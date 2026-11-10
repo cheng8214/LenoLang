@@ -787,15 +787,40 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                     gp_names[i] = NULL;
                 }
             }
+            // ★ 2026-11-11：**约束名也要带上**。此前这里传 NULL ⇒ 方法签名（以及后续
+            //   `resolve_generic_in_ast` 处理的方法体局部声明 `Array[T] a = []`）里的 T
+            //   变成"无约束的泛型参数" ⇒ `a[0].compare(…)` 误报「泛型参数 'T' 没有约束」✗
+            //   （实测：泛型 struct 的字段/参数位置有约束，本地数组里的 T 却没有）。
+            //   约束来源：struct 类型符号上登记的 struct_type_param_constraints（与字段同源 ✓）。
+            char** gp_cons = NULL;
+            Symbol* self_sym = self_type->struct_name
+                ? scope_resolve(s->current, self_type->struct_name) : NULL;
+            if (!self_sym && self_type->struct_name && s->root_scope) {
+                self_sym = scope_resolve(s->root_scope, self_type->struct_name);
+            }
+            if (self_sym && self_sym->struct_type_param_constraints &&
+                self_sym->struct_type_param_count > 0) {
+                gp_cons = self_sym->struct_type_param_constraints;
+            }
             // 解析方法参数和返回类型中的泛型参数
             for (int i = 1; i < ast->u.func.pcnt; i++) {
-                resolve_generic_in_type(ast->u.func.param_types[i], gp_names, NULL, gp_count);
+                resolve_generic_in_type(ast->u.func.param_types[i], gp_names, gp_cons, gp_count);
             }
-            resolve_generic_in_type(ast->u.func.return_type, gp_names, NULL, gp_count);
+            resolve_generic_in_type(ast->u.func.return_type, gp_names, gp_cons, gp_count);
             // 保存到 ast 以便后续 resolve_generic_in_ast 使用
             if (!ast->u.func.type_params && !ast->u.func.type_param_count) {
                 ast->u.func.type_param_count = gp_count;
                 ast->u.func.type_params = gp_names;
+                // 约束一并挂到函数 AST 上（resolve_generic_in_ast 读的就是这份）
+                if (gp_cons) {
+                    ast->u.func.type_param_constraints =
+                        (char**)calloc((size_t)gp_count, sizeof(char*));
+                    for (int i = 0; i < gp_count; i++) {
+                        if (gp_cons[i]) {
+                            ast->u.func.type_param_constraints[i] = strdup(gp_cons[i]);
+                        }
+                    }
+                }
             } else {
                 for (int i = 0; i < gp_count; i++) free(gp_names[i]);
                 free(gp_names);

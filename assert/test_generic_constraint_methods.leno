@@ -1,0 +1,93 @@
+// test_generic_constraint_methods.leno —— 泛型约束 face 的方法调用（2026-11-11）
+//
+// 修前的三处误报（都在"接收者不是裸变量"时发生）：
+//   ① `func f[T: Comparable](Array[T] xs) { xs[0].compare(xs[1]) }`
+//      ⇒ 「不能在 any 类型上调用方法 'compare'」✗（visit_expr 那条路没有约束分支，
+//        只有 visit_module 的**裸变量**接收者处理了 T: Face）
+//   ② 泛型 struct 的方法体里 `for items to it { it.compare(…) }`
+//      ⇒ 「类型 'T' 没有方法 'compare'」✗（接收者泛型实参是裸 T，
+//        type_substitute 把字段元素 T 的 constraint_name 换成了 NULL）
+//   ③ 泛型 struct 方法里的**局部数组** `Array[T] a = []` ⇒ a[0] 的 T 没有约束 ✗
+//      （visit_func_impl 给 struct 方法解析 T 时传的是 NULL 约束表）
+//
+// 修后：字段 / 参数 / 局部数组 / for 变量四种来源的 T 都带约束，均可调用 face 方法；
+// 未加约束的 T 调方法仍报错（见 test_diag_static_errors 的负例）。
+import io
+
+face Comparable {
+    func compare(Comparable o): int
+}
+
+struct Num impl Comparable {
+    int v = 0
+    func compare(Comparable o): int {
+        if o is Num => n {
+            if v < n.v { return -1 }
+            if v > n.v { return 1 }
+        }
+        return 0
+    }
+}
+
+// ① 泛型函数：Array[T] 的**元素**上调用约束 face 的方法
+func cmpFirstTwo[T: Comparable](Array[T] xs): int {
+    return xs[0].compare(xs[1])
+}
+
+struct Box[T: Comparable] {
+    T cur = null
+    Array[T] items = []
+
+    // ② 字段数组的元素
+    func cmpByField(int i, T other): int {
+        return items[i].compare(other)
+    }
+
+    // ③ 局部 Array[T]
+    func cmpLocal(T other): int {
+        Array[T] a = []
+        a.add(cur)
+        return a[0].compare(other)
+    }
+
+    // ④ for 遍历字段数组
+    func cmpByLoop(T other): int {
+        for items to it {
+            return it.compare(other)
+        }
+        return 0
+    }
+
+    // ⑤ 方法参数里的 Array[T]
+    func cmpParam(Array[T] arr, T other): int {
+        return arr[0].compare(other)
+    }
+}
+
+func mk(int v): Num {
+    return new Num(v = v)
+}
+
+// 约束 face 的方法引用（作为一等函数值）
+func methodValue[T: Comparable](T v): int {
+    var f = v.compare
+    return f(v)
+}
+
+main() {
+    Array[Num] xs = [mk(1), mk(2)]
+    assert_eq(cmpFirstTwo(xs), -1, "① 泛型函数：xs[0].compare(xs[1])")
+
+    var b = new Box[Num]()
+    b.cur = mk(5)
+    b.items.add(mk(3))
+    assert_eq(b.cmpByField(0, mk(9)), -1, "② 字段数组元素 items[0].compare(9)")
+    assert_eq(b.cmpLocal(mk(1)), 1, "③ 局部 Array[T]：5 vs 1 ⇒ 1")
+    assert_eq(b.cmpByLoop(mk(9)), -1, "④ for items to it：3 vs 9 ⇒ -1")
+    assert_eq(b.cmpParam(b.items, mk(0)), 1, "⑤ 参数 Array[T]：3 vs 0 ⇒ 1")
+
+    // 约束 face 的方法引用（作为一等函数值）仍可用
+    assert_eq(methodValue(mk(4)), 0, "约束 face 方法当函数值：等于自身 ⇒ 0")
+
+    io.print("test_generic_constraint_methods passed")
+}

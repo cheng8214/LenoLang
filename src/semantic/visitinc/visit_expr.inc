@@ -842,6 +842,71 @@
                             break;
                         }
                         // 非 clib 类型：走原生方法检查
+                        // ★ 2026-11-11：接收者是**泛型参数**（`T`）时按约束 face 校验。
+                        //   此前这里直接落到「不能在 any 类型上调用方法」✗ —— 约束处理只写在
+                        //   visit_module（**裸变量**接收者）那条路上 ⇒ `arr[i].compare(…)` /
+                        //   `a[i].f()` 这类**下标/字段接收者**统统误报（实测
+                        //   `func f[T: Comparable](Array[T] xs) { xs[0].compare(xs[1]) }` ✗）。
+                        if (receiver_type->kind == TYPE_GENERIC_PARAM) {
+                            const char* gp_name = receiver_type->type_param_name
+                                ? receiver_type->type_param_name : "T";
+                            if (!receiver_type->constraint_name) {
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                    "泛型参数 '%s' 没有约束，不能调用方法 '%s' —— "
+                                    "请给类型参数加 face 约束（如 `[%s: Comparable]`），"
+                                    "或在函数体内先收窄成具体类型",
+                                    gp_name, method_name, gp_name);
+                                semantic_poison_expr(ast);
+                                type_free(receiver_type);
+                                break;
+                            }
+                            int face_found = 0;
+                            int face_arity = -1;
+                            ObjFaceDef* cf = face_def_find(receiver_type->constraint_name);
+                            if (cf) {
+                                for (int mi = 0; mi < cf->method_count; mi++) {
+                                    if (cf->methods[mi].name &&
+                                        strcmp(cf->methods[mi].name, method_name) == 0) {
+                                        face_found = 1;
+                                        face_arity = cf->methods[mi].param_count;
+                                        break;
+                                    }
+                                }
+                            }
+                            // 约束 face 可能在导入的模块中
+                            for (int mi = 0; !face_found && mi < s->imported_module_count; mi++) {
+                                ImportedModuleInfo* im = &s->imported_modules[mi];
+                                if (!im || !im->sym_table) continue;
+                                ModuleFaceSymbol* fsym = module_symbol_table_find_face(
+                                    im->sym_table, receiver_type->constraint_name);
+                                if (!fsym) continue;
+                                for (int fi = 0; fi < fsym->method_count; fi++) {
+                                    if (fsym->methods[fi].name &&
+                                        strcmp(fsym->methods[fi].name, method_name) == 0) {
+                                        face_found = 1;
+                                        face_arity = fsym->methods[fi].param_count;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (face_found) {
+                                int actual_arity = ast->u.call.args.count;
+                                if (face_arity >= 0 && actual_arity != face_arity) {
+                                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                        "方法 '%s' 参数数量不匹配: 期望 %d, 实际 %d（来自泛型约束 '%s'）",
+                                        method_name, face_arity, actual_arity,
+                                        receiver_type->constraint_name);
+                                }
+                            } else {
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                    "泛型约束 '%s' 没有方法 '%s'（类型参数 '%s' 只能调用约束 face "
+                                    "声明的方法）",
+                                    receiver_type->constraint_name, method_name, gp_name);
+                                semantic_poison_expr(ast);
+                            }
+                            type_free(receiver_type);
+                            break;
+                        }
                         const char* type_name = native_get_type_name(receiver_type->kind);
                         
                         // face 类型：查找 face 定义验证方法存在性

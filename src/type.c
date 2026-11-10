@@ -1548,6 +1548,15 @@ TypeInfo* type_substitute(TypeInfo* type, const char* param_name, TypeInfo* conc
         //   否则 `func f[T](T? a)` 调 `f[int](null)` 会被判"期望 int，实际 null" ✗
         //   （实测：非泛型的 `int? a` 收 null 是好的 ⇒ 差别只在这条代入路径）。
         if (replaced && type->nullable) replaced->nullable = 1;
+        // ★ 2026-11-11：**约束也不能丢**。典型路径：泛型 struct 的方法体里
+        //   `infer_field_type` 拿字段 `Array[T]`（T 带 `T: Comparable`），再用**接收者**
+        //   的泛型实参（`Box[T]` 里的那个裸 `T`，不带约束）做代入 ⇒ 元素的
+        //   constraint_name 被换成 NULL ⇒ `items[0].compare(...)` 误报"any 不能调方法"/"T 没有方法"。
+        //   口径：占位符**自己带约束**、代入值却没有（且还是泛型参数）⇒ 保留占位符的约束 ✓
+        if (replaced && type->constraint_name &&
+            replaced->kind == TYPE_GENERIC_PARAM && !replaced->constraint_name) {
+            replaced->constraint_name = strdup(type->constraint_name);
+        }
         return replaced;
     }
     

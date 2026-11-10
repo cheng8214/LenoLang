@@ -1860,5 +1860,40 @@ main() {
     ce.expect_error(d24, "字段 widht => 是否想用 width",
         "是否想用 'width'", 5)
 
+    // ---- 2026-11-11：泛型约束 face 的方法调用（三处误报已修，三条负例钉住）----
+    //   正向见 assert/test_generic_constraint_methods.leno（字段/参数/局部数组/for 变量）
+    var gpCmpA = dirs.join(work, "gp_unconstrained_method.leno")
+    files.write(gpCmpA, @"face F { func go(int x): int }
+
+func bad[T](Array[T] xs): int { return xs[0].go(1) }
+
+main() { print(""x"") }
+")
+    ce.expect_error(gpCmpA, "泛型参数无约束却调方法 => 点名加 [T: Face]",
+        "泛型参数 'T' 没有约束", 3)
+
+    var gpCmpB = dirs.join(work, "gp_face_no_method.leno")
+    files.write(gpCmpB, @"face F { func go(int x): int }
+
+func bad[T: F](Array[T] xs): int { return xs[0].nope(1) }
+
+main() { print(""x"") }
+")
+    ce.expect_error(gpCmpB, "约束 face 没有该方法 => 只报根因",
+        "泛型约束 'F' 没有方法 'nope'", 3)
+
+    var gpCmpC = dirs.join(work, "gp_face_arity.leno")
+    files.write(gpCmpC, @"face F { func go(int x): int }
+
+func bad[T: F](Array[T] xs): int { return xs[0].go(1, 2) }
+
+main() { print(""x"") }
+")
+    ce.expect_error(gpCmpC, "约束 face 方法参数个数不匹配",
+        "来自泛型约束 'F'", 3)
+
     print("=== test_diag_static_errors ALL passed ===")
 }
+
+
+
