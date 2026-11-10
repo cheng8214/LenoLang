@@ -1014,6 +1014,11 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
     int tmp = reg_alloc(gen);
     gen_expr_to(gen, ast->u.switch_.expr, tmp);
 
+    // 主题的静态类型（用于判断"字面量 case 能不能走融合比较"）
+    TypeKind sw_kind = ast->u.switch_.expr && ast->u.switch_.expr->cached_type
+                           ? ast->u.switch_.expr->cached_type->kind : TYPE_ANY;
+    int sw_is_int = (sw_kind == TYPE_INT || sw_kind == TYPE_ENUM);
+
     // break 支持
     LoopContextNode* node = (LoopContextNode*)malloc(sizeof(LoopContextNode));
     node->prev = gen->loop_head;
@@ -1110,6 +1115,29 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
                 reg_free(gen, lo);
                 reg_free(gen, hi);
                 continue;
+            }
+            // ★ 2026-11-10（性能，基准实测后改）：**整数字面量 case 走融合比较**。
+            //   老路径 = `LOADK vr` + `OP_EQ cr` + `OP_JMP_IF_TRUE`（3 条 12 字节）；
+            //   融合的 `OP_CMPJMP_EQ`（T31，`if a == 3` 早就在用）只要 **1 条 8 字节**。
+            //   基准（300k 次调用、30 个 case、命中最后一个）：50ms → 见 docs 的性能小节。
+            //   ⚠ 只在"主题静态类型是 int/enum"且字面量落在 int16 内时才发 ——
+            //     `OP_CMPJMP_EQ` 的立即数是 16 位，且它只对 int 语义等价（string/float 要原路径）。
+            {
+                int is_int_imm = (cv->kind == AST_NUM && !cv->u.num.is_float &&
+                                  !cv->u.num.is_bigint &&
+                                  cv->u.num.value >= -32768 && cv->u.num.value <= 32767);
+                if (is_int_imm && sw_is_int) {
+                    int jp2 = emit_cmpjmp(gen, OP_CMPJMP_EQ, tmp, (int)cv->u.num.value, 1, 1, line);
+                    if (cnt == cap) {
+                        cap *= 2;
+                        hit_pos = (int*)realloc(hit_pos, sizeof(int) * cap);
+                        hit_case = (int*)realloc(hit_case, sizeof(int) * cap);
+                    }
+                    hit_pos[cnt] = jp2;
+                    hit_case[cnt] = i;
+                    cnt++;
+                    continue;
+                }
             }
             int vr = reg_alloc(gen);
             gen_expr_to(gen, cv, vr);
