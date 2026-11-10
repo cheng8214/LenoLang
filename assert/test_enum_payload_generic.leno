@@ -1,0 +1,76 @@
+// test_enum_payload_generic.leno —— 泛型载荷 enum（2026-11-10，步 1~3）
+//
+// 模型：**擦除**（与泛型 struct 同一条路）——类型系统记住实参，运行期只有一份同名定义。
+// 类型实参只能**从上下文推断**（var 声明 / return / 赋值右侧三处），因为
+// `Res[int].ok(…)` 这种显式写法还没进解析器。
+//
+// 钉住五件事：
+//   ① 构造（声明处推断）+ 载荷值正确
+//   ② 构造（return 处从签名推断）
+//   ③ 构造（赋值处从左侧变量类型推断）
+//   ④ 匹配：`case R.ok(v)` 绑出来的就是对应槽位的值
+//   ⑤ 同一个 enum 的**两种实参**共存（擦除模型的直接证据）
+enum Res[T] {
+    ok(T v)
+    err(int code, string msg)
+}
+
+enum Pair[A, B] {
+    both(A a, B b)
+    neither()
+}
+
+// ② return 处推断：签名给了 Res[int]
+func make(int n): Res[int] {
+    if n < 0 { return Res.err(1, "负数") }
+    return Res.ok(n * 2)
+}
+
+func describe(Res[int] r): string {
+    switch r {
+        case Res.ok(v) { return "ok:" + _str(v) }
+        case Res.err(c, m) { return "err:" + _str(c) + ":" + m }
+    }
+    return "?"
+}
+
+main() {
+    // ① 声明处推断
+    Res[int] a = Res.ok(7)
+    assert_eq(a.tag, 0, "① ok 的 tag = 0");
+    assert_eq(a.p0, 7, "① 载荷落在 p0");
+    assert_eq(describe(a), "ok:7", "④ 匹配绑出 7");
+
+    // ② return 处推断（函数内部两处 return 都推出来了）
+    assert_eq(describe(make(5)), "ok:10", "② 正常路径");
+    assert_eq(describe(make(-1)), "err:1:负数", "② 失败路径（msg 落在 p1）");
+
+    // ③ 赋值处推断
+    Res[int] c = Res.ok(1)
+    c = Res.ok(99)
+    assert_eq(describe(c), "ok:99", "③ 赋值右侧也能推断");
+
+    // ⑤ 两种实参共存（擦除：同一份定义，字段按 any 存）
+    Res[string] s = Res.ok("hi")
+    assert_eq(s.p0, "hi", "⑤ string 实参的载荷");
+    assert_eq(describe(a), "ok:7", "⑤ 与 int 实参互不影响");
+    assert_eq(describe(Res.err(2, "x") as Res[int]), "err:2:x", "⑤ 直接构造 + as 收窄");
+
+    // 多类型参数
+    Pair[int, string] p = Pair.both(3, "three")
+    assert_eq(p.tag, 0, "多参：both 的 tag = 0");
+    assert_eq(p.p0, 3, "多参：A 槽");
+    assert_eq(p.p1, "three", "多参：B 槽");
+    Pair[int, string] q = Pair.neither()
+    assert_eq(q.tag, 1, "多参：neither 的 tag = 1");
+
+    // 按值比较 / 容器（与普通载荷 enum 同一套）
+    //   ⚠ 构造必须有上下文（声明 / return / 赋值 / `as` 四处）—— 直接写进比较或实参里
+    //     推不出类型实参（会给定向报错）⇒ 先绑一个带类型的局部量
+    Res[int] seven = Res.ok(7)
+    Res[int] n99 = Res.ok(99)
+    assert_eq(seven == a, true, "按值相等");
+    assert_eq([a, c].has(n99), true, "Array.has 按值");
+
+    print("test_enum_payload_generic passed（构造三通道 / 匹配 / 双实参 / 多类型参数 / 按值比较）")
+}

@@ -10,7 +10,15 @@
                 visit(s, ast->u.ret);
                 break;
             }
-            visit(s, ast->u.ret);
+            // ★ 2026-11-10（泛型载荷 enum 步 3/3）：把**函数返回类型**作为"期望类型"传下去，
+            //   这样 `return Res.ok(42)` 能从签名推出类型实参（与 var 声明同一个通道）。
+            {
+                TypeInfo* saved_expected = s->expected_type;
+                TypeInfo* rt = s->current_func ? s->current_func->u.func.return_type : NULL;
+                s->expected_type = (rt && rt->kind != TYPE_INFER) ? rt : NULL;
+                visit(s, ast->u.ret);
+                s->expected_type = saved_expected;
+            }
 
             if (s->current_func) {
                 TypeInfo* return_type_info = infer_expr_type(s, ast->u.ret);

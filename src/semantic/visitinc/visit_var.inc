@@ -90,7 +90,13 @@
                 }
                 // 标记变量正在初始化，防止初始化表达式中引用自身
                 if (sym) sym->is_initialized = 2;
+                // ★ 2026-11-10（泛型载荷 enum）：把**声明类型**作为"期望类型"传下去，
+                //   这样 `Res[int] a = Res.ok(42)` 的构造点能推出类型实参
+                TypeInfo* saved_expected = s->expected_type;
+                s->expected_type = (ast->u.var_decl.type && ast->u.var_decl.type->kind != TYPE_INFER)
+                                       ? ast->u.var_decl.type : NULL;
                 visit(s, ast->u.var_decl.init);
+                s->expected_type = saved_expected;
                 // 标记变量已初始化
                 if (sym) sym->is_initialized = 1;
                 // ★ 记「确定为 null」（编译期专用，见 Symbol.is_null_value 的说明）：
@@ -503,9 +509,18 @@
         case AST_ASSIGN: {
             // 处理并行赋值：a, b = c, d 或 a, b = [c, d] 或 arr[0], arr[1] = x, y
             int left_count = ast->u.assign.name_count;
-            
+
+            // ★ 2026-11-10（泛型载荷 enum 步 3/3）：单目标赋值把**左侧变量的类型**作为
+            //   "期望类型"传下去，这样 `a = Res.ok(9)` 也能推出类型实参
+            //   （var 声明 / return 另有两个通道，见 visit_var 的 init 与 visit_stmt 的 AST_RETURN）
+            TypeInfo* saved_expected = s->expected_type;
+            if (left_count == 1 && ast->u.assign.names && ast->u.assign.names[0]) {
+                Symbol* lsym = scope_resolve(s->current, ast->u.assign.names[0]);
+                if (lsym && lsym->type) s->expected_type = lsym->type;
+            }
             // 先访问右侧值
             visit(s, ast->u.assign.value);
+            s->expected_type = saved_expected;
             
             // 检查右侧值数量
             // 只有当左侧有多个变量且右侧是数组时，才展开数组作为并行赋值

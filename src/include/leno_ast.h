@@ -431,6 +431,13 @@ struct Ast {
             char*** member_param_names;      // [member][param] 参数名
             TypeInfo*** member_param_types;  // [member][param] 参数类型
             int* member_param_counts;        // 每个成员的参数个数
+            // ★ 2026-11-10（泛型载荷 enum，步 1/3）：`enum Result[T] { ok(T v) }` 的类型参数。
+            //   与 struct 走**同一套擦除模型**（类型系统记住实参、运行期单一定义）：
+            //   载荷槽类型里跟类型参数同名的会转成 TYPE_GENERIC_PARAM（见 parse_enum_def
+            //   末尾的 convert_to_generic_params）。
+            //   NULL / 0 = 非泛型 enum ⇒ 老行为一个字节都不变。
+            char** type_params;              // ["T", "U"]
+            int type_param_count;
             // ★ 2026-11-10（压测发现）：**这个成员写没写括号**。
             //   为什么需要单独一位：`stop()`（零参数但写了括号）是一个合法的
             //   "无载荷变体"（Option 的 None、命令的 Stop 都是这个形状），而

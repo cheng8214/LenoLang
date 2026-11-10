@@ -171,6 +171,44 @@ static void sem_payload_block_prepend(Ast* body, Ast** nodes, int n) {
 //   `new Enum(tag = mi, p<base+k> = 实参 k)`，然后走正常的 struct 初始化检查。
 static void sem_payload_emit_struct_init(Semantic* s, Ast* ast, const SemPayloadEnum* v,
                                          int mi, AstList args, const char* mname) {
+    // ★ 2026-11-10（泛型载荷 enum，步 2/3）：**构造暂不支持** —— 别让它落到
+    //   `new Res(tag=…)` 上再报"泛型 struct 'Res' 需要类型参数（如 Res[类型]）"
+    //   （那句会把人引到一个**解析不进去**的语法上：`Res[int].ok(…)` 目前是语法错误）。
+    //   类型实参从**期望类型**推断（var 声明 / return / 赋值右侧都会挂一个，见 Semantic.expected_type）。
+    int gen_n = 0;
+    TypeInfo** gen_args = NULL;
+    if (v->esrc && v->esrc->u.enum_def.type_param_count > 0) {
+        TypeInfo* exp = s ? s->expected_type : NULL;
+        int matched = (exp && exp->kind == TYPE_STRUCT && exp->struct_name &&
+                       strcmp(exp->struct_name, v->name) == 0 && exp->generic_count > 0);
+        if (!matched) {
+            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                "泛型载荷 enum '%s' 的构造**推不出类型实参**：`%s.%s(…)` 只能从上下文推断，"
+                "认这四处 —— 带类型的声明（`%s[类型] x = %s.%s(…)`）、函数 return（签名写了返回类型）、"
+                "给已声明变量赋值、以及 `… as %s[类型]`。"
+                "直接塞进比较（`%s.ok(1) == y`）或函数实参里推不出来 ⇒ 先赋给一个带类型的局部量再传；"
+                "`%s[int].%s(…)` 这种显式写法还没进解析器",
+                v->name, v->name, mname, v->name, v->name, mname, v->name,
+                v->name, v->name, mname);
+            semantic_poison_expr(ast);
+            for (int k = 0; k < (int)args.count; k++) ast_free(args.items[k]);
+            free(args.items);
+            memset(&ast->u, 0, sizeof(ast->u));
+            ast->kind = AST_CALL;
+            return;
+        }
+        if (exp->generic_count != v->esrc->u.enum_def.type_param_count) {
+            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                "泛型载荷 enum '%s' 需要 %d 个类型实参，上下文给的是 %d 个",
+                v->name, v->esrc->u.enum_def.type_param_count, exp->generic_count);
+        }
+        gen_n = exp->generic_count;
+        gen_args = (TypeInfo**)calloc((size_t)gen_n, sizeof(TypeInfo*));
+        for (int i = 0; i < gen_n; i++) {
+            gen_args[i] = exp->generic_args ? type_copy(exp->generic_args[i]) : NULL;
+        }
+    }
+
     int want = v->counts[mi];
     int got = args.count;
     for (int i = 0; i < got; i++) {
@@ -203,6 +241,12 @@ static void sem_payload_emit_struct_init(Semantic* s, Ast* ast, const SemPayload
     ast->kind = AST_STRUCT_INIT;
     ast->u.struct_init.struct_name = strdup(v->name);
     ast->u.struct_init.from_enum_payload = 1;
+    // 泛型载荷 enum：把推断出来的类型实参挂到改写后的 `new R[...]()` 上
+    if (gen_n > 0 && gen_args) {
+        ast->u.struct_init.generic_type_count = gen_n;
+        ast->u.struct_init.generic_type_args = gen_args;
+        gen_args = NULL;
+    }
     ast->u.struct_init.field_count = 1 + use_n;
     ast->u.struct_init.field_names = (char**)calloc((size_t)(1 + use_n), sizeof(char*));
     ast->u.struct_init.field_values = (Ast**)calloc((size_t)(1 + use_n), sizeof(Ast*));

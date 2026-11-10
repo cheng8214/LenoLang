@@ -253,3 +253,57 @@ struct Msg {
 - 一个 switch 里**每个 case 的绑定各占一个寄存器** ⇒ 80 个 case × 4 绑定会撞 255 上限；
   与手写 80 个 case 各声明 4 个局部量完全同价（实测对照：两者报同样的错），不是载荷特有。
 - 300 成员 × 零参数的同模块 enum 可用（带载荷 enum 不发 `OP_ENUM_DEF`，255 成员上限不适用）。
+
+---
+
+## 9. 泛型载荷 enum（2026-11-10 起，进度 2/3）
+
+### 决定：走**擦除**，与泛型 struct 同一条路
+
+依据（实测，不是猜的）：
+
+- `struct Box[T] { T v }` 现在的表示是"**类型系统记住实参、运行期只有一份同名定义**"：
+  `type(new Box[int]())` 打印 `Box[int]`、`is Box[int]` 为真，但字段按 any 存。
+- 泛型载荷 enum 只要**沿用同一模型**即可：载荷槽里跟类型参数同名的注解在解析期就转成
+  `TYPE_GENERIC_PARAM`（`convert_to_generic_params`，struct/func/face 三处早就在用），
+  合成出来的隐藏 struct 带上同样一份 `type_params` ⇒ 实例化时按实参替换。
+- **不选单态化**（每个实参组合造一份 `__R_int`）：要动 struct 定义表、字段索引、
+  `.lenb` 与模块缓存版本策略，而收益只是"字段不做 any"——现有泛型 struct 也没这么做，
+  为 enum 单独破例会让两套泛型语义并存。
+
+### 已完成（步 1 + 步 2）
+
+1. **解析器**：`enum Name[T, U] { … }` 接受类型参数列表（重复参数有诊断），
+   载荷参数类型里的 `T` 转成 `TYPE_GENERIC_PARAM`（与 struct 字段同款）。
+2. **降级合成**：合成出的隐藏 struct 继承同一份 `type_params`；
+   `TYPE_GENERIC_PARAM` 载荷槽显式默认 `null`（与压测 §8 那条同一个理由）。
+
+现在这些都能编译且零诊断：
+
+``leno
+enum Res[T] { ok(T v), err(int code, string msg) }
+func sig(Res[int] r): string { return "x" }
+``
+
+### 已完成（步 3/3）：构造从**上下文**推断
+
+类型实参认**四处**（`Semantic.expected_type` 通道：进入时挂上、访问完立刻还原）：
+
+1. 带类型的声明：`Res[int] a = Res.ok(42)`
+2. `return`（函数签名写了返回类型）：`func f(): Res[int] { return Res.ok(1) }`
+3. 给已声明变量赋值：`a = Res.ok(9)`
+4. `expr as Res[int]`
+
+四处都推不出 ⇒ **定向报错**（并提示"先赋给带类型的局部量"），不静默。
+明确不做 `Res[int].ok(…)` 这种显式写法（要改 `Type[args].member` 的解析规则，收益低于成本）。
+
+回归钉子：`assert/test_enum_payload_generic.leno`（构造三通道 / 匹配绑定 / 双实参共存 /
+多类型参数 / 按值比较）。
+
+### 已知边界
+
+- 泛型载荷 enum 暂不支持**跨模块 export**（模块符号表里没有载荷槽的类型参数表）。
+- 类型参数暂不支持约束/默认值（`enum R[T: Face]`）：解析器只认名字列表。
+- **enum 不能挂方法**（`extend Res { … }` 会报"extend 只能给 struct 加方法"）⇒ 即使载荷
+  enum 运行期就是个 struct，`isOk/orElse/…` 这类方法也挂不上去。**这正是 `LenoResult` 的
+  `Result[T]` / `Option[T]` 必须保持 struct 的决定性理由**（不是"不能泛型"了 —— 那个已经支持）。

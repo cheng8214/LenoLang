@@ -11,13 +11,18 @@
 //   ② 可能"没有值"但不算失败 → `Option[T]`（`some` / `val`）
 //   ③ 同一个函数内部临时判空 → 继续用 `T?`（便宜；跨模块边界才换成 Option）
 //
-// 为什么是 struct 不是 enum —— **2026-11-10 复核过，结论没变，但理由换了**：
+// 为什么是 struct 不是 enum —— **2026-11-10 复核过两次，结论没变，理由见下**：
 //   · enum 现在**能带载荷**了（`enum Msg { progress(int done, int total) }`，
 //     见 docs/idioms.md §3 与 docs/enum载荷_设计草案.md）⇒ 旧注释"enum 只存 int 常量"已过期；
-//   · 但**载荷 enum 不支持泛型参数**：`enum Result[T] { ok(T v) err(int c) }` 直接语法错误
-//     （带载荷 enum 会被降级成一个同名 struct `{tag, p0, p1…}`，泛型要求按实参逐个实例化，
-//     这套机制没做）。编译器现在对 `enum X[...]` 会给定向提示，不再只说"期望 '{'"。
-//   ⇒ 只要 `Result` 必须携带**任意 T**，它就只能是"bool 标志 + 值"的 struct。
+//   · **泛型载荷 enum 现在完整可用了**（2026-11-10，步 1~3）：声明、构造（类型实参从
+//     上下文推断）、匹配都通 —— `enum Result[T] { ok(T v) err(int c) }` 本身能写；
+//   · 但 **enum 不能挂方法**：`extend Result { func isOk() … }` 会报
+//     「extend 只能给 struct 加方法」。而 `Result` 的全部价值就在方法上
+//     （`isOk / isErr / orElse / unwrap / errName / errText`）⇒ 换成 enum 就得让
+//     调用方改写成 `switch`，那是**破坏性 API 变更**，且丢掉 `orElse(默认值)` 的显式性。
+//   ⇒ 结论：`Result[T]` / `Option[T]` 保持 struct。**这不是"语言做不到泛型 enum"**（已经能了），
+//     而是"enum 不能有方法"这条更有意的限制（enum 是值、不是对象）。
+//   如果哪天真要给 enum 加方法，那是一条独立的设计（`impl` 泛化），不是本模块该赌的。
 //   字段顺序固定为 ok/code/msg/val，这样 `jsons.fill` / 日志打印 / 逐字段拷贝都能用同一口径。
 //
 //   反过来：**不需要泛型的结果形态应当写成载荷 enum**（更好读，还能 `switch` 穷尽检查）：

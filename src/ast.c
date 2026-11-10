@@ -570,6 +570,13 @@ break;
             free(ast->u.enum_def.member_param_types);
             free(ast->u.enum_def.member_param_counts);
             free(ast->u.enum_def.member_payload_flags);
+            // ★ 泛型载荷 enum 的类型参数
+            if (ast->u.enum_def.type_params) {
+                for (int i = 0; i < ast->u.enum_def.type_param_count; i++) {
+                    free(ast->u.enum_def.type_params[i]);
+                }
+                free(ast->u.enum_def.type_params);
+            }
             free(ast->u.enum_def.ref.name);
             free(ast->u.enum_def.ref.struct_name);
             break;

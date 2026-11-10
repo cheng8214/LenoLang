@@ -3824,24 +3824,39 @@ Ast* parse_enum_stmt(Parser* p) {
     char* enum_name = copy_string(p->lex.current.text, p->lex.current.len);
     lexer_next(&p->lex);
 
-    // ★ 2026-11-10（写 LenoResult 时撞到）：**enum 不支持泛型参数**。
-    //   载荷 enum 落地后，`enum Result[T] { ok(T v) err(int c) }` 是最自然的写法，
-    //   但它降级成的是**同名 struct**（`__Result{tag, p0, p1}`）—— 泛型需要"按实参实例化"，
-    //   这套机制没做。原来这里只会说「期望 '{' 开始 enum 定义」，看到的是"我明明写了 {"。
-    //   ⇒ 遇到 `[` 就直接点名 + 给出路（用 struct，或改用非泛型 enum）。
+    // ★ 2026-11-10（泛型载荷 enum，步 1/3）：解析可选的类型参数 `enum Result[T] { … }`。
+    //   与 struct / func / face 走**同一套擦除模型**：类型系统记住实参，运行期只有一份
+    //   同名定义（载荷槽里跟类型参数同名的类型转成 TYPE_GENERIC_PARAM，见下面的
+    //   convert_to_generic_params 调用）。
+    char** type_params = NULL;
+    int type_param_count = 0;
     if (p->lex.current.type == TOK_LBRACKET) {
-        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
-            "enum '%s' 不支持**泛型参数**：带载荷的 enum 会被降级成一个同名 struct"
-            "（`{tag, p0, p1, …}`），而泛型要求按实参逐个实例化，这套机制尚未实现。"
-            "两条出路：① 要带类型参数请用 `struct %s[T] { … }`；"
-            "② 要 `ok/err` 那种形态且不需要泛型，就写非泛型的 `enum %s { ok(int v) err(int code, string msg) }`",
-            enum_name, enum_name, enum_name);
-        free(enum_name);
-        return NULL;
+        lexer_next(&p->lex);  // 跳过 '['
+        int tp_capacity = 8;
+        type_params = (char**)malloc(sizeof(char*) * (size_t)tp_capacity);
+        do {
+            if (type_param_count >= tp_capacity) {
+                tp_capacity *= 2;
+                type_params = (char**)realloc(type_params, sizeof(char*) * (size_t)tp_capacity);
+            }
+            if (p->lex.current.type != TOK_IDENT) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                 "期望类型参数名（如 `enum Result[T]`）");
+                break;
+            }
+            type_params[type_param_count] = copy_string(p->lex.current.text, p->lex.current.len);
+            parser_check_dup_type_param(type_params, type_param_count,
+                                        p->lex.current.line, p->lex.current.column);
+            type_param_count++;
+            lexer_next(&p->lex);
+        } while (match(p, TOK_COMMA));
+        consume(p, TOK_RBRACKET, "期望 ']' 结束泛型参数列表");
     }
 
     // 期望 '{'
     if (!consume(p, TOK_LBRACE, "期望 '{' 开始 enum 定义")) {
+        for (int i = 0; i < type_param_count; i++) free(type_params[i]);
+        free(type_params);
         free(enum_name);
         return NULL;
     }
@@ -4050,12 +4065,35 @@ Ast* parse_enum_stmt(Parser* p) {
             enum_name ? enum_name : "?");
     }
 
+    // ★ 2026-11-10（泛型载荷 enum，步 1/3）：把载荷参数类型里跟类型参数同名的
+    //   `T` 从"TYPE_STRUCT + struct_name=T"转成 TYPE_GENERIC_PARAM（与 struct 字段同款，
+    //   见 convert_to_generic_params 的说明）。非泛型 enum 这里 count = 0 ⇒ 空转。
+    if (type_param_count > 0 && saw_payload) {
+        for (int m = 0; m < member_count; m++) {
+            TypeInfo** pt = (member_param_types && member_param_types[m])
+                                ? member_param_types[m] : NULL;
+            if (!pt) continue;
+            for (int k = 0; k < member_param_counts[m]; k++) {
+                convert_to_generic_params(pt[k], type_params, NULL, type_param_count);
+            }
+        }
+    }
+
     // 创建 enum 定义 AST 节点
     Ast* ast = ast_new(AST_ENUM_DEF, line);
     ast->u.enum_def.name = enum_name;
     ast->u.enum_def.member_names = member_names;
     ast->u.enum_def.member_values = member_values;
     ast->u.enum_def.member_count = member_count;
+    // 类型参数：没有就**不挂**（老 AST 形状不变）
+    if (type_param_count > 0) {
+        ast->u.enum_def.type_params = type_params;
+        ast->u.enum_def.type_param_count = type_param_count;
+    } else {
+        free(type_params);
+        ast->u.enum_def.type_params = NULL;
+        ast->u.enum_def.type_param_count = 0;
+    }
     // 没有任何带载荷成员时**不挂**这三个数组（保持老 AST 形状，ast_free 也走老路径）
     if (saw_payload) {
         ast->u.enum_def.member_param_names = member_param_names;

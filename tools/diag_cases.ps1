@@ -57,9 +57,18 @@ $cases += @{ n = "e01 空 enum（2026-11-10 起告警）"; e = "warn"; src = @'
 enum E { }
 main() { print("x") }
 '@ }
-$cases += @{ n = "e01b enum 泛型参数（载荷 enum 不支持泛型）"; e = "error"; src = @'
+$cases += @{ n = "e01b enum 泛型参数（声明 + 降级，2026-11-10 起支持）"; e = "ok"; src = @'
 enum R[T] { ok(T v), err(int c) }
+func sig(R[int] r): string { return "x" }
 main() { print("x") }
+'@ }
+$cases += @{ n = "e01c 泛型载荷 enum 的构造（声明处推断，2026-11-10 起支持）"; e = "ok"; src = @'
+enum R[T] { ok(T v), err(int c) }
+main() { R[int] a = R.ok(1); print(_str(a.p0)) }
+'@ }
+$cases += @{ n = "e01d 泛型载荷 enum 的构造缺上下文（推不出类型实参）"; e = "error"; src = @'
+enum R[T] { ok(T v), err(int c) }
+main() { var x = R.ok(1); print("x") }
 '@ }
 $cases += @{ n = "e02 重复成员"; e = "error"; src = @'
 enum E { a, a }
@@ -238,7 +247,10 @@ foreach ($c in $cases) {
     if ($out -match '内部错误|Segmentation|crash|assert') { $kind = "CRASH?" }
 
     $verdict = "OK"
-    if ($c.e -eq "error" -and $kind -ne "error") { $verdict = "!! 该报错没报" }
+    # ★ 2026-11-10（自查发现）：**want=ok 却报错/告警** 原来没有判据 ⇒ 直接落到 "OK"
+    #   （等于"该通过的用例挂了也显示通过"，是最危险的那种假绿）
+    if ($c.e -eq "ok" -and $kind -ne "ok") { $verdict = "!! 本该通过却给了诊断（" + $kind + "）" }
+    elseif ($c.e -eq "error" -and $kind -ne "error") { $verdict = "!! 该报错没报" }
     elseif ($c.e -eq "warn" -and $kind -eq "ok") { $verdict = "!! 该警告没警告" }
     elseif ($c.e -eq "error" -and $kind -eq "CRASH?") { $verdict = "!! 崩了" }
     elseif ($kind -eq "error" -and $c.e -eq "warn" -and $out -notmatch 'warning:') { $verdict = "!! 警告变错误" }
@@ -252,7 +264,8 @@ $rows | ForEach-Object {
     if ($_.msg) { Write-Output ("      → " + $_.msg) }
 }
 Write-Output ""
-$bad = $rows | Where-Object { $_.v -like "!!*" }
+# ⚠ 用 @() 包一层：单条命中时 PS 5.1 的 .Count 会给出空串（"有问题  例"）
+$bad = @($rows | Where-Object { $_.v -like "!!*" })
 Write-Output ("=== 共 " + $rows.Count + " 例；有问题 " + $bad.Count + " 例 ===")
 $bad | ForEach-Object { Write-Output ("  " + $_.n + " : " + $_.v) }
 

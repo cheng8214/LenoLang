@@ -546,6 +546,21 @@ static void enum_payload_synthesize(Semantic* s, Ast* ast) {
         sd->u.struct_def.name = strdup(e->u.enum_def.name);
         sd->u.struct_def.is_synthetic = 1;
         sd->u.struct_def.enum_src = e;
+        // ★ 2026-11-10（泛型载荷 enum，步 2/3）：类型参数搬到合成 struct 上。
+        //   字段里那些 TYPE_GENERIC_PARAM（如 `ok(T v)` 的 v）要靠 struct 自己的
+        //   type_params 才能在 `Result[int]` 实例化时被替换 —— 与手写泛型 struct 同一条路。
+        //   enum 的类型参数暂不支持约束/默认值（`[T: Face]`），这里不搬那两个数组。
+        if (e->u.enum_def.type_param_count > 0 && e->u.enum_def.type_params) {
+            int tp = e->u.enum_def.type_param_count;
+            sd->u.struct_def.type_param_count = tp;
+            sd->u.struct_def.type_params = (char**)calloc((size_t)tp, sizeof(char*));
+            if (sd->u.struct_def.type_params) {
+                for (int i = 0; i < tp; i++) {
+                    sd->u.struct_def.type_params[i] =
+                        e->u.enum_def.type_params[i] ? strdup(e->u.enum_def.type_params[i]) : NULL;
+                }
+            }
+        }
         int fc = 1 + param_total;
         sd->u.struct_def.field_count = fc;
         sd->u.struct_def.field_names = (char**)calloc((size_t)fc, sizeof(char*));
@@ -580,7 +595,9 @@ static void enum_payload_synthesize(Semantic* s, Ast* ast) {
                     (sd->u.struct_def.field_types[pidx]->kind == TYPE_STRUCT ||
                      sd->u.struct_def.field_types[pidx]->kind == TYPE_FACE ||
                      sd->u.struct_def.field_types[pidx]->kind == TYPE_PTR ||
-                     sd->u.struct_def.field_types[pidx]->kind == TYPE_CSTRUCT)) {
+                     sd->u.struct_def.field_types[pidx]->kind == TYPE_CSTRUCT ||
+                     // ★ 泛型载荷槽（`ok(T v)`）：运行期按 any 存，默认 null 最安全
+                     sd->u.struct_def.field_types[pidx]->kind == TYPE_GENERIC_PARAM)) {
                     Ast* dv = ast_new(AST_NULL, e->line);
                     if (dv) {
                         dv->column = e->column;

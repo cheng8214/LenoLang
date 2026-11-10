@@ -13,7 +13,14 @@
 
         case AST_AS_CAST:
             if (ast->u.type_check.expr) {
+                // ★ 2026-11-10（泛型载荷 enum 步 3/3）：`Res.err(2, "x") as Res[int]`
+                //   的类型实参就从**转换目标类型**来（第四个"期望类型"通道）
+                TypeInfo* saved_expected = s->expected_type;
+                if (ast->u.type_check.type && ast->u.type_check.type->kind == TYPE_STRUCT) {
+                    s->expected_type = ast->u.type_check.type;
+                }
                 visit(s, ast->u.type_check.expr);
+                s->expected_type = saved_expected;
             }
             resolve_type_names(s, &ast->u.type_check.type);
             // ★ 「不可能成功的 as 收窄」提示（WARN_IMPOSSIBLE_CAST）——
