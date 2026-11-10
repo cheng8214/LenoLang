@@ -739,6 +739,61 @@ static Value str_byte_find(int argc, Value* args) {
 
 // 11. 新增：字符串格式化
 
+// ★ 2026-11-11：bigint 的进制转换（format 的 %d/%u/%x/%X/%o/%b 用）。
+//   为什么需要：`format("%d", 2^63)` / `$"{big:x}"` 此前一律输出字面量 `<type_error>`
+//   （%d 分支只认 int/float/bool），而同一棵树 `_str(bigint)` 却是精确的 ⇒ 静默错值。
+//   实现：limbs 是 **2^32 进制**（见 bigint.c 的 BASE_BITS），2/8/16 进制都是 2 的幂
+//   ⇒ 直接按位取即可，不需要除法；10 进制走 bigint_to_string。
+//   负数输出 "-" + 绝对值（bigint 没有固定位宽，谈不上补码语义）。
+static char* bigint_to_base_string(ObjBigInt* bi, int base, int upper) {
+    if (!bi) return NULL;
+    if (base == 10) return bigint_to_string(bi);
+    int neg = bi->is_negative ? 1 : 0;
+    int n = bi->limb_count;
+    // 最高有效位下标（limb_count*32-1；全 0 ⇒ 之后落 -1）
+    int top_bit = n * 32 - 1;
+    while (top_bit >= 0) {
+        int limb = top_bit / 32, bit = top_bit % 32;
+        if ((bi->limbs[limb] >> bit) & 1u) break;
+        top_bit--;
+    }
+    char* out = (char*)malloc((size_t)((top_bit > 0 ? top_bit : 0) + 4));
+    if (!out) return NULL;
+    int len = 0;
+    if (top_bit < 0) {
+        out[len++] = '0';
+        out[len] = '\0';
+        return out;
+    }
+    if (neg) out[len++] = '-';
+    const char* digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    if (base == 16 || base == 8) {
+        // ★ 首组位宽 = top_bit % group + 1（从**最低位**对齐分组——否则 2^64 会
+        //   被当成 0x8…（多左移了一位）；2^63 的八进制同样从 4 开头 ✗ 实测过）
+        int group = (base == 16) ? 4 : 3;
+        int first_bits = (top_bit % group) + 1;
+        int b = top_bit;
+        int bits = first_bits;
+        while (b >= 0) {
+            int v = 0;
+            for (int k = 0; k < bits; k++) {
+                int limb = (b - k) / 32, bit = (b - k) % 32;
+                v = (v << 1) | (int)((bi->limbs[limb] >> bit) & 1u);
+            }
+            out[len++] = (base == 16) ? digits[v] : (char)('0' + v);
+            b -= bits;
+            bits = group;
+        }
+    } else {   // base 2
+        for (int b = top_bit; b >= 0; b--) {
+            int limb = b / 32, bit = b % 32;
+            out[len++] = ((bi->limbs[limb] >> bit) & 1u) ? '1' : '0';
+        }
+    }
+    out[len] = '\0';
+    return out;
+}
+
 static Value str_format(int argc, Value* args) {
     if (argc == 0) {
         return val_obj((Object*)str_copy("", 0));
@@ -780,6 +835,26 @@ static Value str_format(int argc, Value* args) {
         ENSURE_BUF(slen); \
         memcpy(result + result_len, (s), slen); \
         result_len += slen; \
+    } while(0)
+
+    // ★ 2026-11-11：追加一段字符串并按 printf 的宽度 / '-' / '0' 规则补位
+    //   （bigint 走不了 snprintf，只能自己补；has_width/width/flag_* 在循环内声明，
+    //     宏在使用处展开 ⇒ 能看见 ✓）
+    #define APPEND_PADDED_STR(_s, _slen) do { \
+        int _sl = (int)(_slen); \
+        int _pad = (has_width && _sl < width) ? (width - _sl) : 0; \
+        int _sign = (_sl > 0 && ((_s)[0] == '-' || (_s)[0] == '+')) ? 1 : 0; \
+        if (flag_minus) { \
+            APPEND_STR(_s, _sl); \
+            for (int _p = 0; _p < _pad; _p++) { ENSURE_BUF(1); result[result_len++] = ' '; } \
+        } else if (_pad > 0 && flag_zero) { \
+            APPEND_STR(_s, _sign); \
+            for (int _p = 0; _p < _pad; _p++) { ENSURE_BUF(1); result[result_len++] = '0'; } \
+            APPEND_STR((_s) + _sign, _sl - _sign); \
+        } else { \
+            for (int _p = 0; _p < _pad; _p++) { ENSURE_BUF(1); result[result_len++] = ' '; } \
+            APPEND_STR(_s, _sl); \
+        } \
     } while(0)
     
     for (int i = 0; i < fmt_len; i++) {
@@ -932,6 +1007,15 @@ static Value str_format(int argc, Value* args) {
                         } else {
                             APPEND_STR(bs, blen);
                         }
+                    } else if (val_is_bigint(args[arg_idx])) {
+                        // ★ 2026-11-11：%s 也接受 bigint（按十进制精确输出，此前 `<value>`）
+                        char* bs = bigint_to_base_string(val_as_bigint(args[arg_idx]), 10, 0);
+                        if (bs) {
+                            APPEND_PADDED_STR(bs, strlen(bs));
+                            free(bs);
+                        } else {
+                            APPEND_STR("<type_error>", 11);
+                        }
                     } else {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), "<value>");
                         APPEND_TEMP();
@@ -957,6 +1041,19 @@ static Value str_format(int argc, Value* args) {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, (int)val_as_num(args[arg_idx]));
                     } else if (val_is_bool(args[arg_idx])) {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, val_as_bool(args[arg_idx]) ? 1 : 0);
+                    } else if (val_is_bigint(args[arg_idx])) {
+                        // ★ 2026-11-11：bigint 精确输出（此前 `<type_error>`）
+                        char* bs = bigint_to_base_string(val_as_bigint(args[arg_idx]), 10, 0);
+                        if (bs) {
+                            APPEND_PADDED_STR(bs, strlen(bs));
+                            free(bs);
+                            temp_len = 0;
+                        } else {
+                            temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
+                        }
+                        APPEND_TEMP();
+                        arg_idx++;
+                        break;
                     } else {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
                     }
@@ -977,6 +1074,19 @@ static Value str_format(int argc, Value* args) {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, (unsigned int)val_as_int(args[arg_idx]));
                     } else if (val_is_float(args[arg_idx])) {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, (unsigned int)val_as_num(args[arg_idx]));
+                    } else if (val_is_bigint(args[arg_idx])) {
+                        // bigint：按十进制精确输出（无固定位宽，不模拟 unsigned 回绕）
+                        char* bs = bigint_to_base_string(val_as_bigint(args[arg_idx]), 10, 0);
+                        if (bs) {
+                            APPEND_PADDED_STR(bs, strlen(bs));
+                            free(bs);
+                            temp_len = 0;
+                        } else {
+                            temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
+                        }
+                        APPEND_TEMP();
+                        arg_idx++;
+                        break;
                     } else {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
                     }
@@ -1097,6 +1207,20 @@ static Value str_format(int argc, Value* args) {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, val_as_int(args[arg_idx]));
                     } else if (val_is_float(args[arg_idx])) {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, (int)val_as_num(args[arg_idx]));
+                    } else if (val_is_bigint(args[arg_idx])) {
+                        // ★ 2026-11-11：bigint 按 16 进制精确输出（此前 `<type_error>`）
+                        char* bs = bigint_to_base_string(val_as_bigint(args[arg_idx]), 16, spec == 'X');
+                        if (bs) {
+                            if (flag_hash && bs[0] != '-') APPEND_STR(spec == 'X' ? "0X" : "0x", 2);
+                            APPEND_PADDED_STR(bs, strlen(bs));
+                            free(bs);
+                            temp_len = 0;
+                        } else {
+                            temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
+                        }
+                        APPEND_TEMP();
+                        arg_idx++;
+                        break;
                     } else {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
                     }
@@ -1107,7 +1231,7 @@ static Value str_format(int argc, Value* args) {
                 arg_idx++;
                 break;
             }
-            
+
             case 'o': {
                 // 八进制
                 printf_fmt[pf_len++] = 'o';
@@ -1117,6 +1241,20 @@ static Value str_format(int argc, Value* args) {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, val_as_int(args[arg_idx]));
                     } else if (val_is_float(args[arg_idx])) {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), printf_fmt, (int)val_as_num(args[arg_idx]));
+                    } else if (val_is_bigint(args[arg_idx])) {
+                        // ★ 2026-11-11：bigint 按 8 进制精确输出（此前 `<type_error>`）
+                        char* bs = bigint_to_base_string(val_as_bigint(args[arg_idx]), 8, 0);
+                        if (bs) {
+                            if (flag_hash && bs[0] != '-') APPEND_STR("0", 1);
+                            APPEND_PADDED_STR(bs, strlen(bs));
+                            free(bs);
+                            temp_len = 0;
+                        } else {
+                            temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
+                        }
+                        APPEND_TEMP();
+                        arg_idx++;
+                        break;
                     } else {
                         temp_len = snprintf(temp_buf, sizeof(temp_buf), "<type_error>");
                     }
@@ -1131,6 +1269,21 @@ static Value str_format(int argc, Value* args) {
             case 'b': {
                 // 二进制
                 if (arg_idx < argc) {
+                    if (val_is_bigint(args[arg_idx])) {
+                        // ★ 2026-11-11：bigint 按 2 进制精确输出（此前 `<type_error>`）
+                        char* bs = bigint_to_base_string(val_as_bigint(args[arg_idx]), 2, 0);
+                        if (bs) {
+                            int bl = (int)strlen(bs);
+                            int prefix_len = (flag_hash && bs[0] != '-') ? 2 : 0;
+                            if (prefix_len) APPEND_STR("0b", 2);
+                            APPEND_PADDED_STR(bs, bl);
+                            free(bs);
+                        } else {
+                            APPEND_STR("<type_error>", 11);
+                        }
+                        arg_idx++;
+                        break;
+                    }
                     unsigned int val = 0;
                     if (val_is_int(args[arg_idx])) {
                         val = (unsigned int)val_as_int(args[arg_idx]);

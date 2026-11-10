@@ -2,6 +2,7 @@
 //
 // 语义 = 脱糖成 `format("%.2f", x)`（不新增 AST 节点，字节码复用 format）。
 // spec 复用 format 的转换子集：.Nf / f / d / x / X / s / e / g，也允许自己写 % 开头。
+import strings
 
 main() {
     float pi = 3.14159
@@ -31,6 +32,26 @@ main() {
 
     // ⑥ 等值于手写 format
     assert_eq($"pi={pi:.2f}", "pi=" + format("%.2f", pi), "与 format 等价")
+
+    // ⑦ bigint：d/u/x/X/o/b 都要**精确**输出（2026-11-11；此前一律 `<type_error>`）
+    //   2^63 = 0x8000000000000000；2^64 = 0x10000000000000000（首组位宽不足 4 位时不能补 0）
+    var big = 9223372036854775808
+    var big2 = 18446744073709551616
+    assert_eq($"{big:d}", "9223372036854775808", "bigint :d 精确")
+    assert_eq($"{big:x}", "8000000000000000", "bigint :x")
+    assert_eq($"{big2:x}", "10000000000000000", "bigint :x 首组按最低位对齐")
+    assert_eq($"{big:X}", "8000000000000000", "bigint :X")
+    assert_eq($"{big:o}", "1000000000000000000000", "bigint :o = 8^21")
+    assert_eq($"{big:b}", "1" + strings.rep("0", 63), "bigint :b = 2^63")
+    assert_eq(format("%d", big), "9223372036854775808", "format %d bigint")
+    assert_eq(format("%x", big), "8000000000000000", "format %x bigint")
+    assert_eq(format("%#x", big), "0x8000000000000000", "format %#x bigint")
+    assert_eq(format("%s", big), "9223372036854775808", "format %s bigint（此前 <value>）")
+    assert_eq($"{big:25d}", "      9223372036854775808", "bigint 宽度右对齐")
+    assert_eq($"{big:025d}", strings.pad_start("9223372036854775808", 25, "0"), "bigint 零填充")
+    var nb = 0 - big
+    assert_eq($"{nb:d}", "-9223372036854775808", "负 bigint 十进制")
+    assert_eq($"{nb:x}", "-8000000000000000", "负 bigint 十六进制（- + 绝对值）")
 
     print("test_interp_format all passed")
 }
