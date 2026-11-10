@@ -1267,6 +1267,85 @@ static inline int bigint_equals_int64(ObjBigInt* a, int64_t b) {
     }
 }
 
+// ★ 2026-11-10（压测发现的不一致，已修）：**带载荷 enum 的载荷比较深度上限**
+//   必须 `==` 与 `Array.has / index_of / Dict 键` 两处**共用**。
+//   修复前：`==` 走 vm.c 的 value_eq_depth（上限 8），has/index_of 走本文件的
+//   value_shallow_equal（上限 4）⇒ 5 层嵌套载荷时 `a == b` 为真、`arr.has(b)` 为假
+//   （实测：L5→L4→L3→L2→L1 五层，has 直接给 false）。这类自相矛盾比"两边都保守"更糟。
+#define LENO_VALUE_EQ_MAX_DEPTH 8
+
+// 载荷字段的**值比较唯一实现**（不分配、不做 bigint 提升）：
+//   `==`（vm.c 的 value_eq_depth）与 `Array.has / index_of / Dict 键`（value_shallow_equal_depth）
+//   都调这里 ⇒ 两条路对同一个问题给出同一个答案。
+//   覆盖：数值（int/float/bigint 交叉）、字符串、**数组逐元素**、**字典按键值**、
+//         嵌套的带载荷 struct；其余对象仍按指针（与既有语义一致）。
+static inline int value_payload_field_equal_depth(Value a, Value b, int depth) {
+    if (a == b && !val_is_float(a)) return 1;      // 同指针 / 同整数（NaN 必须 false）
+    if (val_is_int(a) && val_is_int(b)) return val_as_int(a) == val_as_int(b);
+    if (val_is_int(a) && val_is_float(b)) return (double)val_as_int(a) == val_as_double(b);
+    if (val_is_float(a) && val_is_int(b)) return val_as_double(a) == (double)val_as_int(b);
+    if (val_is_float(a) && val_is_float(b)) return val_as_double(a) == val_as_double(b);
+    if (val_is_int(a) && val_is_bigint(b)) return bigint_equals_int64(val_as_bigint(b), val_as_int(a));
+    if (val_is_bigint(a) && val_is_int(b)) return bigint_equals_int64(val_as_bigint(a), val_as_int(b));
+    if (val_is_bigint(a) && val_is_bigint(b)) {
+        return bigint_compare((ObjBigInt*)val_as_obj(a), (ObjBigInt*)val_as_obj(b)) == 0;
+    }
+    if (!val_is_obj(a) || !val_is_obj(b)) return 0;
+    Object* oa = val_as_obj(a);
+    Object* ob = val_as_obj(b);
+    if (oa->type != ob->type) return 0;
+    if (oa->type == OBJ_STRING) {
+        ObjString* sa = (ObjString*)oa;
+        ObjString* sb = (ObjString*)ob;
+        return sa->len == sb->len && memcmp(sa->chars, sb->chars, (size_t)sa->len) == 0;
+    }
+    if (depth <= 0) return 0;                       // 自引用 / 超深：到顶判不等（保守）
+    if (oa->type == OBJ_ARRAY) {
+        ObjArray* aa = (ObjArray*)oa;
+        ObjArray* ab = (ObjArray*)ob;
+        if (aa->count != ab->count) return 0;
+        for (int i = 0; i < aa->count; i++) {
+            if (!value_payload_field_equal_depth(aa->elements[i], ab->elements[i], depth - 1)) {
+                return 0;
+            }
+        }
+        return 1;
+    }
+    if (oa->type == OBJ_DICT) {
+        ObjDict* da = (ObjDict*)oa;
+        ObjDict* db = (ObjDict*)ob;
+        if (da->acount + da->count != db->acount + db->count) return 0;
+        if (da->order && da->order_count > 0) {
+            for (int i = 0; i < da->order_count; i++) {
+                Value k = da->order[i];
+                if (!dict_has(db, k)) return 0;
+                if (!value_payload_field_equal_depth(dict_get(da, k), dict_get(db, k),
+                                                     depth - 1)) {
+                    return 0;
+                }
+            }
+        }
+        return 1;
+    }
+    if (oa->type == OBJ_STRUCT) {
+        ObjStruct* sa = (ObjStruct*)oa;
+        ObjStruct* sb = (ObjStruct*)ob;
+        ObjStructDef* d = sa->def;
+        // 只有"带载荷 enum 降级出来的 struct"按值；普通 struct 仍是引用语义
+        if (d && d->enum_sig && sb->def == d && d->field_count > 0) {
+            for (int i = 0; i < d->field_count; i++) {
+                if (!value_payload_field_equal_depth(sa->field_values[i], sb->field_values[i],
+                                                     depth - 1)) {
+                    return 0;
+                }
+            }
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
 // 核心浅比较：处理基本类型、String 内容、BigInt 值、对象指针
 // 快速路径覆盖 null/bool（bit-exact）、同指针对象
 // 跨类型支持 int<->float、int<->BigInt
@@ -1329,14 +1408,10 @@ static inline int value_shallow_equal_depth(Value a, Value b, int depth) {
             ObjStruct* sb = (ObjStruct*)ob;
             ObjStructDef* d = sa->def;
             if (d && d->enum_sig && sb->def == d && d->field_count > 0) {
-                if (depth <= 0) return 0;   // 自引用（`e.other = e`）兜底：到顶判不等
-                for (int i = 0; i < d->field_count; i++) {
-                    if (!value_shallow_equal_depth(sa->field_values[i], sb->field_values[i],
-                                                   depth - 1)) {
-                        return 0;
-                    }
-                }
-                return 1;
+                // ★ 载荷逐字段比 ⇒ 交给**唯一实现**（与 `==` 同一份，见上方
+                //   value_payload_field_equal_depth 的说明：原来这里调的是
+                //   value_shallow_equal_depth，深度上限 4 且不走容器 ⇒ 与 `==` 打架）
+                return value_payload_field_equal_depth(a, b, depth);
             }
             return 0;
         }
@@ -1347,9 +1422,9 @@ static inline int value_shallow_equal_depth(Value a, Value b, int depth) {
     return 0;
 }
 
-// 对外入口：深度上限 4（载荷槽正常只有标量/字符串；带自引用的才需要上限）
+// 对外入口：与 `==` **共用同一个深度上限**（否则深层嵌套时两条路结论不一致）
 static inline int value_shallow_equal(Value a, Value b) {
-    return value_shallow_equal_depth(a, b, 4);
+    return value_shallow_equal_depth(a, b, LENO_VALUE_EQ_MAX_DEPTH);
 }
 
 // ============================================================================

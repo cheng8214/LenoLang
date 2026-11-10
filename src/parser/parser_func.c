@@ -3842,6 +3842,8 @@ Ast* parse_enum_stmt(Parser* p) {
     char*** member_param_names = (char***)calloc((size_t)member_capacity, sizeof(char**));
     TypeInfo*** member_param_types = (TypeInfo***)calloc((size_t)member_capacity, sizeof(TypeInfo**));
     int* member_param_counts = (int*)calloc((size_t)member_capacity, sizeof(int));
+    // ★ 2026-11-10：**是否写了括号**（`stop()` 是合法的零参数变体，`stop` 是老 int 常量成员）
+    int* member_payload_flags = (int*)calloc((size_t)member_capacity, sizeof(int));
     int saw_payload = 0;      // 是否出现过带载荷成员（用于"混用"检查，见下方收尾）
     int saw_plain = 0;        // 是否出现过不带载荷成员
 
@@ -3870,7 +3872,9 @@ Ast* parse_enum_stmt(Parser* p) {
         char** pnames = NULL;
         TypeInfo** ptypes = NULL;
         int pcount = 0;
+        int has_parens = 0;          // `stop()` 与 `stop` 的区别就在这一位
         if (p->lex.current.type == TOK_LPAREN) {
+            has_parens = 1;
             lexer_next(&p->lex);        // '('
             int pcap = 4;
             pnames = (char**)malloc(sizeof(char*) * (size_t)pcap);
@@ -3950,12 +3954,16 @@ Ast* parse_enum_stmt(Parser* p) {
                                                       sizeof(TypeInfo**) * (size_t)member_capacity);
             member_param_counts = (int*)realloc(member_param_counts,
                                                 sizeof(int) * (size_t)member_capacity);
+            member_payload_flags = (int*)realloc(member_payload_flags,
+                                                 sizeof(int) * (size_t)member_capacity);
             // realloc 出来的尾巴未初始化 ⇒ 清零，否则 ast_free 会读到垃圾指针
             memset(&member_param_names[member_count], 0,
                    sizeof(char**) * (size_t)(member_capacity - member_count));
             memset(&member_param_types[member_count], 0,
                    sizeof(TypeInfo**) * (size_t)(member_capacity - member_count));
             memset(&member_param_counts[member_count], 0,
+                   sizeof(int) * (size_t)(member_capacity - member_count));
+            memset(&member_payload_flags[member_count], 0,
                    sizeof(int) * (size_t)(member_capacity - member_count));
         }
 
@@ -3964,7 +3972,9 @@ Ast* parse_enum_stmt(Parser* p) {
         member_param_names[member_count] = pnames;
         member_param_types[member_count] = ptypes;
         member_param_counts[member_count] = pcount;
-        if (pcount > 0) saw_payload = 1; else saw_plain = 1;
+        member_payload_flags[member_count] = has_parens;
+        // ⚠ 判据是"写了括号"，不是"参数个数 > 0" —— `stop()` 是合法的零参数变体
+        if (has_parens) saw_payload = 1; else saw_plain = 1;
         member_count++;
 
         // 下一个自动分配的值为当前值 + 1
@@ -4035,13 +4045,16 @@ Ast* parse_enum_stmt(Parser* p) {
         ast->u.enum_def.member_param_names = member_param_names;
         ast->u.enum_def.member_param_types = member_param_types;
         ast->u.enum_def.member_param_counts = member_param_counts;
+        ast->u.enum_def.member_payload_flags = member_payload_flags;
     } else {
         free(member_param_names);
         free(member_param_types);
         free(member_param_counts);
+        free(member_payload_flags);
         ast->u.enum_def.member_param_names = NULL;
         ast->u.enum_def.member_param_types = NULL;
         ast->u.enum_def.member_param_counts = NULL;
+        ast->u.enum_def.member_payload_flags = NULL;
     }
 
     return ast;

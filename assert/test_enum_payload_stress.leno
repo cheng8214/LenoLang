@@ -1,0 +1,259 @@
+// test_enum_payload_stress.leno —— 带载荷 enum 的**压力测试**（2026-11-10）
+//
+// 与 `test_enum_payload.leno` 的分工：那个测"基本语义对不对"，这个测"边界会不会崩"。
+// 本文件里的每一条都对应一次真实的压测，其中两条**当场测出了 bug**（已修）：
+//   ① `a == b` 为真、`arr.has(b)` 为假 —— `==` 深度上限 8、has 走浅比较上限 4，且浅比较
+//      不递归容器 ⇒ 5 层嵌套载荷 / 载荷里装 Array 时两条路打架。现已统一到
+//      `value_payload_field_equal_depth()`（leno_value.h，唯一实现）。
+//   ② `enum Cmd { add(int n)  stop() }` 被判成"混用带载荷与不带载荷" —— 判据原来是
+//      "参数个数 > 0"，于是零参数变体（Option 的 None、命令的 Stop）根本写不出来。
+//      现已改成"写没写括号"（`member_payload_flags`）。
+//
+// ⚠ 已知边界（不是 bug，写在这里免得下次又踩）：
+//   · `switch` 的主题必须是**变量**（降级后要读 m.tag/m.p0，表达式会被重复求值）
+//   · 一个 switch 里每个 case 的绑定各占一个寄存器 ⇒ 80 个 case × 4 绑定 会撞 255 上限
+//     （与手写 80 个 case 各声明 4 个局部量完全一样的代价，不是载荷特有的）
+//   · `export` 全部零参数的带载荷 enum 会明确报错（模块符号表靠"参数总数 > 0"判载荷表）
+import jsons
+import "./helpers/enum_stress_mod.leno" as evmod
+use evmod.Ev
+
+// ==================== ① 载荷类型全覆盖 ====================
+struct Pt { int x = 1, y = 2 }
+
+enum Ink { red, blue }
+
+enum Payload {
+    num(int v)
+    txt(string s)
+    pair(float f, bool flag)
+    arr(Array[int] xs)
+    map(Dict[string, int] m)
+    pt(Pt p)
+    ink(Ink i)
+}
+
+func render(Payload p): string {
+    switch p {
+        case Payload.num(v) { return "num:" + _str(v) }
+        case Payload.txt(s) { return "txt:" + s }
+        case Payload.pair(f, b) { return "pair:" + _str(f) + "/" + _str(b) }
+        case Payload.arr(xs) { return "arr:" + _str(xs.len()) }
+        case Payload.map(m) { return "map:" + _str(m.len()) }
+        case Payload.pt(q) { return "pt:" + _str(q.x) }
+        case Payload.ink(i) { return "ink:" + _str(i) }
+    }
+    return "?"
+}
+
+// ==================== ② 零参数变体 ====================
+enum Cmd { add(int n), stop(), echo(string s) }
+
+func apply(int acc, Cmd c): int {
+    switch c {
+        case Cmd.add(n) { return acc + n }
+        case Cmd.stop() { return -1 }
+        case Cmd.echo(s) { return acc + s.len() }
+    }
+    return acc
+}
+
+// ==================== ③ 嵌套 + 名字撞车 ====================
+enum Deep1 { leaf(int v) }
+
+enum Deep2 { mid(Deep1 inner) }
+
+enum Deep3 { top(Deep2 inner) }
+
+enum Deep4 { deep(Deep3 inner) }
+
+enum Deep5 { deeper(Deep4 inner) }
+
+func mkDeep(): Deep5 {
+    return Deep5.deeper(Deep4.deep(Deep3.top(Deep2.mid(Deep1.leaf(42)))))
+}
+
+// 成员名 / 参数名与降级出来的字段名（tag / p0）撞车
+enum Clash {
+    tag(int v)
+    p0(string s)
+    plain(int tag, int p0)
+}
+
+// ==================== ④ 大 enum（322 个载荷槽 ⇒ 走 P3 宽索引）====================
+enum Wide {
+    w0(int a, int b, string c, float d)
+    w1(int a, int b, string c, float d)
+    w2(int a, int b, string c, float d)
+    w3(int a, int b, string c, float d)
+    w4(int a, int b, string c, float d)
+    w5(int a, int b, string c, float d)
+    w6(int a, int b, string c, float d)
+    w7(int a, int b, string c, float d)
+    w8(int a, int b, string c, float d)
+    w9(int a, int b, string c, float d)
+    w10(int a, int b, string c, float d)
+    w11(int a, int b, string c, float d)
+    w12(int a, int b, string c, float d)
+    w13(int a, int b, string c, float d)
+    w14(int a, int b, string c, float d)
+    w15(int a, int b, string c, float d)
+    w16(int a, int b, string c, float d)
+    w17(int a, int b, string c, float d)
+    w18(int a, int b, string c, float d)
+    w19(int a, int b, string c, float d)
+    w20(int a, int b, string c, float d)
+    w21(int a, int b, string c, float d)
+    w22(int a, int b, string c, float d)
+    w23(int a, int b, string c, float d)
+    w24(int a, int b, string c, float d)
+    w25(int a, int b, string c, float d)
+    w26(int a, int b, string c, float d)
+    w27(int a, int b, string c, float d)
+    w28(int a, int b, string c, float d)
+    w29(int a, int b, string c, float d)
+    w30(int a, int b, string c, float d)
+    w31(int a, int b, string c, float d)
+    w32(int a, int b, string c, float d)
+    w33(int a, int b, string c, float d)
+    w34(int a, int b, string c, float d)
+    w35(int a, int b, string c, float d)
+    w36(int a, int b, string c, float d)
+    w37(int a, int b, string c, float d)
+    w38(int a, int b, string c, float d)
+    w39(int a, int b, string c, float d)
+    w40(int a, int b, string c, float d)
+    w41(int a, int b, string c, float d)
+    w42(int a, int b, string c, float d)
+    w43(int a, int b, string c, float d)
+    w44(int a, int b, string c, float d)
+    w45(int a, int b, string c, float d)
+    w46(int a, int b, string c, float d)
+    w47(int a, int b, string c, float d)
+    w48(int a, int b, string c, float d)
+    w49(int a, int b, string c, float d)
+    w50(int a, int b, string c, float d)
+    w51(int a, int b, string c, float d)
+    w52(int a, int b, string c, float d)
+    w53(int a, int b, string c, float d)
+    w54(int a, int b, string c, float d)
+    w55(int a, int b, string c, float d)
+    w56(int a, int b, string c, float d)
+    w57(int a, int b, string c, float d)
+    w58(int a, int b, string c, float d)
+    w59(int a, int b, string c, float d)
+    w60(int a, int b, string c, float d)
+    w61(int a, int b, string c, float d)
+    w62(int a, int b, string c, float d)
+    w63(int a, int b, string c, float d)
+    w64(int a, int b, string c, float d)
+    w65(int a, int b, string c, float d)
+    w66(int a, int b, string c, float d)
+    w67(int a, int b, string c, float d)
+    w68(int a, int b, string c, float d)
+    w69(int a, int b, string c, float d)
+    w70(int a, int b, string c, float d)
+    w71(int a, int b, string c, float d)
+    w72(int a, int b, string c, float d)
+    w73(int a, int b, string c, float d)
+    w74(int a, int b, string c, float d)
+    w75(int a, int b, string c, float d)
+    w76(int a, int b, string c, float d)
+    w77(int a, int b, string c, float d)
+    w78(int a, int b, string c, float d)
+    w79(int a, int b, string c, float d)
+}
+
+func wideTag(Wide w): string {
+    switch w {
+        case Wide.w0(a, b, c, d) { return "w0:" + _str(a) }
+        case Wide.w40(a, b, c, d) { return "w40:" + _str(b) }
+        case Wide.w79(a, b, c, d) { return "w79:" + c }
+        default { return "other" }
+    }
+}
+
+main() {
+    // ---------- ① 载荷类型 ----------
+    assert_eq(render(Payload.num(7)), "num:7", "① int 载荷")
+    assert_eq(render(Payload.txt("hi")), "txt:hi", "① string 载荷")
+    assert_eq(render(Payload.pair(1.5, true)), "pair:1.5/true", "① float+bool 载荷")
+    assert_eq(render(Payload.arr([1, 2, 3])), "arr:3", "① Array 载荷")
+    assert_eq(render(Payload.map({"k": 1})), "map:1", "① Dict 载荷")
+    assert_eq(render(Payload.pt(new Pt())), "pt:1", "① struct 载荷")
+    assert_eq(render(Payload.ink(Ink.blue)), "ink:1", "① enum 载荷")
+
+    // ---------- ② 零参数变体（压测修掉的 bug）----------
+    assert_eq(apply(10, Cmd.add(5)), 15, "② add")
+    assert_eq(apply(10, Cmd.stop()), -1, "② stop()（零参数成员）")
+    assert_eq(apply(10, Cmd.echo("ab")), 12, "② echo")
+
+    // ---------- ③ 容器载荷的按值相等（压测修掉的 bug）----------
+    Payload a1 = Payload.arr([1, 2, 3])
+    Payload a2 = Payload.arr([1, 2, 3])
+    Payload a3 = Payload.arr([1, 2, 4])
+    assert_eq(a1 == a2, true, "③ Array 载荷 == 按值")
+    assert_eq(a1 == a3, false, "③ Array 载荷 != 不同内容")
+    assert_eq([a1].has(a2), true, "③ Array.has 与 == 一致（压测 bug ①）")
+    assert_eq([a1].has(a3), false, "③ has 不同内容")
+    assert_eq([a1].index_of(a2), 0, "③ index_of 与 == 一致")
+
+    Payload d1 = Payload.map({"a": 1, "b": 2})
+    Payload d2 = Payload.map({"b": 2, "a": 1})
+    assert_eq(d1 == d2, true, "③ Dict 载荷 == 不依赖插入序")
+    assert_eq([d1].has(d2), true, "③ Dict 载荷 has")
+
+    // ---------- ④ 深层嵌套（压测 bug ①：深度上限 4 vs 8）----------
+    Deep5 x = mkDeep()
+    Deep5 y = mkDeep()
+    assert_eq(x == y, true, "④ 5 层嵌套 ==")
+    assert_eq([x].has(y), true, "④ 5 层嵌套 has（与 == 一致）")
+    assert_eq([x].index_of(y), 0, "④ 5 层嵌套 index_of")
+
+    // ---------- ⑤ 名字撞车（成员/参数叫 tag、p0）----------
+    Clash c1 = Clash.plain(7, 8)
+    assert_eq(clashRender(c1), "plain:7/8", "⑤ 参数名与降级字段名撞车")
+    assert_eq(Clash.tag(3) == Clash.tag(3), true, "⑤ 成员名叫 tag 也能相等")
+
+    // ---------- ⑥ 大 enum（322 个载荷槽 ⇒ 宽索引）----------
+    assert_eq(wideTag(Wide.w0(1, 2, "x", 3.5)), "w0:1", "⑥ 宽索引：首成员")
+    assert_eq(wideTag(Wide.w40(1, 2, "x", 3.5)), "w40:2", "⑥ 宽索引：中段")
+    assert_eq(wideTag(Wide.w79(1, 2, "hi", 3.5)), "w79:hi", "⑥ 宽索引：末成员（p316）")
+    Wide wp = Wide.w79(1, 2, "hi", 3.5)
+    Wide wq = Wide.w79(1, 2, "hi", 3.5)
+    assert_eq(wp == wq, true, "⑥ 322 字段的载荷按值相等")
+    assert_eq([wp].has(wq), true, "⑥ 322 字段的载荷 has")
+
+    // ---------- ⑦ 跨模块（export + 零参数变体）----------
+    Ev e1 = Ev.click(1, 2)
+    Ev e2 = Ev.click(1, 2)
+    assert_eq(evmod.describe(e1), "click:1,2", "⑦ 生产端 describe")
+    assert_eq(evmod.describe(Ev.tick()), "tick", "⑦ 生产端 describe tick()")
+    assert_eq(e1 == e2, true, "⑦ 消费端构造 + 按值相等")
+    assert_eq([e1].has(e2), true, "⑦ 消费端 has")
+    assert_eq(localDescribe(Ev.tick()), "tick", "⑦ 消费端本地 switch")
+
+    // ---------- ⑧ JSON 用成员名 ----------
+    assert_eq(jsons.encode(Ev.click(1, 2)), "{\"click\":{\"x\":1,\"y\":2}}", "⑧ JSON 成员名 + 参数名")
+    assert_eq(jsons.encode(Ev.tick()), "{\"tick\":{}}", "⑧ JSON 零参数成员")
+
+    print("test_enum_payload_stress passed（8 组：载荷类型/零参数/容器相等/深嵌套/撞名/宽索引/跨模块/JSON）")
+}
+
+func clashRender(Clash c): string {
+    switch c {
+        case Clash.tag(v) { return "tag:" + _str(v) }
+        case Clash.p0(s) { return "p0:" + s }
+        case Clash.plain(t, q) { return "plain:" + _str(t) + "/" + _str(q) }
+    }
+    return "?"
+}
+
+func localDescribe(Ev e): string {
+    switch e {
+        case Ev.click(x, y) { return "click" }
+        case Ev.key(code) { return "key" }
+        case Ev.tick() { return "tick" }
+    }
+    return "?"
+}

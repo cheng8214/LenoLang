@@ -1,0 +1,17 @@
+// enum_stress_mod.leno —— 带载荷 enum 跨模块压测的**生产端**
+//
+// 覆盖：`export` + 零参数变体 `tick()`（载荷表的基址算法必须与消费端一致）。
+export enum Ev {
+    click(int x, int y)
+    key(string code)
+    tick()
+}
+
+export func describe(Ev e): string {
+    switch e {
+        case Ev.click(x, y) { return "click:" + _str(x) + "," + _str(y) }
+        case Ev.key(code) { return "key:" + code }
+        case Ev.tick() { return "tick" }
+    }
+    return "?"
+}

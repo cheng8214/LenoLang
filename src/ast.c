@@ -569,6 +569,7 @@ break;
             free(ast->u.enum_def.member_param_names);
             free(ast->u.enum_def.member_param_types);
             free(ast->u.enum_def.member_param_counts);
+            free(ast->u.enum_def.member_payload_flags);
             free(ast->u.enum_def.ref.name);
             free(ast->u.enum_def.ref.struct_name);
             break;

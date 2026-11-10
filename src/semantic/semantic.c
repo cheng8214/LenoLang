@@ -463,12 +463,13 @@ static void enum_payload_synthesize(Semantic* s, Ast* ast) {
         }
         if (e->kind != AST_ENUM_DEF) continue;
         if (e->u.enum_def.payload_state != 0) continue;      // 幂等：同一个 AST 只降级一次
-        if (!e->u.enum_def.member_param_counts) continue;    // 老写法（纯 int 成员）
+        if (!e->u.enum_def.member_payload_flags) continue;   // 老写法（纯 int 成员）
 
         int member_count = e->u.enum_def.member_count;
         int payload_n = 0;
         for (int m = 0; m < member_count; m++) {
-            if (e->u.enum_def.member_param_counts[m] > 0) payload_n++;
+            // ⚠ 判据是"写了括号"（`stop()` 也算带载荷成员，它是合法的零参数变体）
+            if (e->u.enum_def.member_payload_flags[m]) payload_n++;
         }
         if (payload_n == 0) continue;   // 老写法：零变化 ✓
 
@@ -501,9 +502,20 @@ static void enum_payload_synthesize(Semantic* s, Ast* ast) {
         //   ⚠ 基址必须**两处一致**（构造 / case 绑定），唯一实现见 sem_payload_member_base()。
         int param_total = 0;
         for (int m = 0; m < member_count; m++) {
-            param_total += e->u.enum_def.member_param_counts[m];
+            param_total += e->u.enum_def.member_param_counts
+                               ? e->u.enum_def.member_param_counts[m] : 0;
         }
         if (param_total <= 0) param_total = 0;
+        // ⚠ 全部成员都是零参数（`enum Ack { ok() fail() }`）时 param_total = 0：
+        //   同模块内一切正常（struct 只有 tag 字段）；但**跨模块**导出会退化 ——
+        //   模块符号表用"参数总数 > 0"判断要不要存载荷表（见 sym_table_add.inc），
+        //   总数 0 ⇒ 消费端拿到的还是普通 int enum。这是已知边界，给明确报错而不是静默。
+        if (via_export && param_total == 0 && payload_n == member_count) {
+            error_add_at_fmt(ERR_SEMANTIC, e->line, e->column,
+                "带载荷 enum '%s' 的**所有**成员都是零参数（`name()`），暂不支持 `export`："
+                "模块符号表里靠\"参数总数 > 0\"判断有没有载荷表，全零会退化成普通 int enum。"
+                "请至少给一个成员带参数，或改用 struct + tag", e->u.enum_def.name);
+        }
 
         // ④ 名字冲突：合成 struct 与 enum **同名** ⇒ 不能再有别的同名类型声明
         const char* dup_at = NULL;
@@ -556,6 +568,25 @@ static void enum_payload_synthesize(Semantic* s, Ast* ast) {
                                 e->u.enum_def.member_param_types[m])
                                    ? e->u.enum_def.member_param_types[m][k] : NULL;
                 sd->u.struct_def.field_types[pidx] = tk ? type_copy(tk) : type_new(TYPE_ANY);
+                // ★ 2026-11-10（压测发现）：**引用类**载荷槽必须显式默认 null。
+                //   不写默认值时，struct / face / Ptr / cstruct 类型的槽会被自动造成一个
+                //   **新实例**（实测 `enum P { num(int v)  pt(Pt p) }`：`P.num(5)` 的 p1 是
+                //   `Pt{x=1}` 而不是 null）⇒ 两次 `P.num(5)` 的 p1 是两个不同对象 ⇒
+                //   整条带载荷 enum 的 `==` / `Array.has` 全退化成 false —— 而且**只在
+                //   enum 里恰好有个 struct 成员时**才出现（4 成员时好好的，加第 5 个就崩）。
+                //   ⚠ 标量槽不能写成 null（`int p0 = null` 是类型错误），它们交给原默认值
+                //     （int/float/bool/string 的零值），零值相等本来就没问题。
+                if (sd->u.struct_def.field_types[pidx] &&
+                    (sd->u.struct_def.field_types[pidx]->kind == TYPE_STRUCT ||
+                     sd->u.struct_def.field_types[pidx]->kind == TYPE_FACE ||
+                     sd->u.struct_def.field_types[pidx]->kind == TYPE_PTR ||
+                     sd->u.struct_def.field_types[pidx]->kind == TYPE_CSTRUCT)) {
+                    Ast* dv = ast_new(AST_NULL, e->line);
+                    if (dv) {
+                        dv->column = e->column;
+                        sd->u.struct_def.field_defaults[pidx] = dv;
+                    }
+                }
                 pidx++;
             }
         }

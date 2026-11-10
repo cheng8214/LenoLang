@@ -189,3 +189,44 @@ struct Msg {
 - `jsons.fill(enum_value, json)` 反向填充：载荷"属于哪个成员"是运行期概念，反填要先定 tag；
   目前请用 `switch` 分派。
 - `==` 跨**不同 enum** 比较：类型不同 ⇒ 不等；`switch` 里混用两个 enum 的成员也在编译期就拦。
+
+## 8. 压力测试记录（2026-11-10）—— 测出 3 个 bug，已修
+
+用例固化在 `assert/test_enum_payload_stress.leno`（8 组：载荷类型 / 零参数变体 / 容器相等 /
+5 层嵌套 / 名字撞车 / 322 槽宽索引 / 跨模块 / JSON）。三处**都是收官提交里没覆盖到**的：
+
+### ① `a == b` 为真，`arr.has(b)` 为假（值比较有两条路，结论不一致）
+
+- 现象：5 层嵌套载荷 `==` 给 true、`has` 给 false；载荷里装 `Array[int]` 时同样打架。
+- 根因：`==` 走 `vm.c` 的 `value_eq_depth`（深度上限 **8**、容器逐元素），
+  `Array.has / index_of / Dict 键` 走 `leno_value.h` 的 `value_shallow_equal`（上限 **4**、
+  并且**不递归容器** —— 它对 Array/Dict 一律按指针比）。
+- 修法：抽出**唯一实现** `value_payload_field_equal_depth()`（leno_value.h，不分配、
+  覆盖数值/字符串/数组/字典/嵌套载荷），两条路都调它；深度上限统一成
+  `LENO_VALUE_EQ_MAX_DEPTH = 8`。普通 struct 仍是引用语义（零变化）。
+
+### ② `enum Cmd { add(int n)  stop() }` 被判成"混用带载荷与不带载荷"
+
+- 现象：零参数变体（Option 的 `None`、命令的 `Stop`）**根本写不出来**，直接报混用。
+- 根因：判据是"参数个数 > 0"，而 `stop()` 的参数个数也是 0，与老写法的 `stop` 不可区分。
+- 修法：AST 加 `member_payload_flags`（**写没写括号**），parser / `enum_payload_synthesize` /
+  `visit_enum.inc` 的判据全改成它。`stop()` 现在能构造、能 `case Cmd.stop()` 匹配、能进 JSON（`{"tick":{}}`）。
+- 顺带堵一个洞：`export` 一个**全部成员零参数**的带载荷 enum 会明确报错
+  （模块符号表靠"参数总数 > 0"决定存不存载荷表，全零会静默退化）—— 报错而不是错值。
+
+### ③ 只要 enum 里有一个 struct 载荷，整条 enum 的 `==` 全部变 false
+
+- 现象：`enum P { num(int v)  pt(Pt p) }`，`P.num(5) == P.num(5)` 是 **false**。
+  4 个成员时正常、加到第 5 个（含 struct 成员）就崩 —— 非常像"随机"。
+- 根因：合成 struct 的载荷槽没写默认值时，**struct / face / Ptr / cstruct 类型的槽会被自动
+  造成一个新实例**（实测 `P.num(5)` 的 `p1` 是 `Pt{x=1}` 而不是 null）⇒ 两次构造的 p1 是
+  两个不同对象 ⇒ 逐字段比较必不等。
+- 修法：合成时给**引用类**载荷槽显式默认 `null`（标量槽不能写 null，交给原零值默认）。
+
+### 已知边界（不是 bug，写在这里免得下次又踩）
+
+- `switch` 的主题必须是**变量**（降级后要读 `m.tag` / `m.p0`，表达式会被重复求值）——
+  语义阶段有定向报错。
+- 一个 switch 里**每个 case 的绑定各占一个寄存器** ⇒ 80 个 case × 4 绑定会撞 255 上限；
+  与手写 80 个 case 各声明 4 个局部量完全同价（实测对照：两者报同样的错），不是载荷特有。
+- 300 成员 × 零参数的同模块 enum 可用（带载荷 enum 不发 `OP_ENUM_DEF`，255 成员上限不适用）。

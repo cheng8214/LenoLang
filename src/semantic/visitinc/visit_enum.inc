@@ -8,16 +8,17 @@
                 //   这条 enum 声明本身**什么都不用做**（成员不是 int 常量，不能注册成值）。
                 if (ast->u.enum_def.payload_state == 1) break;
                 if (ast->u.enum_def.payload_state == 2) break;   // 合成阶段已报错，别级联
-                if (ast->u.enum_def.member_param_counts) {
+                if (ast->u.enum_def.member_payload_flags) {
                     int payload_member_count = 0;
                     for (int i = 0; i < ast->u.enum_def.member_count; i++) {
-                        if (ast->u.enum_def.member_param_counts[i] > 0) payload_member_count++;
+                        // ⚠ 判据是"写了括号"，不是"参数个数 > 0"：`stop()` 也是带载荷成员
+                        if (ast->u.enum_def.member_payload_flags[i]) payload_member_count++;
                     }
                     if (payload_member_count > 0) {
                         // 能走到这里 = 降级没做成（合成阶段只扫**顶层**语句列表）
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                             "带载荷 enum '%s' 不支持这个位置 —— 它必须声明在**文件顶层**"
-                            "（不能写在函数/块里，也不能 `export`）：编译器要把它降级成**同名的** "
+                            "（不能写在函数/块里）：编译器要把它降级成**同名的** "
                             "`struct { tag; p0; … }`，只在顶层做这件事。"
                             "见 docs/enum载荷_设计草案.md",
                             ast->u.enum_def.name);

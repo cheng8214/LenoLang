@@ -1306,13 +1306,12 @@ static inline int value_eq_depth(Value a, Value b, int depth) {
             ObjStruct* sa = (ObjStruct*)oa;
             ObjStruct* sb = (ObjStruct*)ob;
             ObjStructDef* d = sa->def;
-            if (d && d->enum_sig && sb->def == d && depth > 0 && d->field_count > 0) {
-                for (int i = 0; i < d->field_count; i++) {
-                    if (!value_eq_depth(sa->field_values[i], sb->field_values[i], depth - 1)) {
-                        return 0;
-                    }
-                }
-                return 1;
+            if (d && d->enum_sig && sb->def == d && d->field_count > 0) {
+                // ★ 逐字段交给「载荷值比较的唯一实现」（leno_value.h 的
+                //   value_payload_field_equal_depth）—— `Array.has / index_of / Dict 键`
+                //   走的是同一个函数 ⇒ 两条路不可能再给出不同答案（2026-11-10 压测发现
+                //   深层嵌套/容器载荷时 `a == b` 真而 `has(b)` 假）。
+                return value_payload_field_equal_depth(a, b, depth);
             }
             return 0;
         }

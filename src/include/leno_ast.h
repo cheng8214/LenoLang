@@ -430,7 +430,15 @@ struct Ast {
             //   设计见 docs/enum载荷_设计草案.md：语义阶段会把它降级成"隐藏 struct + tag"。
             char*** member_param_names;      // [member][param] 参数名
             TypeInfo*** member_param_types;  // [member][param] 参数类型
-            int* member_param_counts;        // 每个成员的参数个数（0 = 无载荷）
+            int* member_param_counts;        // 每个成员的参数个数
+            // ★ 2026-11-10（压测发现）：**这个成员写没写括号**。
+            //   为什么需要单独一位：`stop()`（零参数但写了括号）是一个合法的
+            //   "无载荷变体"（Option 的 None、命令的 Stop 都是这个形状），而
+            //   `stop`（不写括号）是老写法的 int 常量成员 —— 两者的 counts 都是 0，
+            //   靠 counts 区分不了。没有这一位就只能拒绝 `stop()`，等于让所有
+            //   "带载荷 enum" 都写不出 None 分支（实测：`enum Cmd { add(int n) stop() }`
+            //   直接被判成"混用"）。
+            int* member_payload_flags;       // [member] 1 = 写了括号（带载荷成员，可为 0 参）
             // ★ 2026-11-10（P4 enum 载荷 步 2/6）：降级状态（见 semantic.c 的合成函数）
             //   0 = 老写法（纯 int 成员）⇒ 本字段全 0，行为与改动前**逐字节一致** ✓
             //   1 = 已降级成 `struct <同名>{ tag, p0..pn }`，payload_struct 指向它（借用）
