@@ -1160,7 +1160,8 @@ export struct Window {
             if (ev.keyMod() & 3) != 0 { _moveFocus(-1) } else { _moveFocus(1) }   // 0x0003 = Shift ✓
             return true
         }
-        if sc == core.Scancode.RETURN or sc == core.Scancode.SPACE {
+        // ★ 2026-11-10：KP_ENTER（小键盘回车）与 RETURN 同义，否则焦点链激活会漏掉它 ✗
+        if sc == core.Scancode.RETURN or sc == core.Scancode.SPACE or sc == core.Scancode.KP_ENTER {
             // ★ 2026-11-04：**焦点没落在链里时不消费** —— 应用里很常见的路径是"鼠标点进输入框，
             //   直接敲回车提交"，此时 focusIdx 还是 -1（点选没有同步聚焦序号）⇒ 原先
             //   窗口层把 RETURN 吃掉、又没人可激活 ⇒ 回车**毫无反应**（登录窗实测 ✗）。

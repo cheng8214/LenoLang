@@ -1272,7 +1272,11 @@ _drawBorder = opts.get("border", true)
             if sc == Scancode.HOME  { cursorPos = 0; clear_sel(); mergeUndo = false }
             if sc == Scancode.END   { cursorPos = text.len(); clear_sel(); mergeUndo = false }
             adjust_scroll()
-            if sc == Scancode.RETURN {
+            // ★ 2026-11-10：小键盘回车（KP_ENTER=88）**也算提交**。
+            //   实测（Aria 登录窗场景的键盘探针）：焦点在密码框时按主键盘 RETURN 会触发
+            //   on_enter，按小键盘 Enter 却毫无反应 ⇒ 输密码多用数字小键盘、最后顺手按它，
+            //   看起来就是"输完密码回车没反应"✗。单行提交 + 多行换行两处一并认 ✓
+            if sc == Scancode.RETURN or sc == Scancode.KP_ENTER {
                 if onEnter != null { onEnter() }
             }
 
@@ -1394,8 +1398,8 @@ _drawBorder = opts.get("border", true)
             if sc == Scancode.HOME   { cursorCol = 0; moved = true; clear_sel(); mergeUndo = false }
             if sc == Scancode.END    { cursorCol = lines[cursorLine].len(); moved = true; clear_sel(); mergeUndo = false }
 
-            // 回车
-            if sc == Scancode.RETURN {
+            // 回车（★ 2026-11-10：小键盘回车同样换行，与单行提交保持同一口径 ✓）
+            if sc == Scancode.RETURN or sc == Scancode.KP_ENTER {
                 save_undo(); mergeUndo = false; var ln = lines[cursorLine]
                 var rest = ln.slice(cursorCol, ln.len())
                 lines[cursorLine] = ln.slice(0, cursorCol - 1)
