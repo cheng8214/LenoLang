@@ -1,0 +1,112 @@
+// test_enum_payload_switch_diag.leno —— 带载荷 enum 的 switch 模式**只报根因**（2026-11-10）
+//
+// 此前三种写法错误都会级联刷屏（一个错刷 4~7 条）：
+//   · switch 主题写成表达式（`switch Msg.a(1)`）
+//   · case 模式来自另一个 enum
+//   · case 的绑定变量个数不对 / 绑定写成表达式
+// 根因是 desugar 报完根因后**继续走正常 switch 访问**：case 里的 `Msg.成员(绑定)`
+// 被当成"构造"再求值一次 ⇒ 绑定变量报未定义 + 「载荷参数类型不匹配: 实际 unknown」。
+// 现在 desugar 出错即返回 1，调用方跳过整个 switch：**只留根因那一条**。
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_enum_switch_diag")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ① 主题是表达式
+    var d1 = dirs.join(work, "subject_expr.leno")
+    files.write(d1, @"enum Msg {
+    a(int x)
+    b(string s)
+}
+
+main() {
+    switch Msg.a(1) {
+        case Msg.a(x) { print(_str(x)) }
+        case Msg.b(s) { print(s) }
+    }
+}
+")
+    var o1 = ce.expect_error(d1, "① 主题是表达式：只报根因", "switch 主题必须是**变量**", 7)
+    ce.expect_no_warning(o1, "① 不应再报绑定变量未定义", "未定义的变量")
+    ce.expect_no_warning(o1, "① 不应再报载荷类型不匹配", "实际 'unknown'")
+
+    // ② case 模式来自另一个 enum
+    var d2 = dirs.join(work, "other_enum.leno")
+    files.write(d2, @"enum A {
+    x(int n)
+}
+
+enum B {
+    y(int n)
+}
+
+main() {
+    var a = A.x(1)
+    switch a {
+        case B.y(v) { print(_str(v)) }
+    }
+}
+")
+    var o2 = ce.expect_error(d2, "② 模式来自别的 enum：只报根因", "两者必须是同一个 enum", 12)
+    ce.expect_no_warning(o2, "② 不应再报绑定变量未定义", "未定义的变量")
+    ce.expect_no_warning(o2, "② 不应再报载荷类型不匹配", "实际 'unknown'")
+
+    // ③ 绑定变量个数不对
+    var d3 = dirs.join(work, "arity.leno")
+    files.write(d3, @"enum Msg {
+    a(int x)
+}
+
+main() {
+    var m = Msg.a(1)
+    switch m {
+        case Msg.a(x, y) { print(_str(x)) }
+    }
+}
+")
+    var o3 = ce.expect_error(d3, "③ 绑定个数不对：只报根因", "需要 1 个绑定变量", 8)
+    ce.expect_no_warning(o3, "③ 不应再报绑定变量未定义", "未定义的变量")
+
+    // ④ 绑定写成表达式
+    var d4 = dirs.join(work, "bind_expr.leno")
+    files.write(d4, @"enum Msg {
+    a(int x)
+}
+
+main() {
+    var m = Msg.a(1)
+    switch m {
+        case Msg.a(1 + 2) { print(""x"") }
+    }
+}
+")
+    var o4 = ce.expect_error(d4, "④ 绑定不是变量名：只报根因", "绑定必须是**变量名**", 8)
+    ce.expect_no_warning(o4, "④ 不应再报载荷类型不匹配", "实际 'unknown'")
+
+    // ⑤ 正向对照：合法写法照常工作
+    var d5 = dirs.join(work, "ok.leno")
+    files.write(d5, @"enum Msg {
+    a(int x)
+    b(string s)
+}
+
+func f(Msg m): string {
+    switch m {
+        case Msg.a(x) { return ""a"" + _str(x) }
+        case Msg.b(s) { return ""b"" + s }
+        default { return ""?"" }
+    }
+}
+
+main() {
+    print(f(Msg.a(1)) + f(Msg.b(""z"")))
+}
+")
+    ce.expect_ok(d5, "⑤ 合法写法", "a1bz")
+
+    print("test_enum_payload_switch_diag passed（4 种写法错误只报根因 + 正向对照）")
+}

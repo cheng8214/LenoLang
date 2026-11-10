@@ -698,6 +698,58 @@ typedef struct {
     int fields_inline;             // 字段数组是否内联在对象内存尾部（1=随对象一次分配，释放时不可单独 free）
 } ObjStruct;
 
+// ★ 2026-11-10：**带载荷 enum 的签名遍历**——`_str` / `print` 要把
+//   `Msg{tag=0, p0=7, …}` 显示成 `Msg.a(7)`，签名解析必须只有一份（jsons 里那份是
+//   "编码"用的，输出形状不同，不合并）。命中第 tag 个成员 ⇒ 返回 1，并写：
+//     · name / name_len   —— 成员名（指向 sig 内部，借用）
+//     · base              —— 该成员的载荷基址（前面所有成员的参数个数之和）
+//     · params / params_end —— 参数名串区间（逗号分隔；零参数时两指针相等）
+//     · pcount            —— 参数个数
+//   tag 越界 / 签名残缺 ⇒ 返回 0（调用方退回通用 struct 显示）。
+static inline int enum_sig_member_at(const char* sig, int tag, const char** name, int* name_len,
+                                     int* base, const char** params, const char** params_end,
+                                     int* pcount) {
+    if (!sig || tag < 0) return 0;
+    const char* p = sig;
+    int idx = 0;
+    int b = 0;
+    for (;;) {
+        if (!*p) return 0;
+        const char* nend = strchr(p, '(');
+        const char* semi = strchr(p, ';');
+        if (!nend || (semi && semi < nend)) nend = semi;
+        if (!nend) nend = p + strlen(p);
+
+        const char* ps = NULL;
+        const char* pe = NULL;
+        int pc = 0;
+        if (*nend == '(') {
+            pe = strchr(nend, ')');
+            if (!pe) return 0;
+            ps = nend + 1;
+            pc = (pe > ps) ? 1 : 0;
+            for (const char* q = ps; q < pe; q++) {
+                if (*q == ',') pc++;
+            }
+        }
+        if (idx == tag) {
+            if (name) *name = p;
+            if (name_len) *name_len = (int)(nend - p);
+            if (base) *base = b;
+            if (params) *params = ps;
+            if (params_end) *params_end = pe;
+            if (pcount) *pcount = pc;
+            return 1;
+        }
+        if (!semi) return 0;
+        b += pc;
+        idx++;
+        p = strchr(nend, ';');
+        if (!p) return 0;
+        p++;
+    }
+}
+
 // face 方法签名
 typedef struct {
     char* name;                    // 方法名称

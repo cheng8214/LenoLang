@@ -203,5 +203,11 @@ main() {
     assert_true(out.has("A5"), "③跨模块构造 + 匹配")
     assert_true(out.has("EQOK"), "③跨模块按值比较")
 
-    print("test_enum_payload passed（构造/匹配/`_`/按值==/jsons/5 条错误路径/穷尽性/跨模块）")
+    // ④ 显示：`_str` 输出**成员式**，不再暴露 `Msg{tag=0, p0=…}` 这类降级字段
+    //    （2026-11-10：签名遍历 enum_sig_member_at 与 jsons/print 共用）
+    assert_eq(_str(Msg.progress(3, 10)), "Msg.progress(3, 10)", "④ _str 成员式（多参数）")
+    assert_eq(_str(Msg.finished("a.txt")), "Msg.finished(a.txt)", "④ _str 字符串载荷（_str 不加引号）")
+    assert_eq(_str(Msg.failed("x", 2)), "Msg.failed(x, 2)", "④ _str 混合载荷")
+
+    print("test_enum_payload passed（构造/匹配/`_`/按值==/jsons/5 条错误路径/穷尽性/跨模块/显示）")
 }

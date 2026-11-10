@@ -524,10 +524,14 @@ static int sem_enum_payload_rewrite_module_call(Semantic* s, Ast* ast) {
 //   同时给"带载荷 enum 的 switch"补穷尽性警告（老 enum 那条只认 TYPE_ENUM，
 //   降级后主题是 int ⇒ 不会触发，见 visit_control.inc 末尾那段）。
 // ============================================================================
-static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
-    if (!s || !sw || sw->kind != AST_SWITCH) return;
+//   返回 1 = **已报根因错**（主题不是该 enum 的变量 / case 模式来自别的 enum）——
+//   调用方应跳过整个 switch 的后续访问：不跳的话 `case Msg.成员(绑定)` 会被当构造
+//   再求值一次、绑定变量报"未定义"、还会冒出"载荷参数类型不匹配: 实际 unknown"
+//   —— 实测一个写法错刷 7 条 ✗
+static int sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
+    if (!s || !sw || sw->kind != AST_SWITCH) return 0;
     Ast* subject = sw->u.switch_.expr;
-    if (!subject) return;
+    if (!subject) return 0;
 
     // 主题是不是"带载荷 enum 类型的变量"？（不先 visit：这里只想拿静态类型）
     SemPayloadEnum v;
@@ -554,7 +558,7 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
         }
     }
     if (!have_view && pattern_n == 0) {
-        return;   // 与带载荷 enum 无关 ⇒ 原路径（零变化 ✓）
+        return 0;   // 与带载荷 enum 无关 ⇒ 原路径（零变化 ✓）
     }
 
     if (!have_view) {
@@ -569,13 +573,13 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
                 "**变量**（先 `var m = …` 再 `switch m`）—— 降级后要读 `m.tag` 与 `m.p0/p1`，"
                 "表达式会被重复求值、可能拿到不同的值");
         }
-        return;
+        return 1;
     }
     if (subject->kind != AST_VAR || !subject->u.var.name) {
         error_add_at_fmt(ERR_SEMANTIC, sw->line, sw->column,
             "带载荷 enum 的 switch 主题必须是**变量**（先 `var m = …` 再 `switch m`）—— "
             "降级后要读 `m.tag` 与 `m.p0/p1`，表达式会被重复求值、可能拿到不同的值");
-        return;
+        return 1;
     }
 
     const char* subj = subject->u.var.name;
@@ -599,13 +603,13 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
             error_add_at_fmt(ERR_SEMANTIC, pat->line, pat->column,
                 "带载荷 enum 的 case 一次只能写**一个**模式（`case Msg.成员(a, b)`）—— "
                 "多个模式会各自绑定不同的变量，合并在一个分支里没有确定语义");
-            continue;
+            return 1;
         }
         if (!pv.name || !v.name || strcmp(pv.name, v.name) != 0) {
             error_add_at_fmt(ERR_SEMANTIC, pat->line, pat->column,
                 "case 的模式来自 enum '%s'，而 switch 的主题是 '%s' —— 两者必须是同一个 enum",
                 pv.name ? pv.name : "?", v.name ? v.name : "?");
-            continue;
+            return 1;
         }
 
         const char* mname = (pat->kind == AST_CALL)
@@ -618,6 +622,7 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
             error_add_at_fmt(ERR_SEMANTIC, pat->line, pat->column,
                 "case 模式 '%s.%s' 需要 %d 个绑定变量，实际写了 %d 个",
                 v.name, mname, want, got);
+            return 1;   // 少写的绑定会在 case 体里继续报"未定义" ⇒ 只留根因
         }
 
         int use_n = got < want ? got : want;
@@ -631,7 +636,8 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
                 error_add_at_fmt(ERR_SEMANTIC, a->line, a->column,
                     "case 模式里的绑定必须是**变量名**（如 `case Msg.%s(d, t)`）—— "
                     "这里写的是表达式", mname);
-                continue;
+                free(binds);
+                return 1;
             }
             if (strcmp(a->u.var.name, "_") == 0) continue;   // `_` = 只匹配、不绑定
             char fbuf[32];
@@ -709,6 +715,7 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
         }
         if (covered) free(covered);
     }
+    return 0;
 }
 
 // ============================================================================

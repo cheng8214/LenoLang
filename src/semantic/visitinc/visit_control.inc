@@ -829,7 +829,13 @@
             //   `case Msg.progress(d, t)` ⇒ `switch m.tag { case 0 { var d = m.p0; … } }`
             //   ⚠ 必须在下面 visit 主题之前：改写会把主题换成 `m.tag`、把 case 值换成
             //     tag 常量；晚改就会先把 `Msg.progress(d, t)` 当成"构造"改写掉 ✗
-            sem_enum_payload_desugar_switch(s, ast);
+            //   ★ 返回 1 = 已报根因错（主题不是本 enum 的变量）⇒ **跳过整个 switch**：
+            //     否则 case 里的 `Msg.成员(绑定)` 会被当构造再求值一次、绑定变量报未定义
+            //     ⇒ 一个写法错刷 7 条（实测）。
+            if (sem_enum_payload_desugar_switch(s, ast)) {
+                sem_local_release(s, _mark_switch);
+                break;
+            }
 
             visit(s, ast->u.switch_.expr);
 

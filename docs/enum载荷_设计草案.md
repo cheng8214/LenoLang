@@ -356,3 +356,18 @@ func sig(Res[int] r): string { return "x" }
 - **enum 不能挂方法**（`extend Res { … }` 会报"extend 只能给 struct 加方法"）⇒ 即使载荷
   enum 运行期就是个 struct，`isOk/orElse/…` 这类方法也挂不上去。**这正是 `LenoResult` 的
   `Result[T]` / `Option[T]` 必须保持 struct 的决定性理由**（不是"不能泛型"了 —— 那个已经支持）。
+
+### 显示：`_str` / `print` 用成员式（2026-11-10）
+
+此前打印带载荷 enum 会暴露降级布局：`Msg{tag=0, p0=7, p1=null, p2=null}`。
+现在 `value.c`（`_str`）与 `io.c`（`print` / `print_value` / `print_value_quoted`）都走
+**同一份签名遍历** `enum_sig_member_at()`（`leno_value.h`）⇒ `Msg.a(7)`：
+
+```leno
+print(Msg.b("hi", 2.5))    // Msg.b("hi", 2.5)   —— print 的字符串带引号
+_str(Msg.b("hi", 2.5))     // Msg.b(hi, 2.5)     —— _str 的字符串不带（与 _str("hi") 一致）
+_str([Msg.a(1), Msg.c()])  // [Msg.a(1), Msg.c()]
+```
+
+签名缺失 / tag 越界 / tag 不是 int ⇒ **退回**通用 `Name{field=value}` 显示（宁可多暴露字段，不崩）。
+钉子：`assert/test_enum_payload.leno` 的 ④ 段。

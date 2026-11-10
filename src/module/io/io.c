@@ -32,9 +32,47 @@ static void print_value_internal(Value value);
 static void print_value_quoted(Value value);
 static void print_array_internal(ObjArray* arr);
 static void print_dict_internal(ObjDict* dict);
+static void print_struct_internal(ObjStruct* st);
 
 // 外部声明：tombstone 哨兵（线程局部存储，用于标识已删除的字典条目）
 extern _Thread_local ObjString* tombstone;
+
+// ★ 2026-11-10：带载荷 enum 的显示 —— `Msg{tag=0, p0=7, p1=null, p2=null}`
+//   ⇒ `Msg.a(7)`。签名遍历与 jsons 共用 `enum_sig_member_at`（leno_value.h）。
+//   签名缺失 / tag 越界 / 不是 int tag ⇒ 退回通用 struct 显示（宁可多暴露字段，不崩）。
+static void print_struct_internal(ObjStruct* st) {
+    ObjStructDef* def = st ? st->def : NULL;
+    if (!def) {
+        printf("<struct>");
+        return;
+    }
+    if (def->enum_sig && def->field_count >= 1 &&
+        val_get_type(st->field_values[0]) == VAL_INT) {
+        int tag = (int)val_as_int(st->field_values[0]);
+        const char* mname = NULL;
+        int mlen = 0;
+        int base = 0;
+        int pc = 0;
+        if (enum_sig_member_at(def->enum_sig, tag, &mname, &mlen, &base, NULL, NULL, &pc)) {
+            int avail = def->field_count - 1 - base;
+            if (pc > avail) pc = avail > 0 ? avail : 0;
+            printf("%s.%.*s(", def->name, mlen, mname);
+            for (int k = 0; k < pc; k++) {
+                if (k > 0) printf(", ");
+                print_value_quoted(st->field_values[1 + base + k]);
+            }
+            printf(")");
+            return;
+        }
+    }
+    printf("%s{", def->name);
+    for (int i = 0; i < def->field_count; i++) {
+        if (i > 0) printf(", ");
+        printf("%s=", def->fields[i].name);
+        print_value_quoted(st->field_values[i]);
+    }
+    printf("}");
+}
 
 // 打印值（用于普通输出，字符串不加引号）
 static void print_value_internal(Value value) {
@@ -78,15 +116,7 @@ static void print_value_internal(Value value) {
                     break;
                 }
                 case OBJ_STRUCT: {
-                    ObjStruct* struct_obj = (ObjStruct*)obj;
-                    ObjStructDef* struct_def = struct_obj->def;
-                    printf("%s{", struct_def->name);
-                    for (int i = 0; i < struct_def->field_count; i++) {
-                        if (i > 0) printf(", ");
-                        printf("%s=", struct_def->fields[i].name);
-                        print_value_quoted(struct_obj->field_values[i]);
-                    }
-                    printf("}");
+                    print_struct_internal((ObjStruct*)obj);
                     break;
                 }
                 case OBJ_ENUM_DEF: {
@@ -194,15 +224,7 @@ static void print_value_quoted(Value value) {
                     break;
                 }
                 case OBJ_STRUCT: {
-                    ObjStruct* struct_obj = (ObjStruct*)obj;
-                    ObjStructDef* struct_def = struct_obj->def;
-                    printf("%s{", struct_def->name);
-                    for (int i = 0; i < struct_def->field_count; i++) {
-                        if (i > 0) printf(", ");
-                        printf("%s=", struct_def->fields[i].name);
-                        print_value_quoted(struct_obj->field_values[i]);
-                    }
-                    printf("}");
+                    print_struct_internal((ObjStruct*)obj);
                     break;
                 }
                 case OBJ_FFI_POINTER: {

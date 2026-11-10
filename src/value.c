@@ -229,7 +229,59 @@ char* value_to_string(Value v) {
             } else if (val_as_obj(v)->type == OBJ_STRUCT) {
                 ObjStruct* struct_obj = (ObjStruct*)val_as_obj(v);
                 ObjStructDef* struct_def = struct_obj->def;
-                
+
+                // ★ 2026-11-10：带载荷 enum ⇒ `Msg.a(7)`（不再是 `Msg{tag=0, p0=7, …}`）。
+                //   签名遍历与 print / jsons 共用 `enum_sig_member_at`（leno_value.h）。
+                //   签名缺失 / tag 越界 ⇒ 落回下面的通用 struct 显示。
+                if (struct_def->enum_sig && struct_def->field_count >= 1 &&
+                    struct_obj->field_values &&
+                    val_get_type(struct_obj->field_values[0]) == VAL_INT) {
+                    int tag = (int)val_as_int(struct_obj->field_values[0]);
+                    const char* mname = NULL;
+                    int mlen = 0;
+                    int base = 0;
+                    int pc = 0;
+                    if (enum_sig_member_at(struct_def->enum_sig, tag, &mname, &mlen, &base,
+                                           NULL, NULL, &pc)) {
+                        int avail = struct_def->field_count - 1 - base;
+                        if (pc > avail) pc = avail > 0 ? avail : 0;
+
+                        char** arg_strs = (char**)malloc((size_t)(pc > 0 ? pc : 1) * sizeof(char*));
+                        int total_len = (int)strlen(struct_def->name) + 1 + mlen + 2; // Name.member()
+                        for (int k = 0; k < pc; k++) {
+                            char* s = value_to_string(struct_obj->field_values[1 + base + k]);
+                            arg_strs[k] = s ? s : strdup("null");
+                            if (arg_strs[k]) total_len += (int)strlen(arg_strs[k]);
+                            if (k < pc - 1) total_len += 2; // ", "
+                        }
+
+                        result = (char*)malloc((size_t)total_len + 1);
+                        if (result) {
+                            int pos = 0;
+                            memcpy(result + pos, struct_def->name, strlen(struct_def->name));
+                            pos += (int)strlen(struct_def->name);
+                            result[pos++] = '.';
+                            memcpy(result + pos, mname, (size_t)mlen);
+                            pos += mlen;
+                            result[pos++] = '(';
+                            for (int k = 0; k < pc; k++) {
+                                int l = (int)strlen(arg_strs[k]);
+                                memcpy(result + pos, arg_strs[k], (size_t)l);
+                                pos += l;
+                                if (k < pc - 1) {
+                                    result[pos++] = ',';
+                                    result[pos++] = ' ';
+                                }
+                            }
+                            result[pos++] = ')';
+                            result[pos] = '\0';
+                        }
+                        for (int k = 0; k < pc; k++) free(arg_strs[k]);
+                        free(arg_strs);
+                        break;   // 已生成，跳出 switch(val_get_type)
+                    }
+                }
+
                 // 计算需要的总长度
                 int total_len = (int)strlen(struct_def->name) + 1; // "Point{"
                 for (int i = 0; i < struct_def->field_count; i++) {
