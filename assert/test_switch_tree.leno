@@ -143,7 +143,42 @@ main() {
     assert_eq(fmulti(3), 3, "多值 case 的 switch 里普通 case 照常");
     assert_eq(fmulti(99), -1, "多值 case 的 switch 越界 ⇒ default");
 
-    print("test_switch_tree passed（20 case / 负数 / enum / 稀疏 / 多值回退 五组）");
+    // ⑥ int16 之外的**大值**也进树（比较时把常量装进寄存器）：
+    //    100000 的倍数 + 一个 99 + 一个 -40000，混排后照样逐值命中
+    assert_eq(fbig(0), "case-0", "大值：最小");
+    assert_eq(fbig(1700000), "case-17", "大值：最大");
+    assert_eq(fbig(99), "small", "大值：混进一个小值");
+    assert_eq(fbig(-40000), "neg-big", "大值：负的大数");
+    assert_eq(fbig(123), "default", "大值：空洞 ⇒ default");
+
+    print("test_switch_tree passed（20 case / 负数 / enum / 稀疏 / 多值回退 / 大值 六组）");
+}
+
+// ⑥ int16 之外的大值（树的比较退化成"常量先装寄存器"）
+func fbig(int v): string {
+    switch v {
+        case 0 { return "case-0" }
+        case 100000 { return "case-1" }
+        case 200000 { return "case-2" }
+        case 300000 { return "case-3" }
+        case 400000 { return "case-4" }
+        case 500000 { return "case-5" }
+        case 600000 { return "case-6" }
+        case 700000 { return "case-7" }
+        case 800000 { return "case-8" }
+        case 900000 { return "case-9" }
+        case 1000000 { return "case-10" }
+        case 1100000 { return "case-11" }
+        case 1200000 { return "case-12" }
+        case 1300000 { return "case-13" }
+        case 1400000 { return "case-14" }
+        case 1500000 { return "case-15" }
+        case 1600000 { return "case-16" }
+        case 1700000 { return "case-17" }
+        case 99 { return "small" }
+        case -40000 { return "neg-big" }
+        default { return "default" }
+    }
 }
 
 // ⑤ 多值 case 的 switch（含 16 个单值 case + 1 个双值 case ⇒ 不满足树的判据）

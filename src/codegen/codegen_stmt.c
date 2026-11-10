@@ -1030,8 +1030,19 @@ static void emit_switch_tree(CodeGen* gen, int tmp, SwTreeLeaf* leaves, int lo, 
     int mid = lo + (hi - lo) / 2;
     int v = leaves[mid].value;
 
+    // 比较值：fits int16 ⇒ 立即数（1 条指令够）；否则先装进寄存器再比。
+    //   ⚠ 立即数范围按 codegen 的既有口径 **[-32767, 32767]**（AST_NUM 那边用的就是它，
+    //     -32768 刻意不用）—— 树里若按 -32768 发，会和其它地方的编码口径不一致。
+    int imm_ok = (v >= -32767 && v <= 32767);
+    int vreg = -1;
+    if (!imm_ok) {
+        vreg = reg_alloc(gen);
+        int cidx = make_constant(gen, val_int((int64_t)v));
+        emit_loadk_to(gen, vreg, cidx, line);
+    }
+
     // ① 相等 ⇒ 命中（跳到跳板）
-    int jhit = emit_cmpjmp(gen, OP_CMPJMP_EQ, tmp, v, 1, 1, line);
+    int jhit = emit_cmpjmp(gen, OP_CMPJMP_EQ, tmp, imm_ok ? v : vreg, imm_ok ? 1 : 0, 1, line);
     if (*cnt == *cap) {
         *cap *= 2;
         *hit_pos = (int*)realloc(*hit_pos, sizeof(int) * (size_t)(*cap));
@@ -1042,7 +1053,8 @@ static void emit_switch_tree(CodeGen* gen, int tmp, SwTreeLeaf* leaves, int lo, 
     (*cnt)++;
 
     // ② tmp < v ⇒ 左子树；否则右子树
-    int jl = emit_cmpjmp(gen, OP_CMPJMP_LT, tmp, v, 1, 1, line);
+    int jl = emit_cmpjmp(gen, OP_CMPJMP_LT, tmp, imm_ok ? v : vreg, imm_ok ? 1 : 0, 1, line);
+    if (vreg >= 0) reg_free(gen, vreg);   // 两条比较都已发出，临时寄存器可以还了
     int jr = emit_jmp(gen, line);
 
     patch_jmp_to(gen, jl, gen->chunk->len);
@@ -1093,7 +1105,8 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
     // ★ 2026-11-10（性能）：能不能走树？四条判据，任何一条不满足就退回线性链——
     //   ① 主题静态类型是 int / enum（树用 OP_CMPJMP_EQ/LT 的整数立即数比较）
     //   ② 每个 case **恰好一个**值（`case 1, 2` 这种多值、`case 1 to 3` 区间都不进树）
-    //   ③ 值都是整数字面量且落在 int16（融合比较的立即数上限）
+    //   ③ 值都是整数字面量且落在 int32（更大的值退回线性链；
+    //      int16 之外的**大值仍进树**，比较时把常量装进寄存器）
     //   ④ 值**互不相同**（有重复时"第一个命中"是可观测语义，排序会改掉它）
     //   ⑤ case 数 ≥ SW_TREE_MIN_CASES
     SwTreeLeaf* leaves = NULL;
@@ -1109,7 +1122,9 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
             Ast* cv0 = vl->items[0];
             if (!cv0 || cv0->kind != AST_NUM ||
                 cv0->u.num.is_float || cv0->u.num.is_bigint) { ok = 0; break; }
-            if (cv0->u.num.value < -32768.0 || cv0->u.num.value > 32767.0) { ok = 0; break; }
+            // 超出 int32 的值退回线性链（树里按 int 存；int16 之外的**大值照样进树**，
+            // 只是比较时先把常量装进寄存器 —— 见 emit_switch_tree 的 imm_ok）
+            if (cv0->u.num.value < -2147483647.0 || cv0->u.num.value > 2147483647.0) { ok = 0; break; }
             leaves[leaf_n].value = (int)cv0->u.num.value;
             leaves[leaf_n].case_idx = i;
             leaf_n++;
