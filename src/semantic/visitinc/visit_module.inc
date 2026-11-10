@@ -1809,24 +1809,24 @@
                 // ★ 2026-11-10（P4 enum 载荷 步 3/6）：`Msg.progress`（**不加括号**）不是值 ——
                 //   带载荷 enum 的成员必须构造（`Msg.progress(3, 10)`），单独写出来没有意义。
                 //   不拦的话会掉进下面的 struct 字段访问分支，变成"读类型名上的字段"之类的远因错。
-                if (var_sym && var_sym->type && var_sym->type->kind == TYPE_STRUCT) {
-                    Ast* _psd = (Ast*)var_sym->type_decl_ast;
-                    if (_psd && _psd->kind == AST_STRUCT_DEF && _psd->u.struct_def.enum_src) {
-                        Ast* _esrc = _psd->u.struct_def.enum_src;
+                if (var_sym) {
+                    //   判据走 SemPayloadEnum 视图（本地 AST / 跨模块符号表两路都认）
+                    SemPayloadEnum _pv;
+                    memset(&_pv, 0, sizeof(_pv));
+                    if (sem_payload_view_from_symbol(var_sym, &_pv)) {
                         const char* _mn = ast->u.module_access.member_name;
-                        int _mi = sem_payload_member_index(_esrc, _mn);
+                        int _mi = sem_payload_member_index(&_pv, _mn);
                         if (_mi >= 0) {
                             error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                 "带载荷 enum '%s' 的成员 '%s' 需要 %d 个参数 —— 不能单独当值用："
                                 "构造请写 `%s.%s(实参…)`；匹配请写 `case %s.%s(绑定变量…)`",
-                                _esrc->u.enum_def.name, _mn,
-                                _esrc->u.enum_def.member_param_counts[_mi],
-                                _esrc->u.enum_def.name, _mn,
-                                _esrc->u.enum_def.name, _mn);
+                                _pv.name, _mn, _pv.counts[_mi],
+                                _pv.name, _mn,
+                                _pv.name, _mn);
                         } else {
                             error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
                                 "带载荷 enum '%s' 里没有成员 '%s'",
-                                _esrc->u.enum_def.name, _mn ? _mn : "?");
+                                _pv.name, _mn ? _mn : "?");
                         }
                         if (ast->cached_type) type_free(ast->cached_type);
                         ast->cached_type = type_new(TYPE_POISON);

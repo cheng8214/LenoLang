@@ -6,7 +6,7 @@
 // ⚠ 版本号登记表：docs/单一事实来源与重复实现收敛.md 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x0000002B  // v43 (2026-11-07): struct 符号新增**泛型约束名**（type_param_constraints）
+#define LENOSYMC_VERSION 0x0000002C  // v44 (2026-11-10): enum 成员追加「载荷参数个数 + 参数类型」（P4 enum 载荷跨模块）
                                      //   （has_psn + 每参数名）—— 调用方需要区分"目标 struct
                                      //   的类型参数 T"与真 struct，否则 `wrap(T x)` 的跨模块
                                      //   调用被误判成「期望 struct, 实际 int」✗
@@ -516,6 +516,18 @@ sym_cache_write_string(f, table->funcs[i].optkeys);
             sym_cache_write_string(f, table->enums[i].member_names[j]);
             int64_t mv = table->enums[i].member_values[j];
             fwrite(&mv, 8, 1, f);
+            // ★ 2026-11-10（P4 enum 载荷，LENOSYMC v44）：每个成员后面追加
+            //   u16 参数个数 + 逐参 type_info。纯 int 枚举写 0（多 2 字节/成员）。
+            //   ⚠ 读取侧（sym_cache_read…）必须严格同序。
+            uint16_t pc = (uint16_t)(table->enums[i].member_param_counts
+                                         ? table->enums[i].member_param_counts[j] : 0);
+            fwrite(&pc, 2, 1, f);
+            for (uint16_t k = 0; k < pc; k++) {
+                TypeInfo* pt = (table->enums[i].member_param_types &&
+                                table->enums[i].member_param_types[j])
+                                   ? table->enums[i].member_param_types[j][k] : NULL;
+                sym_cache_write_type_info(f, pt);
+            }
         }
     }
 
@@ -1054,6 +1066,20 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
             table->enums[i].member_names[j] = sym_cache_read_string(f);
             int64_t mv; if (fread(&mv, 8, 1, f) != 1) goto fail;
             table->enums[i].member_values[j] = mv;
+            // ★ 2026-11-10（P4 enum 载荷，LENOSYMC v44）：u16 参数个数 + 逐参 type_info
+            uint16_t pc; if (fread(&pc, 2, 1, f) != 1) goto fail;
+            if (pc > 0) {
+                if (!table->enums[i].member_param_counts) {
+                    table->enums[i].member_param_counts = (int*)calloc(emc, sizeof(int));
+                    table->enums[i].member_param_types =
+                        (TypeInfo***)calloc(emc, sizeof(TypeInfo**));
+                }
+                table->enums[i].member_param_counts[j] = (int)pc;
+                table->enums[i].member_param_types[j] = (TypeInfo**)calloc(pc, sizeof(TypeInfo*));
+                for (uint16_t k = 0; k < pc; k++) {
+                    table->enums[i].member_param_types[j][k] = sym_cache_read_type_info(f);
+                }
+            }
         }
         table->enum_count++;
     }

@@ -287,7 +287,10 @@ ModuleEnumSymbol* module_symbol_table_find_enum(ModuleSymbolTable* table, const 
 }
 
 // 添加 enum 符号
-void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count, char** member_names, int64_t* member_values) {
+void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count,
+                                  char** member_names, int64_t* member_values,
+                                  const int* member_param_counts,
+                                  TypeInfo*** member_param_types) {
     if (!table || !name) return;
 
     // 扩容
@@ -304,6 +307,8 @@ void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, in
     en->member_count = member_count;
     en->member_names = NULL;
     en->member_values = NULL;
+    en->member_param_counts = NULL;
+    en->member_param_types = NULL;
     if (member_count > 0 && member_names) {
         en->member_names = (char**)malloc(sizeof(char*) * member_count);
         en->member_values = (int64_t*)malloc(sizeof(int64_t) * member_count);
@@ -315,6 +320,46 @@ void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, in
             en->member_values[i] = member_values ? member_values[i] : 0;
         }
     }
+    // ★ 2026-11-10（P4 enum 载荷，LENOSYMC v44）：载荷参数个数 + 参数类型（深拷贝）。
+    //   只有带载荷 enum 才分配；纯 int 枚举保持两个 NULL ⇒ 老行为零变化。
+    if (member_param_counts && member_count > 0) {
+        int total = 0;
+        for (int i = 0; i < member_count; i++) total += member_param_counts[i];
+        if (total > 0) {
+            en->member_param_counts = (int*)malloc(sizeof(int) * member_count);
+            for (int i = 0; i < member_count; i++) {
+                en->member_param_counts[i] = member_param_counts[i];
+            }
+            en->member_param_types = (TypeInfo***)calloc((size_t)member_count, sizeof(TypeInfo**));
+            for (int i = 0; i < member_count; i++) {
+                int pc = member_param_counts[i];
+                if (pc <= 0) continue;
+                en->member_param_types[i] = (TypeInfo**)calloc((size_t)pc, sizeof(TypeInfo*));
+                for (int k = 0; k < pc; k++) {
+                    TypeInfo* src = (member_param_types && member_param_types[i])
+                                        ? member_param_types[i][k] : NULL;
+                    en->member_param_types[i][k] = src ? type_copy(src) : type_new(TYPE_ANY);
+                }
+            }
+        }
+    }
+}
+
+int module_symbol_table_enum_is_payload(const ModuleEnumSymbol* es) {
+    if (!es || !es->member_param_counts) return 0;
+    for (int i = 0; i < es->member_count; i++) {
+        if (es->member_param_counts[i] > 0) return 1;
+    }
+    return 0;
+}
+
+int module_symbol_table_enum_member_base(const ModuleEnumSymbol* es, int mi) {
+    if (!es || !es->member_param_counts || mi <= 0) return 0;
+    int base = 0;
+    for (int i = 0; i < mi && i < es->member_count; i++) {
+        base += es->member_param_counts[i];
+    }
+    return base;
 }
 
 // 查找 face 符号

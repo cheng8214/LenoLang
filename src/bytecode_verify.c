@@ -128,6 +128,14 @@ static int scan_struct_def(const Chunk* c, int base, int checks, Cur* k) {
             ck_const(k, value_idx);
         }
     }
+    // ★ 2026-11-10（P4 enum 载荷）：尾部"成员/参数名签名"（1 字节标志 + 可选 u16 常量）。
+    //   ⚠ 漏读会让**紧跟其后的指令**被当成数据头 ⇒ 运行期"内存反序列化失败(6)"，
+    //   而 --check 仍然是绿的（与上面 TYPE_ARRAY 那条同一个坑）。
+    int has_enum_sig = cur_u8(k);
+    if (has_enum_sig) {
+        int idx = cur_u16(k);
+        if (checks) ck_const(k, idx);
+    }
     return !k->bad;
 }
 

@@ -1106,7 +1106,11 @@ static void ast_transmit_type_deps(ModuleSymbolTable* table, ModuleSymbolTable* 
     }
     ModuleEnumSymbol* es = module_symbol_table_find_enum(dep, nm);
     if (es) {
-        module_symbol_table_add_enum(table, nm, es->member_count, es->member_names, es->member_values);
+        // ★ 2026-11-10（P4 enum 载荷）：载荷信息随枚举一起转导出（否则消费端
+        //   `use p.Msg` 只拿到"纯 int 枚举"，`Msg.progress(...)` 会落到"int 没有方法"）
+        module_symbol_table_add_enum(table, nm, es->member_count, es->member_names,
+                                     es->member_values, es->member_param_counts,
+                                     es->member_param_types);
         return;
     }
     ModuleAliasSymbol* as = module_symbol_table_find_alias(dep, nm);
@@ -1181,8 +1185,10 @@ static void ast_fill_one_use(ModuleSymbolTable* table, Ast* us) {
     ModuleEnumSymbol* es = module_symbol_table_find_enum(dep, sname);
     if (es) {
         if (!module_symbol_table_find_enum(table, sname)) {
+            // ★ 2026-11-10（P4 enum 载荷）：载荷信息一起转导出
             module_symbol_table_add_enum(table, sname, es->member_count, es->member_names,
-                                         es->member_values);
+                                         es->member_values, es->member_param_counts,
+                                         es->member_param_types);
         }
         return;
     }
@@ -2111,7 +2117,11 @@ static void ast_fill_one_enum(ModuleSymbolTable* table, Ast* ed) {
         // ★ 建表路径（S10 删除老解析的前置）：条目不存在时由 AST 直接建出来。
         //   add_enum 内部会**复制**名字（扫描链随后自己 free 临时 buf ⇒ 同一约定 ✓）✓
         //   有这条之后，scan_enum.inc 的"符号建表"部分就可以停用，只留它的导出名登记 ✓
-        module_symbol_table_add_enum(table, ed->u.enum_def.name, mc, mn, mv);
+        // ★ 2026-11-10（P4 enum 载荷）：连同"成员参数个数 + 参数类型"一起导出 ——
+        //   跨模块构造/匹配全靠这两组（见 ModuleEnumSymbol 的说明）。
+        module_symbol_table_add_enum(table, ed->u.enum_def.name, mc, mn, mv,
+                                     ed->u.enum_def.member_param_counts,
+                                     ed->u.enum_def.member_param_types);
         for (int i = 0; i < mc; i++) free(mn[i]);
         free(mn);
         free(mv);
@@ -2126,6 +2136,41 @@ static void ast_fill_one_enum(ModuleSymbolTable* table, Ast* ed) {
     sym->member_count = mc;
     sym->member_names = mn;
     sym->member_values = mv;
+    // 载荷信息同样整组换（类型是深拷贝，旧的一组要先释放）
+    if (sym->member_param_counts) {
+        for (int i = 0; i < mc; i++) {
+            int pc = sym->member_param_counts[i];
+            if (pc <= 0 || !sym->member_param_types) continue;
+            for (int k = 0; k < pc; k++) {
+                if (sym->member_param_types[i][k]) type_free(sym->member_param_types[i][k]);
+            }
+            free(sym->member_param_types[i]);
+        }
+        free(sym->member_param_types);
+        free(sym->member_param_counts);
+        sym->member_param_counts = NULL;
+        sym->member_param_types = NULL;
+    }
+    if (ed->u.enum_def.member_param_counts) {
+        int total = 0;
+        for (int i = 0; i < mc; i++) total += ed->u.enum_def.member_param_counts[i];
+        if (total > 0) {
+            sym->member_param_counts = (int*)calloc((size_t)mc, sizeof(int));
+            sym->member_param_types = (TypeInfo***)calloc((size_t)mc, sizeof(TypeInfo**));
+            for (int i = 0; i < mc; i++) {
+                int pc = ed->u.enum_def.member_param_counts[i];
+                sym->member_param_counts[i] = pc;
+                if (pc <= 0) continue;
+                sym->member_param_types[i] = (TypeInfo**)calloc((size_t)pc, sizeof(TypeInfo*));
+                for (int k = 0; k < pc; k++) {
+                    TypeInfo* src = (ed->u.enum_def.member_param_types &&
+                                     ed->u.enum_def.member_param_types[i])
+                                        ? ed->u.enum_def.member_param_types[i][k] : NULL;
+                    sym->member_param_types[i][k] = src ? type_copy(src) : type_new(TYPE_ANY);
+                }
+            }
+        }
+    }
 }
 
 // ---- cfunc 类接管 ----

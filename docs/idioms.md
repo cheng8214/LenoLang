@@ -90,8 +90,9 @@ if curNav == Page.LYRIC { ... }  // 读得懂，改名字编译器跟着改
 
 > **带载荷成员**（2026-11-10 起）：`enum Msg { progress(int done, int total) }`，
 > 构造 `Msg.progress(3, 10)`、匹配 `case Msg.progress(d, t) { … }`（`_` 表示忽略该位置）。
+> 跨模块可用、`==` 按值、`jsons.encode` 用成员名输出。
 > 刻意窄的规则：同一 enum 里成员要么全带参数、要么全不带；带载荷成员不是 int，
-> 也不能 `new Msg(...)`；`switch` 主题必须是**变量**；**不支持 `export`**。
+> 也不能 `new Msg(...)`；`switch` 主题必须是**变量**。
 > 纯 int 成员的老写法行为完全不变。降级成同名 struct 的细节见
 > [`enum载荷_设计草案.md`](enum载荷_设计草案.md)。
 
@@ -178,7 +179,7 @@ strings.lines("a\nb\r\nc")       // 按行切，认 \r\n
 | 缺口 | 表现 | 绕过 |
 |---|---|---|
 | **struct ↔ JSON 无自动转换** | `jsons.decode` 实测返回 `Dict[string, any]`（值保留运行期类型：`d["list"]` 收窄后就是 `Array[int]`），但**变不成你自己的 struct**，每层仍要 `as` 收窄 + `_str`/`_int` | 收窄成 `Dict[string, any]` 后手取；或 `jsons.dig(data, "user.name")` |
-| ~~**enum 不能带载荷**~~ | ✅ 2026-11-10 已补：`enum Msg { progress(int done, int total) }` + `case Msg.progress(d, t)`（同文件可用；**跨模块 / `export` 尚未做**） | 带数据的消息优先用它，别再手写 struct + int tag |
+| ~~**enum 不能带载荷**~~ | ✅ 2026-11-10 已补：`enum Msg { progress(int done, int total) }` + `case Msg.progress(d, t)`；跨模块 / `==` 按值 / `jsons.encode` 都支持 | 带数据的消息优先用它，别再手写 struct + int tag |
 | ~~**没有 `Result`**~~ | ✅ 2026-11-09 已补：`import "Result"` 提供 `Result[T]` / `Option[T]`（`ok`/`code`/`msg`/`val`，见 AGENTS.md §11） | 新代码一律用它，别再自造 `Dict{ok,err}` / `bool` / `int -1` |
 | **8 位索引上限** | struct 字段 > 255 / 函数局部量 > 255 编译报错 | 拆类型 / 拆函数（现在是**编译期报错**，不会静默） |
 | **`switch` 无穷尽性检查** | 漏 case 不报错 | 用 `default` 兜底 + 注释 |

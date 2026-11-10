@@ -192,7 +192,14 @@
 //   `Array[Item]` 此前在运行时**没有**元素类型（读出是 TYPE_PTR 默认值），
 //   于是只能塞 `Array[Dict]`，字段声明类型被静默破坏。
 //   ⇒ LENO_MODCACHE_VERSION 同步升（模块字节码里同样是这份元数据）。
-#define LENO_BIN_VERSION    0x0003021E  // v3.2.30（2026-11-10）—— 新增 4 条字段宽索引 opcode
+// v3.2.31（2026-11-10）：`OP_STRUCT_DEF` 尾部再追加 1 字节 has_enum_sig（+ 有则 u16 常量索引），
+//   指向"带载荷 enum 的成员/参数名签名"（`progress(done,total);finished(path)`）。
+//   为什么必须 bump：又是**变长尾随字节** —— 读错会把下一条指令当成数据头（"内存反序列化
+//   失败(6)"，而 --check 是绿的）。用途：`==` 按值比较 + `jsons.encode` 成员式输出。
+//   ⇒ LENO_MODCACHE_VERSION 同步升（模块字节码里同样是这份元数据）。
+#define LENO_BIN_VERSION    0x0003021F  // v3.2.31（2026-11-10）—— OP_STRUCT_DEF 尾部加
+                                        //   has_enum_sig（带载荷 enum 的成员/参数名签名）
+                                        // v3.2.30（2026-11-10）—— 新增 4 条字段宽索引 opcode
                                         //   （OP_GET_FIELD_W / OP_SET_FIELD_W / OP_GET_FIELD_FAST_W /
                                         //    OP_GET_FIELD_ADDR_W：字段索引 > 255 时用 C=0 +
                                         //    紧随 EXTRAARG 的 24 位索引）。末尾追加 ⇒ 既有编号不变，
@@ -392,7 +399,10 @@
 // v45（2026-11-09）：OP_STRUCT_DEF 的字段元数据多一个 `element_struct_name`
 //   （见 LENO_BIN_VERSION v3.2.29）。模块字节码里是同一份布局 ⇒ 必须同步升，
 //   否则旧 .lenomc 会被当成新格式读，字段定义整体错位。
-#define LENO_MODCACHE_VERSION  0x0000002E  // v45 - 同 LENO_BIN_VERSION v3.2.30（新增 4 条字段宽索引
+#define LENO_MODCACHE_VERSION  0x0000002F  // v46 - 同 LENO_BIN_VERSION v3.2.31（OP_STRUCT_DEF 尾部
+                                            //   加 has_enum_sig ⇒ 模块字节码的元数据布局变了，
+                                            //   旧 .lenomc 读进来会整体错位 ⇒ 整体失效重编译 ✓）
+                                            // v45 - 同 LENO_BIN_VERSION v3.2.30（新增 4 条字段宽索引
                                             //   opcode ⇒ 模块字节码里含旧构建不认识的指令 ⇒ 整体失效 ✓）
                                             // v44 - 同 LENO_BIN_VERSION v3.2.28（新增 opcode
                                             //   OP_STRUCT_EXTEND ⇒ 模块字节码里含旧构建不认识的

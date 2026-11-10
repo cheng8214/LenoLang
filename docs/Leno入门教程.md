@@ -7382,9 +7382,12 @@ main() {
 3. `case` 里的绑定名可以写 `_` 表示"这个位置不关心"：`case Msg.failed(w, _) { … }`。
 4. `switch` 的**主题必须是变量**（`var m = …` 之后 `switch m`）：降级实现要读
    `m.tag` 和载荷槽，表达式会被求值两次。
-5. 带载荷 enum **暂不支持 `export`**（跨模块需要把"成员是否有载荷"带进模块符号表，
-   是单独一步）—— 同文件里用完全没有问题。
+5. **跨模块可用**：`export enum Msg { … }` 之后，别的文件 `import "msg.leno" as a` +
+   `use a.Msg`，就能照常 `Msg.progress(3, 10)`。
 6. 漏了成员又没写 `default` ⇒ `WARN_SWITCH_NOT_EXHAUSTIVE` 警告（与 int 枚举同一条）。
+7. `==` **按值**比较（tag + 载荷逐字段），`Array.has` 也一样；`jsons.encode` 输出
+   `{"progress":{"done":3,"total":10}}`（成员名 + 参数名，不会漏出 `tag/p0` 这些实现字段）。
+   反方向的 `jsons.fill` 不支持（要先决定是哪个成员）⇒ 用 `switch` 分派。
 
 > 实现方式（不影响用法，但读报错时需要知道）：编译器把它降级成**同名的普通 struct**
 > `struct Msg { int tag; int p0; int p1; string p2; … }`，构造改成 `new Msg(tag = 0, p0 = 3, …)`，

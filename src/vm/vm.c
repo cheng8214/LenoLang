@@ -1298,6 +1298,24 @@ static inline int value_eq_depth(Value a, Value b, int depth) {
             }
             return 1;
         }
+        // ★ 2026-11-10（P4 enum 载荷）：带载荷 enum 的降级 struct **按值比较**
+        //   （tag + 载荷逐字段）。普通 struct 仍是引用比较 —— 那是既有语义，
+        //   改了会让"两个内容相同的对象"突然相等，属于破坏性变更 ✗
+        //   判据只有 `def->enum_sig`（由 OP_STRUCT_DEF 尾部带过来）✓
+        if (oa->type == OBJ_STRUCT) {
+            ObjStruct* sa = (ObjStruct*)oa;
+            ObjStruct* sb = (ObjStruct*)ob;
+            ObjStructDef* d = sa->def;
+            if (d && d->enum_sig && sb->def == d && depth > 0 && d->field_count > 0) {
+                for (int i = 0; i < d->field_count; i++) {
+                    if (!value_eq_depth(sa->field_values[i], sb->field_values[i], depth - 1)) {
+                        return 0;
+                    }
+                }
+                return 1;
+            }
+            return 0;
+        }
         return oa == ob;
     }
     return 0;

@@ -965,6 +965,110 @@ static void json_encode_dict(StringBuilder* sb, ObjDict* dict, int indent, bool 
     sb_append_char(sb, '}');
 }
 
+// ★ 2026-11-10（P4 enum 载荷）：带载荷 enum 的降级 struct → `{"progress":{"done":3,"total":10}}`
+//   为什么不能直接用下面的通用实现：那里会输出隐藏字段 `{"tag":0,"p0":3,"p1":10}` ——
+//   用户看到的是编译器实现细节，而且换个成员就整串变样 ✗
+//   成员/参数名来自 `def->enum_sig`（`progress(done,total);finished(path)`，见 leno_ast.h）。
+//   签名缺失/解析不出来 ⇒ 返回 0，让调用方退回通用实现（宁可多暴露字段，也不要输出坏 JSON）。
+static int json_encode_enum_payload(StringBuilder* sb, ObjStruct* st, int indent, bool pretty,
+                                    int depth, int* err) {
+    ObjStructDef* def = st->def;
+    if (!def || !def->enum_sig || def->field_count < 1) return 0;
+
+    Value tagv = st->field_values[0];
+    if (val_get_type(tagv) != VAL_INT) return 0;
+    int tag = (int)val_as_num(tagv);
+    if (tag < 0) return 0;
+
+    // ── 走到第 tag 个成员，同时累计载荷基址 ────────────────────────────────
+    const char* p = def->enum_sig;
+    int idx = 0, base = 0;
+    const char* mname = NULL;
+    int mname_len = 0;
+    int pcount = 0;
+    for (;;) {
+        if (!p || !*p) return 0;                  // 签名比 tag 短 ⇒ 对不上
+        const char* nend = strchr(p, '(');
+        const char* semi = strchr(p, ';');
+        if (!nend || (semi && semi < nend)) nend = semi;
+        if (!nend) nend = p + strlen(p);
+        int pc = 0;
+        const char* pstart = NULL;
+        if (*nend == '(') {
+            const char* pend = strchr(nend, ')');
+            if (!pend) return 0;
+            pstart = nend + 1;
+            // 数逗号 + 1（空括号 = 0 个参数）
+            pc = (pend > pstart) ? 1 : 0;
+            for (const char* q = pstart; q < pend; q++) {
+                if (*q == ',') pc++;
+            }
+            semi = strchr(pend, ';');
+        }
+        if (idx == tag) {
+            mname = p;
+            mname_len = (int)(nend - p);
+            pcount = pc;
+            break;
+        }
+        if (!semi) return 0;                     // 没有更多成员了
+        base += pc;
+        idx++;
+        p = semi + 1;
+    }
+
+    // ── 输出 `{"成员":{ "参数": 值 … }}` ───────────────────────────────────
+    int avail = def->field_count - 1 - base;
+    if (pcount > avail) pcount = avail > 0 ? avail : 0;
+
+    sb_append_char(sb, '{');
+    if (pretty) sb_append_char(sb, '\n');
+    if (pretty) json_encode_indent(sb, indent + 2);
+    json_encode_string(sb, mname, mname_len);
+    sb_append_char(sb, ':');
+    if (pretty) sb_append_char(sb, ' ');
+    sb_append_char(sb, '{');
+    if (pretty && pcount > 0) sb_append_char(sb, '\n');
+
+    // 参数名：与成员名同一段签名里，`name(a,b)` 的括号内
+    const char* q = strchr(mname, '(');
+    const char* qend = q ? strchr(q, ')') : NULL;
+    const char* pn = q ? q + 1 : NULL;
+    for (int k = 0; k < pcount; k++) {
+        const char* pn_end = NULL;
+        if (pn && qend && pn <= qend) {
+            const char* comma = pn;
+            while (comma < qend && *comma != ',') comma++;
+            pn_end = comma;
+        }
+        if (pretty) json_encode_indent(sb, indent + 4);
+        if (pn && pn_end) {
+            json_encode_string(sb, pn, (int)(pn_end - pn));
+        } else {
+            char fb[16];
+            snprintf(fb, sizeof(fb), "p%d", base + k);
+            json_encode_string(sb, fb, (int)strlen(fb));
+        }
+        sb_append_char(sb, ':');
+        if (pretty) sb_append_char(sb, ' ');
+        json_encode_value(sb, st->field_values[1 + base + k], indent + 4, pretty, depth + 1, err);
+        if (k + 1 < pcount) sb_append_char(sb, ',');
+        if (pretty) sb_append_char(sb, '\n');
+        if (pn && qend && pn_end && pn_end < qend) {
+            pn = pn_end + 1;
+        } else {
+            pn = NULL;
+        }
+    }
+
+    if (pretty && pcount > 0) json_encode_indent(sb, indent + 2);
+    sb_append_char(sb, '}');
+    if (pretty) sb_append_char(sb, '\n');
+    if (pretty) json_encode_indent(sb, indent);
+    sb_append_char(sb, '}');
+    return 1;
+}
+
 // ★ 2026-11-09（P1 记录类型）：struct 实例 → JSON 对象
 //   字段名取 `def->fields[i].name`，值取 `st->field_values[i]`（字段顺序 = 声明顺序）。
 //   嵌套 struct / struct 数组靠 `json_encode_value` 递归 ⇒ 自动支持。
@@ -975,6 +1079,8 @@ static void json_encode_struct(StringBuilder* sb, ObjStruct* st, int indent, boo
         return;
     }
     ObjStructDef* def = st->def;
+    // 带载荷 enum：先按成员式输出（见 json_encode_enum_payload 的说明）
+    if (def->enum_sig && json_encode_enum_payload(sb, st, indent, pretty, depth, err)) return;
     int n = def->field_count;
 
     sb_append_char(sb, '{');

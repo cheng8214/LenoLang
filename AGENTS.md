@@ -141,12 +141,13 @@ if curNav == -12 { ... }          // ❌ -12 是什么？只能靠注释
 if status == "3" { ... }          // ❌ 字符串码，拼错不报错
 ```
 
-> **带载荷成员**（2026-11-10 起，P4 最后一项）：`enum Msg { progress(int done, int total) }`
+> **带载荷成员**（2026-11-10 起，P4 最后一项，已收官）：`enum Msg { progress(int done, int total) }`
 > 写法是 `Msg.progress(3, 10)`，匹配是 `case Msg.progress(d, t) { … }`；`_` 表示忽略该位置。
+> 跨模块可用（`export enum` + `use m.Msg`），`==` **按值**比较，`jsons.encode` 输出
+> `{"progress":{"done":3,"total":10}}`（用成员名，不暴露 `tag/p0`）。
 > 规则刻意窄：**同一 enum 里成员要么全带参数、要么全不带**；带载荷的成员不是 int
-> （`int x = Msg.progress(1,2)` 报错，也不能 `new Msg(...)`）；`switch` 主题必须是**变量**；
-> **不支持 `export`**（跨模块是单独一步）。漏成员又没 `default` ⇒ 穷尽性警告。
-> 纯 int 成员的老写法**零变化**（成员仍是 int 常量）。
+> （`int x = Msg.progress(1,2)` 报错，也不能 `new Msg(...)`）；`switch` 主题必须是**变量**。
+> 漏成员又没 `default` ⇒ 穷尽性警告。纯 int 成员的老写法**零变化**（成员仍是 int 常量）。
 
 ---
 
@@ -434,8 +435,8 @@ build\leno.exe --check <file>
 
 | 需求 | 现状 |
 |---|---|
-| `enum` 带载荷的**跨模块**使用（`export enum` / `use` 导入后构造） | 同文件可用（2026-11-10 起，见 #2）；跨模块要在模块符号表里带"成员是否有载荷"，尚未做 ⇒ 直接报错，不静默 |
 | `enum` 里混用"带载荷 / 不带载荷"成员 | 不支持（有意）：值是 int 与值是对象两种表示并存会让 switch / == / 穷尽性分叉 |
+| `jsons.fill(枚举值, json)` 反向填充 | 没有（载荷"属于哪个成员"是运行期概念）⇒ 用 `switch` 分派 |
 | struct ↔ JSON 自动转换 | 没有，手写 `as` 收窄 + 字段赋值 |
 | `switch` 穷尽性检查 | 没有，用 `default` 兜底 |
 | 函数局部量 > 255 | **编译期报错**（不会静默），需拆函数。寄存器号保持 8 位是**量过之后的决定**（四个项目 1.6 万个函数最高只用 134，见 `docs/待办与路线图.md` 的 P3 后半）；高水位 ≥ 200 时会先给 `WARN_REG_PRESSURE` 预警 |

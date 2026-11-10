@@ -9,12 +9,15 @@
 //   载荷槽**按成员分段**（progress 占 p0/p1、finished 占 p2、failed 占 p3/p4）——
 //   这样每个参数都是它自己声明的类型，一个 any 都不用 ✓
 //
-// 判据分两块：
-//   ① 运行期：构造 / 三种成员匹配 / 同值重复 switch / `_` 忽略绑定
+// 判据分三块：
+//   ① 运行期：构造 / 三种成员匹配 / 同值重复 switch / `_` 忽略绑定；
+//      按值 `==`（不是引用）、`Array.has`、`jsons.encode`（用成员名而非 tag/p0）
 //   ② 编译期（`--check` 子进程）：错误路径 5 条 + 穷尽性警告 1 条
+//   ③ 跨模块：`export enum` + `use m.Msg` 后构造/匹配（.lenosymc v44 带载荷表）
 import dirs
 import files
 import strings
+import jsons
 
 enum Msg {
     progress(int done, int total)
@@ -80,6 +83,17 @@ main() {
         default              { seen = 2 }
     }
     assert_eq(seen, 2, "①default 兜底")
+
+    // ---------- ①2 按值比较 + JSON（运行期才知道 tag 对应哪个成员）----------
+    assert_true(Msg.progress(3, 10) == Msg.progress(3, 10), "①2 同值相等（按值，不是引用）")
+    assert_true(Msg.progress(3, 10) != Msg.progress(4, 10), "①2 同成员不同载荷 ⇒ 不等")
+    assert_true(Msg.progress(3, 10) != Msg.finished("3"), "①2 不同成员 ⇒ 不等")
+    var arr = [Msg.progress(1, 2), Msg.failed("x", 9)]
+    assert_true(arr.has(Msg.progress(1, 2)), "①2 Array.has 也按值")
+    assert_eq(jsons.encode(Msg.progress(3, 10)),
+              "{\"progress\":{\"done\":3,\"total\":10}}", "①2 jsons.encode 用成员/参数名")
+    assert_eq(jsons.encode(Msg.failed("w", 2)),
+              "{\"failed\":{\"why\":\"w\",\"code\":2}}", "①2 jsons.encode 第二个成员")
 
     // ---------- ② 编译期错误路径 ----------
     var work = dirs.join(_tmpdir(), "leno_enum_payload")
@@ -159,5 +173,35 @@ main() {
     assert_true(o6.has("少了 1 个成员"), "②6 穷尽性警告（带载荷 enum）")
     assert_true(o6.has("编译检查通过"), "②6 只是警告，不打断编译")
 
-    print("test_enum_payload passed（构造 / 三种匹配 / `_` / 5 条错误路径 / 穷尽性警告）")
+    // ---------- ③ 跨模块：export enum + use m.Msg ----------
+    //   载荷信息走 .lenosymc（v44）+ 消费端按它重建同名 struct（semantic_import_payload_enum）
+    files.write(dirs.join(work, "pm_mod.leno"), @"export enum M {
+    a(int x)
+    b(string s)
+}
+")
+    var entrySrc = @"import ""pm_mod.leno"" as mm
+use mm.M
+
+main() {
+    M m = M.a(5)
+    switch m {
+        case M.a(x) { print(""A"" + _str(x)) }
+        case M.b(s) { print(""B"" + s) }
+    }
+    M n = M.a(5)
+    if m == n {
+        print(""EQOK"")
+    }
+}
+"
+    var entryPath = dirs.join(work, "pm_entry.leno")
+    files.write(entryPath, entrySrc)
+    var r = _exec(_executable() + " \"" + entryPath + "\"", 30000)
+    var out = r.output as string
+    assert_eq(r.code as int, 0, "③跨模块编译运行成功")
+    assert_true(out.has("A5"), "③跨模块构造 + 匹配")
+    assert_true(out.has("EQOK"), "③跨模块按值比较")
+
+    print("test_enum_payload passed（构造/匹配/`_`/按值==/jsons/5 条错误路径/穷尽性/跨模块）")
 }

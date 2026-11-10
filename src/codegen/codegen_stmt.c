@@ -2492,6 +2492,21 @@ static void gen_struct_def(CodeGen* gen, Ast* ast) {
         cw_u16(gen, make_constant(gen, cv), ast->line);
     }
 
+    // ★ 2026-11-10（P4 enum 载荷）：带载荷 enum 降级出来的 struct ⇒ 尾部多带一段
+    //   "成员/参数名签名"，运行时 `==` 与 `jsons.encode` 靠它才知道 tag 对应哪个成员。
+    //   形态：`progress(done,total);finished(path)`（构造代码：enum_payload_signature_text）
+    //   ⚠ 读取侧必须同序：VM 的 OP_STRUCT_DEF、debug.c 的 decode_trailing、
+    //     bytecode_verify.c 的 scan_struct_def，三处都在"关联常量"之后读这一段。
+    if (ast->u.struct_def.enum_src && ast->u.struct_def.is_synthetic) {
+        cw_u8(gen, 1, ast->line);
+        char* sig = enum_payload_signature_text(ast->u.struct_def.enum_src);
+        ObjString* ss = str_copy(sig ? sig : "", sig ? (int)strlen(sig) : 0);
+        cw_u16(gen, make_constant(gen, val_obj((Object*)ss)), ast->line);
+        free(sig);
+    } else {
+        cw_u8(gen, 0, ast->line);
+    }
+
     if (method_name_consts) free(method_name_consts);
     if (method_func_consts) free(method_func_consts);
 }

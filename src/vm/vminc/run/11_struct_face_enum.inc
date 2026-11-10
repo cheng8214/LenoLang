@@ -184,6 +184,21 @@
             }
         }
 
+        // ★ 2026-11-10（P4 enum 载荷）：尾部"成员/参数名签名"（带载荷 enum 降级出来的
+        //   struct 才有）。1 字节标志 + u16 常量索引。
+        //   ⚠ 与 codegen_stmt.c 的发射顺序严格对应；debug.c / bytecode_verify.c 也要读这一段。
+        uint8_t has_enum_sig = *p++;
+        if (has_enum_sig) {
+            int sig_idx = ((int)p[0] << 8) | (int)p[1];
+            p += 2;
+            if (sig_idx >= 0 && sig_idx < frame->chunk->const_cnt) {
+                Value sv = frame->chunk->constants[sig_idx];
+                if (val_is_obj(sv) && val_as_obj(sv)->type == OBJ_STRING) {
+                    def->enum_sig = strdup(((ObjString*)val_as_obj(sv))->chars);
+                }
+            }
+        }
+
         frame->ip = p;
         struct_def_register(def);
         DISPATCH();

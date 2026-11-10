@@ -375,3 +375,5 @@
     //   每个方法: method_name_idx(2) func_idx(2)
     //   ctor_dtor_flags(1) [ctor_index(1)] [dtor_index(1)]
     //   const_count(1) + (cname_idx(2) cval_idx(2))×n
+    //   has_enum_sig(1) [sig_idx(2)]   ← ★ 2026-11-10（P4 enum 载荷）：带载荷 enum 的
+    //                                    成员/参数名签名（读取见 11_struct_face_enum.inc）

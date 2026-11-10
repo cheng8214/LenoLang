@@ -204,6 +204,21 @@ static void sym_table_clear_symbols(ModuleSymbolTable* table) {
         }
         free(table->enums[i].member_names);
         free(table->enums[i].member_values);
+        // ★ 2026-11-10（P4 enum 载荷）：载荷参数个数 + 参数类型（纯 int 枚举这两个是 NULL）
+        if (table->enums[i].member_param_counts) {
+            for (int j = 0; j < table->enums[i].member_count; j++) {
+                int pc = table->enums[i].member_param_counts[j];
+                if (pc <= 0 || !table->enums[i].member_param_types) continue;
+                for (int k = 0; k < pc; k++) {
+                    if (table->enums[i].member_param_types[j][k]) {
+                        type_free(table->enums[i].member_param_types[j][k]);
+                    }
+                }
+                free(table->enums[i].member_param_types[j]);
+            }
+            free(table->enums[i].member_param_types);
+            free(table->enums[i].member_param_counts);
+        }
     }
     free(table->enums);
 

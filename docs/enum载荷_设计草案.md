@@ -1,6 +1,6 @@
 # enum 载荷（`case Progress(done, total)`）设计草案
 
-> 状态：**已实现**（2026-11-10，步 1~4 + 断言；步 5 无需改动、步 6 完成）。
+> 状态：**已实现并收官**（2026-11-10）：步 1~4 + 断言 + 跨模块 + `==` 按值 + `jsons.encode`。
 > 目标：把"enum 只能当 int 常量用"补成"enum 成员可以带数据"，且**不破坏**现有 int 枚举。
 > ⚠ 实现与本文初稿**有三处偏离**（都是为了不退回 `any`、不让类型名对不上），
 >   见文末 §7「实现记录」——读 §2/§3 时以 §7 为准。
@@ -101,14 +101,15 @@ struct Msg {
 | 步 | 文件 | 内容 | 状态 |
 |---|---|---|---|
 | 1 | `src/parser/*`、`src/ast.c` | `enum` 成员允许 `name(type a, type b)`；`Ast` 里加 `member_params`（名字 + 类型数组）。**纯新增**，不带参数的成员走老路径 | ✅ 7c32a521 |
-| 2 | `src/semantic/semantic.c` + `visit_enum.inc` | 见到带参数的成员 ⇒ 在**顶层列表最前面**插一条**同名** `struct E{tag,p0…}`（支持前向引用）；enum 那条声明在语义/codegen 阶段被跳过；混用 / export 在此报错 | ✅ |
+| 2 | `src/semantic/semantic.c` + `visit_enum.inc` | 见到带参数的成员 ⇒ 在**顶层 import/use 之后**插一条**同名** `struct E{tag,p0…}`（支持前向引用；不能越过 import，否则载荷类型解析不到）；enum 那条声明在语义/codegen 阶段被跳过；混用在此报错（`export` 已支持，见 §7） | ✅ |
 | 3 | `src/semantic/visitinc/enum_payload.inc` | `E.m(args)` 改写成 `AST_STRUCT_INIT(E, {tag, p<base+k>})`。⚠ 实际节点是 **`AST_MODULE_CALL`**（parser 把"变量.名字(…)"统一建成它），`AST_CALL + MODULE_ACCESS` 那条也一并接住；`E.m`（不带括号）⇒ 报错"该成员要参数" | ✅ |
 | 4 | `src/semantic/visitinc/visit_control.inc` | `case E.m(a, b)` ⇒ 主题换成 `m.tag`、case 值换成 tag 常量、绑定变量注入 case 体最前面；另补一份穷尽性警告 | ✅ |
 | 5 | `src/serialize/*` | 隐藏 struct 随模块一起序列化（`OBJ_STRUCT_DEF` 已有能力 ⇒ **零改动**） | ✅ 无需动 |
-| 6 | `assert/` + `docs` | 新增 `assert/test_enum_payload.leno`：构造 / 三种成员匹配 / `_` / 循环里 switch / 5 条错误路径 / 穷尽性警告 | ✅ |
+| 6 | `assert/` + `docs` | 新增 `assert/test_enum_payload.leno`：构造 / 三种成员匹配 / `_` / 循环里 switch / 5 条错误路径 / 穷尽性警告 / **按值 `==` + `jsons.encode` + 跨模块** | ✅ |
+| 7 | 跨模块 + 运行期语义（**初稿没列，后来补的**） | `.lenosymc` v44 带载荷表；`OP_STRUCT_DEF` 尾部带签名 ⇒ `==` 按值、`jsons.encode` 用成员名 | ✅ 见 §7 |
 
-**不做**：跨模块 `use` 导入带载荷 enum 的成员构造（按步 3 的改写发生在语义阶段，跨模块需要
-模块符号表带上"成员是否有载荷"，属额外一步；先只在同模块可用，`export` 直接报错写清限制）。
+**原定的"不做"已做掉**：跨模块 `use` 导入带载荷 enum（`.lenosymc` v44 + 消费端重建同名 struct），
+所以 `export enum` 现在是正常写法，不再报错。
 
 ---
 
@@ -124,9 +125,11 @@ struct Msg {
 
 ## 6. 验收标准
 
-1. `assert/test_enum_payload.leno` 全绿（构造、匹配、穷尽性、5 条错误路径）；
+1. `assert/test_enum_payload.leno` 全绿（构造、匹配、穷尽性、5 条错误路径、按值 `==`、
+   `jsons.encode`、跨模块）；
 2. 现有断言 **580/0**（579 老 + 1 新）不退（int 枚举路径零变化）；
-3. `examples/` 812 个文件 `--check` 全过；`leno_gui` 110 个全过；
+3. `examples/` 812 个文件 `--check` 全过；`leno_gui` 110 个全过；`build/leno_module` 369 个
+   里只剩 2 个**既有**失败（LenoWeb 的 generic 示例，与 enum 无关）；
 4. 四个项目 `--check` 通过（它们不写带载荷 enum，等价于"没影响"）；
 5. `docs/Leno入门教程.md` 的 enum 章节补一节（含与 struct+tag 的取舍）✅。
 
@@ -169,10 +172,20 @@ struct Msg {
   用来跳过"字段未初始化"、"与 native/导入模块同名"、"绑定变量未使用"这类面向用户源码的诊断
   —— 用户没写这些声明，报给他也无处可改。
 
-### 已知缺口（下一步才做）
+### 三处缺口：**已补齐**（2026-11-10 第二轮）
 
-- 跨模块：`export enum` 直接报错；消费端 `use m.Msg` 拿到的仍是 enum 符号 ⇒ 构造会落到
-  "类型 'int' 没有方法"这条远因错。要彻底解决得让模块符号表带上"成员参数个数/类型"
-  （`.lenosymc` 再 bump 一次）。
-- `==` 比较：两个带载荷的成员值目前是 struct 比较（引用语义），不按 tag+载荷逐字段比。
-- `jsons.encode` 会暴露 `tag/p0…` 这些实现字段（可接受，但别当成稳定格式）。
+| 缺口 | 做法 | 落点 |
+|---|---|---|
+| 跨模块（`export enum` + `use m.Msg`） | 载荷表随 **`.lenosymc` v44** 往返（`ModuleEnumSymbol.member_param_counts/member_param_types`）；消费端 `use` 时**自己重建**同名 struct（符号 + 字段表 + 载荷表），不依赖生产端的 AST。运行期的结构定义仍由生产模块 `import` 时 `OP_STRUCT_DEF` 注册（同名 ⇒ 对得上） | `sym_table_cache.inc`、`module_ast_exports.c`、`semantic_import_payload_enum` |
+| `==` 按值比较 | `OP_STRUCT_DEF` **尾部**多带 `has_enum_sig + u16 常量`（成员/参数名签名 `progress(done,total);finished(path)`，`.lenb` v3.2.31 / `.lenomc` v46）。运行期按该标志走"逐字段比较"（`value_eq_depth` 深度 8）；`value_shallow_equal` 也同步（否则 `Array.has` / Dict 键会与 `==` 自相矛盾） | `codegen_stmt.c`、`11_struct_face_enum.inc`、`vm.c`、`leno_value.h` |
+| `jsons.encode` 暴露 `tag/p0` | 有签名时输出 `{"progress":{"done":3,"total":10}}`（成员名 + 参数名）；解析不出来就退回通用输出（宁可多暴露字段，也不产出坏 JSON） | `jsons.c` 的 `json_encode_enum_payload` |
+
+> 三条都靠同一份"签名文本"，所以**三处读取方必须同序**：VM 的 `OP_STRUCT_DEF`、`debug.c` 的
+> `decode_trailing`、`bytecode_verify.c` 的 `scan_struct_def`。漏一处就会把下一条指令当数据头
+> ⇒ 运行期"内存反序列化失败(6)"，而 `--check` 依然是绿的（与 v3.2.29 的 `Array[T]` 同一个坑）。
+
+### 仍未做（明确不做）
+
+- `jsons.fill(enum_value, json)` 反向填充：载荷"属于哪个成员"是运行期概念，反填要先定 tag；
+  目前请用 `switch` 分派。
+- `==` 跨**不同 enum** 比较：类型不同 ⇒ 不等；`switch` 里混用两个 enum 的成员也在编译期就拦。

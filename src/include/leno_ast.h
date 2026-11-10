@@ -501,6 +501,13 @@ struct {
 
 // AST API
 Ast* ast_new(AstKind kind, int line);
+
+// ★ 2026-11-10（P4 enum 载荷）：带载荷 enum 的「成员/参数名签名」
+//   形态 `progress(done,total);finished(path)`（调用方 free）。
+//   编译期由 codegen 编进 OP_STRUCT_DEF 尾部，运行期给 `==` 与 `jsons.encode` 用
+//   （它们只有 ObjStructDef，没有 AST ⇒ 必须是可恢复成名字的文本）。
+//   不是带载荷 enum ⇒ 返回 NULL。
+char* enum_payload_signature_text(Ast* enum_def_ast);
 void ast_free(Ast* ast);
 
 // 取 struct 第 i 个字段的声明行（诊断落点；缺 field_lines 时回退到 struct 行）。

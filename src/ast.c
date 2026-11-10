@@ -664,3 +664,58 @@ break;
 
     free(ast);
 }
+
+// ★ 2026-11-10（P4 enum 载荷）：`progress(done,total);finished(path)`
+//   为什么要有它：运行期的 `==`（按值比较）与 `jsons.encode`（成员式输出）手里只有
+//   ObjStructDef（字段名是 p0/p1），而"第 k 个槽对应哪个参数名"只在 AST 里 ⇒ 编成一段
+//   可解析的短文本随 OP_STRUCT_DEF 带过去。不是带载荷 enum ⇒ NULL（编 0 个字节即可）。
+char* enum_payload_signature_text(Ast* ed) {
+    if (!ed || ed->kind != AST_ENUM_DEF) return NULL;
+    if (!ed->u.enum_def.member_param_counts) return NULL;
+    int mc = ed->u.enum_def.member_count;
+    if (mc <= 0) return NULL;
+
+    size_t cap = 64;
+    for (int m = 0; m < mc; m++) {
+        const char* mn = (ed->u.enum_def.member_names && ed->u.enum_def.member_names[m])
+                             ? ed->u.enum_def.member_names[m] : "m";
+        cap += strlen(mn) + 3;
+        int pc = ed->u.enum_def.member_param_counts[m];
+        for (int k = 0; k < pc; k++) {
+            const char* pn = (ed->u.enum_def.member_param_names &&
+                              ed->u.enum_def.member_param_names[m] &&
+                              ed->u.enum_def.member_param_names[m][k])
+                                 ? ed->u.enum_def.member_param_names[m][k] : "p";
+            cap += strlen(pn) + 2;
+        }
+    }
+    char* out = (char*)malloc(cap + 1);
+    if (!out) return NULL;
+    size_t off = 0;
+    for (int m = 0; m < mc; m++) {
+        const char* mn = (ed->u.enum_def.member_names && ed->u.enum_def.member_names[m])
+                             ? ed->u.enum_def.member_names[m] : "m";
+        int pc = ed->u.enum_def.member_param_counts[m];
+        int w = snprintf(out + off, cap + 1 - off, "%s%s", m == 0 ? "" : ";", mn);
+        if (w < 0) break;
+        off += (size_t)w;
+        if (pc <= 0) continue;
+        w = snprintf(out + off, cap + 1 - off, "(");
+        if (w < 0) break;
+        off += (size_t)w;
+        for (int k = 0; k < pc; k++) {
+            const char* pn = (ed->u.enum_def.member_param_names &&
+                              ed->u.enum_def.member_param_names[m] &&
+                              ed->u.enum_def.member_param_names[m][k])
+                                 ? ed->u.enum_def.member_param_names[m][k] : "p";
+            w = snprintf(out + off, cap + 1 - off, "%s%s", k == 0 ? "" : ",", pn);
+            if (w < 0) break;
+            off += (size_t)w;
+        }
+        w = snprintf(out + off, cap + 1 - off, ")");
+        if (w < 0) break;
+        off += (size_t)w;
+    }
+    out[off < cap ? off : cap] = '\0';
+    return out;
+}

@@ -243,11 +243,15 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
                 dbg_take_u16(chunk, base, &p, &over);
                 dbg_take_u16(chunk, base, &p, &over);
             }
+            // ★ 2026-11-10（P4 enum 载荷）：带载荷 enum 的成员/参数名签名（1 字节标志 + u16）
+            int has_enum_sig = dbg_take_u8(chunk, base, &p, &over);
+            if (has_enum_sig) dbg_take_u16(chunk, base, &p, &over);
             if (desc) {
                 char nm[128];
                 dbg_const_str(chunk, ((int)b << 8) | (int)c, nm, (int)sizeof(nm));
-                snprintf(desc, desc_size, "name=%s 字段=%d 方法=%d impl=%d 泛型参数=%d 关联常量=%d%s",
-                         nm, fields, methods, impls, tps, consts, over ? " [截断]" : "");
+                snprintf(desc, desc_size, "name=%s 字段=%d 方法=%d impl=%d 泛型参数=%d 关联常量=%d%s%s",
+                         nm, fields, methods, impls, tps, consts,
+                         has_enum_sig ? " 载荷enum=1" : "", over ? " [截断]" : "");
             }
             break;
         }

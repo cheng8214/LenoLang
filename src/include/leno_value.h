@@ -678,6 +678,13 @@ typedef struct {
     // 声明来源模块（跨模块同名检测用，见 S2）。运行时由 OP_DEFINE_* 从 module frame 取；
     // NULL = 来源未知（编译期早期注册、反序列化产生的定义、入口程序自身的类型）。
     ObjModule* owner;
+    // ★ 2026-11-10（P4 enum 载荷）：这个 struct 是**带载荷 enum 降级出来的**（否则 NULL）。
+    //   形态：`progress(done,total);finished(path)` —— 成员名 + 参数名，分号分段。
+    //   用途只有两处（都是"运行期才知道"的语义）：
+    //     ① `==` 按值比较（tag + 载荷逐字段），见 value_eq_depth；
+    //     ② `jsons.encode` 输出 `{"progress":{"done":3,"total":10}}`，见 jsons.c。
+    //   ⚠ 它只是**成员/参数名**，不承诺是稳定序列化格式之外的任何东西。
+    char* enum_sig;
 } ObjStructDef;
 
 // 结构体实例对象
@@ -1263,7 +1270,7 @@ static inline int bigint_equals_int64(ObjBigInt* a, int64_t b) {
 // 核心浅比较：处理基本类型、String 内容、BigInt 值、对象指针
 // 快速路径覆盖 null/bool（bit-exact）、同指针对象
 // 跨类型支持 int<->float、int<->BigInt
-static inline int value_shallow_equal(Value a, Value b) {
+static inline int value_shallow_equal_depth(Value a, Value b, int depth) {
     // 1. 快速路径：bit-exact 相等（涵盖 null, bool, 同指针对象, 相同 int/float）
     if (a == b) return 1;
 
@@ -1311,11 +1318,38 @@ static inline int value_shallow_equal(Value a, Value b) {
         if (oa->type == OBJ_BIGINT) {
             return bigint_compare((ObjBigInt*)oa, (ObjBigInt*)ob) == 0;
         }
+        // ★ 2026-11-10（P4 enum 载荷）：带载荷 enum 的降级 struct **按值**比较
+        //   （tag + 载荷逐字段，浅比较）。
+        //   为什么必须在这里也补一份：`Array.has / index_of / remove`、Dict 的键比较都走
+        //   本函数 —— VM 的 `==`（value_eq_depth）已经按值了，这里不改就会得到
+        //   「a == b 为真，但 list.has(b) 为假」这种自相矛盾的观感 ✗
+        //   判据是 `def->enum_sig`（普通 struct 仍是引用语义，零变化 ✓）
+        if (oa->type == OBJ_STRUCT) {
+            ObjStruct* sa = (ObjStruct*)oa;
+            ObjStruct* sb = (ObjStruct*)ob;
+            ObjStructDef* d = sa->def;
+            if (d && d->enum_sig && sb->def == d && d->field_count > 0) {
+                if (depth <= 0) return 0;   // 自引用（`e.other = e`）兜底：到顶判不等
+                for (int i = 0; i < d->field_count; i++) {
+                    if (!value_shallow_equal_depth(sa->field_values[i], sb->field_values[i],
+                                                   depth - 1)) {
+                        return 0;
+                    }
+                }
+                return 1;
+            }
+            return 0;
+        }
         // 其他对象类型：指针不同即不等
         return 0;
     }
 
     return 0;
+}
+
+// 对外入口：深度上限 4（载荷槽正常只有标量/字符串；带自引用的才需要上限）
+static inline int value_shallow_equal(Value a, Value b) {
+    return value_shallow_equal_depth(a, b, 4);
 }
 
 // ============================================================================

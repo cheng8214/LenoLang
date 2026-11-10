@@ -92,16 +92,22 @@
                     error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                      "face '%s' 不能实例化", ast->u.struct_init.struct_name);
                 } else if (!ast->u.struct_init.from_enum_payload &&
-                           sym->type->kind == TYPE_STRUCT && sym->type_decl_ast &&
-                           ((Ast*)sym->type_decl_ast)->kind == AST_STRUCT_DEF &&
-                           ((Ast*)sym->type_decl_ast)->u.struct_def.enum_src) {
+                           sym->type->kind == TYPE_STRUCT &&
+                           // 本地声明走 AST；跨模块（`use m.Msg`）只有符号表 ⇒ 看 enum_payload_counts
+                           (sym->enum_payload_counts ||
+                            (sym->type_decl_ast &&
+                             ((Ast*)sym->type_decl_ast)->kind == AST_STRUCT_DEF &&
+                             ((Ast*)sym->type_decl_ast)->u.struct_def.enum_src))) {
                     // ★ 2026-11-10（P4 enum 载荷 步 3/6）：带载荷 enum 降级出来的同名 struct
                     //   是**编译器的实现细节** ⇒ 不许 `new Msg(tag = 0, …)` 绕过成员构造。
-                    Ast* _esrc = ((Ast*)sym->type_decl_ast)->u.struct_def.enum_src;
+                    const char* _ename = sym->enum_payload_counts
+                                             ? sym->name
+                                             : ((Ast*)sym->type_decl_ast)
+                                                   ->u.struct_def.enum_src->u.enum_def.name;
                     error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                         "带载荷 enum '%s' 不能用 new 构造 —— 请写 `%s.成员(实参…)`"
                         "（成员构造会替你填 tag/载荷槽）",
-                        _esrc->u.enum_def.name, _esrc->u.enum_def.name);
+                        _ename, _ename);
                 } else if (sym->type->kind != TYPE_STRUCT) {
                     // ★ 2026-10-24：cstruct 用 new 构造 ⇒ 直接给出正确写法
                     //   原来只说「'Point' 不是 struct 类型」，看不出该用哪套 API

@@ -141,6 +141,15 @@ typedef struct {
     int member_count;           // 成员数量
     char** member_names;        // 成员名称数组
     int64_t* member_values;     // 成员值数组（int64_t，支持 >= 2^31 的位标志值）
+    // ★ 2026-11-10（P4 enum 载荷，LENOSYMC v44）：成员载荷（带载荷 enum 跨模块要用）
+    //   member_param_counts[i] = 第 i 个成员（tag = i）的参数个数；0 = 纯 int 成员。
+    //   member_param_types[i][k] = 第 k 个参数的类型（仅 counts[i] > 0 时非空）。
+    //   纯 int 枚举这两个字段全为 NULL —— 老缓存/老模块行为零变化。
+    //   为什么放这里（而不是 ModuleStructSymbol）：消费端 `use m.Msg` 时命中哪条分支取决于
+    //   **符号表里有什么**，而 enum 符号是 parser AST 填充器**一定**会产出的那个（合成的
+    //   隐藏 struct 是语义阶段才造的，不保证在表里）⇒ 载荷信息挂在 enum 符号上最可靠 ✓
+    int* member_param_counts;
+    TypeInfo*** member_param_types;
 } ModuleEnumSymbol;
 
 // 模块 clib 函数符号
@@ -326,7 +335,16 @@ ModuleEnumSymbol* module_symbol_table_find_enum(ModuleSymbolTable* table, const 
 
 // 添加 enum 符号（member_values 一律原样接收：自动递增已在扫描阶段
 // scan_enum.inc 解析完毕。-1 是合法成员值，不表示"无显式值"）
-void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count, char** member_names, int64_t* member_values);
+// member_param_counts / member_param_types 可为 NULL（纯 int 枚举）—— 深拷贝进符号表。
+void module_symbol_table_add_enum(ModuleSymbolTable* table, const char* name, int member_count,
+                                  char** member_names, int64_t* member_values,
+                                  const int* member_param_counts,
+                                  TypeInfo*** member_param_types);
+
+// 是否「带载荷 enum」（任一成员参数个数 > 0）。纯 int 枚举一律 0（老行为）。
+int module_symbol_table_enum_is_payload(const ModuleEnumSymbol* es);
+// 第 mi 个成员的载荷基址（= 前面所有成员参数个数之和）—— 与语义层同一个公式
+int module_symbol_table_enum_member_base(const ModuleEnumSymbol* es, int mi);
 
 // 查找 face 符号
 ModuleFaceSymbol* module_symbol_table_find_face(ModuleSymbolTable* table, const char* face_name);

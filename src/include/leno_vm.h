@@ -1038,6 +1038,12 @@ struct Symbol {
     char** enum_value_names;        // 成员名称数组
     int64_t* enum_values;           // 成员值数组（int64_t，支持 >= 2^31 的位标志值）
     int enum_value_count;           // 成员数量
+    // ★ 2026-11-10（P4 enum 载荷 跨模块）：`use m.Msg` 导入的**带载荷 enum** 的载荷信息。
+    //   counts[i] = 第 i 个成员（tag = i）的参数个数；NULL = 不是带载荷 enum。
+    //   本地声明不靠它（走 type_decl_ast → AST_STRUCT_DEF.enum_src），
+    //   跨模块没有 AST ⇒ 这是唯一来源（见 visitinc/enum_payload.inc 的 SemPayloadEnum）。
+    int* enum_payload_counts;
+    int enum_payload_member_count;
     // 函数别名信息（仅当 kind == SYM_FUNC_ALIAS 时使用）
     char* alias_module_name;        // 源模块名（如 "core"）
     char* alias_func_name;          // 源函数名（如 "loadTexture"）

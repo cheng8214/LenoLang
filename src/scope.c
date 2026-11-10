@@ -146,6 +146,10 @@ void scope_free(Scope* scope) {
             if (sym->enum_values) {
                 free(sym->enum_values);
             }
+            // ★ 2026-11-10（P4 enum 载荷 跨模块）：use 导入带载荷 enum 时的成员参数个数表
+            if (sym->enum_payload_counts) {
+                free(sym->enum_payload_counts);
+            }
             // 释放 struct / cstruct 字段元数据（都是本符号独占的副本）
             if (sym->struct_type_name) free(sym->struct_type_name);
             if (sym->struct_field_names) {

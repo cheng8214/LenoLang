@@ -1,10 +1,10 @@
 // ============================================================================
-// ★ 2026-11-10（P4 enum 载荷 步 3/6 + 步 4/6）：带载荷 enum 的两处**改写**
+// ★ 2026-11-10（P4 enum 载荷）：带载荷 enum 的**语义改写**（构造 / switch 匹配 / 跨模块导入）
 // ----------------------------------------------------------------------------
 // 降级形态（见 semantic.c 的 enum_payload_synthesize）：
 //   `enum Msg { progress(int done, int total)  finished(string path) }`
 //     ⇒ `struct Msg { int tag; int p0; int p1; string p2 }`（同名，用户看不见这层）
-//       载荷槽**按成员分段**：progress 占 p0/p1、finished 占 p2（见 semantic.c 的布局说明）
+//       载荷槽**按成员分段**：progress 占 p0/p1、finished 占 p2
 //   于是：
 //     · 构造  `Msg.progress(3, 10)`      ⇒ `new Msg(tag = 0, p0 = 3, p1 = 10)`
 //     · 匹配  `switch m { case Msg.progress(d, t) { … } }`
@@ -17,79 +17,106 @@
 //   AST_MODULE_ACCESS。漏掉 MODULE_CALL 这条路的症状是：
 //   「'Msg' 是 struct 类型名，不能直接当接收者用」。
 //
-// 判据"这是不是带载荷 enum 的隐藏 struct"**只有一个**：
-//   `AST_STRUCT_DEF` 的 `enum_src != NULL`（见 leno_ast.h 的说明）。
+// ★ 跨模块（LENOSYMC v44）：消费端 `use m.Msg` 时**没有 AST**（enum_src 恒为 NULL）⇒
+//   载荷信息只能来自模块符号表（ModuleEnumSymbol 的 member_param_counts/…，经
+//   `semantic_import_payload_enum` 拷进 Symbol）。因此下面一切判据都走 **SemPayloadEnum**
+//   这个"视图"：本地声明取 AST，跨模块取符号表 —— 两者字段名/公式完全一致 ✓
 // ============================================================================
 
-// 名字是带载荷 enum 的隐藏 struct 名 ⇒ 返回那条 struct 定义 AST（否则 NULL）
-static Ast* sem_payload_enum_struct_of_type(Semantic* s, const char* type_name) {
-    if (!s || !type_name || !type_name[0]) return NULL;
-    Symbol* ts = scope_resolve(s->current, type_name);
-    if (!ts && s->root_scope) ts = scope_resolve(s->root_scope, type_name);
-    if (!ts) return NULL;
-    Ast* sd = (Ast*)ts->type_decl_ast;
-    if (sd && sd->kind == AST_STRUCT_DEF && sd->u.struct_def.enum_src) return sd;
-    return NULL;
-}
-
-// 成员名 → 序号（= tag 值）；没有 ⇒ -1
-static int sem_payload_member_index(const Ast* esrc, const char* name) {
-    if (!esrc || esrc->kind != AST_ENUM_DEF || !name) return -1;
-    for (int i = 0; i < esrc->u.enum_def.member_count; i++) {
-        if (esrc->u.enum_def.member_names[i] &&
-            strcmp(esrc->u.enum_def.member_names[i], name) == 0) {
-            return i;
-        }
-    }
-    return -1;
-}
+// ---------------------------------------------------------------------------
+// 「带载荷 enum 视图」：本地声明与跨模块导入的唯一统一表示
+// ---------------------------------------------------------------------------
+typedef struct {
+    const char* name;        // enum 名（诊断文案用；构造时也用它当 struct 名）
+    int member_count;        // 成员数（tag 取值 0..member_count-1）
+    char** member_names;     // 成员名数组（借用，不释放）
+    int* counts;             // [成员] = 该成员的参数个数（借用，不释放）
+    Ast* esrc;               // 本地声明的 enum AST；跨模块为 NULL（只用于诊断/穷尽提示）
+} SemPayloadEnum;
 
 // 第 mi 个成员的载荷基址（= 前面所有成员的参数个数之和）—— **唯一实现**
 //   `enum Msg { progress(int,int)  finished(string) }`
 //     progress ⇒ 0（p0/p1）、finished ⇒ 2（p2）
 //   ⚠ 构造（步 3）与 case 绑定（步 4）必须用同一个公式，否则读错槽 = 静默错值
-static int sem_payload_member_base(const Ast* esrc, int mi) {
-    if (!esrc || esrc->kind != AST_ENUM_DEF || mi <= 0) return 0;
+static int sem_payload_member_base(const SemPayloadEnum* v, int mi) {
+    if (!v || !v->counts || mi <= 0) return 0;
     int base = 0;
-    for (int i = 0; i < mi && i < esrc->u.enum_def.member_count; i++) {
-        base += esrc->u.enum_def.member_param_counts[i];
-    }
+    for (int i = 0; i < mi && i < v->member_count; i++) base += v->counts[i];
     return base;
 }
 
+// 成员名 → 序号（= tag 值）；没有 ⇒ -1
+static int sem_payload_member_index(const SemPayloadEnum* v, const char* name) {
+    if (!v || !v->member_names || !name) return -1;
+    for (int i = 0; i < v->member_count; i++) {
+        if (v->member_names[i] && strcmp(v->member_names[i], name) == 0) return i;
+    }
+    return -1;
+}
+
+// 从符号取视图：本地声明（type_decl_ast → struct.enum_src）或跨模块（Symbol 上的载荷表）
+static int sem_payload_view_from_symbol(Symbol* sym, SemPayloadEnum* out) {
+    if (!sym) return 0;
+    Ast* sd = (Ast*)sym->type_decl_ast;
+    if (sd && sd->kind == AST_STRUCT_DEF && sd->u.struct_def.enum_src) {
+        Ast* ed = sd->u.struct_def.enum_src;
+        if (ed->kind != AST_ENUM_DEF) return 0;
+        out->name = ed->u.enum_def.name;
+        out->member_count = ed->u.enum_def.member_count;
+        out->member_names = ed->u.enum_def.member_names;
+        out->counts = ed->u.enum_def.member_param_counts;
+        out->esrc = ed;
+        return out->name && out->member_names && out->counts && out->member_count > 0;
+    }
+    if (sym->enum_payload_counts && sym->enum_payload_member_count > 0) {
+        out->name = sym->name;
+        out->member_count = sym->enum_payload_member_count;
+        out->member_names = sym->enum_value_names;   // 导入时一起填的成员名
+        out->counts = sym->enum_payload_counts;
+        out->esrc = NULL;
+        return out->name && out->member_names;
+    }
+    return 0;
+}
+
+// 按**类型名**取视图（变量声明类型、enum 名）
+static int sem_payload_view_by_name(Semantic* s, const char* type_name, SemPayloadEnum* out) {
+    if (!s || !type_name || !type_name[0]) return 0;
+    Symbol* ts = scope_resolve(s->current, type_name);
+    if (!ts && s->root_scope) ts = scope_resolve(s->root_scope, type_name);
+    return sem_payload_view_from_symbol(ts, out);
+}
+
 // `Enum.成员(…)` 的**统一识别**（AST_CALL 与 AST_MODULE_CALL 两种形状都认）
-//   命中 ⇒ 返回那条隐藏 struct 定义，并把成员名 / 实参列表写到出参（都可为 NULL）
-//   没命中（不是带载荷 enum 的成员调用 / 带泛型实参 / 名字不存在）⇒ NULL
-static Ast* sem_payload_enum_of_pattern(Semantic* s, Ast* v,
-                                        const char** out_mname, AstList** out_args) {
-    if (!s || !v) return NULL;
+//   命中 ⇒ 1，view 填好、实参列表写到 out_args
+static int sem_payload_view_of_pattern(Semantic* s, Ast* v, SemPayloadEnum* out,
+                                       AstList** out_args) {
+    if (!s || !v) return 0;
     const char* ename = NULL;
     const char* mname = NULL;
     AstList* args = NULL;
     if (v->kind == AST_CALL) {
         Ast* callee = v->u.call.callee;
-        if (!callee || callee->kind != AST_MODULE_ACCESS) return NULL;
-        if (v->u.call.generic_type_args || v->u.call.generic_type_names) return NULL;
+        if (!callee || callee->kind != AST_MODULE_ACCESS) return 0;
+        if (v->u.call.generic_type_args || v->u.call.generic_type_names) return 0;
         ename = callee->u.module_access.module_name;
         mname = callee->u.module_access.member_name;
         args = &v->u.call.args;
     } else if (v->kind == AST_MODULE_CALL) {
-        if (v->u.module_call.generic_type_args || v->u.module_call.generic_type_names) return NULL;
+        if (v->u.module_call.generic_type_args || v->u.module_call.generic_type_names) return 0;
         ename = v->u.module_call.module_name;
         mname = v->u.module_call.method_name;
         args = &v->u.module_call.args;
     } else {
-        return NULL;
+        return 0;
     }
-    if (!ename || !mname) return NULL;
+    if (!ename || !mname) return 0;
     Symbol* esym = scope_resolve(s->current, ename);
-    if (!esym) return NULL;
-    Ast* sd = (Ast*)esym->type_decl_ast;
-    if (!sd || sd->kind != AST_STRUCT_DEF || !sd->u.struct_def.enum_src) return NULL;
-    if (sem_payload_member_index(sd->u.struct_def.enum_src, mname) < 0) return NULL;
-    if (out_mname) *out_mname = mname;
+    if (!esym) return 0;
+    if (!sem_payload_view_from_symbol(esym, out)) return 0;
+    if (sem_payload_member_index(out, mname) < 0) return 0;   // 名字不对 ⇒ 交给原路径报错
     if (out_args) *out_args = args;
-    return sd;
+    return 1;
 }
 
 static Ast* sem_payload_new_int(int value, int line) {
@@ -140,11 +167,11 @@ static void sem_payload_block_prepend(Ast* body, Ast** nodes, int n) {
     bl->count = need;
 }
 
-// `Enum.成员(实参…)` 已识别（sd/esrc/mi 确定）⇒ 把 ast（AST_CALL，union 已被腾空）
-//   改写成 `new Enum(tag = mi, p<base+k> = 实参 k)`，然后走正常的 struct 初始化检查。
-static void sem_payload_emit_struct_init(Semantic* s, Ast* ast, Ast* sd, Ast* esrc,
+// `Enum.成员(实参…)` 已识别 ⇒ 把 ast（AST_CALL，union 已被腾空）改写成
+//   `new Enum(tag = mi, p<base+k> = 实参 k)`，然后走正常的 struct 初始化检查。
+static void sem_payload_emit_struct_init(Semantic* s, Ast* ast, const SemPayloadEnum* v,
                                          int mi, AstList args, const char* mname) {
-    int want = esrc->u.enum_def.member_param_counts[mi];
+    int want = v->counts[mi];
     int got = args.count;
     for (int i = 0; i < got; i++) {
         Ast* a = args.items[i];
@@ -152,7 +179,7 @@ static void sem_payload_emit_struct_init(Semantic* s, Ast* ast, Ast* sd, Ast* es
             error_add_at_fmt(ERR_SEMANTIC, a->line, a->column,
                 "带载荷 enum 的成员构造不支持命名实参（`%s.%s(名字 = 值)`）—— "
                 "请按声明顺序传：`%s.%s(实参…)`",
-                esrc->u.enum_def.name, mname, esrc->u.enum_def.name, mname);
+                v->name, mname, v->name, mname);
             semantic_poison_expr(ast);
             for (int k = 0; k < got; k++) ast_free(args.items[k]);
             free(args.items);
@@ -166,15 +193,15 @@ static void sem_payload_emit_struct_init(Semantic* s, Ast* ast, Ast* sd, Ast* es
     if (got != want) {
         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
             "带载荷 enum 成员 '%s.%s' 需要 %d 个参数，实际给了 %d 个",
-            esrc->u.enum_def.name, mname, want, got);
+            v->name, mname, want, got);
     }
 
     int use_n = got < want ? got : want;
-    int base = sem_payload_member_base(esrc, mi);
+    int base = sem_payload_member_base(v, mi);
 
     memset(&ast->u, 0, sizeof(ast->u));
     ast->kind = AST_STRUCT_INIT;
-    ast->u.struct_init.struct_name = strdup(sd->u.struct_def.name);
+    ast->u.struct_init.struct_name = strdup(v->name);
     ast->u.struct_init.from_enum_payload = 1;
     ast->u.struct_init.field_count = 1 + use_n;
     ast->u.struct_init.field_names = (char**)calloc((size_t)(1 + use_n), sizeof(char*));
@@ -210,17 +237,17 @@ static int sem_enum_payload_rewrite_call(Semantic* s, Ast* ast) {
 
     Symbol* esym = scope_resolve(s->current, ename);
     if (!esym) return 0;
-    Ast* sd = (Ast*)esym->type_decl_ast;
-    if (!sd || sd->kind != AST_STRUCT_DEF || !sd->u.struct_def.enum_src) return 0;
+    SemPayloadEnum v;
+    memset(&v, 0, sizeof(v));
+    if (!sem_payload_view_from_symbol(esym, &v)) return 0;
 
     // 泛型实参的写法不在本期范围：交给原路径（会报"没有这个方法"之类），不静默改写
     if (ast->u.call.generic_type_args || ast->u.call.generic_type_names) return 0;
 
-    Ast* esrc = sd->u.struct_def.enum_src;
-    int mi = sem_payload_member_index(esrc, mname);
+    int mi = sem_payload_member_index(&v, mname);
     if (mi < 0) {
         error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
-            "带载荷 enum '%s' 里没有成员 '%s'", esrc->u.enum_def.name, mname);
+            "带载荷 enum '%s' 里没有成员 '%s'", v.name, mname);
         semantic_poison_expr(ast);
         return 1;
     }
@@ -234,7 +261,7 @@ static int sem_enum_payload_rewrite_call(Semantic* s, Ast* ast) {
         type_free(ast->cached_type);
         ast->cached_type = NULL;
     }
-    sem_payload_emit_struct_init(s, ast, sd, esrc, mi, args, mname);
+    sem_payload_emit_struct_init(s, ast, &v, mi, args, mname);
     return 1;
 }
 
@@ -248,8 +275,9 @@ static int sem_enum_payload_rewrite_module_call(Semantic* s, Ast* ast) {
 
     Symbol* esym = scope_resolve(s->current, ename);
     if (!esym) return 0;
-    Ast* sd = (Ast*)esym->type_decl_ast;
-    if (!sd || sd->kind != AST_STRUCT_DEF || !sd->u.struct_def.enum_src) return 0;
+    SemPayloadEnum v;
+    memset(&v, 0, sizeof(v));
+    if (!sem_payload_view_from_symbol(esym, &v)) return 0;
     if (ast->u.module_call.generic_type_args || ast->u.module_call.generic_type_names) return 0;
 
     char* en = ast->u.module_call.module_name;
@@ -288,13 +316,15 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
     if (!subject) return;
 
     // 主题是不是"带载荷 enum 类型的变量"？（不先 visit：这里只想拿静态类型）
-    Ast* sd = NULL;
+    SemPayloadEnum v;
+    memset(&v, 0, sizeof(v));
+    int have_view = 0;
     if (subject->kind == AST_VAR && subject->u.var.name) {
         SymRef ref;
         memset(&ref, 0, sizeof(ref));
         Symbol* vs = resolve_variable_with_upvalue(s, subject->u.var.name, &ref);
         if (vs && vs->type && vs->type->kind == TYPE_STRUCT && vs->type->struct_name) {
-            sd = sem_payload_enum_struct_of_type(s, vs->type->struct_name);
+            have_view = sem_payload_view_by_name(s, vs->type->struct_name, &v);
         }
         symref_dispose(&ref);
     }
@@ -303,12 +333,17 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
     for (int i = 0; i < sw->u.switch_.case_count; i++) {
         AstList* vl = &sw->u.switch_.cases[i].values;
         for (int j = 0; j < vl->count; j++) {
-            if (sem_payload_enum_of_pattern(s, vl->items[j], NULL, NULL)) pattern_n++;
+            // ⚠ 用临时视图：不能覆盖上面主题的 v（主题视图后面还要用）
+            SemPayloadEnum pvscan;
+            memset(&pvscan, 0, sizeof(pvscan));
+            if (sem_payload_view_of_pattern(s, vl->items[j], &pvscan, NULL)) pattern_n++;
         }
     }
-    if (!sd && pattern_n == 0) return;   // 与带载荷 enum 无关 ⇒ 原路径（零变化 ✓）
+    if (!have_view && pattern_n == 0) {
+        return;   // 与带载荷 enum 无关 ⇒ 原路径（零变化 ✓）
+    }
 
-    if (!sd) {
+    if (!have_view) {
         if (subject->kind == AST_VAR && subject->u.var.name) {
             error_add_at_fmt(ERR_SEMANTIC, sw->line, sw->column,
                 "case 里写的是带载荷 enum 的成员模式（`Enum.成员(绑定…)`），但 switch 的主题"
@@ -330,16 +365,16 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
     }
 
     const char* subj = subject->u.var.name;
-    Ast* esrc = sd->u.struct_def.enum_src;
-    int member_count = esrc->u.enum_def.member_count;
+    int member_count = v.member_count;
 
     for (int i = 0; i < sw->u.switch_.case_count; i++) {
         AstList* vl = &sw->u.switch_.cases[i].values;
-        const char* mname = NULL;
-        AstList* args = NULL;
         Ast* pat = NULL;
+        SemPayloadEnum pv;
+        memset(&pv, 0, sizeof(pv));
+        AstList* pargs = NULL;
         for (int j = 0; j < vl->count; j++) {
-            if (sem_payload_enum_of_pattern(s, vl->items[j], &mname, &args)) {
+            if (sem_payload_view_of_pattern(s, vl->items[j], &pv, &pargs)) {
                 pat = vl->items[j];
                 break;
             }
@@ -352,31 +387,31 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
                 "多个模式会各自绑定不同的变量，合并在一个分支里没有确定语义");
             continue;
         }
-
-        Ast* psd = sem_payload_enum_of_pattern(s, pat, NULL, NULL);
-        if (psd != sd) {
+        if (!pv.name || !v.name || strcmp(pv.name, v.name) != 0) {
             error_add_at_fmt(ERR_SEMANTIC, pat->line, pat->column,
                 "case 的模式来自 enum '%s'，而 switch 的主题是 '%s' —— 两者必须是同一个 enum",
-                psd && psd->u.struct_def.enum_src ? psd->u.struct_def.enum_src->u.enum_def.name : "?",
-                esrc->u.enum_def.name);
+                pv.name ? pv.name : "?", v.name ? v.name : "?");
             continue;
         }
 
-        int mi = sem_payload_member_index(esrc, mname);
-        int want = (mi >= 0) ? esrc->u.enum_def.member_param_counts[mi] : 0;
-        int got = args ? args->count : 0;
+        const char* mname = (pat->kind == AST_CALL)
+                                ? pat->u.call.callee->u.module_access.member_name
+                                : pat->u.module_call.method_name;
+        int mi = sem_payload_member_index(&v, mname);
+        int want = (mi >= 0) ? v.counts[mi] : 0;
+        int got = pargs ? pargs->count : 0;
         if (got != want) {
             error_add_at_fmt(ERR_SEMANTIC, pat->line, pat->column,
                 "case 模式 '%s.%s' 需要 %d 个绑定变量，实际写了 %d 个",
-                esrc->u.enum_def.name, mname, want, got);
+                v.name, mname, want, got);
         }
 
         int use_n = got < want ? got : want;
-        int base = sem_payload_member_base(esrc, mi >= 0 ? mi : 0);
+        int base = sem_payload_member_base(&v, mi >= 0 ? mi : 0);
         Ast** binds = (Ast**)calloc((size_t)(use_n > 0 ? use_n : 1), sizeof(Ast*));
         int bn = 0;
         for (int k = 0; k < use_n; k++) {
-            Ast* a = args->items[k];
+            Ast* a = pargs->items[k];
             if (!a) continue;
             if (a->kind != AST_VAR || !a->u.var.name) {
                 error_add_at_fmt(ERR_SEMANTIC, a->line, a->column,
@@ -425,12 +460,12 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
             if (sw->u.switch_.cases[i].is_type_match) { unknown = 1; break; }
             AstList* vl = &sw->u.switch_.cases[i].values;
             for (int j = 0; j < vl->count && !unknown; j++) {
-                Ast* v = vl->items[j];
-                if (!v || v->kind != AST_NUM || v->u.num.is_float || v->u.num.is_bigint) {
+                Ast* cv = vl->items[j];
+                if (!cv || cv->kind != AST_NUM || cv->u.num.is_float || cv->u.num.is_bigint) {
                     unknown = 1;      // 认不出的形状 ⇒ 宁漏勿误报
                     break;
                 }
-                int idx = (int)v->u.num.value;
+                int idx = (int)cv->u.num.value;
                 if (idx >= 0 && idx < member_count) covered[idx] = 1;
                 any_case = 1;
             }
@@ -442,11 +477,11 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
             for (int mi = 0; mi < member_count; mi++) {
                 if (covered[mi]) continue;
                 missing_n++;
-                if (missing_n <= 6) {
+                if (missing_n <= 6 && v.member_names && v.member_names[mi]) {
                     if (missing[0]) {
                         strncat(missing, "、", sizeof(missing) - strlen(missing) - 1);
                     }
-                    strncat(missing, esrc->u.enum_def.member_names[mi],
+                    strncat(missing, v.member_names[mi],
                             sizeof(missing) - strlen(missing) - 1);
                 }
             }
@@ -455,10 +490,92 @@ static void sem_enum_payload_desugar_switch(Semantic* s, Ast* sw) {
                     "switch 的主题是带载荷 enum '%s'，但少了 %d 个成员（%s%s）且没有 default："
                     "这些成员会直接穿过去、什么都不做；请补 case，或加 default"
                     "（哪怕只写 throw / 赋一个兜底值）",
-                    esrc->u.enum_def.name, missing_n, missing,
-                    missing_n > 6 ? " 等" : "");
+                    v.name, missing_n, missing, missing_n > 6 ? " 等" : "");
             }
         }
         if (covered) free(covered);
     }
+}
+
+// ============================================================================
+// 跨模块：`use m.Msg`（带载荷 enum）⇒ 在**当前作用域**造出同一套结构
+// ----------------------------------------------------------------------------
+// 为什么不是"把合成 struct 也放进模块符号表"：
+//   .lenosymc 是在**语义之前**（get_shared → scan）按 parser AST 写盘的，而合成 struct
+//   是语义阶段才造的 ⇒ 落不进缓存；改成让语义阶段回写符号表又会引入"缓存与内存两份"的
+//   时序坑。这里改成"消费端按载荷表**自己重建**"：字段名/槽位公式与生产端完全一致，
+//   运行期的结构定义仍由生产模块 import 时 `OP_STRUCT_DEF` 注册（名字相同 ⇒ 对得上 ✓）。
+// ============================================================================
+static int semantic_import_payload_enum(Semantic* s, const char* name,
+                                        const ModuleEnumSymbol* es, int line, int column) {
+    if (!s || !name || !es) return 0;
+
+    // ① 幂等：类型归一化会对同一类型跑不止一遍（见 semantic_import_use_symbol 的说明）
+    Symbol* existing = scope_resolve_local(s->current, name);
+    if (existing && existing->enum_payload_counts) {
+        const char* ex_name = existing->struct_type_name;
+        if (!ex_name || strcmp(ex_name, name) == 0) return 1;
+    }
+
+    int mc = es->member_count;
+    int total = 0;
+    for (int m = 0; m < mc; m++) {
+        int pc = es->member_param_counts ? es->member_param_counts[m] : 0;
+        if (pc < 0) pc = 0;
+        total += pc;
+    }
+
+    Symbol* sym = scope_define(s->current, name, SYM_STRUCT);
+    if (!sym) {
+        Symbol* dup = scope_resolve_local(s->current, name);
+        error_add_at_fmt(ERR_DUPLICATE_VAR, line, column,
+            "类型导入失败：'%s' 已在当前作用域中定义（带载荷 enum 会占用**同名 struct**）"
+            "—— 请先 `import` 再 `use`，或给两边的类型改名", name);
+        (void)dup;
+        return 0;
+    }
+
+    sym->type = type_new(TYPE_STRUCT);
+    sym->type->struct_name = strdup(name);
+    sym->struct_type_name = strdup(name);
+
+    // ② 字段表：tag + 按成员分段的载荷槽（与生产端 semantic.c 的降级**同一公式**）
+    int fc = 1 + total;
+    sym->struct_field_count = fc;
+    sym->struct_field_names = (char**)calloc((size_t)fc, sizeof(char*));
+    sym->struct_field_types = (TypeInfo**)calloc((size_t)fc, sizeof(TypeInfo*));
+    sym->struct_field_null_default = (int*)calloc((size_t)fc, sizeof(int));
+    sym->struct_field_names[0] = strdup("tag");
+    sym->struct_field_types[0] = type_new(TYPE_INT);
+    int pidx = 1;
+    for (int m = 0; m < mc; m++) {
+        int pc = es->member_param_counts ? es->member_param_counts[m] : 0;
+        for (int k = 0; k < pc; k++) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "p%d", pidx - 1);
+            sym->struct_field_names[pidx] = strdup(buf);
+            TypeInfo* pt = (es->member_param_types && es->member_param_types[m])
+                               ? es->member_param_types[m][k] : NULL;
+            sym->struct_field_types[pidx] = pt ? type_copy(pt) : type_new(TYPE_ANY);
+            if (pt && pt->nullable) sym->struct_field_null_default[pidx] = 1;
+            pidx++;
+        }
+    }
+
+    // ③ 成员名 + 载荷个数：之后 `Msg.成员(...)` / `case Msg.成员(...)` / 穷尽性都靠它们
+    sym->enum_payload_member_count = mc;
+    sym->enum_payload_counts = (int*)calloc((size_t)(mc > 0 ? mc : 1), sizeof(int));
+    for (int m = 0; m < mc; m++) {
+        sym->enum_payload_counts[m] = (es->member_param_counts ? es->member_param_counts[m] : 0);
+    }
+    if (es->member_names) {
+        sym->enum_value_count = mc;
+        sym->enum_value_names = (char**)calloc((size_t)(mc > 0 ? mc : 1), sizeof(char*));
+        sym->enum_values = (int64_t*)calloc((size_t)(mc > 0 ? mc : 1), sizeof(int64_t));
+        for (int m = 0; m < mc; m++) {
+            sym->enum_value_names[m] = es->member_names[m] ? strdup(es->member_names[m]) : NULL;
+            sym->enum_values[m] = es->member_values ? es->member_values[m] : m;
+        }
+    }
+    return 1;
 }

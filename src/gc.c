@@ -1719,6 +1719,11 @@ static void free_object_resources_ex(Object* obj, int remove_intern) {
             if (def->const_values) {
                 free(def->const_values);
             }
+            // ★ 2026-11-10（P4 enum 载荷）：带载荷 enum 的成员/参数名签名
+            if (def->enum_sig) {
+                free(def->enum_sig);
+                def->enum_sig = NULL;
+            }
             break;
         }
         case OBJ_FACE_DEF: {

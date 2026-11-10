@@ -483,16 +483,11 @@ static void enum_payload_synthesize(Semantic* s, Ast* ast) {
             continue;
         }
 
-        // ② export 暂不支持：跨模块要把"成员是否有载荷"带进模块符号表，属另一步（草案 §4）
-        if (via_export) {
-            error_add_at_fmt(ERR_SEMANTIC, e->line, e->column,
-                "带载荷 enum '%s' 暂不支持 export（跨模块导入需要在模块符号表里带上"
-                "「成员是否有载荷」，是单独一步 —— 见 docs/enum载荷_设计草案.md）："
-                "请去掉 export（只在同文件用），或改用 struct + tag",
-                e->u.enum_def.name);
-            e->u.enum_def.payload_state = 2;
-            continue;
-        }
+        // ② export（跨模块）：2026-11-10 起支持 —— 载荷信息随 ModuleEnumSymbol 进
+        //   .lenosymc（LENOSYMC v44），消费端 `use m.Msg` 时按它**自己重建**同名 struct
+        //   （见 semantic_import_payload_enum）。这里只需把 enum 的成员载荷表导出即可，
+        //   AST 填充器（module_ast_exports.c）已经会搬 member_param_counts/… ✓
+        (void)via_export;
 
         // ③ 载荷槽布局：**按成员分段**（第 m 个成员的参数占用一段连续槽位）
         //   `enum Msg { progress(int done, int total)  finished(string path) }`
@@ -1092,6 +1087,11 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
 
     // ★ 2026-11-05：模块级重名函数 / 函数与类型同名（与 semantic_analyze 同口径）
     semantic_check_dup_funcs(ast);
+
+    // ★ 2026-11-10（P4 enum 载荷）：模块入口也要降级 —— `semantic_analyze_module` 是
+    //   **另一条前导**（import 的模块走它），漏了这句的症状是：模块里的带载荷 enum
+    //   在同文件编译时好、被 import 时报「不支持这个位置 / 未定义的类型 Msg」✗
+    enum_payload_synthesize(s, ast);
 
     // 预注册所有模块类型定义（struct/cstruct/face）和函数定义（使用 SYM_MODULE 类型）
     // 同时提前注册 struct/face 到全局定义表，确保函数体中能通过 struct_def_find/face_def_find 找到

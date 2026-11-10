@@ -600,6 +600,19 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
             return 0;
             }
 
+            // ★ 2026-11-10（P4 enum 载荷 跨模块）：**带载荷 enum** 走独立通道。
+            //   必须排在 struct/enum 两个分支**之前**：符号表里叫什么、哪条分支先命中
+            //   取决于填充器，不在这里定死就会出现"跨模块和同文件表现不同"这种最难查的错 ✗
+            //   判据只在模块符号表上（ModuleEnumSymbol.member_param_counts），不看 AST ——
+            //   消费端本来就没有那个 AST ✓
+            {
+                ModuleEnumSymbol* pe = module_symbol_table_find_enum(module_info->sym_table,
+                                                                     symbol_name);
+                if (pe && module_symbol_table_enum_is_payload(pe)) {
+                    return semantic_import_payload_enum(s, symbol_name, pe, line, column);
+                }
+            }
+
             // 尝试查找 struct 定义
             ModuleStructSymbol* struct_sym = module_symbol_table_find_struct(module_info->sym_table, symbol_name);
             if (struct_sym) {
