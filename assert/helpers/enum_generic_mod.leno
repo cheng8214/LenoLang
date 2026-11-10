@@ -1,0 +1,20 @@
+// enum_generic_mod.leno —— 泛型载荷 enum 的**跨模块生产端**（2026-11-10）
+//
+// 配套消费端：assert/test_enum_payload_generic_mod.leno
+// 验证的是：`export enum Res[T]` 的**类型参数**能跟着模块符号表走到消费端，
+// 消费端 `Res[int]` 才能把载荷槽里的 TYPE_GENERIC_PARAM 替成 int。
+export enum Res[T] {
+    ok(T v)
+    err(int code, string msg)
+}
+
+// 返回泛型载荷 enum：签名里的 `Res[int]` 是跨模块类型检查的关键
+export func make(int n): Res[int] {
+    if n < 0 { return Res.err(1, "neg") }
+    return Res.ok(n)
+}
+
+export func make_text(string s): Res[string] {
+    if s == "" { return Res.err(2, "empty") }
+    return Res.ok(s)
+}

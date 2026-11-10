@@ -1015,6 +1015,19 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     if (target->kind == TYPE_GENERIC_PARAM) return 1;
     if (source->kind == TYPE_GENERIC_PARAM) return 1;
 
+    // ★ 2026-11-10（载荷 enum 跨模块）：**同名 STRUCT ↔ ENUM 视为兼容**。
+    //   载荷 enum 在生产端降级成**同名 struct**，但导出的函数签名里那一位可能仍是
+    //   TYPE_ENUM（`export func make(): Res[int]` 就是这样）⇒ 消费端写
+    //     `Res[int] r = m.make(5)`
+    //   会报「期望 Res[int]，实际 int」（TYPE_ENUM 的显示名就是 int，看不出真因）。
+    //   两者运行期是**同一个对象**（enum 名 == 合成 struct 名），只是类型标签不同 ⇒ 放行。
+    //   ⚠ 只在**同名**时放行：不同名的 struct/enum 仍然不兼容（不放大兼容面）。
+    if ((target->kind == TYPE_STRUCT && source->kind == TYPE_ENUM) ||
+        (target->kind == TYPE_ENUM && source->kind == TYPE_STRUCT)) {
+        if (target->struct_name && source->struct_name &&
+            strcmp(target->struct_name, source->struct_name) == 0) return 1;
+    }
+
     // null 赋值规则：
     // - nullable 类型（如 int?, string?）可以接受 null
     // - 引用类型（struct, cstruct, face, string, array, dict, func, clib, ptr 等）可以为 null

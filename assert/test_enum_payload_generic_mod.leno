@@ -1,0 +1,45 @@
+// test_enum_payload_generic_mod.leno —— 泛型载荷 enum **跨模块**（2026-11-10）
+//
+// 这条以前是"能力缺口"：模块符号表只带成员名/参数个数、不带**类型参数** ⇒ 消费端
+// 拿到的载荷槽是"任何类型都能塞"的退化版本，`switch` 绑出来的变量类型对不上。
+// 现在要求四件事全通：
+//   ① 跨模块函数返回 `Res[int]` / `Res[string]`，声明处能接住（同名 STRUCT↔ENUM 兼容）
+//   ② `switch` 匹配两种成员，载荷绑定值正确
+//   ③ 消费端**自己构造**（类型实参从声明推断）
+//   ④ 按值相等 / 进容器（与本地声明同一套语义）
+import "./helpers/enum_generic_mod.leno" as gm
+use gm.Res
+
+func describe(Res[int] r): string {
+    switch r {
+        case Res.ok(v) { return "ok:" + _str(v) }
+        case Res.err(c, m) { return "err:" + _str(c) + ":" + m }
+    }
+    return "?"
+}
+
+main() {
+    // ① 跨模块返回 + ② 匹配 + 载荷绑定
+    assert_eq(describe(gm.make(5)), "ok:5", "① 跨模块返回 ok 分支，载荷 = 5");
+    assert_eq(describe(gm.make(-1)), "err:1:neg", "② 跨模块返回 err 分支，code/msg 正确");
+
+    // ① 换一个实参：Res[string]（同一个 enum 的两套实参，跨模块也对）
+    Res[string] s = gm.make_text("hi")
+    switch s {
+        case Res.ok(v) { assert_eq(v, "hi", "① string 实参的载荷") }
+        case Res.err(c, m) { assert_eq("不该到这里", m, "① string 实参走 ok 分支") }
+    }
+
+    // ③ 消费端自己构造（类型实参从声明推断，走同一条改写路径）
+    Res[int] a = Res.ok(42)
+    assert_eq(describe(a), "ok:42", "③ 消费端构造 + 本地匹配");
+    Res[int] b = Res.err(9, "boom")
+    assert_eq(describe(b), "err:9:boom", "③ 消费端构造 err");
+
+    // ④ 按值相等 / 进容器
+    Res[int] a2 = Res.ok(42)
+    assert_eq(a == a2, true, "④ 跨模块构造的实例按值相等");
+    assert_eq([a, b].has(a2), true, "④ 进 Array 后按值查找");
+
+    print("test_enum_payload_generic_mod passed（跨模块返回 / 匹配 / 消费端构造 / 按值比较）")
+}

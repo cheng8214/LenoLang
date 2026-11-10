@@ -302,8 +302,25 @@ func sig(Res[int] r): string { return "x" }
 
 ### 已知边界
 
-- 泛型载荷 enum 暂不支持**跨模块 export**（模块符号表里没有载荷槽的类型参数表）。
 - 类型参数暂不支持约束/默认值（`enum R[T: Face]`）：解析器只认名字列表。
+
+### 跨模块（2026-11-10 补齐，已**支持**）
+
+`export enum Res[T] { ok(T v) … }` + 消费端 `use m.Res` 现在完整可用：
+跨模块返回、`switch` 匹配、消费端自己构造、按值相等都通
+（钉子：`assert/test_enum_payload_generic_mod.leno` + `assert/helpers/enum_generic_mod.leno`）。
+
+实现上只有一个关键点：**类型实参要从"看起来像 int"的旧标签里救回来**。
+载荷 enum 在生产端降级成同名 struct，但导出的函数签名里那一处类型仍是 `TYPE_ENUM`
+（`export func make(): Res[int]` 就是这样）⇒ 消费端 `Res[int] r = m.make(5)` 会报
+「期望 Res[int]，实际 int」（`TYPE_ENUM` 的显示名就是 int，看不出真因）。
+修法是在 `type_is_compatible` 里放行**同名的 STRUCT ↔ ENUM**（运行期本来就是同一个对象，
+只是类型标签不同）—— 只按同名放行，不同名的照旧不兼容，兼容面没有放大。
+
+> 过程记录：这条我先做过一版"给模块符号表加类型参数"的大改（ModuleEnumSymbol、
+> `.lenosymc` v45、导出/导入三处 + 消费端重建），**把同模块主路径改回归了**（`'(null)' 里没有成员`），
+> 全量回滚后才发现真正缺的只是上面那一处兼容判断。教训：这类改动要**先看最小复现**，
+> 别一上来动符号表格式 —— 版本号一 bump，所有模块缓存失效，定位成本翻倍。
 - **enum 不能挂方法**（`extend Res { … }` 会报"extend 只能给 struct 加方法"）⇒ 即使载荷
   enum 运行期就是个 struct，`isOk/orElse/…` 这类方法也挂不上去。**这正是 `LenoResult` 的
   `Result[T]` / `Option[T]` 必须保持 struct 的决定性理由**（不是"不能泛型"了 —— 那个已经支持）。
