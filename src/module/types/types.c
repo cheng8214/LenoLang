@@ -1005,6 +1005,34 @@ static Value native_to_byte(int argCount, Value* args) {
 // ⚠ 命名与 `_env_or(name, default)` 同族：`*_or` = 拿不到就给默认值 ✓
 // ⚠ **不改** `_int` / `_float` 的既有语义（"抛异常"那条被大量既有代码与测试依赖，
 //   改成宽容等于**静默**改掉别人已经写好的错误处理）⇒ 只能新增入口，不能改旧的。
+// _field(obj, name) —— 按**字段名**取 struct 的字段值（2026-11-10，P1 记录编解码的地基）
+//   为什么需要这层：字段名在"表格按列名绑定 / 记录 ↔ 行"这类场景里是**运行期字符串**，
+//   而语言明确禁止在 `any` 上索引（`o["a"]` 是编译错误，见语义层的
+//   "不能在 any 类型上进行索引访问"）；静态类型已知时 `s["a"]` 又会被编译期直接解析掉。
+//   ⇒ 只能给一个受控的 native，把"按名取字段"的能力**显式**开出来。
+//   契约：非 struct / 无该字段 ⇒ **null**（不抛）。
+//     理由：调用方（表格）要的是"这一列没数据就留空"，而不是整页崩掉；
+//     拼错字段名的代价是"那一列空着"，一眼能看出来。
+static Value native_field_by_name(int argCount, Value* args) {
+    (void)argCount;   // 个数由编译期把关（同 _int）
+    Value o = args[0];
+    Value k = args[1];
+    if (!val_is_obj(o) || !val_is_string(k)) return val_null();
+    Object* obj = val_as_obj(o);
+    if (obj->type != OBJ_STRUCT) return val_null();
+    ObjStruct* st = (ObjStruct*)obj;
+    ObjStructDef* def = st->def;
+    if (!def || !def->fields || def->field_count <= 0) return val_null();
+    const char* name = ((ObjString*)val_as_obj(k))->chars;
+    if (!name) return val_null();
+    for (int i = 0; i < def->field_count; i++) {
+        if (def->fields[i].name && strcmp(def->fields[i].name, name) == 0) {
+            return st->field_values[i];
+        }
+    }
+    return val_null();
+}
+
 static Value native_int_or(int argCount, Value* args) {
     (void)argCount;   // 个数由编译期把关（同 _int）
     Value v = args[0];
@@ -1084,6 +1112,11 @@ void types_init_globals(void) {
     vm_register_native("_float_or", native_float_or, TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(or_float_params));
     vm_register_native("_bool", native_to_bool, TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
     vm_register_native("_str", native_to_str, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
+    // _field(obj, name)：按字段名取 struct 字段值（2026-11-10，P1）——
+    //   表格按列名绑定、记录 ↔ 行转换的地基。缺失字段给 null（不抛）。
+    TypeKind field_params[] = {TYPE_ANY, TYPE_STRING};
+    vm_register_native("_field", native_field_by_name, TYPE_ANY, TYPE_UNKNOWN,
+                       NATIVE_FIXED(field_params));
     vm_register_native("_ptr", native_to_ptr, TYPE_PTR, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
     vm_register_native("_int32", native_to_int32, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));
     vm_register_native("_uint32", native_to_uint32, TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(convert_params));

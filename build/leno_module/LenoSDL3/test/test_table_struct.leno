@@ -1,0 +1,61 @@
+// test_table_struct.leno —— 表格直接吃"记录（struct）"，按**字段名**绑定列（2026-11-10，P1）
+//
+// 背景：表格的行一直是 `Array[Array[string]]`（纯位置），于是应用里到处是
+//   `rows.add([s.title, s.artist, s.album, ...])` 这种"列顺序即契约"的写法 ——
+//   插一列就要改所有构造点，漏一处就是**串列**（不报错、看着像数据错了）。
+//
+// 新 API：`set_struct_keys([...字段名...])` 一次 + `add_struct(rec)` 每行。
+//   · 映射只写一次（写在表头旁边），列顺序变了只改这一处
+//   · 取不到的字段（拼错 / 该记录没这个字段）⇒ **空单元格**，不是整页崩
+//   · 值一律 `_str()`：表格单元格本来只有字符串一种类型
+import "SDL3" as SDL3
+use SDL3.(Table)
+
+struct Song {
+    string title = "untitled"
+    string artist = "unknown"
+    int secs = 0
+    bool liked = false
+}
+
+main() {
+    Table tb = SDL3.createTable({x: 0, y: 0, w: 600.0, h: 300.0,
+                                 headers: ["歌名", "歌手", "时长", "收藏"]})
+    // ① 映射：列顺序 = keys 顺序（与 headers 一一对应）
+    tb.set_struct_keys(["title", "artist", "secs", "liked"])
+
+    var a = new Song()
+    a.title = "song-a"
+    a.artist = "singer-a"
+    a.secs = 269
+    a.liked = true
+    tb.add_struct(a)
+
+    // ② 没赋值的字段用**声明处的默认值**（不是空串）
+    var b = new Song()
+    b.title = "song-b"
+    b.secs = 12
+    tb.add_struct(b)
+
+    assert_eq(tb.row_count(), 2, "② add_struct 逐行追加");
+    assert_eq(tb.get_row(0).join("|"), "song-a|singer-a|269|true", "① 四个字段按 keys 落位");
+    assert_eq(tb.get_row(1).join("|"), "song-b|unknown|12|false", "② 默认值照常带出来");
+
+    // ③ 批量：自己攒行再 set_rows（与老写法一致，但不再有位置常量）
+    Array[Song] all = [a, b]
+    Array[Array[string]] rows = []
+    for all to s { rows.add(tb.struct_row(s)) }
+    tb.set_rows(rows)
+    assert_eq(tb.row_count(), 2, "③ set_rows 批量换数据");
+    assert_eq(tb.get_row(1)[0], "song-b", "③ 批量行内容正确");
+
+    // ④ 字段名拼错 ⇒ 那一列空着（不是崩、也不是串到别的列）
+    tb.set_struct_keys(["title", "nope", "secs"])
+    var c = new Song()
+    c.title = "song-c"
+    c.secs = 7
+    tb.add_struct(c)
+    assert_eq(tb.get_row(2).join("|"), "song-c||7", "④ 拼错的字段 ⇒ 空单元格");
+
+    print("test_table_struct passed（逐行 / 默认值 / 批量 / 拼错留空 四组）")
+}

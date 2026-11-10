@@ -719,6 +719,38 @@ export struct Table impl Widget, Themeable {
         sortCol = -1; sortDesc = false
         update_check_header()
     }
+    // ==================== 记录（struct）行（2026-11-10，P1）====================
+    // 让表格直接吃"有字段名的记录"，消掉 `row[F_ALBUM]` 这类**列号常量**。
+    //   用法：
+    //       tb.set_struct_keys(["title", "artist", "album"])   // 一次；下标 = 列号
+    //       tb.add_struct(song)                                // 每行一条
+    //   为什么用显式 keys、而不是"表头名 = 字段名"：表头是给人看的中文，字段名是代码里的
+    //   英文标识，强行统一会让其中一边变难读 ⇒ 映射只写一次，就写在表头旁边。
+    //   取不到的字段（拼错 / 这行没这个字段）⇒ **空单元格**，不是整页崩
+    //   （`_field` 的契约就是缺失给 null；拼错的代价是"那一列空着"，一眼能看见）。
+    //   ⚠ 行里的值一律 `_str()`：表格单元格本来就只有字符串一种类型，
+    //     数字/布尔/时长该怎么格式化仍由调用方决定（要补零就先 `_str` 好再塞字段）。
+    pri Array[string] structKeys = []
+
+    func set_struct_keys(Array[string] ks) {
+        structKeys = ks
+        if ks.len() > ncols and _headers.len() == 0 { ncols = ks.len(); recompute_cols() }
+    }
+
+    // 把一条记录按 keys 摊成一行（不追加，供需要自己攒批量的调用方用）
+    func struct_row(any rec): Array[string] {
+        Array[string] cells = []
+        for structKeys to k {
+            var v = _field(rec, k)
+            cells.add(if v == null then "" else _str(v))
+        }
+        return cells
+    }
+
+    func add_struct(any rec) {
+        add_row(struct_row(rec), "")
+    }
+
     func remove_row(int idx) {
         invalidate_fitted(); invalidate_sb()
         if idx >= 0 and idx < _rows.len() { _rows.remove(idx) }

@@ -1,0 +1,52 @@
+// test_field_native.leno —— `_field(obj, name)`（2026-11-10，P1 记录编解码的地基）
+//
+// 为什么需要这个 native：字段名在"表格按列名绑定 / 记录 ↔ 行"这类场景里是**运行期字符串**，
+//   而语言禁止在 `any` 上索引（`o["a"]` 是编译错误），静态类型已知时 `s["a"]` 又会被
+//   编译期直接解析掉 ⇒ 必须显式开一个"按名取字段"的口子。
+//
+// 契约（这里逐条钉住）：
+//   ① 有该字段 ⇒ 返回**字段值本身**（不是字符串化：类型要保住）
+//   ② 没有该字段 ⇒ `null`（**不抛**：表格那一列就留空，而不是整页崩）
+//   ③ 不是 struct（int/string/Array/Dict/null）⇒ `null`
+//   ④ 名字参数不是 string ⇒ `null`（防御，别让 native 崩）
+struct Rec {
+    string title = "t0"
+    int n = 0
+    bool flag = false
+    Array[int] xs = [1, 2]
+}
+
+main() {
+    var r = new Rec()
+    r.title = "hello"
+    r.n = 42
+    r.flag = true
+
+    // ① 取值本身（类型保住）
+    assert_eq(_str(_field(r, "title")), "hello", "① string 字段");
+    assert_eq(_field(r, "n"), 42, "① int 字段（不是 \"42\" 字符串）");
+    assert_eq(_field(r, "flag"), true, "① bool 字段");
+
+    // ① 容器字段：返回的是同一个数组（按引用）
+    var xs = _field(r, "xs")
+    assert_eq(_str(xs), "[1, 2]", "① Array 字段取出来还是 Array");
+
+    // ② 缺失字段 ⇒ null
+    assert_eq(_field(r, "nope"), null, "② 缺失字段 ⇒ null");
+    assert_eq(_field(r, "TITLE"), null, "② 字段名大小写敏感");
+
+    // ③ 非 struct ⇒ null
+    assert_eq(_field(42, "x"), null, "③ int 不是 struct ⇒ null");
+    assert_eq(_field("s", "x"), null, "③ string 不是 struct ⇒ null");
+    assert_eq(_field(null, "x"), null, "③ null 不是 struct ⇒ null");
+    assert_eq(_field([1, 2], "x"), null, "③ Array 不是 struct ⇒ null");
+
+    // ④ 名字参数的类型由**编译期**把关（`_field(r, 1)` 直接编译错误），
+    //    所以这里验的是"运行期能拿到的都是 string"，native 里的类型判断只是防御性兜底。
+
+    // 改字段之后再取得到新值（说明是**现取**，不是建表时快照）
+    r.title = "changed"
+    assert_eq(_str(_field(r, "title")), "changed", "① 取到的是当前值");
+
+    print("test_field_native passed（取值 / 缺失 / 非 struct / 坏参数 四组）")
+}

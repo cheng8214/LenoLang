@@ -1977,3 +1977,37 @@ Label l = SDL3.createLabel({text: "看完整榜单", font_size: 12, truncate: 1,
                             cursor: SDL3.SystemCursor.POINTER, hover_shift: 3.0})
 l.on_click(func() { open() })
 ```
+
+---
+
+## Table 直接吃「记录（struct）」（2026-11-10，P1）
+
+行一直是 Array[Array[string]]（纯位置）⇒ 应用里到处是
+ows.add([s.title, s.artist, s.album]) 这种"**列顺序即契约**"的写法：插一列就要改所有
+构造点，漏一处就是**串列**（不报错，看着像数据错了）。
+
+现在可以让表格按**字段名**绑列：
+
+``leno
+Table tb = SDL3.createTable({x: 0, y: 0, w: 600.0, h: 300.0,
+                             headers: ["歌名", "歌手", "时长", "收藏"]})
+tb.set_struct_keys(["title", "artist", "secs", "liked"])   // 一次：列顺序 = 字段顺序
+tb.add_struct(song)                                        // 每行一条
+``
+
+批量（要自己攒行、或要复用老代码）用 struct_row：
+
+``leno
+Array[Array[string]] rows = []
+for songs to s { rows.add(tb.struct_row(s)) }
+tb.set_rows(rows)
+``
+
+口径：
+
+- **取不到的字段 ⇒ 空单元格**，不是崩、也不是串到别的列（拼错的代价一眼能看见）
+- 值一律 _str()：单元格只有字符串一种类型，**格式化仍由调用方决定**
+  （要补零/要 mm:ss 就先格式化好再塞进记录字段）
+- 表头仍是给人看的中文：**字段名与列名不强行统一**，映射只写一次，就在表头旁边
+- 底层是 _field(obj, name)（按名字取 struct 字段，缺失给 null）；语言禁止在 ny 上索引，
+  所以这个口子是显式开的，不要用它绕类型检查做别的事
