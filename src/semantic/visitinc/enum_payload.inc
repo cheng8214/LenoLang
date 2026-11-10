@@ -510,11 +510,35 @@ static int semantic_import_payload_enum(Semantic* s, const char* name,
                                         const ModuleEnumSymbol* es, int line, int column) {
     if (!s || !name || !es) return 0;
 
-    // ① 幂等：类型归一化会对同一类型跑不止一遍（见 semantic_import_use_symbol 的说明）
+    // ① 幂等 + **同名不同形**检查
+    //   幂等：类型归一化会对同一类型跑不止一遍（见 semantic_import_use_symbol 的说明）
+    //   ★ 2026-11-10（压测发现）：两个模块各导出一个同名**带载荷** enum 时，原来直接
+    //     当"幂等"放行 ⇒ 编译期默默挑一个、**运行期**才由 def_owner_conflict 报错 ——
+    //     而且报错发生在 main 跑完之后（实测：先打印了 "ok" 才报"跨模块同名 struct"，
+    //     那段代码已经拿着其中一份定义跑过了）。这里按成员名 + 参数个数比形状：
+    //     一致才放行（与 def_owner_conflict 同口径），不一致就在**编译期**报。
     Symbol* existing = scope_resolve_local(s->current, name);
     if (existing && existing->enum_payload_counts) {
         const char* ex_name = existing->struct_type_name;
-        if (!ex_name || strcmp(ex_name, name) == 0) return 1;
+        if (!ex_name || strcmp(ex_name, name) == 0) {
+            int same = (existing->enum_value_count == es->member_count);
+            for (int m = 0; same && m < es->member_count; m++) {
+                const char* en = existing->enum_value_names ? existing->enum_value_names[m] : NULL;
+                const char* nn = es->member_names ? es->member_names[m] : NULL;
+                int ep = existing->enum_payload_counts ? existing->enum_payload_counts[m] : 0;
+                int np = es->member_param_counts ? es->member_param_counts[m] : 0;
+                if (ep != np) same = 0;
+                else if ((en == NULL) != (nn == NULL)) same = 0;
+                else if (en && strcmp(en, nn) != 0) same = 0;
+            }
+            if (same) return 1;
+            error_add_at_fmt(ERR_DUPLICATE_VAR, line, column,
+                "两个模块都导出了**带载荷 enum '%s'**，而且成员对不上 —— 全局类型表按名字索引，"
+                "运行期只能保留一份（保留先注册的），混用会静默读到对方的 tag / 载荷槽。"
+                "请给其中一个改名，或别 `use`、改用限定名（`a.%s` / `b.%s`）",
+                name, name, name);
+            return 0;
+        }
     }
 
     int mc = es->member_count;

@@ -1,0 +1,76 @@
+// test_enum_payload_interop.leno —— 带载荷 enum 与**泛型 / 跨模块**的交叉（2026-11-10 压测）
+//
+// 覆盖压测 A 跑过的场景，固化成回归：
+//   ① 泛型 struct 的字段类型是**跨模块导入**的带载荷 enum（`Box[Ev].v`）
+//   ② 双泛型参数（一个装 enum、一个装标量）
+//   ③ 泛型函数透传带载荷 enum（`idOf[Ev](...)`）
+//   ④ 容器里装带载荷 enum 的跨模块比较（模块内构造 vs 本地构造）
+//   ⑤ JSON：模块导入的 enum 也按成员名/参数名输出
+//   ⑥ 同名类型撞车：本地同名 enum / struct 与 `use` 进来的带载荷 enum 冲突，必须是**编译期**错误
+//      （这里只能验"能跑"，编译期错误由 tools/diag_cases.ps1 那套拦）
+import jsons
+import "./helpers/enum_stress_mod.leno" as evmod
+use evmod.Ev
+
+// ① 泛型 struct：字段类型由实参给出（这里就是跨模块的 Ev）
+struct Box[T] {
+    T v = null
+    int n = 0
+}
+
+struct Pair[A, B] {
+    A a = null
+    B b = null
+}
+
+// ③ 泛型函数透传
+func idOf[T](T x): T { return x }
+
+// 跨模块的 enum 在本地 switch 里必须能匹配
+func localDescribe(Ev e): string {
+    switch e {
+        case Ev.click(x, y) { return "click:" + _str(x) + "," + _str(y) }
+        case Ev.key(code) { return "key:" + code }
+        case Ev.tick() { return "tick" }
+    }
+    return "?"
+}
+
+main() {
+    // ① 泛型 struct 装跨模块带载荷 enum
+    Box[Ev] b = new Box[Ev]()
+    b.v = Ev.click(1, 2)
+    b.n = 7
+    assert_eq(localDescribe(b.v), "click:1,2", "① Box[Ev].v 取出来能 switch")
+    assert_eq(b.v == Ev.click(1, 2), true, "① Box[Ev].v 按值相等")
+    assert_eq(b.n, 7, "① 同 struct 的标量字段不受影响")
+
+    // ② 双泛型参数
+    Pair[Ev, string] p = new Pair[Ev, string]()
+    p.a = Ev.key("k")
+    p.b = "tail"
+    assert_eq(localDescribe(p.a), "key:k", "② Pair[Ev,string].a")
+    assert_eq(p.b, "tail", "② Pair[Ev,string].b")
+
+    // ③ 泛型函数透传
+    assert_eq(localDescribe(idOf[Ev](Ev.tick())), "tick", "③ 泛型函数透传 enum")
+
+    // ④ 容器 + 跨模块构造
+    Array[Ev] xs = [Ev.tick(), Ev.click(3, 4)]
+    assert_eq(xs.has(Ev.click(3, 4)), true, "④ Array[Ev].has 按值")
+    assert_eq(xs.index_of(Ev.tick()), 0, "④ Array[Ev].index_of")
+    assert_eq(idOf[Ev](Ev.click(9, 9)) == Ev.click(9, 9), true, "④ 模块返回 vs 本地构造 ==")
+    assert_eq(evmod.describe(xs[1]), "click:3,4", "④ 模块侧 describe 也认同一个值")
+
+    // ⑤ JSON：跨模块导入的 enum
+    assert_eq(jsons.encode(Ev.click(1, 2)), "{\"click\":{\"x\":1,\"y\":2}}", "⑤ JSON 成员名")
+    assert_eq(jsons.encode(Ev.tick()), "{\"tick\":{}}", "⑤ JSON 零参数成员")
+    var back = jsons.decode(jsons.encode(Ev.click(5, 6)))
+    if back is Dict {
+        assert_eq((back as Dict).len(), 1, "⑤ decode 后是单键 Dict")
+    } else {
+        assert(false, "⑤ decode 应该是 Dict")
+    }
+
+    print("test_enum_payload_interop passed（泛型 / 跨模块 / JSON 交叉）")
+}

@@ -223,6 +223,29 @@ struct Msg {
   两个不同对象 ⇒ 逐字段比较必不等。
 - 修法：合成时给**引用类**载荷槽显式默认 `null`（标量槽不能写 null，交给原零值默认）。
 
+### ④ 两个模块导出**同名但不同形**的带载荷 enum：运行期才报（已改成编译期）
+
+- 现象：`import a` + `import b`，两边都 `export enum Ev`（成员不同），消费端 `use a.Ev` +
+  `use b.Ev` ⇒ **编译通过**，程序先跑完 main（打印了 "ok"），然后在收尾时报
+  「跨模块同名 struct 'Ev' …… 请给其中一个改名」。
+- 根因：`semantic_import_payload_enum` 把"同名且已是带载荷 enum"当**幂等**直接放行，
+  于是编译期默默挑了先导入的那份；形状冲突只有运行期的 `def_owner_conflict` 才查，
+  而它是在两份 `OP_STRUCT_DEF` 都注册时才触发 —— 那时 main 可能已经拿其中一份跑过了。
+- 修法：导入时按**成员名 + 参数个数**比形状（与 `def_owner_conflict` 同口径），一致才幂等放行，
+  不一致就在**编译期**报错并点名"给其中一个改名 / 别 use、用限定名 `a.Ev` / `b.Ev`"。
+
+### ⑤ 泛型 / 并发 / JSON 往返：压测通过，无 bug
+
+| 场景 | 结果 |
+|---|---|
+| `Box[Ev]`（泛型 struct 的字段是跨模块导入的带载荷 enum）、`Pair[Ev,string]`、`idOf[Ev](…)` | ✅ 取出来能 switch、能按值比较、标量字段不受影响 |
+| 带载荷 enum 过 `Channel`（`send`/`receive`）、`threads.start` 入参 | ✅ 跨线程是深拷贝，收回来能 switch；`==` / `Array.has` / `index_of` 仍按值成立 |
+| `jsons.encode` 单值 / 零参数成员 / 数组 / struct 字段 / 再 encode | ✅ 形状稳定：`{"done":{"code":7,"who":"me"}}`、`{"quit":{}}`、`[{"text":{"s":"a"}},{"quit":{}}]`、`{"name":"box","msg":null}` |
+| `jsons.decode(… ) as Ev`（反填） | 仍返回 `null`（设计上未做，见上文"仍未做"）—— 需要时用 `switch` 分派 |
+
+回归用例：`assert/test_enum_payload_interop.leno`（泛型/跨模块/JSON）、
+`assert/test_enum_payload_threads.leno`（Channel 双向 + 深拷贝后按值比较）。
+
 ### 已知边界（不是 bug，写在这里免得下次又踩）
 
 - `switch` 的主题必须是**变量**（降级后要读 `m.tag` / `m.p0`，表达式会被重复求值）——

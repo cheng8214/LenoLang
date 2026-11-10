@@ -1,0 +1,68 @@
+// test_enum_payload_threads.leno —— 带载荷 enum 跨线程（2026-11-10 压测）
+//
+// 关注点：带载荷 enum 降级成 struct ⇒ 跨线程是**深拷贝**。这条链路必须：
+//   ① 能进 Channel（send/receive），且收回来还是同一个 enum（能 switch）
+//   ② 深拷贝之后 `==` 仍按值成立（否则"同一个消息在两边不相等"，路由/去重全废）
+//   ③ 线程里构造的 enum 与本线程构造的 enum 能比（tag + 载荷槽一致）
+import threads
+
+enum Msg {
+    done(int code)
+    text(string s)
+    quit()
+}
+
+func describe(Msg m): string {
+    switch m {
+        case Msg.done(code) { return "done:" + _str(code) }
+        case Msg.text(s) { return "text:" + s }
+        case Msg.quit() { return "quit" }
+    }
+    return "?"
+}
+
+// worker：收 → 加工 → 发（带载荷 enum 双向过通道）
+func worker(Channel inCh, Channel outCh) {
+    while true {
+        var m = inCh.receive()
+        if m == null { break }
+        Msg msg = m as Msg
+        switch msg {
+            case Msg.done(code) { outCh.send(Msg.done(code * 2)) }
+            case Msg.text(s) { outCh.send(Msg.text(s + "!")) }
+            case Msg.quit() { outCh.send(Msg.quit()) }
+        }
+    }
+    outCh.send(null)
+}
+
+main() {
+    var jobs = threads.channel(8)
+    var done = threads.channel(8)
+    var h = threads.start(worker, jobs, done)
+
+    jobs.send(Msg.done(21))
+    jobs.send(Msg.text("hi"))
+    jobs.send(Msg.quit())
+    jobs.send(null)          // 停机信号
+
+    Msg r1 = done.receive() as Msg
+    Msg r2 = done.receive() as Msg
+    Msg r3 = done.receive() as Msg
+    h.join()
+
+    assert_eq(describe(r1), "done:42", "① 跨线程回来的 done(42) 能 switch")
+    assert_eq(describe(r2), "text:hi!", "① text 加工后能 switch")
+    assert_eq(describe(r3), "quit", "① 零参数成员 quit() 也能跨线程")
+
+    // ② 深拷贝之后按值相等（不是一个"看起来像"的对象）
+    assert_eq(r1 == Msg.done(42), true, "② done(42) 按值相等")
+    assert_eq(r2 == Msg.text("hi!"), true, "② text(\"hi!\") 按值相等")
+    assert_eq(r1 == Msg.done(43), false, "② 载荷不同则不相等")
+
+    // ③ 容器查找（走 value_shallow_equal 那条路，与 == 必须一致）
+    assert_eq([r1, r2].has(Msg.done(42)), true, "③ Array.has 跨线程对象按值")
+    assert_eq([r1, r2].index_of(Msg.text("hi!")), 1, "③ index_of 跨线程对象")
+
+    print("test_enum_payload_threads passed（Channel 双向 + 深拷贝后按值比较）")
+}
