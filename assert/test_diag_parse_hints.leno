@@ -1015,6 +1015,29 @@ main() { print(""x"") }
     ce.expect_warning(dictKey, "Dict[string,int].has(1) => 提醒键类型不匹配",
         "键类型不匹配", 3)
 
+    // ★ 2026-11-11：**语句位置**的 Dict 方法调用也要查键类型
+    //   （此前只有表达式位置 —— `d.set(1, 2)` 作为语句静默写进去，之后再也查不到）
+    var dictSetStmt = dirs.join(work, "dict_key_set_stmt.leno")
+    files.write(dictSetStmt, @"main() {
+    Dict[string, int] d = {}
+    d.set(1, 2)
+    d.remove(1)
+    print(_str(d.len()))
+}
+")
+    ce.expect_warning(dictSetStmt, "语句位置 d.set(1,2) => 提醒键类型不匹配",
+        "方法 'set' 的键类型不匹配", 3)
+
+    var dictSetOk = dirs.join(work, "dict_key_set_ok.leno")
+    files.write(dictSetOk, @"main() {
+    Dict[string, int] d = {}
+    d.set(""a"", 1)
+    print(_str(d.len()))
+}
+")
+    var outDictSetOk = ce.expect_ok(dictSetOk, "语句位置 set 键类型匹配（防误报）", "1")
+    ce.expect_no_warning(outDictSetOk, "语句位置 set 配套", "键类型不匹配")
+
     var dictKeyOk = dirs.join(work, "dict_key_ok.leno")
     files.write(dictKeyOk, @"main() {
     Dict[string, int] d = {""a"": 1}

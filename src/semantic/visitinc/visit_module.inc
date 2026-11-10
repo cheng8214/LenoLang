@@ -358,13 +358,21 @@
                         // 构建可用方法列表
                         char available[BUFFER_MEDIUM];
                         int pos = 0;
+                        const char* sim_names[64];
+                        int sim_n = 0;
                         for (int mi = 0; mi < method_count && pos < BUFFER_MEDIUM - 50; mi++) {
                             if (mi > 0) pos += snprintf(available + pos, BUFFER_MEDIUM - pos, ", ");
                             pos += snprintf(available + pos, BUFFER_MEDIUM - pos, "%s", all_methods[mi].method_name);
+                            if (sim_n < 64 && all_methods[mi].method_name) {
+                                sim_names[sim_n++] = all_methods[mi].method_name;
+                            }
                         }
+                        // ★ 2026-11-11：列表之后**再给相似名**（方法多的模块翻列表很费眼）
+                        const char* sim_hint = get_similar_in_names(sim_names, sim_n,
+                                                                    ast->u.module_call.method_name);
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                 "未找到模块方法: %s.%s（可用: %s）",
-                                 actual_module, ast->u.module_call.method_name, available);
+                                 "未找到模块方法: %s.%s（可用: %s）%s",
+                                 actual_module, ast->u.module_call.method_name, available, sim_hint);
                         free(all_methods);
                     } else {
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
@@ -589,9 +597,24 @@
                     int has_method = module_has_method(module_info->file_path, current_file, 
                                                        ast->u.module_call.method_name);
                     if (has_method == 0) {
+                        // ★ 2026-11-11：拼错模块函数名时给**相似名提示**（与 struct 方法 / 变量同款）。
+                        //   此前只有"模块 'm' 中没有方法 'helo'"，用户得自己去翻模块源码。
+                        const char* sim_hint = "";
+                        const char* sim_names[64];
+                        int sim_n = 0;
+                        if (module_info->sym_table && module_info->sym_table->funcs) {
+                            for (int fi = 0; fi < module_info->sym_table->func_count && sim_n < 64; fi++) {
+                                if (module_info->sym_table->funcs[fi].name) {
+                                    sim_names[sim_n++] = module_info->sym_table->funcs[fi].name;
+                                }
+                            }
+                            sim_hint = get_similar_in_names(sim_names, sim_n,
+                                                            ast->u.module_call.method_name);
+                        }
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                 "模块 '%s' 中没有方法 '%s'",
-                                 ast->u.module_call.module_name, ast->u.module_call.method_name);
+                                 "模块 '%s' 中没有方法 '%s'%s",
+                                 ast->u.module_call.module_name, ast->u.module_call.method_name,
+                                 sim_hint);
                         semantic_poison_expr(ast);   /* 根因已报 ⇒ 抑制下游级联 */
                     } else if (module_info->sym_table) {
                         // 从模块符号表推断返回类型
@@ -1498,6 +1521,15 @@
                             error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                      "调用方法 '%s' 时参数过多: 最多 %d 个, 实际 %d",
                                      method_name, inst_meta->max_arity, actual_arity);
+                        }
+
+                        // ★ 2026-11-11：Dict 方法的**键类型**（唯一实现，与 infer 路径同一份）。
+                        //   语句位置（`d.set(1, 2)`）此前完全不查 —— 实测静默写进一个
+                        //   string 键的 Dict 里、运行期再也查不到 ✗。
+                        if (obj_sym->type && obj_sym->type->kind == TYPE_DICT) {
+                            semantic_check_dict_method_key(s, obj_sym->type, method_name,
+                                                           &ast->u.module_call.args,
+                                                           ast->line, ast->column);
                         }
 
                         // 检查参数类型（仅当参数数量匹配或可变参数时；可变参数的 arity 是 NATIVE_ARITY_VARARG）

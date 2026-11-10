@@ -308,6 +308,11 @@ const char* format_detailed_type_error_text(TypeInfo* expected, TypeInfo* actual
 const char* format_detailed_type_error_ex_text(TypeInfo* expected, TypeInfo* actual,
                                                const char* context, const char* var_name);
 
+// ★ 2026-11-11：Dict 方法的键类型提醒（has/get/set/remove/setdefault 的第 1 个实参）——
+//   唯一实现；表达式位置（infer）与语句位置（visit_module）两个入口都要调。
+void semantic_check_dict_method_key(Semantic* s, TypeInfo* obj_type, const char* method_name,
+                                    AstList* args, int line, int column);
+
 // 数组索引赋值类型检查工具函数
 int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_type, int line, int column);
 

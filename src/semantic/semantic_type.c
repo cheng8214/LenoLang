@@ -1623,11 +1623,18 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         char lbuf[128], rbuf[128];
                         snprintf(lbuf, sizeof(lbuf), "%s", type_to_string(left));
                         snprintf(rbuf, sizeof(rbuf), "%s", type_to_string(right));
+                        // ★ 2026-11-11：漏 `await` 是最常见的 async 手误 —— 直接把话说明白
+                        const char* future_hint = "";
+                        if (left->kind == TYPE_FUTURE || right->kind == TYPE_FUTURE) {
+                            future_hint =
+                                "\n  提示: 这是 async 调用返回的 Future —— 需要 `await` 才能取值；"
+                                "建议先 `var v = await 任务()`，再参与运算";
+                        }
                         error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                             "类型 '%s' 与 '%s' 不能相加 —— `+` 只支持数值与字符串拼接；"
                             "数组追加元素请用 `a.add(x)`（批量可写循环），"
-                            "其它类型请用 `_str(...)` 显式转字符串",
-                            lbuf, rbuf);
+                            "其它类型请用 `_str(...)` 显式转字符串%s",
+                            lbuf, rbuf, future_hint);
                         // 毒值：根因已报过 ⇒ 下游（声明/调用/方法查找）静默，避免级联
                         result = type_new(TYPE_POISON);
                     }
@@ -2436,32 +2443,15 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
 
                             //（map/reduce 的推断特判已删：⓪ 族声明化后走上面的实例规格路径 ✓）
 
-                            // ★ 2026-11-08：Dict 方法的**键类型**提醒。
+                            // ★ 2026-11-08：Dict 方法的**键类型**提醒（2026-11-11 收编为共享实现）。
                             //   `has` 的元信息只有"1 个参数"、没有键类型 ⇒
                             //   `Dict[string,int].has(1)` 编译通过、运行期静默 false ✗；
                             //   get/set/remove/setdefault 同理（键都在第 1 个实参）。
-                            if (obj_type->key_type && obj_type->key_type->kind != TYPE_ANY &&
-                                ast->u.call.args.count >= 1 && ast->u.call.args.items[0] &&
-                                (strcmp(method_name, "has") == 0 ||
-                                 strcmp(method_name, "get") == 0 ||
-                                 strcmp(method_name, "set") == 0 ||
-                                 strcmp(method_name, "remove") == 0 ||
-                                 strcmp(method_name, "setdefault") == 0)) {
-                                TypeInfo* kt = infer_expr_type(s, ast->u.call.args.items[0]);
-                                if (kt && kt->kind != TYPE_ANY &&
-                                    !type_is_compatible(obj_type->key_type, kt)) {
-                                    // ⚠ type_to_string 是**共享静态缓冲** ⇒ 两个类型名先各拷一份
-                                    char kbuf[128], abuf[128];
-                                    snprintf(kbuf, sizeof(kbuf), "%s", type_to_string(obj_type->key_type));
-                                    snprintf(abuf, sizeof(abuf), "%s", type_to_string(kt));
-                                    warning_add_at_fmt(WARN_DICT_KEY_TYPE, ast->line, ast->column,
-                                        "方法 '%s' 的键类型不匹配：字典键类型是 '%s'，实参是 '%s' —— "
-                                        "运行期会把它们当成不同的键（查不到 / 静默 false）；"
-                                        "请用匹配的键类型",
-                                        method_name, kbuf, abuf);
-                                }
-                                if (kt) type_free(kt);
-                            }
+                            //   ⚠ 语句位置的调用走 visit_module 的变量方法分支，那边也调同一个
+                            //     函数（此前只有这里 ⇒ `d.set(1, 2)` 作为语句时完全不查）。
+                            semantic_check_dict_method_key(s, obj_type, method_name,
+                                                           &ast->u.call.args,
+                                                           ast->line, ast->column);
 
                             // Dict.get 返回类型：2 参 ⇒ 默认值类型、1 参 ⇒ 值类型 V
                             //（与 obj_sym 路径共享 infer_dict_get_return ✓）

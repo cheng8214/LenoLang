@@ -123,6 +123,14 @@ main() {
     ce.expect_error(n2, "负例 2：裸 Future 的元素未知 ⇒ 不猜（用 Future[int] 才有精确类型）",
         "返回类型不匹配", 0)
 
+    // 负例 3：漏 `await` 直接参与运算 ⇒ 必须**点破是 Future**（2026-11-11 补）
+    //   此前只说"类型 'Future[int]' 与 'int' 不能相加"，新手看不出该加 await
+    var n3 = build_entry(work, "forgot_await",
+        "async func go(): int {\n    return 2\n}\n\n"
+        + "main() {\n    var f = go()\n    print(f + 1)\n}\n")
+    ce.expect_error(n3, "负例 3：漏 await 直接加法 ⇒ 提示需要 await",
+        "需要 `await` 才能取值", 0)
+
     dirs.delete(work)
     io.print("test_async_future_type passed")
 }

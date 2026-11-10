@@ -1775,6 +1775,37 @@ const char* format_detailed_type_error_ex_text(TypeInfo* expected, TypeInfo* act
     return buf;
 }
 
+// ★ 2026-11-11：Dict 方法的**键类型**提醒（唯一实现）——
+//   `has / get / set / remove / setdefault` 的第 1 个实参是键。
+//   ⚠ 用**警告**不用错误（沿用 2026-11-08 的口径）：键类型不匹配在运行期只是"查不到"，
+//     不崩；而 `IntDict.get("x")` 这类探测写法可能是有意的。
+//   ⚠ 两个调用点必须都接：infer_expr_type（表达式位置）与 visit_module 的变量方法调用
+//     （语句位置）。此前只有前者 ⇒ `d.set(1, 2)` 作为**语句**时完全不查（实测静默通过）。
+void semantic_check_dict_method_key(Semantic* s, TypeInfo* obj_type, const char* method_name,
+                                    AstList* args, int line, int column) {
+    if (!s || !obj_type || obj_type->kind != TYPE_DICT || !method_name || !args) return;
+    if (!obj_type->key_type || obj_type->key_type->kind == TYPE_ANY) return;
+    if (args->count < 1 || !args->items[0]) return;
+    if (!(strcmp(method_name, "has") == 0 || strcmp(method_name, "get") == 0 ||
+          strcmp(method_name, "set") == 0 || strcmp(method_name, "remove") == 0 ||
+          strcmp(method_name, "setdefault") == 0)) {
+        return;
+    }
+
+    TypeInfo* kt = infer_expr_type(s, args->items[0]);
+    if (kt && kt->kind != TYPE_ANY && !type_is_compatible(obj_type->key_type, kt)) {
+        // ⚠ type_to_string 是**共享静态缓冲** ⇒ 两个类型名先各拷一份
+        char kbuf[128], abuf[128];
+        snprintf(kbuf, sizeof(kbuf), "%s", type_to_string(obj_type->key_type));
+        snprintf(abuf, sizeof(abuf), "%s", type_to_string(kt));
+        warning_add_at_fmt(WARN_DICT_KEY_TYPE, line, column,
+            "方法 '%s' 的键类型不匹配：字典键类型是 '%s'，实参是 '%s' —— "
+            "运行期会把它们当成不同的键（查不到 / 静默 false）；请用匹配的键类型",
+            method_name, kbuf, abuf);
+    }
+    if (kt) type_free(kt);
+}
+
 // ============================================================================
 // 数组索引赋值类型检查工具函数
 // ============================================================================
