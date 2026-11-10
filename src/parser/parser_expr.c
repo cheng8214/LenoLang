@@ -1751,6 +1751,60 @@ Ast* parse_index(Parser* p, Ast* obj) {
                 consume(p, TOK_RPAREN, "期望 ')'");
                 return ast;
             }
+
+            // ★ 2026-11-10：`类型名[类型实参].成员(实参…)` —— 泛型载荷 enum 的**显式**
+            //   类型实参写法（`Res[int].ok(1)`）。此前这里整段回退成"索引表达式"，
+            //   最终报的是「期望表达式」（列号还指向 `]`），完全看不出该写什么 ✗。
+            //   ⚠ 只认 obj 是**以大写字母开头的裸变量**（= 类型名/模块名的书写惯例）：
+            //     `_runRens[i].destroy()` 这类下划线开头的数组变量必须继续走"下标 + 方法调用"
+            //     ——实测不加上限时它会在这里被判成 `_runRens` 模块的成员调用 ⇒ AST 错乱，
+            //     模块编译阶段 ast_free 直接 0xC0000005（sdl_window.leno）。
+            //   `gm.Res[int].ok(…)` 这种限定形态仍走原路径（跨模块类型不支持显式实参）。
+            if (p->lex.current.type == TOK_DOT && obj->kind == AST_VAR &&
+                obj->u.var.name && obj->u.var.name[0] >= 'A' && obj->u.var.name[0] <= 'Z') {
+                Lexer saved_dot = p->lex;
+                int member_column = p->lex.current.column;
+                lexer_next(&p->lex);   // 消费 '.'
+                char* member_name = NULL;
+                if (p->lex.current.type == TOK_IDENT) {
+                    member_column = p->lex.current.column;
+                    member_name = copy_string(p->lex.current.text, p->lex.current.len);
+                    lexer_next(&p->lex);   // 消费成员名
+                }
+                if (member_name && p->lex.current.type == TOK_LPAREN) {
+                    Ast* ast = ast_new(AST_MODULE_CALL, line);
+                    ast->column = member_column;
+                    ast->u.module_call.module_name = obj->u.var.name;   // 名字转移
+                    ast->u.module_call.method_name = member_name;
+                    ast_list_init(&ast->u.module_call.args);
+                    ast->u.module_call.lib_ref.kind = SYM_GLOBAL;
+                    ast->u.module_call.lib_ref.index = -1;
+                    ast->u.module_call.lib_ref.name = NULL;
+                    ast->u.module_call.generic_type_args = generic_type_args;
+                    ast->u.module_call.generic_type_count = count;
+                    ast->u.module_call.generic_type_names = generic_type_names;
+                    ast->u.module_call.clib_return_type = NULL;
+
+                    obj->u.var.name = NULL;
+                    free(obj->u.var.ref.name);
+                    obj->u.var.ref.name = NULL;
+                    if (obj->cached_type) { type_free(obj->cached_type); obj->cached_type = NULL; }
+                    free(obj);
+
+                    lexer_next(&p->lex);   // 消费 '('
+                    if (p->lex.current.type != TOK_RPAREN) {
+                        do {
+                            Ast* arg = parse_call_arg(p, 0);
+                            ast_list_add(&ast->u.module_call.args, arg);
+                        } while (match(p, TOK_COMMA));
+                    }
+                    consume(p, TOK_RPAREN, "期望 ')'");
+                    return ast;
+                }
+                free(member_name);
+                p->lex = saved_dot;   // 不是 `X[..].name(` ⇒ 回退成普通索引
+                error_set_column(saved_dot.current.column);
+            }
         }
 
         // 不是泛型调用，清理泛型解析结果

@@ -32,6 +32,10 @@ typedef struct {
     char** member_names;     // 成员名数组（借用，不释放）
     int* counts;             // [成员] = 该成员的参数个数（借用，不释放）
     Ast* esrc;               // 本地声明的 enum AST；跨模块为 NULL（只用于诊断/穷尽提示）
+    // ★ 2026-11-10（泛型载荷 enum 构造推断）：[成员][参数] 的**声明类型**（借用）。
+    //   本地声明取 enum AST；跨模块那条路不做类型实参推断（消费端本来就不带类型参数），
+    //   因此可以是 NULL —— 所有使用点都必须先判空。
+    TypeInfo*** param_types;
 } SemPayloadEnum;
 
 // 第 mi 个成员的载荷基址（= 前面所有成员的参数个数之和）—— **唯一实现**
@@ -66,6 +70,7 @@ static int sem_payload_view_from_symbol(Symbol* sym, SemPayloadEnum* out) {
         out->member_names = ed->u.enum_def.member_names;
         out->counts = ed->u.enum_def.member_param_counts;
         out->esrc = ed;
+        out->param_types = ed->u.enum_def.member_param_types;
         return out->name && out->member_names && out->counts && out->member_count > 0;
     }
     if (sym->enum_payload_counts && sym->enum_payload_member_count > 0) {
@@ -74,6 +79,7 @@ static int sem_payload_view_from_symbol(Symbol* sym, SemPayloadEnum* out) {
         out->member_names = sym->enum_value_names;   // 导入时一起填的成员名
         out->counts = sym->enum_payload_counts;
         out->esrc = NULL;
+        out->param_types = NULL;   // 跨模块：不做构造处的类型实参推断（见结构体注释）
         return out->name && out->member_names;
     }
     return 0;
@@ -167,48 +173,46 @@ static void sem_payload_block_prepend(Ast* body, Ast** nodes, int n) {
     bl->count = need;
 }
 
+// 递归：类型 t 里是否出现了泛型参数 name
+//   用途：报"推不出类型实参"时区分两种真因 ——
+//     · 这个成员的载荷声明里**根本没有** T（`err(int, string)`）⇒ 只能靠上下文
+//     · 有 T 但实参类型读不出来（null / any）⇒ 换个实参写法或显式类型实参
+static int sem_payload_type_mentions_param(TypeInfo* t, const char* name) {
+    if (!t || !name) return 0;
+    switch (t->kind) {
+        case TYPE_GENERIC_PARAM:
+            return t->type_param_name && strcmp(t->type_param_name, name) == 0;
+        case TYPE_ARRAY:
+        case TYPE_PTR_GENERIC:
+            return sem_payload_type_mentions_param(t->element_type, name);
+        case TYPE_DICT:
+            return sem_payload_type_mentions_param(t->key_type, name) ||
+                   sem_payload_type_mentions_param(t->value_type, name);
+        case TYPE_FUNCTION:
+            for (int i = 0; i < t->param_count; i++) {
+                if (sem_payload_type_mentions_param(t->param_types ? t->param_types[i] : NULL, name))
+                    return 1;
+            }
+            return sem_payload_type_mentions_param(t->return_type, name);
+        default:
+            // 泛型 struct 实例（`Box[T]`）等：看 generic_args
+            for (int i = 0; i < t->generic_count; i++) {
+                if (sem_payload_type_mentions_param(t->generic_args ? t->generic_args[i] : NULL, name))
+                    return 1;
+            }
+            return 0;
+    }
+}
+
 // `Enum.成员(实参…)` 已识别 ⇒ 把 ast（AST_CALL，union 已被腾空）改写成
 //   `new Enum(tag = mi, p<base+k> = 实参 k)`，然后走正常的 struct 初始化检查。
+//
+// explicit_args / explicit_n：`Res[int].ok(1)` 这种**显式类型实参**写法
+//   （parser 已把它解析到 generic_type_args 上）。所有权随调用转移到这里：
+//   用上了就挂到改写后的 struct init，没用上（非泛型 enum / 出错）在这里释放。
 static void sem_payload_emit_struct_init(Semantic* s, Ast* ast, const SemPayloadEnum* v,
-                                         int mi, AstList args, const char* mname) {
-    // ★ 2026-11-10（泛型载荷 enum，步 2/3）：**构造暂不支持** —— 别让它落到
-    //   `new Res(tag=…)` 上再报"泛型 struct 'Res' 需要类型参数（如 Res[类型]）"
-    //   （那句会把人引到一个**解析不进去**的语法上：`Res[int].ok(…)` 目前是语法错误）。
-    //   类型实参从**期望类型**推断（var 声明 / return / 赋值右侧都会挂一个，见 Semantic.expected_type）。
-    int gen_n = 0;
-    TypeInfo** gen_args = NULL;
-    if (v->esrc && v->esrc->u.enum_def.type_param_count > 0) {
-        TypeInfo* exp = s ? s->expected_type : NULL;
-        int matched = (exp && exp->kind == TYPE_STRUCT && exp->struct_name &&
-                       strcmp(exp->struct_name, v->name) == 0 && exp->generic_count > 0);
-        if (!matched) {
-            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                "泛型载荷 enum '%s' 的构造**推不出类型实参**：`%s.%s(…)` 只能从上下文推断，"
-                "认这四处 —— 带类型的声明（`%s[类型] x = %s.%s(…)`）、函数 return（签名写了返回类型）、"
-                "给已声明变量赋值、以及 `… as %s[类型]`。"
-                "直接塞进比较（`%s.ok(1) == y`）或函数实参里推不出来 ⇒ 先赋给一个带类型的局部量再传；"
-                "`%s[int].%s(…)` 这种显式写法还没进解析器",
-                v->name, v->name, mname, v->name, v->name, mname, v->name,
-                v->name, v->name, mname);
-            semantic_poison_expr(ast);
-            for (int k = 0; k < (int)args.count; k++) ast_free(args.items[k]);
-            free(args.items);
-            memset(&ast->u, 0, sizeof(ast->u));
-            ast->kind = AST_CALL;
-            return;
-        }
-        if (exp->generic_count != v->esrc->u.enum_def.type_param_count) {
-            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
-                "泛型载荷 enum '%s' 需要 %d 个类型实参，上下文给的是 %d 个",
-                v->name, v->esrc->u.enum_def.type_param_count, exp->generic_count);
-        }
-        gen_n = exp->generic_count;
-        gen_args = (TypeInfo**)calloc((size_t)gen_n, sizeof(TypeInfo*));
-        for (int i = 0; i < gen_n; i++) {
-            gen_args[i] = exp->generic_args ? type_copy(exp->generic_args[i]) : NULL;
-        }
-    }
-
+                                         int mi, AstList args, const char* mname,
+                                         TypeInfo** explicit_args, int explicit_n) {
     int want = v->counts[mi];
     int got = args.count;
     for (int i = 0; i < got; i++) {
@@ -221,6 +225,10 @@ static void sem_payload_emit_struct_init(Semantic* s, Ast* ast, const SemPayload
             semantic_poison_expr(ast);
             for (int k = 0; k < got; k++) ast_free(args.items[k]);
             free(args.items);
+            for (int i = 0; i < explicit_n; i++) {
+                if (explicit_args[i]) type_free(explicit_args[i]);
+            }
+            free(explicit_args);
             // ⚠ callee 已被调用方释放（见 sem_enum_payload_rewrite_call 的顺序）：
             //   这里必须把它清空，否则后续 ast_free 会二次释放、infer_expr_type 会读悬垂指针。
             memset(&ast->u, 0, sizeof(ast->u));
@@ -237,10 +245,137 @@ static void sem_payload_emit_struct_init(Semantic* s, Ast* ast, const SemPayload
     int use_n = got < want ? got : want;
     int base = sem_payload_member_base(v, mi);
 
+    // ★ 2026-11-10（泛型载荷 enum 构造）：类型实参三种来源，优先级：
+    //     ① 显式写法 `Res[int].ok(…)`（parser 已解析）
+    //     ② 期望类型（带类型声明 / 函数 return / 给已声明变量赋值 / `as Res[类型]`）
+    //     ③ **从载荷实参推断**（`Res.ok(1)` ⇒ T = int，与泛型函数同一套 infer_generic_bindings）
+    //   ③ 是本次新增：没有它，`show(Res.ok(1))` / `arr.add(Res.ok(1))` / `b.val = Res.ok(5)`
+    //   这些"上下文里明明写着 Res[int]"的地方都会被判成推不出（实测）。
+    int gen_n = 0;
+    TypeInfo** gen_args = NULL;
+    Ast* enum_ast = v->esrc;
+    if (enum_ast && enum_ast->u.enum_def.type_param_count > 0) {
+        int tn = enum_ast->u.enum_def.type_param_count;
+        char** tnames = enum_ast->u.enum_def.type_params;
+        TypeInfo** binds = (TypeInfo**)calloc((size_t)tn, sizeof(TypeInfo*));
+
+        if (explicit_n > 0) {
+            if (explicit_n != tn) {
+                error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                    "泛型载荷 enum '%s' 需要 %d 个类型实参，实际写了 %d 个",
+                    v->name, tn, explicit_n);
+            }
+            for (int i = 0; i < tn && i < explicit_n; i++) {
+                binds[i] = (explicit_args && explicit_args[i]) ? explicit_args[i] : NULL;
+            }
+            // 多写的类型实参：已报错，这里直接丢弃（数组本体也要释放）
+            for (int i = tn; i < explicit_n; i++) {
+                if (explicit_args && explicit_args[i]) type_free(explicit_args[i]);
+            }
+            free(explicit_args);
+            // 所有权已转移（binds 负责释放元素）
+            explicit_args = NULL;
+            explicit_n = 0;
+        } else {
+            TypeInfo* exp = s ? s->expected_type : NULL;
+            int matched = (exp && exp->kind == TYPE_STRUCT && exp->struct_name &&
+                           strcmp(exp->struct_name, v->name) == 0 && exp->generic_count > 0);
+            if (matched) {
+                if (exp->generic_count != tn) {
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                        "泛型载荷 enum '%s' 需要 %d 个类型实参，上下文给的是 %d 个",
+                        v->name, tn, exp->generic_count);
+                }
+                for (int i = 0; i < tn && i < exp->generic_count; i++) {
+                    if (exp->generic_args && exp->generic_args[i]) {
+                        binds[i] = type_copy(exp->generic_args[i]);
+                    }
+                }
+            }
+            // 从载荷实参推断（先绑定的优先 ⇒ 期望类型不会被实参覆盖）
+            if (v->param_types && v->param_types[mi] && tnames) {
+                for (int k = 0; k < use_n; k++) {
+                    Ast* a = args.items[k];
+                    if (!a) continue;
+                    // 嵌套的载荷 enum 构造（`Res.ok(Res.ok(5))`）自身也需要上下文，
+                    // 这里读不出类型 ⇒ 跳过（这类形状本来就走"推不出"诊断）
+                    SemPayloadEnum nested;
+                    memset(&nested, 0, sizeof(nested));
+                    if (sem_payload_view_of_pattern(s, a, &nested, NULL)) continue;
+                    TypeInfo* at = infer_expr_type(s, a);
+                    // null / any 推不出任何有用信息（`Res.ok(null)`），别把 T 绑成 null
+                    if (at && at->kind != TYPE_NULL && at->kind != TYPE_ANY &&
+                        at->kind != TYPE_INFER) {
+                        infer_generic_bindings(v->param_types[mi][k], at, tnames, binds, tn);
+                    }
+                    if (at) type_free(at);
+                }
+            }
+        }
+
+        // 仍有未绑定的 ⇒ 定向报错，并说清是"载荷里没有它"还是"实参类型不够确定"
+        int missing_n = 0;
+        char missing[128];
+        missing[0] = '\0';
+        for (int i = 0; i < tn; i++) {
+            if (binds[i]) continue;
+            missing_n++;
+            if (missing_n > 3 || !tnames || !tnames[i]) continue;
+            if (missing[0]) {
+                strncat(missing, "、", sizeof(missing) - strlen(missing) - 1);
+            }
+            strncat(missing, tnames[i], sizeof(missing) - strlen(missing) - 1);
+        }
+        if (missing_n > 0) {
+            int payload_has = 0;
+            for (int i = 0; i < tn && !payload_has; i++) {
+                if (binds[i]) continue;
+                if (!v->param_types || !v->param_types[mi]) break;
+                for (int k = 0; k < want; k++) {
+                    if (sem_payload_type_mentions_param(v->param_types[mi][k], tnames ? tnames[i] : NULL)) {
+                        payload_has = 1;
+                        break;
+                    }
+                }
+            }
+            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                "泛型载荷 enum '%s' 的构造**推不出类型实参 '%s%s'**：成员 '%s' %s。"
+                "请给上下文（`%s[类型] x = %s.%s(…)`、函数 return 写返回类型、"
+                "给已声明变量赋值、`… as %s[类型]`），或写显式形式 `%s[int].%s(…)`",
+                v->name, missing, missing_n > 3 ? " 等" : "", mname,
+                payload_has ? "的载荷实参类型不足以确定它（实参是 null / any？）"
+                            : "的载荷声明里没有它",
+                v->name, v->name, mname, v->name, v->name, mname);
+            for (int i = 0; i < tn; i++) {
+                if (binds[i]) type_free(binds[i]);
+            }
+            free(binds);
+            semantic_poison_expr(ast);
+            for (int k = 0; k < got; k++) ast_free(args.items[k]);
+            free(args.items);
+            memset(&ast->u, 0, sizeof(ast->u));
+            ast->kind = AST_CALL;
+            return;
+        }
+        gen_n = tn;
+        gen_args = binds;
+    } else if (explicit_args && explicit_n > 0) {
+        // 非泛型 enum 却写了 `R[int].ok(…)` ⇒ 明确报错（不静默忽略）
+        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+            "带载荷 enum '%s' 不是泛型，不能写类型实参（`%s[…]`）", v->name, v->name);
+        for (int i = 0; i < explicit_n; i++) {
+            if (explicit_args[i]) type_free(explicit_args[i]);
+        }
+        free(explicit_args);
+    }
+
     memset(&ast->u, 0, sizeof(ast->u));
     ast->kind = AST_STRUCT_INIT;
     ast->u.struct_init.struct_name = strdup(v->name);
     ast->u.struct_init.from_enum_payload = 1;
+    // 诊断还原用：字段类型不匹配时把 `p<N>` 说成"成员 X 的第 k 个参数"
+    ast->u.struct_init.enum_payload_member = strdup(mname);
+    ast->u.struct_init.enum_payload_base = base;
     // 泛型载荷 enum：把推断出来的类型实参挂到改写后的 `new R[...]()` 上
     if (gen_n > 0 && gen_args) {
         ast->u.struct_init.generic_type_count = gen_n;
@@ -263,7 +398,16 @@ static void sem_payload_emit_struct_init(Semantic* s, Ast* ast, const SemPayload
     free(args.items);
 
     // 改写后的节点交给正常路径做类型检查/字段索引（AST_STRUCT_INIT）
-    visit(s, ast);
+    // ★ 2026-11-10：**必须清掉外层期望类型** —— 否则 `Res[Res[int]] x = Res.ok(Res.ok(5))`
+    //   里的内层构造会拿到外层的 `Res[Res[int]]`（名字相同、generic_count 相同 ⇒ 判"匹配"）
+    //   ⇒ 内层被绑成 T = Res[int]，报「成员 ok 第 1 个参数: 期望 Res[int]，实际 int」✗
+    //   （实测）。改写后的节点已经带好类型实参，内层构造应当独立按自己的载荷实参推断。
+    {
+        TypeInfo* saved_expected = s ? s->expected_type : NULL;
+        if (s) s->expected_type = NULL;
+        visit(s, ast);
+        if (s) s->expected_type = saved_expected;
+    }
 }
 
 // ============================================================================
@@ -285,14 +429,29 @@ static int sem_enum_payload_rewrite_call(Semantic* s, Ast* ast) {
     memset(&v, 0, sizeof(v));
     if (!sem_payload_view_from_symbol(esym, &v)) return 0;
 
-    // 泛型实参的写法不在本期范围：交给原路径（会报"没有这个方法"之类），不静默改写
-    if (ast->u.call.generic_type_args || ast->u.call.generic_type_names) return 0;
+    // ★ 2026-11-10：显式类型实参（`Res[int].ok(…)`）现在**支持**了 —— parser 把
+    //   `Res[int]` 解析成 call 的 generic_type_args（见 parser_expr.c 的 parse_index）。
+    //   所有权随改写转移（emit 用不上会自己释放）。
+    TypeInfo** expl = ast->u.call.generic_type_args;
+    int expl_n = ast->u.call.generic_type_count;
+    char** expl_names = ast->u.call.generic_type_names;
+    ast->u.call.generic_type_args = NULL;
+    ast->u.call.generic_type_count = 0;
+    ast->u.call.generic_type_names = NULL;
+    if (expl_names) {
+        for (int i = 0; i < expl_n; i++) free(expl_names[i]);
+        free(expl_names);
+    }
 
     int mi = sem_payload_member_index(&v, mname);
     if (mi < 0) {
         error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
             "带载荷 enum '%s' 里没有成员 '%s'", v.name, mname);
         semantic_poison_expr(ast);
+        for (int i = 0; i < expl_n; i++) {
+            if (expl[i]) type_free(expl[i]);
+        }
+        free(expl);
         return 1;
     }
 
@@ -305,7 +464,7 @@ static int sem_enum_payload_rewrite_call(Semantic* s, Ast* ast) {
         type_free(ast->cached_type);
         ast->cached_type = NULL;
     }
-    sem_payload_emit_struct_init(s, ast, &v, mi, args, mname);
+    sem_payload_emit_struct_init(s, ast, &v, mi, args, mname, expl, expl_n);
     return 1;
 }
 
@@ -322,11 +481,20 @@ static int sem_enum_payload_rewrite_module_call(Semantic* s, Ast* ast) {
     SemPayloadEnum v;
     memset(&v, 0, sizeof(v));
     if (!sem_payload_view_from_symbol(esym, &v)) return 0;
-    if (ast->u.module_call.generic_type_args || ast->u.module_call.generic_type_names) return 0;
 
     char* en = ast->u.module_call.module_name;
     char* mn = ast->u.module_call.method_name;
     AstList args = ast->u.module_call.args;
+    // 显式类型实参（`Res[int].ok(…)`）随节点搬过去（同 rewrite_call 的说明）
+    TypeInfo** expl = ast->u.module_call.generic_type_args;
+    int expl_n = ast->u.module_call.generic_type_count;
+    ast->u.module_call.generic_type_args = NULL;
+    ast->u.module_call.generic_type_count = 0;
+    if (ast->u.module_call.generic_type_names) {
+        for (int i = 0; i < expl_n; i++) free(ast->u.module_call.generic_type_names[i]);
+        free(ast->u.module_call.generic_type_names);
+        ast->u.module_call.generic_type_names = NULL;
+    }
     if (ast->cached_type) {
         type_free(ast->cached_type);
         ast->cached_type = NULL;
@@ -344,6 +512,8 @@ static int sem_enum_payload_rewrite_module_call(Semantic* s, Ast* ast) {
     ast->kind = AST_CALL;
     ast->u.call.callee = callee;
     ast->u.call.args = args;
+    ast->u.call.generic_type_args = expl;
+    ast->u.call.generic_type_count = expl_n;
     return sem_enum_payload_rewrite_call(s, ast);
 }
 

@@ -467,6 +467,11 @@ struct Ast {
             //   （`Msg.progress(3,10)` ⇒ `new Msg(tag=0, p0=3, …)`）。
             //   用户显式写 `new Msg(...)` 要报"带载荷 enum 不能用 new 构造"，这一位用来区分。
             int from_enum_payload;
+            // ★ 2026-11-10（诊断质量）：改写来源的成员名与载荷基址 —— 字段类型不匹配时
+            //   用它把合成的 `p<N>` 还原成"成员 X 的第 k 个参数"（否则用户看到 `p0`
+            //   完全不知道对应哪个参数）。仅 from_enum_payload=1 时有值。
+            char* enum_payload_member;
+            int enum_payload_base;
         } struct_init;
         struct {
             Ast* obj;          // 对象表达式

@@ -1,0 +1,133 @@
+// test_enum_payload_generic_infer.leno —— 泛型载荷 enum 的构造推断 + 显式类型实参（2026-11-10）
+//
+// 此前泛型载荷 enum 的构造只能从**上下文**推断类型实参（带类型的声明 / return / 赋值 / as），
+// 于是 `show(Res.ok(1))` / `arr.add(Res.ok(1))` / `b.val = Res.ok(5)` 这些
+// "上下文里明明写着 Res[int]" 的位置全会报「推不出类型实参」✗。现在三条路：
+//   ① 载荷实参推断（`Res.ok(1)` ⇒ T = int）—— 与泛型函数同一套 infer_generic_bindings
+//   ② 显式类型实参 `Res[int].ok(1)`（parser 新增）—— 任意表达式位置可用
+//   ③ 原来的期望类型通道（声明 / return / 赋值 / as）保持不动
+//
+// 同时钉住三条诊断：
+//   · 无上下文且成员载荷里没有 T（`Res.err(1,"x")`）⇒ 点名 T 并说清原因
+//   · 载荷参数类型不符 ⇒ 说「成员 ok 的第 1 个参数」，不再泄漏合成的 `p0`
+//   · 非泛型 enum 写类型实参 ⇒ 明确报错（不静默忽略）
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+enum Res[T] {
+    ok(T v)
+    err(int code, string msg)
+}
+
+struct Box {
+    string name = ""
+    Res[int]? val = null
+}
+
+func show(Res[int] r): string {
+    switch r {
+        case Res.ok(v) { return "ok:" + _str(v) }
+        case Res.err(c, m) { return m }
+    }
+    return "?"
+}
+
+main() {
+    // ① 载荷实参推断：四个"没有 expected_type"的位置
+    assert_eq(show(Res.ok(1)), "ok:1", "① 函数实参处按载荷推断")
+
+    Array[Res[int]] arr = []
+    arr.add(Res.ok(2))
+    assert_eq(show(arr[0]), "ok:2", "① Array.add 处按载荷推断")
+
+    Dict[string, Res[int]] d = {}
+    d.set("a", Res.ok(3))
+    assert_eq(show(d.get("a") as Res[int]), "ok:3", "① Dict.set 处按载荷推断")
+
+    Box b = new Box(name = "b")
+    b.val = Res.ok(4)
+    assert_eq(show(b.val), "ok:4", "① struct 字段赋值处按载荷推断")
+
+    // ② 嵌套构造：内层用自己的载荷推断（不能沿用外层的 Res[Res[int]]）
+    Res[Res[int]] nested = Res.ok(Res.ok(5))
+    assert_eq(nested.tag, 0, "② 外层 tag = ok")
+    Res[int] inner = nested.p0 as Res[int]
+    assert_eq(show(inner), "ok:5", "② 内层按自己的载荷推断")
+
+    // ③ 显式类型实参：任意表达式位置都能写
+    assert_eq(show(Res[int].ok(6)), "ok:6", "③ 显式形式作实参")
+    Res[int] e = Res[int].err(7, "boom")
+    assert_eq(show(e), "boom", "③ 显式形式构造载荷里没有 T 的成员")
+    Res[string] s = Res[string].ok("hi")
+    assert_eq(s.p0, "hi", "③ 显式形式换一个类型实参")
+
+    // ③-b 显式 + 嵌套
+    Res[Res[int]] n2 = Res[Res[int]].ok(Res[int].ok(9))
+    Res[int] n2in = n2.p0 as Res[int]
+    assert_eq(show(n2in), "ok:9", "③ 显式形式嵌套构造")
+
+    // ④ 下标 + 方法调用的回归（parser 新增分支只认大写开头的裸变量；
+    //    `_rows[_i].len()` 必须继续按"下标 + 方法调用"解析 —— 否则模块编译期会崩）
+    Array[Array[int]] _rows = [[1, 2], [3]]
+    int _i = 1
+    assert_eq(_rows[_i].len(), 1, "④ 下划线变量 + 下划线下标 + 方法调用")
+
+    print("test_enum_payload_generic_infer passed（载荷推断 / 显式实参 / 嵌套 / 下标记法回归）")
+
+    // ---- 诊断用例（动态源码，用独立子进程编译）----
+    var work = dirs.join(_tmpdir(), "leno_enum_payload_infer")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    var d1 = dirs.join(work, "no_ctx.leno")
+    files.write(d1, @"enum Res[T] {
+    ok(T v)
+    err(int code, string msg)
+}
+
+main() {
+    var a = Res.err(1, ""x"")
+    print(_str(a))
+}
+")
+    ce.expect_error(d1, "无上下文 + 载荷里没有 T：点名 T 并说清原因", "载荷声明里没有它", 7)
+
+    var d2 = dirs.join(work, "explicit_bad.leno")
+    files.write(d2, @"enum Res[T] {
+    ok(T v)
+    err(int code, string msg)
+}
+
+main() {
+    Res[int] a = Res[int].ok(""字符串"")
+    print(_str(a))
+}
+")
+    ce.expect_error(d2, "显式类型实参与载荷类型不符：说成员 + 第几个参数", "成员 'ok' 第 1 个参数类型不匹配", 7)
+
+    var d3 = dirs.join(work, "non_generic.leno")
+    files.write(d3, @"enum R {
+    ok(int v)
+}
+
+main() {
+    R a = R[int].ok(1)
+    print(_str(a))
+}
+")
+    ce.expect_error(d3, "非泛型 enum 写类型实参：明确报错", "不是泛型，不能写类型实参", 6)
+
+    var d4 = dirs.join(work, "payload_bad.leno")
+    files.write(d4, @"enum R {
+    ok(int v)
+}
+
+main() {
+    R a = R.ok(""字符串"")
+    print(_str(a))
+}
+")
+    ce.expect_error(d4, "非泛型载荷参数类型不符：不泄漏合成的 p0", "成员 'ok' 第 1 个参数类型不匹配", 6)
+}

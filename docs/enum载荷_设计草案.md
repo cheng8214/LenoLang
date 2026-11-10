@@ -285,24 +285,51 @@ enum Res[T] { ok(T v), err(int code, string msg) }
 func sig(Res[int] r): string { return "x" }
 ``
 
-### 已完成（步 3/3）：构造从**上下文**推断
+### 已完成（步 3/3）：构造的类型实参推断
 
-类型实参认**四处**（`Semantic.expected_type` 通道：进入时挂上、访问完立刻还原）：
+**五条来源**，优先级从高到低：
 
-1. 带类型的声明：`Res[int] a = Res.ok(42)`
-2. `return`（函数签名写了返回类型）：`func f(): Res[int] { return Res.ok(1) }`
-3. 给已声明变量赋值：`a = Res.ok(9)`
-4. `expr as Res[int]`
+1. **显式写法** `Res[int].ok(42)`（2026-11-10 补 —— parser 在 `parse_index` 里识别
+   `类型名[类型实参].成员(…)` 并建成 `AST_MODULE_CALL`，语义侧直接取实参）。
+   可以出现在任意表达式位置，是"没有上下文"时的万能写法。
+2. 带类型的声明：`Res[int] a = Res.ok(42)`
+3. `return`（函数签名写了返回类型）：`func f(): Res[int] { return Res.ok(1) }`
+4. 给已声明变量赋值：`a = Res.ok(9)`
+5. `expr as Res[int]`
 
-四处都推不出 ⇒ **定向报错**（并提示"先赋给带类型的局部量"），不静默。
-明确不做 `Res[int].ok(…)` 这种显式写法（要改 `Type[args].member` 的解析规则，收益低于成本）。
+外加 **载荷实参推断**（2026-11-10 补）：成员载荷声明里出现了 `T` 时，按实参类型绑定
+（`Res.ok(1)` ⇒ `T = int`），与泛型函数共用 `infer_generic_bindings`。
+于是 `show(Res.ok(1))` / `arr.add(Res.ok(1))` / `d.set(k, Res.ok(1))` /
+`b.val = Res.ok(5)` 这些**没有 `expected_type`** 的位置也都成立 ——
+此前它们一律报「推不出类型实参」，要求用户先绑一个带类型的局部量。
+
+推断顺序是"先绑定的优先"：期望类型先占住，实参类型只补空缺（不会互相覆盖）。
+
+**全都推不出**（典型：`Res.err(1, "x")` —— 该成员的载荷里根本没有 `T`）⇒ 定向报错，
+文案会点名**缺哪个类型参数**，并区分两种真因（"载荷声明里没有它" / "实参类型不够确定"），
+同时给出显式写法作为出路。
+
+> 实现坑（已修，钉在 `assert/test_enum_payload_generic_infer.leno` 的用例 ②）：
+> 改写后的 `new Res(...)` 交给正常 struct 初始化路径时，必须**清掉外层 `expected_type`**，
+> 否则 `Res[Res[int]] x = Res.ok(Res.ok(5))` 里的内层构造会误用外层的 `Res[Res[int]]`
+> （同名 + generic_count 相同 ⇒ 判"匹配"）⇒ 内层被绑成 `T = Res[int]`，报
+> 「成员 ok 第 1 个参数: 期望 Res[int]，实际 int」。
+>
+> 另一个实现坑（parser）：显式写法分支只认**大写开头的裸变量**。实测 `_runRens[_qi].destroy()`
+> （下划线开头 + 下划线下标）会撞进来，被当成 `_runRens` 模块的成员调用 ⇒ AST 错乱、
+> 模块编译期 `ast_free` 直接 0xC0000005（`sdl_window.leno`）。数组下标 + 方法调用必须继续走原路径。
 
 回归钉子：`assert/test_enum_payload_generic.leno`（构造三通道 / 匹配绑定 / 双实参共存 /
-多类型参数 / 按值比较）。
+多类型参数 / 按值比较）+ `assert/test_enum_payload_generic_infer.leno`
+（载荷推断 / 显式实参 / 嵌套 / 下标记法回归 / 三条诊断）。
 
 ### 已知边界
 
 - 类型参数暂不支持约束/默认值（`enum R[T: Face]`）：解析器只认名字列表。
+- 显式写法只支持**裸类型名**：`Res[int].ok(…)` ✓；`gm.Res[int].ok(…)`（限定名）仍走原路径
+  —— 跨模块类型在消费端本来就不带类型参数（擦除模型），需要显式实参时先 `use gm.Res`。
+- 载荷里没有 `T` 的成员（`err(int, string)`）在**完全无上下文**时仍推不出，必须写显式形式
+  或给带类型的声明 —— 这是信息论上的边界，不是实现缺口。
 
 ### 跨模块（2026-11-10 补齐，已**支持**）
 

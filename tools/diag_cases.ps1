@@ -66,9 +66,13 @@ $cases += @{ n = "e01c 泛型载荷 enum 的构造（声明处推断，2026-11-1
 enum R[T] { ok(T v), err(int c) }
 main() { R[int] a = R.ok(1); print(_str(a.p0)) }
 '@ }
-$cases += @{ n = "e01d 泛型载荷 enum 的构造缺上下文（推不出类型实参）"; e = "error"; src = @'
+$cases += @{ n = "e01d 泛型载荷 enum 的构造：载荷里有 T ⇒ 从实参推断（2026-11-10 起不再报错）"; e = "ok"; src = @'
 enum R[T] { ok(T v), err(int c) }
-main() { var x = R.ok(1); print("x") }
+main() { var x = R.ok(1); print(_str(x)) }
+'@ }
+$cases += @{ n = "e01e 泛型载荷 enum 的构造缺上下文（成员载荷里没有 T，推不出）"; e = "error"; src = @'
+enum R[T] { ok(T v), err(int c) }
+main() { var x = R.err(1); print(_str(x)) }
 '@ }
 $cases += @{ n = "e02 重复成员"; e = "error"; src = @'
 enum E { a, a }

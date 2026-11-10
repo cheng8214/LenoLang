@@ -582,6 +582,7 @@ break;
             break;
         case AST_STRUCT_INIT:
             free(ast->u.struct_init.struct_name);
+            free(ast->u.struct_init.enum_payload_member);
             for (int i = 0; i < ast->u.struct_init.field_count; i++) {
                 free(ast->u.struct_init.field_names[i]);
                 ast_free(ast->u.struct_init.field_values[i]);

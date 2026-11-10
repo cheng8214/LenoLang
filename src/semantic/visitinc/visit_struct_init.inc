@@ -322,10 +322,36 @@
                             // 检查类型兼容性
                             if (actual_type) {
                                 if (!type_is_compatible(check_type, actual_type)) {
-                                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
-                                        format_type_error_text("字段 '%s3' 类型不匹配: 期望 '%s1'，实际 '%s2'",
-                                            check_type, actual_type,
-                                            field_name, NULL, NULL));
+                                    // ★ 2026-11-10（诊断质量）：带载荷 enum 的构造是编译器改写的，
+                                    //   字段名是合成的 `p0/p1/…` ⇒ 直接甩给用户等于要求他理解降级布局。
+                                    //   这里还原成"成员 ok 的第 1 个参数"（成员名 + 基址在改写时记下了）。
+                                    int payload_idx = -1;
+                                    if (ast->u.struct_init.from_enum_payload &&
+                                        ast->u.struct_init.enum_payload_member &&
+                                        field_name && field_name[0] == 'p' && field_name[1]) {
+                                        char* endp = NULL;
+                                        long pn = strtol(field_name + 1, &endp, 10);
+                                        if (endp && *endp == '\0' && pn >= 0) {
+                                            payload_idx = (int)(pn - ast->u.struct_init.enum_payload_base);
+                                        }
+                                    }
+                                    if (payload_idx >= 0) {
+                                        char idx_buf[16];
+                                        snprintf(idx_buf, sizeof(idx_buf), "%d", payload_idx + 1);
+                                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
+                                            format_type_error_text(
+                                                "带载荷 enum '%s3' 的成员 '%s4' 第 %s5 个参数类型不匹配: "
+                                                "期望 '%s1'，实际 '%s2'",
+                                                check_type, actual_type,
+                                                ast->u.struct_init.struct_name,
+                                                ast->u.struct_init.enum_payload_member,
+                                                idx_buf));
+                                    } else {
+                                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column, "%s",
+                                            format_type_error_text("字段 '%s3' 类型不匹配: 期望 '%s1'，实际 '%s2'",
+                                                check_type, actual_type,
+                                                field_name, NULL, NULL));
+                                    }
                                 }
                                 type_free(actual_type);
                             }
