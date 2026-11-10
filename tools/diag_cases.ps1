@@ -53,7 +53,7 @@ main() { S s = S; print("x") }
 '@ }
 
 # ==================== enum ====================
-$cases += @{ n = "e01 空 enum（合法但不建议）"; e = "ok"; src = @'
+$cases += @{ n = "e01 空 enum（2026-11-10 起告警）"; e = "warn"; src = @'
 enum E { }
 main() { print("x") }
 '@ }
