@@ -100,6 +100,8 @@ static int scan_struct_def(const Chunk* c, int base, int checks, Cur* k) {
             if (has_esn) {
                 int idx = cur_u16(k);
                 if (checks) ck_const(k, idx);
+            } else {
+                cur_u8(k);                            // ★ 2026-11-11：标量元素类型
             }
         }
         int has_default = cur_u8(k);

@@ -25,6 +25,15 @@ struct Big {
     int id = 0
 }
 
+// ⑤ 数组字段：元素类型转换回归（2026-11-11）
+struct Bag {
+    Array[int] ints = []
+    Array[float] floats = []
+    Array[bool] bools = []
+    Array[string] strs = []
+    Array[any] anys = []
+}
+
 main() {
     // ==================== ① 编码：struct → JSON 对象 ====================
     Song s = new Song()
@@ -150,6 +159,42 @@ main() {
     assert_true(jsons.fill(b, "{\"id\":153282510146394112}"), "大整数 fill 成功")
     assert_eq(_str(b.id), "153282510146394112", "大整数逐位保留")
     assert_eq(jsons.encode(b), "{\"id\":153282510146394112}", "大整数 encode 原样写出")
+
+    // ==================== ⑤ 数组字段：元素按**声明元素类型**转换（2026-11-11）====================
+    //   修前：`{"ints":[1,"2"]}` 填 `Array[int]` ⇒ "2" **原样**留在数组里（静态类型却说是 int）
+    //   ⇒ `ints[0]+ints[1]` 按 int48 读字符串指针，得到 1391279286993 这种垃圾（实测 ✗）。
+    //   现在逐元素走与标量字段同一套转换：能解析的字符串转成数字，转不了给 null（读时报错）。
+    Bag bag = new Bag()
+    assert_true(jsons.fill(bag,
+        "{\"ints\":[\"1\",2.9,true],\"floats\":[1,\"2.5\"],\"bools\":[1,\"true\",0],\"strs\":[123,\"ok\"],\"anys\":[1,\"x\"]}"),
+        "数组字段 fill 成功")
+    assert_eq(bag.ints.len(), 3, "ints 长度")
+    assert_eq(bag.ints[0] + bag.ints[1] + bag.ints[2], 4,
+        "Array[int]：\"1\"→1、2.9→2、true→1（不再把 string 留在 int 数组里）")
+    assert_eq(bag.floats[0] + bag.floats[1], 3.5, "Array[float]：int / 字符串数字都转成 float")
+    assert_true(bag.bools[0] and bag.bools[1] and not bag.bools[2], "Array[bool]：1 / \"true\" / 0")
+    assert_eq(bag.strs.len(), 2, "Array[string] 长度不变")
+    assert_eq(bag.strs[0], null, "Array[string]：数字元素 ⇒ null（不做隐式 _str，与标量字段同口径）")
+    assert_eq(bag.strs[1], "ok", "Array[string]：字符串元素原样")
+    assert_eq(_str(bag.anys[0]), "1", "Array[any]：保持原样（1）")
+    assert_eq(bag.anys[1], "x", "Array[any]：保持原样（\"x\"）")
+
+    // 不可解析的元素 ⇒ null（读时当场报错，不会静默错值）
+    Bag bad = new Bag()
+    jsons.fill(bad, "{\"ints\":[1,\"abc\"]}")
+    assert_eq(bad.ints.len(), 2, "转不了的元素仍占位（长度不变）")
+    var caught = false
+    try {
+        var _n = bad.ints[0] + bad.ints[1]
+    } catch e {
+        caught = true
+    }
+    assert_true(caught, "Array[int] 里的 null 元素参与运算 ⇒ 当场报错（而不是读出垃圾）")
+
+    // 类型本来就对 ⇒ 不换数组对象（既有身份语义不变）
+    Bag okb = new Bag()
+    jsons.fill(okb, "{\"ints\":[1,2]}")
+    assert_eq(jsons.encode(okb.ints), "[1,2]", "全是 int ⇒ 原样（不重建数组）")
 
     print("test_jsons_struct passed\n")
 }

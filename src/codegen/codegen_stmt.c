@@ -2583,7 +2583,16 @@ static void gen_struct_def(CodeGen* gen, Ast* ast) {
                 cw_u8(gen, 1, ast->line);
                 cw_u16(gen, make_constant(gen, val_obj((Object*)en)), ast->line);
             } else {
+                // ★ 2026-11-11：元素不是 struct 时，把**标量元素类型**编进字节码。
+                //   为什么：运行时 StructFieldInfo.element_type 此前对 `Array[int]` 是默认的
+                //   TYPE_PTR ⇒ `jsons.fill` 只能把 JSON 数组原样塞进 `Array[int]`，字符串元素
+                //   "2" 会真的躺进 Array[int]（静态类型说 int）⇒ 之后按 int48 读字符串指针，
+                //   静默错值（实测 `tags[0]+tags[1]` 得 1391279286993 ✗）。
+                //   ⚠ 布局变了 ⇒ LENO_BIN_VERSION / LENO_MODCACHE_VERSION 已同步 bump，
+                //     且三处读取方（VM / debug.c / bytecode_verify.c）已同步。
+                TypeKind ek = (ft && ft->element_type) ? ft->element_type->kind : TYPE_UNKNOWN;
                 cw_u8(gen, 0, ast->line);
+                cw_u8(gen, ek, ast->line);
             }
         }
 

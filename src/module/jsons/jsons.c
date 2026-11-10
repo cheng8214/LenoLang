@@ -640,6 +640,58 @@ static int json_parse_float_text(const char* s, int len, double* out) {
     return 1;
 }
 
+// ★ 2026-11-11：按**数组元素声明类型**把 JSON 值转成该元素可接受的值（口径同标量字段）。
+//   转不了 ⇒ val_null()（读的时候会当场报错，而不是按错误类型读出垃圾）。
+static Value json_coerce_to_elem(Value raw, TypeKind elem_type) {
+    if (val_is_null(raw)) return raw;
+    switch (elem_type) {
+        case TYPE_INT: {
+            if (val_is_int(raw) || val_is_bigint(raw)) return raw;
+            if (val_is_bool(raw)) return val_int(val_as_bool(raw) ? 1 : 0);
+            if (val_is_float(raw)) return val_int((int64_t)val_as_num(raw));
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) {
+                ObjString* t = (ObjString*)val_as_obj(raw);
+                Value iv = val_null();
+                return json_parse_int_text(t->chars, t->len, &iv) ? iv : val_null();
+            }
+            return val_null();
+        }
+        case TYPE_FLOAT: {
+            if (val_is_float(raw) || val_is_int(raw)) return val_float((double)val_as_num(raw));
+            if (val_is_bool(raw)) return val_float(val_as_bool(raw) ? 1.0 : 0.0);
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) {
+                ObjString* t = (ObjString*)val_as_obj(raw);
+                double dv = 0.0;
+                return json_parse_float_text(t->chars, t->len, &dv) ? val_float(dv) : val_null();
+            }
+            return val_null();
+        }
+        case TYPE_BOOL: {
+            if (val_is_bool(raw)) return raw;
+            if (val_is_int(raw)) return val_bool(val_as_int(raw) != 0);
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) {
+                ObjString* t = (ObjString*)val_as_obj(raw);
+                if (t->len == 1 && (t->chars[0] == '1' || t->chars[0] == '0'))
+                    return val_bool(t->chars[0] == '1');
+                if (t->len == 4 && memcmp(t->chars, "true", 4) == 0) return val_bool(true);
+                if (t->len == 5 && memcmp(t->chars, "false", 5) == 0) return val_bool(false);
+            }
+            return val_null();
+        }
+        case TYPE_STRING:
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) return raw;
+            return val_null();
+        case TYPE_DICT:
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_DICT) return raw;
+            return val_null();
+        case TYPE_ARRAY:
+            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_ARRAY) return raw;
+            return val_null();
+        default:
+            return raw;   // 未记录/其它元素类型 ⇒ 保持既有行为（原样）
+    }
+}
+
 // 按字段**声明类型**把 JSON 值转成该字段可接受的值。
 //   转不了 ⇒ val_null()（调用方保留字段默认值，而不是塞个错类型进去）。
 static Value json_coerce_to_field(Value raw, StructFieldInfo* f) {
@@ -689,8 +741,44 @@ static Value json_coerce_to_field(Value raw, StructFieldInfo* f) {
         case TYPE_ARRAY: {
             if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_ARRAY) {
                 // 元素不是 struct（`Array[int]` / `Array[string]` / `Array[Dict]` …）
-                //   ⇒ 原样赋。这类字段本来就该直接吃 JSON 数组。
-                if (!f->element_struct_name || f->element_type != TYPE_STRUCT) return raw;
+                if (!f->element_struct_name || f->element_type != TYPE_STRUCT) {
+                    // ★ 2026-11-11：`Array[int]` 这类**标量元素数组**必须逐元素按声明类型转换。
+                    //   此前这里直接"原样赋" ⇒ `{"tags":[1,"2"]}` 填 `Array[int]` 后数组里
+                    //   真的躺着一个 **string**（静态类型说 int）⇒ 之后 `tags[0]+tags[1]`
+                    //   按 int48 读字符串指针 ⇒ 静默错值（实测 1391279286993 ✗）。
+                    //   口径与标量字段完全相同（字符串能解析成数字 ⇒ 转；转不了 ⇒ null）。
+                    //   `Array[any]` / 裸 `Array`（element_type 未记录）保持原样。
+                    TypeKind et = f->element_type;
+                    if (et == TYPE_UNKNOWN || et == TYPE_INFER || et == TYPE_ANY ||
+                        et == TYPE_PTR || et == TYPE_NULL) {
+                        return raw;
+                    }
+                    ObjArray* srcArr = (ObjArray*)val_as_obj(raw);
+                    int need = 0;
+                    for (int i = 0; i < srcArr->count; i++) {
+                        Value c = json_coerce_to_elem(srcArr->elements[i], et);
+                        if (c != srcArr->elements[i]) { need = 1; break; }
+                    }
+                    if (!need) return raw;   // 类型本来就对 ⇒ 不换对象（保持既有身份语义）
+
+                    ObjArray* outArr = arr_new(srcArr->count > 0 ? srcArr->count : 1);
+                    if (!outArr) return val_null();
+                    Value outVal = val_obj((Object*)outArr);
+                    gc_push_root(&outVal);
+                    int n = 0;
+                    for (int i = 0; i < srcArr->count; i++) {
+                        Value c = json_coerce_to_elem(srcArr->elements[i], et);
+                        gc_push_root(&c);
+                        while (n >= outArr->capacity) {
+                            if (!arr_grow(outArr)) break;
+                        }
+                        if (n < outArr->capacity) arr_write(outArr, n++, c);
+                        gc_pop_root();
+                    }
+                    outArr->count = n;
+                    gc_pop_root();
+                    return outVal;
+                }
 
                 // `Array[Item]`：逐元素造 struct 再递归填。
                 //   ★ 2026-11-09：`element_struct_name` 是**新加的**字段元数据（此前运行时

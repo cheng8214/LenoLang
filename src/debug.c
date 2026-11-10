@@ -226,8 +226,10 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
                 }
                 if (ftype == TYPE_PTR_GENERIC) dbg_take_u8(chunk, base, &p, &over);
                 // ★ 2026-11-09：`Array[T]` 的元素 struct 名（与 codegen_stmt.c 对称）
+                // ★ 2026-11-11：没有 struct 名时再读 1 字节标量元素类型
                 if (ftype == TYPE_ARRAY) {
                     if (dbg_take_u8(chunk, base, &p, &over)) dbg_take_u16(chunk, base, &p, &over);
+                    else dbg_take_u8(chunk, base, &p, &over);
                 }
                 if (dbg_take_u8(chunk, base, &p, &over)) dbg_take_u16(chunk, base, &p, &over);
             }

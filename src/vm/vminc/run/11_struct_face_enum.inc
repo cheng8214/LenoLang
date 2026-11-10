@@ -96,6 +96,10 @@
                         element_struct_name = ((ObjString*)val_as_obj(ev))->chars;
                         element_type = TYPE_STRUCT;
                     }
+                } else {
+                    // ★ 2026-11-11：标量元素类型（`Array[int]` ⇒ TYPE_INT）。
+                    //   与 codegen_stmt.c 的发射顺序对应；jsons.fill 逐元素转换要用它。
+                    element_type = (TypeKind)(*p++);
                 }
             }
 
