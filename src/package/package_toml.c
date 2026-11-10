@@ -1,4 +1,5 @@
 #include "../include/leno_package.h"
+#include "../include/leno_error.h"   /* error_get_filename：判断"这是不是项目自己的文件" */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -724,6 +725,28 @@ int package_check_module_version(const char* resolved_path, char* out_msg, int o
 
     PackageConfig* pkg = package_config_parse(toml);
     if (!pkg) return 1;
+
+    /* ★ 2026-11-10（§5.3 补齐 [requires] 时暴露）：**项目自己的文件不做版本校验**。
+       `[requires]` 说的是"外部模块包的版本要求"；而项目根目录下的 .leno 文件向上找到的
+       `leno.toml` 就是**项目自己**那份。当项目名恰好与某个模块包同名时 —— LenoMusic
+       项目 import 名为 `Music` 的包，而那个包也叫 `LenoMusic` —— 就会拿**项目自己的**
+       version（0.2.2）去比 `>=2.0.0` ⇒ 误报「模块包 'LenoMusic' 版本 0.2.2 不满足
+       项目要求 '>=2.0.0'」（实测：项目永远编不过，除非删掉这条 [requires]）。
+       判据：解析出的模块文件属于**入口所在的项目根** ⇒ 不是外部包，跳过。 */
+    {
+        const char* entry = error_get_filename();
+        char* proj = entry ? package_find_project_root(entry) : NULL;
+        if (proj) {
+            char proj_toml[REQ_PATH_MAX + 16];
+            snprintf(proj_toml, sizeof(proj_toml), "%sleno.toml", proj);
+            int is_self = (strcmp(proj_toml, toml) == 0);
+            free(proj);
+            if (is_self) {
+                package_config_free(pkg);
+                return 1;
+            }
+        }
+    }
 
     int ri = -1;
     for (int i = 0; i < g_module_req_count; i++) {
