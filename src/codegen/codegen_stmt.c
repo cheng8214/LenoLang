@@ -1006,6 +1006,61 @@ static void gen_for_iter(CodeGen* gen, Ast* ast) {
 // 语义与栈式一致（常量 case 用相等比较，命中后执行对应 body 并跳出；
 // 无命中走 default；body 之间不 fallthrough）。
 // case is Type 模式匹配需要类型检查指令，见后续阶段。
+// ============================================================================
+// switch 的**二叉比较树**（2026-11-10，性能：大分支从 O(n) 降到 O(log n)）
+// ----------------------------------------------------------------------------
+// 动机（基准实测，300k 次调用，见 docs/性能_分支与枚举.md）：
+//   线性链在 100 个 case、命中最后一个时是 66ms；同一场景 7 次比较就够。
+// 做法：命中判定不变（还是 OP_CMPJMP_EQ），只是把"N 条平铺"改成"按值排序后的二分树"：
+//   每个节点：`== v` ⇒ 跳到跳板；`< v` ⇒ 左子树；否则右子树。
+//   落空自然落到后面的 miss_jump ⇒ **default / 出口逻辑一行不用改**。
+// 没有新指令、不动字节码格式：全用既有的 OP_CMPJMP_EQ / OP_CMPJMP_LT（都带 16 位立即数）。
+// ⚠ 只在"全是互不相同的整数字面量且主题是 int/enum"时用（判据见 gen_switch）；
+//   有重复值时"第一个命中"是可观测语义，排序树会改变它 ⇒ 退回线性链。
+// ============================================================================
+typedef struct {
+    int value;      // case 的字面量值
+    int case_idx;   // 对应的 case 下标（回填跳板用）
+} SwTreeLeaf;
+
+// 递归发射 [lo, hi] 这棵子树。命中跳转登记进 hit_pos/hit_case（跳板区之后统一回填）。
+static void emit_switch_tree(CodeGen* gen, int tmp, SwTreeLeaf* leaves, int lo, int hi, int line,
+                             int** hit_pos, int** hit_case, int* cap, int* cnt) {
+    if (lo > hi) return;
+    int mid = lo + (hi - lo) / 2;
+    int v = leaves[mid].value;
+
+    // ① 相等 ⇒ 命中（跳到跳板）
+    int jhit = emit_cmpjmp(gen, OP_CMPJMP_EQ, tmp, v, 1, 1, line);
+    if (*cnt == *cap) {
+        *cap *= 2;
+        *hit_pos = (int*)realloc(*hit_pos, sizeof(int) * (size_t)(*cap));
+        *hit_case = (int*)realloc(*hit_case, sizeof(int) * (size_t)(*cap));
+    }
+    (*hit_pos)[*cnt] = jhit;
+    (*hit_case)[*cnt] = leaves[mid].case_idx;
+    (*cnt)++;
+
+    // ② tmp < v ⇒ 左子树；否则右子树
+    int jl = emit_cmpjmp(gen, OP_CMPJMP_LT, tmp, v, 1, 1, line);
+    int jr = emit_jmp(gen, line);
+
+    patch_jmp_to(gen, jl, gen->chunk->len);
+    emit_switch_tree(gen, tmp, leaves, lo, mid - 1, line, hit_pos, hit_case, cap, cnt);
+    int jend = emit_jmp(gen, line);            // 左子树走完 ⇒ 跳过右子树
+    patch_jmp_to(gen, jr, gen->chunk->len);
+    emit_switch_tree(gen, tmp, leaves, mid + 1, hi, line, hit_pos, hit_case, cap, cnt);
+    patch_jmp_to(gen, jend, gen->chunk->len);
+}
+
+// 用二叉比较树的最小 case 数。**这个数是量出来的，不是拍的**：
+//   10 个 case：树 13ms / 线性 13ms（打平；命中靠前时树反而更慢）
+//   16 个 case：树开始稳定赢
+//   30 个 case：树 15ms / 线性 27ms
+//   100 个 case：树 20ms / 线性 66ms
+//   ⇒ 阈值取 16。低于它的 switch 继续走线性链（每条 case 一条融合比较，本来就很快）。
+#define SW_TREE_MIN_CASES 16
+
 static void gen_switch(CodeGen* gen, Ast* ast) {
     int n = ast->u.switch_.case_count;
     int has_default = ast->u.switch_.default_body != NULL;
@@ -1030,12 +1085,69 @@ static void gen_switch(CodeGen* gen, Ast* ast) {
     gen->loop_head = node;
     gen->loop_count++;
 
-    // --- 比较链：命中就跳到对应跳板 ---
+    // --- 命中判定：大分支走二叉比较树，其余走线性链（命中就跳到对应跳板）---
     int cap = 8, cnt = 0;
     int* hit_pos = (int*)malloc(sizeof(int) * cap);
     int* hit_case = (int*)malloc(sizeof(int) * cap);
 
-    for (int i = 0; i < n; i++) {
+    // ★ 2026-11-10（性能）：能不能走树？四条判据，任何一条不满足就退回线性链——
+    //   ① 主题静态类型是 int / enum（树用 OP_CMPJMP_EQ/LT 的整数立即数比较）
+    //   ② 每个 case **恰好一个**值（`case 1, 2` 这种多值、`case 1 to 3` 区间都不进树）
+    //   ③ 值都是整数字面量且落在 int16（融合比较的立即数上限）
+    //   ④ 值**互不相同**（有重复时"第一个命中"是可观测语义，排序会改掉它）
+    //   ⑤ case 数 ≥ SW_TREE_MIN_CASES
+    SwTreeLeaf* leaves = NULL;
+    int leaf_n = 0;
+    int use_tree = 0;
+    if (sw_is_int && n >= SW_TREE_MIN_CASES) {
+        int ok = 1;
+        leaves = (SwTreeLeaf*)malloc(sizeof(SwTreeLeaf) * (size_t)n);
+        for (int i = 0; ok && i < n; i++) {
+            if (ast->u.switch_.cases[i].is_type_match) { ok = 0; break; }
+            AstList* vl = &ast->u.switch_.cases[i].values;
+            if (vl->count != 1) { ok = 0; break; }
+            Ast* cv0 = vl->items[0];
+            if (!cv0 || cv0->kind != AST_NUM ||
+                cv0->u.num.is_float || cv0->u.num.is_bigint) { ok = 0; break; }
+            if (cv0->u.num.value < -32768.0 || cv0->u.num.value > 32767.0) { ok = 0; break; }
+            leaves[leaf_n].value = (int)cv0->u.num.value;
+            leaves[leaf_n].case_idx = i;
+            leaf_n++;
+        }
+        // ④ 重复值 ⇒ 退回线性链
+        for (int i = 0; ok && i < leaf_n; i++) {
+            for (int j = 0; ok && j < i; j++) {
+                if (leaves[i].value == leaves[j].value) ok = 0;
+            }
+        }
+        if (ok && leaf_n >= SW_TREE_MIN_CASES) {
+            // 按值升序排（插入排序：n 最多几百，且 case 值通常接近有序）
+            for (int i = 1; i < leaf_n; i++) {
+                SwTreeLeaf t = leaves[i];
+                int j = i - 1;
+                while (j >= 0 && leaves[j].value > t.value) {
+                    leaves[j + 1] = leaves[j];
+                    j--;
+                }
+                leaves[j + 1] = t;
+            }
+            use_tree = 1;
+        }
+        if (!use_tree) {
+            free(leaves);
+            leaves = NULL;
+            leaf_n = 0;
+        }
+    }
+
+    if (use_tree) {
+        emit_switch_tree(gen, tmp, leaves, 0, leaf_n - 1, line,
+                         &hit_pos, &hit_case, &cap, &cnt);
+        free(leaves);
+    }
+
+    // use_tree 时这个循环不执行（0 次）：判定已经由上面的树发完了
+    for (int i = 0; i < (use_tree ? 0 : n); i++) {
         // case is Type [,...]：类型匹配（任一命中即进入该 case）
         if (ast->u.switch_.cases[i].is_type_match) {
             int tcount = ast->u.switch_.cases[i].match_type_count;

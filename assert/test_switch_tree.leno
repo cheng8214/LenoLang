@@ -1,0 +1,171 @@
+// test_switch_tree.leno —— 二叉比较树（大分支 switch）的语义钉子（2026-11-10）
+//
+// codegen 在 case 数 >= 16 且全是互不相同的整数字面量 时，把线性比较链换成
+// 按值排序的二分树（见 codegen_stmt.c 的 emit_switch_tree）。这条优化只改**判定顺序**，
+// 不改语义 ⇒ 这里逐值验：每个 case 都命中自己、越界走 default、负数也对。
+
+func f20(int v): int {
+    switch v {
+        case 0 { return 0 }
+        case 1 { return 2 }
+        case 2 { return 4 }
+        case 3 { return 6 }
+        case 4 { return 8 }
+        case 5 { return 10 }
+        case 6 { return 12 }
+        case 7 { return 14 }
+        case 8 { return 16 }
+        case 9 { return 18 }
+        case 10 { return 20 }
+        case 11 { return 22 }
+        case 12 { return 24 }
+        case 13 { return 26 }
+        case 14 { return 28 }
+        case 15 { return 30 }
+        case 16 { return 32 }
+        case 17 { return 34 }
+        case 18 { return 36 }
+        case 19 { return 38 }
+        default { return -1 }
+    }
+}
+
+// 负数区间：-10..9（20 个值，树里全是负数/零/正数混排）
+func fneg(int v): int {
+    switch v {
+        case -10 { return 90 }
+        case -9 { return 91 }
+        case -8 { return 92 }
+        case -7 { return 93 }
+        case -6 { return 94 }
+        case -5 { return 95 }
+        case -4 { return 96 }
+        case -3 { return 97 }
+        case -2 { return 98 }
+        case -1 { return 99 }
+        case 0 { return 100 }
+        case 1 { return 101 }
+        case 2 { return 102 }
+        case 3 { return 103 }
+        case 4 { return 104 }
+        case 5 { return 105 }
+        case 6 { return 106 }
+        case 7 { return 107 }
+        case 8 { return 108 }
+        case 9 { return 109 }
+        default { return -1 }
+    }
+}
+
+// 枚举 20 成员：case 值在语义阶段被改写成常量，照样进树
+enum E20 { m0, m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15, m16, m17, m18, m19 }
+
+func fe(E20 e): int {
+    switch e {
+        case E20.m0 { return 0 }
+        case E20.m1 { return 10 }
+        case E20.m2 { return 20 }
+        case E20.m3 { return 30 }
+        case E20.m4 { return 40 }
+        case E20.m5 { return 50 }
+        case E20.m6 { return 60 }
+        case E20.m7 { return 70 }
+        case E20.m8 { return 80 }
+        case E20.m9 { return 90 }
+        case E20.m10 { return 100 }
+        case E20.m11 { return 110 }
+        case E20.m12 { return 120 }
+        case E20.m13 { return 130 }
+        case E20.m14 { return 140 }
+        case E20.m15 { return 150 }
+        case E20.m16 { return 160 }
+        case E20.m17 { return 170 }
+        case E20.m18 { return 180 }
+        case E20.m19 { return 190 }
+        default { return -1 }
+    }
+}
+
+// 有一半 case 命中默认分支（值域中间挖空）：树必须能正确落到 miss
+func fsparse(int v): int {
+    switch v {
+        case 0 { return 0 }
+        case 4 { return 1 }
+        case 8 { return 2 }
+        case 12 { return 3 }
+        case 16 { return 4 }
+        case 20 { return 5 }
+        case 24 { return 6 }
+        case 28 { return 7 }
+        case 32 { return 8 }
+        case 36 { return 9 }
+        case 40 { return 10 }
+        case 44 { return 11 }
+        case 48 { return 12 }
+        case 52 { return 13 }
+        case 56 { return 14 }
+        case 60 { return 15 }
+        case 64 { return 16 }
+        case 68 { return 17 }
+        case 72 { return 18 }
+        case 76 { return 19 }
+        default { return -1 }
+    }
+}
+
+main() {
+    int bad = 0
+    for 0:19 to i { if f20(i) != i * 2 { bad = bad + 1 } }
+    assert_eq(bad, 0, "20 个 case 逐值命中（树）");
+    assert_eq(f20(20), -1, "越界 ⇒ default");
+    assert_eq(f20(-1), -1, "负数越界 ⇒ default");
+
+    int bad2 = 0
+    for -10:9 to i { if fneg(i) != i + 100 { bad2 = bad2 + 1 } }
+    assert_eq(bad2, 0, "负数区间 -10..9 逐值命中");
+    assert_eq(fneg(10), -1, "-10..9 之上越界");
+    assert_eq(fneg(-11), -1, "-10 之下越界");
+
+    assert_eq(fe(E20.m0), 0, "enum 首成员");
+    assert_eq(fe(E20.m19), 190, "enum 末成员");
+    assert_eq(fe(E20.m7), 70, "enum 中段");
+
+    int bad3 = 0
+    for 0:19 to i { if fsparse(i * 4) != i { bad3 = bad3 + 1 } }
+    assert_eq(bad3, 0, "稀疏值（0,4,8..76）逐个命中");
+    assert_eq(fsparse(1), -1, "稀疏值之间的空洞 ⇒ default");
+    assert_eq(fsparse(77), -1, "稀疏值之上 ⇒ default");
+
+    // ⑤ 多值 case（`case 30, 31`）：整条**退回线性链**（树要求每个 case 恰好一个值），
+    //    语义必须完全一样 —— 这条防的是"为了走树而把多值 case 拆错了"
+    assert_eq(fmulti(30), 130, "多值 case：第一个值");
+    assert_eq(fmulti(31), 130, "多值 case：第二个值命中同一分支");
+    assert_eq(fmulti(3), 3, "多值 case 的 switch 里普通 case 照常");
+    assert_eq(fmulti(99), -1, "多值 case 的 switch 越界 ⇒ default");
+
+    print("test_switch_tree passed（20 case / 负数 / enum / 稀疏 / 多值回退 五组）");
+}
+
+// ⑤ 多值 case 的 switch（含 16 个单值 case + 1 个双值 case ⇒ 不满足树的判据）
+func fmulti(int v): int {
+    switch v {
+        case 0 { return 0 }
+        case 1 { return 1 }
+        case 2 { return 2 }
+        case 3 { return 3 }
+        case 4 { return 4 }
+        case 5 { return 5 }
+        case 6 { return 6 }
+        case 7 { return 7 }
+        case 8 { return 8 }
+        case 9 { return 9 }
+        case 10 { return 10 }
+        case 11 { return 11 }
+        case 12 { return 12 }
+        case 13 { return 13 }
+        case 14 { return 14 }
+        case 15 { return 15 }
+        case 30, 31 { return 130 }
+        default { return -1 }
+    }
+}

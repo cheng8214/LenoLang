@@ -6,7 +6,8 @@ W '// auto-generated: dispatch cost (if-chain vs switch, int / enum / payload en
 W 'import times'
 W ''
 
-$Ks = @(3, 10, 30)
+# 2026-11-10：加 100 —— 二叉比较树就是为"大分支"做的，30 个 case 看不出差距
+$Ks = @(3, 10, 30, 100)
 foreach ($k in $Ks) {
     W ('func if{0}(int v): int {{' -f $k)
     for ($i = 0; $i -lt $k; $i++) {
