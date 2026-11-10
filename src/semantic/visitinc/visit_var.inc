@@ -419,6 +419,21 @@
                     "枚举成员 '%s' 不能直接当变量用（直接写会静默得到 null）—— 请写 `%s.%s`",
                     ast->u.var.name, sym->type->struct_name, ast->u.var.name);
             }
+            // ★ 2026-11-10（诊断压测发现）：**类型名当值用**
+            //   `S s = S` 原来能编过，运行期 `_str(s)` 得到字符串 "S" —— 一个类型名
+            //   被当成了值，而且一声不吭（实测）。类型名只能出现在类型位置 / `new S()` /
+            //   `S.成员`（后者是 AST_MODULE_ACCESS，不走这里）⇒ 裸写一律报错。
+            //   ⚠ 枚举成员（`red`）不算：它由上面那条更具体的错误接手（`Color.red`）。
+            //   ⚠ **不包含** SYM_CFUNC / SYM_CSTRUCT / SYM_CLIB：那三个当值用是合法的
+            //     （`ffi.register(x, my_cfunc)` 传的就是 cfunc 名 —— 一刀切会把 8 个
+            //      FFI / cfunc 用例全打红，实测过）。
+            if (sym && !sym->is_enum_member &&
+                (sym->kind == SYM_STRUCT || sym->kind == SYM_ENUM || sym->kind == SYM_TYPE)) {
+                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                    "'%s' 是**类型名**，不能当值用 —— 要实例化请写 `new %s()`；"
+                    "要取它的成员/常量请写 `%s.xxx`",
+                    ast->u.var.name, ast->u.var.name, ast->u.var.name);
+            }
             if (!sym) {
                 // ★ 2026-10-24（Q3）：`for k in d` 里那个未定义的 k（用户想遍历字典/数组）
                 //   原来报「未定义的变量: k」+ 拼写建议「是否想输入 'd'？」——

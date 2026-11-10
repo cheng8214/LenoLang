@@ -845,6 +845,35 @@
             //     "values 访问完就检查"那段）⇒ 不再为每个值多推一遍类型 ✓
             TypeInfo* sw_expr_type = infer_expr_type(s, ast->u.switch_.expr);
 
+            // ★ 2026-11-10（诊断压测发现）：**case 用了另一个 enum 的成员**
+            //   两个 int 枚举的成员都是整数 ⇒ N15 那条"数值族内部不报"会整条放过，
+            //   于是 `switch a { case B.x {…} }` 只要 B.x 的数值恰好等于某个 A 成员，
+            //   就会**静默命中错误分支**（实测：A.x=0、B.x=0 ⇒ 走了 B.x 那条）。
+            //   ⚠ 必须在 visit(case 值)**之前**查：枚举成员访问在语义阶段会被改写成
+            //     AST_NUM（cached_type 也变成 int），改完就看不出它来自哪个 enum 了。
+            if (sw_expr_type && sw_expr_type->kind == TYPE_ENUM && sw_expr_type->struct_name) {
+                for (int ci = 0; ci < ast->u.switch_.case_count; ci++) {
+                    AstList* cvl = &ast->u.switch_.cases[ci].values;
+                    for (int j = 0; j < cvl->count; j++) {
+                        Ast* cv0 = cvl->items[j];
+                        if (!cv0 || cv0->kind != AST_MODULE_ACCESS) continue;
+                        const char* oname = cv0->u.module_access.module_name;
+                        if (!oname || !cv0->u.module_access.member_name) continue;
+                        Symbol* osym = scope_resolve(s->current, oname);
+                        if (!osym || !osym->type || osym->type->kind != TYPE_ENUM) continue;
+                        if (!osym->type->struct_name) continue;
+                        if (strcmp(osym->type->struct_name, sw_expr_type->struct_name) != 0) {
+                            error_add_at_fmt(ERR_SEMANTIC, cv0->line, cv0->column,
+                                "case 用的是 enum '%s' 的成员，而 switch 的主题是 enum '%s' —— "
+                                "两个 enum 的成员都是整数、数值撞上就会**静默命中错误分支**；"
+                                "请改成 `%s` 的成员（要按类型分支请写 `case is`）",
+                                osym->type->struct_name, sw_expr_type->struct_name,
+                                sw_expr_type->struct_name);
+                        }
+                    }
+                }
+            }
+
             for (int i = 0; i < ast->u.switch_.case_count; i++) {
                 Scope* case_scope = scope_new(s->current, 0);
                 s->current = case_scope;

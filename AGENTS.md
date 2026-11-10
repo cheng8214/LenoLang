@@ -428,6 +428,8 @@ build\leno.exe --check <file>
 | `new Route(method: "GET", ...)` | `new` 的命名实参用 **`=`**，不是 `:`（`:` 是 Dict 字面量 / 插值） | `new Route(method="GET", path="/x")` |
 | `f(..., func(x) {` 换行 `...` `})` 内联多行 lambda 当实参 | 解析器在多行 lambda 处报「期望 ')' / 期望表达式」 | 把 handler 写成**单独的具名函数**再传：`f(..., hPing)` |
 | `import "Result" as res` 而本文件有局部/字段叫 `res` | 模块别名被**遮蔽**（`WARN_SHADOW_MODULE_ALIAS`），`res.ok(...)` 报「在该对象上找不到方法」 | 别名叫 `rstd`（本仓惯例），或给那个局部量改名 |
+| `S s = S`（把**类型名**当值） | 2026-11-10 前**静默编过**，运行期 `_str(s)` 得到字符串 `"S"`（实测） | 现在编译期报「'S' 是类型名，不能当值用」；要实例化写 `new S()` |
+| `switch a { case B.x … }`（case 用**另一个 enum** 的成员） | 两个 int 枚举的成员都是整数，数值撞上就**静默命中错误分支**（实测 A.x=0/B.x=0 走了 B.x 那条） | 现在编译期报错；要用同一 enum 的成员，或改 `case is` 做类型分支 |
 
 ---
 
