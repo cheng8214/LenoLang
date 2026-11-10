@@ -271,7 +271,9 @@
                 //   native 规格解释 ⇒ 形状不一致时只有**运行期**才报错（native_struct_def_for 的
                 //   "同形才复用"）。这里提前到编译期讲清楚。
                 //   用**警告**而非错误：形状完全一致时是合法用法（运行期复用同一份定义）。
-                {
+                //   ★ 2026-11-10（P4 enum 载荷 步 2/6）：**合成 struct**（带载荷 enum 降级）
+                //     跳过这一整类"用户源码写了同名类型"的诊断 —— 用户写的是 enum，不是 struct ✓
+                if (!ast->u.struct_def.is_synthetic) {
                     const NativeStructSpec* ns = native_find_struct_spec(ast->u.struct_def.name);
                     if (ns) {
                         const char* owner = (ns->module_name && ns->module_name[0]) ? ns->module_name : "?";
@@ -296,7 +298,7 @@
                 //     ⇒ "脚本 struct 撞脚本 struct"这一格是空的 ✗
                 //   判据：本文件 import 的模块符号表里能查到同名 struct ⇒ 警告（每个定义最多报一次 ✓）
                 //   （显式 `use 模块.X` 的场景会先撞"重复定义"报错 ⇒ 走不到这里 ✓）
-                if (s->imported_module_count > 0) {
+                if (!ast->u.struct_def.is_synthetic && s->imported_module_count > 0) {
                     for (int im = 0; im < s->imported_module_count; im++) {
                         ImportedModuleInfo* mi = &s->imported_modules[im];
                         if (!mi->sym_table || mi->load_failed) continue;
@@ -565,7 +567,10 @@
                             int is_scalar = ftt && (ftt->kind == TYPE_INT || ftt->kind == TYPE_FLOAT ||
                                                     ftt->kind == TYPE_BOOL || ftt->kind == TYPE_STRING ||
                                                     ftt->kind == TYPE_ENUM);
-                            if (is_scalar && !ftt->nullable && !ast->u.struct_def.field_defaults[i]) {
+                            //   ★ 2026-11-10（P4 enum 载荷 步 2/6）：合成 struct 的字段（tag/p0…）
+                            //     是编译器造的，不该让用户去"补初值" ⇒ 跳过这条警告 ✓
+                            if (!ast->u.struct_def.is_synthetic &&
+                                is_scalar && !ftt->nullable && !ast->u.struct_def.field_defaults[i]) {
                                 if (ftt->kind == TYPE_ENUM) {
                                     // 枚举字段的初值示例**不能**沿用 `= 0`（枚举没有这种写法 ✗）⇒
                                     //   用枚举名 + 成员示例（枚举名就在 struct_name 里 ✓）；可空写法同理 ✓
@@ -596,8 +601,11 @@
 
                         // ★ M4（2026-10-11）：字段名撞上**模块别名** ⇒ 遮蔽告警 ✓
                         //   放在这里正好：字段名与 import 别名都已知 ✓（实测复现见 M4 文档 ✓）
-                        semantic_check_alias_shadow(s, ast->u.struct_def.field_names[i], "字段",
-                                                    ast_struct_field_line(ast, i), 1);
+                        //   （合成 struct 的 tag/p0… 不是用户写的名字 ⇒ 跳过 ✓）
+                        if (!ast->u.struct_def.is_synthetic) {
+                            semantic_check_alias_shadow(s, ast->u.struct_def.field_names[i], "字段",
+                                                        ast_struct_field_line(ast, i), 1);
+                        }
                     }
 
                     // 存储泛型类型参数信息

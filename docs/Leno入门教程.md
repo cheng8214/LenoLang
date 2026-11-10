@@ -7345,6 +7345,52 @@ main() {
 > }
 > ```
 
+### 带载荷的枚举（成员带数据）
+
+成员可以带参数 —— 一个成员就变成"带数据的分支"，比 `struct + tag` 更安全
+（`tag` 与载荷的有效性由编译器保证，`switch` 还能查穷尽性）：
+
+```leno
+enum Msg {
+    progress(int done, int total)
+    finished(string path)
+    failed(string why, int code)
+}
+
+func describe(Msg m): string {
+    switch m {
+        case Msg.progress(d, t) { return _str(d) + "/" + _str(t) }
+        case Msg.finished(p)    { return "文件: " + p }
+        case Msg.failed(w, c)   { return w + "(" + _str(c) + ")" }
+    }
+    return "?"
+}
+
+main() {
+    Msg a = Msg.progress(3, 10)      // 构造：`Enum.成员(实参…)`
+    print(describe(a))               // 3/10
+    print(describe(Msg.finished("/tmp/x")))
+}
+```
+
+规则（**刻意窄**，都是为了不出现"有时是 int、有时是对象"的分叉）：
+
+1. **同一个 enum 里成员要么全带参数、要么全不带**。混用 ⇒ 编译错误。
+   纯 int 成员的老写法**行为完全不变**（成员仍是 int 常量，字节码一个字节都没变）。
+2. 带载荷的成员**不是 int**：`int x = Msg.progress(1, 2)` 编译错误；也不能 `new Msg(...)`
+   （那是编译器的实现细节），只能写 `Msg.成员(实参…)`。
+3. `case` 里的绑定名可以写 `_` 表示"这个位置不关心"：`case Msg.failed(w, _) { … }`。
+4. `switch` 的**主题必须是变量**（`var m = …` 之后 `switch m`）：降级实现要读
+   `m.tag` 和载荷槽，表达式会被求值两次。
+5. 带载荷 enum **暂不支持 `export`**（跨模块需要把"成员是否有载荷"带进模块符号表，
+   是单独一步）—— 同文件里用完全没有问题。
+6. 漏了成员又没写 `default` ⇒ `WARN_SWITCH_NOT_EXHAUSTIVE` 警告（与 int 枚举同一条）。
+
+> 实现方式（不影响用法，但读报错时需要知道）：编译器把它降级成**同名的普通 struct**
+> `struct Msg { int tag; int p0; int p1; string p2; … }`，构造改成 `new Msg(tag = 0, p0 = 3, …)`，
+> `case` 改成"比较 tag + 把槽位绑到局部变量"。载荷槽**按成员分段**，所以每个参数都是
+> 它自己声明的类型（不是 `any`）。详见 `docs/enum载荷_设计草案.md`。
+
 ### 枚举作为函数参数
 
 ```leno

@@ -1,0 +1,163 @@
+// test_enum_payload.leno —— 带载荷 enum（P4 最后一项，草案见 docs/enum载荷_设计草案.md）
+//
+// 语言形态：
+//   enum Msg { progress(int done, int total)  finished(string path)  failed(string why, int code) }
+//   Msg m = Msg.progress(3, 10)
+//   switch m { case Msg.progress(d, t) { … } … }
+//
+// 降级（用户看不见）：`struct Msg { int tag; int p0; int p1; string p2; string p3; int p4 }`
+//   载荷槽**按成员分段**（progress 占 p0/p1、finished 占 p2、failed 占 p3/p4）——
+//   这样每个参数都是它自己声明的类型，一个 any 都不用 ✓
+//
+// 判据分两块：
+//   ① 运行期：构造 / 三种成员匹配 / 同值重复 switch / `_` 忽略绑定
+//   ② 编译期（`--check` 子进程）：错误路径 5 条 + 穷尽性警告 1 条
+import dirs
+import files
+import strings
+
+enum Msg {
+    progress(int done, int total)
+    finished(string path)
+    failed(string why, int code)
+}
+
+func render(Msg m): string {
+    switch m {
+        case Msg.progress(d, t) { return _str(d) + "/" + _str(t) }
+        case Msg.finished(p)    { return "file:" + p }
+        case Msg.failed(w, c)   { return w + "(" + _str(c) + ")" }
+    }
+    return "?"
+}
+
+// 编译期：把源码写进临时目录跑一次 `--check`，返回输出文本
+func check(string work, string name, string src): string {
+    var f = dirs.join(work, name)
+    files.write(f, src)
+    var r = _exec(_executable() + " --check \"" + f + "\"", 30000)
+    return r.output as string
+}
+
+main() {
+    // ---------- ① 运行期 ----------
+    assert_eq(render(Msg.progress(3, 10)), "3/10", "①progress 构造+匹配")
+    assert_eq(render(Msg.finished("/tmp/a")), "file:/tmp/a", "①finished 构造+匹配")
+    assert_eq(render(Msg.failed("boom", 7)), "boom(7)", "①failed 构造+匹配")
+
+    // 同一个变量可以重复 switch（改写不消耗变量）
+    Msg m = Msg.progress(1, 2)
+    int hits = 0
+    switch m {
+        case Msg.progress(d, t) { assert_eq(d, 1); assert_eq(t, 2); hits = hits + 1 }
+        case Msg.finished(_p)   { }
+        case Msg.failed(_w, _c) { }
+    }
+    assert_eq(hits, 1, "①同一变量重复 switch 命中一次")
+
+    // 载荷值参与普通运算（类型是真类型，不是 any）
+    var p = Msg.progress(2, 5)
+    switch p {
+        case Msg.progress(d, t) { assert_eq(d * t, 10, "①载荷是真 int（能直接参与算术）") }
+        case Msg.finished(_)    { }
+        case Msg.failed(_, _)   { }
+    }
+
+    // `_` = 只匹配、不绑定
+    var q = Msg.failed("x", 1)
+    int only = 0
+    switch q {
+        case Msg.progress(_, _) { }
+        case Msg.finished(_)    { }
+        case Msg.failed(w, _)   { assert_eq(w, "x", "①`_` 跳过该位置"); only = 1 }
+    }
+    assert_eq(only, 1, "①`_` 分支命中")
+
+    // 有 default 时不改写穷尽性（也能编译）
+    int seen = 0
+    switch q {
+        case Msg.finished(_) { seen = 1 }
+        default              { seen = 2 }
+    }
+    assert_eq(seen, 2, "①default 兜底")
+
+    // ---------- ② 编译期错误路径 ----------
+    var work = dirs.join(_tmpdir(), "leno_enum_payload")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ②1 用户显式 `new Msg(...)` ⇒ 拒绝（隐藏 struct 是实现细节）
+    var o1 = check(work, "e_new.leno", @"enum M {
+    a(int x)
+}
+main() {
+    M m = new M(x = 1)
+}
+")
+    assert_true(o1.has("不能用 new 构造"), "②1 new 被拦")
+
+    // ②2 成员不带括号 ⇒ 拒绝（成员不是值）
+    var o2 = check(work, "e_bare.leno", @"enum M {
+    a(int x)
+}
+main() {
+    var f = M.a
+    print(f)
+}
+")
+    assert_true(o2.has("需要 1 个参数"), "②2 裸成员被拦")
+
+    // ②3 参数个数不对 ⇒ 报准确的期望值
+    var o3 = check(work, "e_argc.leno", @"enum M {
+    a(int x)
+}
+main() {
+    M m = M.a()
+    print(m)
+}
+")
+    assert_true(o3.has("需要 1 个参数，实际给了 0 个"), "②3 参数个数不匹配")
+
+    // ②4 带载荷与不带载荷混用 ⇒ 解析器直接拒绝
+    var o4 = check(work, "e_mix.leno", @"enum M {
+    a(int x)
+    b
+}
+main() {
+    print(1)
+}
+")
+    assert_true(o4.has("混用") or o4.has("混"), "②4 混用被拦")
+
+    // ②5 switch 主题不是变量 ⇒ 拒绝（降级后要读 m.tag / m.p0，不能被求值两次）
+    var o5 = check(work, "e_subj.leno", @"enum M {
+    a(int x)
+}
+func mk(): M {
+    return M.a(1)
+}
+main() {
+    switch mk() {
+        case M.a(x) { print(_str(x)) }
+    }
+}
+")
+    assert_true(o5.has("主题必须是"), "②5 非变量主题被拦")
+
+    // ②6 穷尽性：少一个 case 且没有 default ⇒ **警告**（不打断编译）
+    var o6 = check(work, "w_exhaust.leno", @"enum M {
+    a(int x)
+    b(string s)
+}
+main() {
+    var m = M.a(1)
+    switch m {
+        case M.a(x) { print(_str(x)) }
+    }
+}
+")
+    assert_true(o6.has("少了 1 个成员"), "②6 穷尽性警告（带载荷 enum）")
+    assert_true(o6.has("编译检查通过"), "②6 只是警告，不打断编译")
+
+    print("test_enum_payload passed（构造 / 三种匹配 / `_` / 5 条错误路径 / 穷尽性警告）")
+}

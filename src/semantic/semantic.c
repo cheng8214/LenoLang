@@ -388,6 +388,222 @@ static void extend_check_local_dups(Semantic* s, Ast* root) {
     }
 }
 
+// ============================================================================
+// ★ 2026-11-10（P4 enum 载荷 步 2/6）：把"带载荷 enum"降级成"普通 struct + tag"
+// ----------------------------------------------------------------------------
+// `enum Msg { progress(int done, int total)  finished(string path) }`
+//   ⇒ 编译器合成（用户看不见，语义阶段第一步就造好）
+//     struct Msg { int tag; int p0; string p1 }
+//   然后 `Msg` 这个名字指向这个 struct，enum 那条声明在语义/codegen 阶段被**跳过**。
+//
+// 为什么用"同名 struct"而不是草案里的 `__Msg`：
+//   类型名对不上时，`Msg m = Msg.progress(...)`、形参/返回/字段声明、`m.tag` 的字段
+//   索引、`OP_STRUCT_INIT` 的运行时名字查找……每一处都要多一条"名字映射"规则，
+//   漏一处就是静默错配。同名则整条链路**零改动** ✓
+//
+// 槽位规则（草案 §3）：第 k 个载荷槽的类型在**所有成员间必须一致**；
+//   不一致就报错，而不是退回 any —— any 会把今天的类型检查问题原样搬回来 ✓
+//
+// 合成出来的 struct 定义插在**顶层列表最前面**（不是 enum 前面）：enum 原本是预注册的
+//  （支持前向引用），插最前面才保住"类型可以用在声明之前"这一点 ✓
+// ============================================================================
+
+// 这条语句声明的**类型名**是不是 name（含 `export struct` 包装；不是类型声明 ⇒ NULL）
+static const char* ep_decl_type_name(Ast* stmt) {
+    if (!stmt) return NULL;
+    if (stmt->kind == AST_EXPORT && stmt->u.export.decl) stmt = stmt->u.export.decl;
+    switch (stmt->kind) {
+        case AST_STRUCT_DEF:  return stmt->u.struct_def.name;
+        case AST_CSTRUCT_DEF: return stmt->u.cstruct_def.name;
+        case AST_FACE_DEF:    return stmt->u.face_def.name;
+        case AST_ENUM_DEF:    return stmt->u.enum_def.name;
+        case AST_ALIAS:       return stmt->u.alias.name;
+        case AST_CLIB_DEF:    return stmt->u.clib_def.name;
+        case AST_CFUNC_DECL:  return stmt->u.cfunc_decl.name;
+        default:              return NULL;
+    }
+}
+
+// 把 node 插到语句列表的第 pos 位（与 ast_list_add 相同的扩容策略）
+static void ep_block_insert_at(AstList* list, int pos, Ast* node) {
+    if (pos < 0) pos = 0;
+    if (pos > list->count) pos = list->count;
+    if (list->count >= list->capacity) {
+        int new_capacity = list->capacity == 0 ? 8 : list->capacity * 2;
+        Ast** new_items = (Ast**)realloc(list->items, new_capacity * sizeof(Ast*));
+        if (!new_items) {
+            error_add_at_fmt(ERR_RUNTIME, 0, 0, "内存分配失败");
+            return;
+        }
+        list->items = new_items;
+        list->capacity = new_capacity;
+    }
+    memmove(list->items + pos + 1, list->items + pos,
+            sizeof(Ast*) * (size_t)(list->count - pos));
+    list->items[pos] = node;
+    list->count++;
+}
+
+static void enum_payload_synthesize(Semantic* s, Ast* ast) {
+    (void)s;
+    if (!ast || ast->kind != AST_BLOCK) return;
+    AstList* list = &ast->u.block;
+
+    Ast** made = NULL;      // 本轮合成的 struct（最后统一插到最前面）
+    int made_n = 0, made_cap = 0;
+
+    for (int i = 0; i < list->count; i++) {
+        Ast* stmt = list->items[i];
+        if (!stmt) continue;
+        Ast* e = stmt;
+        int via_export = 0;
+        if (e->kind == AST_EXPORT && e->u.export.decl && e->u.export.decl->kind == AST_ENUM_DEF) {
+            e = e->u.export.decl;
+            via_export = 1;
+        }
+        if (e->kind != AST_ENUM_DEF) continue;
+        if (e->u.enum_def.payload_state != 0) continue;      // 幂等：同一个 AST 只降级一次
+        if (!e->u.enum_def.member_param_counts) continue;    // 老写法（纯 int 成员）
+
+        int member_count = e->u.enum_def.member_count;
+        int payload_n = 0;
+        for (int m = 0; m < member_count; m++) {
+            if (e->u.enum_def.member_param_counts[m] > 0) payload_n++;
+        }
+        if (payload_n == 0) continue;   // 老写法：零变化 ✓
+
+        // ① 形态：要么全带载荷、要么全不带（parser 已拦，这里兜住手写/工具构造的 AST）
+        if (payload_n != member_count) {
+            error_add_at_fmt(ERR_SEMANTIC, e->line, e->column,
+                "enum '%s' 里带载荷成员（%d 个）与不带载荷成员混用 —— 本语言不允许："
+                "同一个 enum 要么所有成员都带参数、要么都不带（值是 int 与值是对象两种"
+                "表示并存会让 switch / == / 穷尽性检查语义分叉）。请统一写法，或改用 struct + tag",
+                e->u.enum_def.name, payload_n);
+            e->u.enum_def.payload_state = 2;
+            continue;
+        }
+
+        // ② export 暂不支持：跨模块要把"成员是否有载荷"带进模块符号表，属另一步（草案 §4）
+        if (via_export) {
+            error_add_at_fmt(ERR_SEMANTIC, e->line, e->column,
+                "带载荷 enum '%s' 暂不支持 export（跨模块导入需要在模块符号表里带上"
+                "「成员是否有载荷」，是单独一步 —— 见 docs/enum载荷_设计草案.md）："
+                "请去掉 export（只在同文件用），或改用 struct + tag",
+                e->u.enum_def.name);
+            e->u.enum_def.payload_state = 2;
+            continue;
+        }
+
+        // ③ 载荷槽布局：**按成员分段**（第 m 个成员的参数占用一段连续槽位）
+        //   `enum Msg { progress(int done, int total)  finished(string path) }`
+        //     ⇒ struct Msg { int tag; int p0; int p1; string p2 }
+        //         progress 的基址 0（p0/p1）、finished 的基址 2（p2）
+        //   为什么不是"按位置复用"（草案 §3 原方案 `p_k` 取所有成员第 k 个参数的共同类型）：
+        //     那样 `progress(int,int)` 与 `finished(string)` 的第 1 个参数类型冲突 ⇒ 只能退回
+        //     any（类型检查全丢）或者干脆不支持 —— 而这两种是最常见的写法。
+        //   按成员分段 ⇒ **每个参数都是它自己声明的类型**，一个 any 都不用 ✓
+        //   代价：实例里多几个恒为 null 的槽（字段数 = 1 + 所有参数个数之和，上限 65535）。
+        //   ⚠ 基址必须**两处一致**（构造 / case 绑定），唯一实现见 sem_payload_member_base()。
+        int param_total = 0;
+        for (int m = 0; m < member_count; m++) {
+            param_total += e->u.enum_def.member_param_counts[m];
+        }
+        if (param_total <= 0) param_total = 0;
+
+        // ④ 名字冲突：合成 struct 与 enum **同名** ⇒ 不能再有别的同名类型声明
+        const char* dup_at = NULL;
+        int dup_line = 0;
+        for (int j = 0; j < list->count && !dup_at; j++) {
+            Ast* other = list->items[j];
+            if (!other || other == stmt) continue;
+            const char* tn = ep_decl_type_name(other);
+            if (tn && strcmp(tn, e->u.enum_def.name) == 0) {
+                dup_at = tn;
+                dup_line = other->line;
+            }
+        }
+        if (dup_at) {
+            error_add_at_fmt(ERR_DUPLICATE_VAR, e->line, e->column,
+                "enum '%s' 与第 %d 行声明的同名类型冲突 —— 带载荷 enum 会降级成**同名的 struct**"
+                "（`struct %s { int tag; … }`），因此这个名字不能被别的 struct/face/enum 占用；"
+                "请改名",
+                e->u.enum_def.name, dup_line, e->u.enum_def.name);
+            e->u.enum_def.payload_state = 2;
+            continue;
+        }
+
+        // ⑤ 造隐藏 struct：`{ int tag; p0; p1; … }`（载荷槽按成员分段，见上）
+        Ast* sd = ast_new(AST_STRUCT_DEF, e->line);
+        if (!sd) continue;
+        sd->column = e->column;
+        sd->u.struct_def.name = strdup(e->u.enum_def.name);
+        sd->u.struct_def.is_synthetic = 1;
+        sd->u.struct_def.enum_src = e;
+        int fc = 1 + param_total;
+        sd->u.struct_def.field_count = fc;
+        sd->u.struct_def.field_names = (char**)calloc((size_t)fc, sizeof(char*));
+        sd->u.struct_def.field_types = (TypeInfo**)calloc((size_t)fc, sizeof(TypeInfo*));
+        sd->u.struct_def.field_defaults = (Ast**)calloc((size_t)fc, sizeof(Ast*));
+        sd->u.struct_def.field_lines = (int*)calloc((size_t)fc, sizeof(int));
+        sd->u.struct_def.field_private = (int*)calloc((size_t)fc, sizeof(int));
+        sd->u.struct_def.field_names[0] = strdup("tag");
+        sd->u.struct_def.field_types[0] = type_new(TYPE_INT);
+        sd->u.struct_def.field_lines[0] = e->line;
+        int pidx = 1;
+        for (int m = 0; m < member_count; m++) {
+            int pc = e->u.enum_def.member_param_counts[m];
+            for (int k = 0; k < pc; k++) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "p%d", pidx - 1);
+                sd->u.struct_def.field_names[pidx] = strdup(buf);
+                sd->u.struct_def.field_lines[pidx] = e->line;
+                TypeInfo* tk = (e->u.enum_def.member_param_types &&
+                                e->u.enum_def.member_param_types[m])
+                                   ? e->u.enum_def.member_param_types[m][k] : NULL;
+                sd->u.struct_def.field_types[pidx] = tk ? type_copy(tk) : type_new(TYPE_ANY);
+                pidx++;
+            }
+        }
+
+        e->u.enum_def.payload_state = 1;
+        e->u.enum_def.payload_struct = sd;
+
+        if (made_n >= made_cap) {
+            made_cap = made_cap ? made_cap * 2 : 4;
+            Ast** grown = (Ast**)realloc(made, sizeof(Ast*) * (size_t)made_cap);
+            if (!grown) {
+                free(made);
+                error_add_at_fmt(ERR_RUNTIME, 0, 0, "内存分配失败");
+                return;
+            }
+            made = grown;
+        }
+        made[made_n++] = sd;
+    }
+
+    // 统一插到**开头那批 import/use 之后**：
+    //   · 插在最前面才能保住"类型可以用在声明之前"（enum 本来是预注册的）——
+    //     预注册阶段会先跑一遍完整列表，所以即使 struct 在函数之后也能用 ✓
+    //   · 但**不能越过 import/use**：载荷类型可能写成 `Item`（`use m.Item` 进来的）或
+    //     `m.Item`（限定名），这两种都要等 import 语句 visit 过才解析得到 ——
+    //     插到最前面实测会报"未定义的类型: struct 'Ev' 的字段 'p0' 使用了未定义的类型 'Item'"
+    //     （t3 用例：`import "mod.leno" as m` + `use m.Item` + `enum Ev { got(Item it) }`）✗
+    int pos = 0;
+    while (pos < list->count) {
+        Ast* st = list->items[pos];
+        if (st && (st->kind == AST_IMPORT || st->kind == AST_USE)) {
+            pos++;
+            continue;
+        }
+        break;
+    }
+    for (int i = 0; i < made_n; i++) {
+        ep_block_insert_at(list, pos, made[i]);
+        pos++;
+    }
+    free(made);
+}
+
 void semantic_analyze(Semantic* s, Ast* ast) {
     annos_reset_all();          // 注解（@optkeys）表每个分析单元清一次 ✓
     // import 别名同理：表是进程级静态，而别名是编译单元级声明 ⇒ 不清空会把上一个
@@ -417,6 +633,12 @@ void semantic_analyze(Semantic* s, Ast* ast) {
     //   ⚠ 必须早于下面的预注册：预注册用 func_table_add / scope_define，
     //     后者遇到重名会静默返回 NULL，晚查就只能看到"已被覆盖"的状态
     semantic_check_dup_funcs(ast);
+
+    // ★ 2026-11-10（P4 enum 载荷 步 2/6）：先把"带载荷 enum"降级成**同名的普通 struct**
+    //   （`struct Msg { int tag; p0; p1 }`）并插到顶层最前面 ⇒ 下面的预注册、字段索引、
+    //   codegen 的 OP_STRUCT_DEF 全部沿用既有路径，VM 与字节码格式零改动 ✓
+    //   ⚠ 必须在预注册**之前**：预注册按名字建符号，合成晚了会先建成 enum 的类型。
+    enum_payload_synthesize(s, ast);
 
     // 预注册所有 struct/face 定义（支持前向引用）
     if (ast && ast->kind == AST_BLOCK) {

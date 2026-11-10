@@ -651,6 +651,11 @@
         }
             
         case AST_CALL: {
+            // ★ 2026-11-10（P4 enum 载荷 步 3/6）：带载荷 enum 的成员构造
+            //   `Msg.progress(3, 10)` ⇒ 原地改写成 `new Msg(tag = 0, p0 = 3, p1 = 10)`
+            //   （`Msg` 是编译器合成的**同名 struct**，见 semantic.c 的合成函数）。
+            //   ⚠ 必须在下面任何"实参逐个访问"之前：改写会接管实参数组的归属。
+            if (sem_enum_payload_rewrite_call(s, ast)) return;
             // ★ 命名实参（C1，2026-11-02）：`f(a = 1, b = 2)` 在语法上就是实参里的
             //   AST_ASSIGN（parser 的 allow_named 分支故意不报错）。这里按**函数签名**
             //   重排成纯位置实参 ⇒ 后面的类型检查 / 默认参数补齐 / codegen 全都不用改。

@@ -1,26 +1,28 @@
         case AST_ENUM_DEF:
             // 注册 enum 类型
             {
-                // ★ 2026-11-10（P4 步 1/6）：**带载荷成员**的语法已经能解析
-                //   （`enum Msg { progress(int done, int total) }`），但降级还没实现
-                //   （计划：合成隐藏 struct `__Msg{tag, p0..pn}`，见 docs/enum载荷_设计草案.md）。
-                //   这里**必须明确报错**，绝不能默默按 int 枚举处理 —— 那样
-                //   `Msg.progress(3, 10)` 会被当成"取一个 int 再当函数调用"，
-                //   症状跑到很远的地方（本仓历史上这类静默错配查过很多次）。
-                int payload_member_count = 0;
+                // ★ 2026-11-10（P4 步 2/6）：**带载荷 enum** 已经在
+                //   `enum_payload_synthesize()`（semantic.c）里降级成**同名 struct**
+                //   `struct Msg { int tag; p0; p1 … }` 并插到顶层最前面 ⇒
+                //   那条 struct 声明已经把这个类型名注册好（字段索引也在那边），
+                //   这条 enum 声明本身**什么都不用做**（成员不是 int 常量，不能注册成值）。
+                if (ast->u.enum_def.payload_state == 1) break;
+                if (ast->u.enum_def.payload_state == 2) break;   // 合成阶段已报错，别级联
                 if (ast->u.enum_def.member_param_counts) {
+                    int payload_member_count = 0;
                     for (int i = 0; i < ast->u.enum_def.member_count; i++) {
                         if (ast->u.enum_def.member_param_counts[i] > 0) payload_member_count++;
                     }
-                }
-                if (payload_member_count > 0) {
-                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                        "enum '%s' 有 %d 个**带载荷**的成员（`name(int a)` 形式），该特性尚未实现"
-                        "（步 1/6：语法已就绪，降级待做 —— 合成隐藏 struct + tag，"
-                        "见 docs/enum载荷_设计草案.md）。当前请改用 struct + tag："
-                        "`struct Msg { int kind; int done; int total }`，或去掉成员参数",
-                        ast->u.enum_def.name, payload_member_count);
-                    break;
+                    if (payload_member_count > 0) {
+                        // 能走到这里 = 降级没做成（合成阶段只扫**顶层**语句列表）
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                            "带载荷 enum '%s' 不支持这个位置 —— 它必须声明在**文件顶层**"
+                            "（不能写在函数/块里，也不能 `export`）：编译器要把它降级成**同名的** "
+                            "`struct { tag; p0; … }`，只在顶层做这件事。"
+                            "见 docs/enum载荷_设计草案.md",
+                            ast->u.enum_def.name);
+                        break;
+                    }
                 }
 
                 // ★ 2026-11-04：enum 的成员数在 `OP_ENUM_DEF` 里用 `cw_u8` 编码 ⇒ >255 会被

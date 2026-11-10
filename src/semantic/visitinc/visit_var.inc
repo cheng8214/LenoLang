@@ -45,7 +45,8 @@
                 //   LSP 模式不登记（编到一半的代码天天有未用变量 ✗ 会刷屏 ✓）；
                 //   形参 / 解构名 / for 头变量不走这条路径 ⇒ 天然豁免 ✓。
                 //   ⚠ 三个字段在这里**显式赋值**：不依赖符号是 calloc 还是 malloc 出来的 ✓
-                if (kind == SYM_LOCAL && !s->is_lsp_mode) {
+                //   ★ 2026-11-10：合成声明（带载荷 enum 的 case 绑定）不登记 ⇒ 不报未使用 ✓
+                if (kind == SYM_LOCAL && !s->is_lsp_mode && !ast->u.var_decl.is_synthetic) {
                     sym->track_unused = 1;
                     sym->decl_line = ast->line;
                     sym->is_read = 0;

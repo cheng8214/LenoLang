@@ -310,6 +310,12 @@
         }
 
         case AST_MODULE_CALL: {
+            // ★ 2026-11-10（P4 enum 载荷 步 3/6）：`Msg.progress(3, 10)` 的节点是
+            //   **AST_MODULE_CALL**（parser 把"变量.名字(...)"统一建成这个，见 parse_dot）⇒
+            //   这里也接一次；命中带载荷 enum 的成员时改写成 `new Msg(tag=…, p0=…)` 并 return。
+            //   ⚠ 必须在 visit_list(args) **之前**：改写会接管实参数组的归属。
+            if (sem_enum_payload_rewrite_module_call(s, ast)) return;
+
             visit_list(s, &ast->u.module_call.args);
             const char* actual_module = native_resolve_module_alias(ast->u.module_call.module_name);
 
@@ -1799,6 +1805,35 @@
                 SymRef ref;
                 memset(&ref, 0, sizeof(ref));
                 Symbol* var_sym = resolve_variable_with_upvalue(s, ast->u.module_access.module_name, &ref);
+
+                // ★ 2026-11-10（P4 enum 载荷 步 3/6）：`Msg.progress`（**不加括号**）不是值 ——
+                //   带载荷 enum 的成员必须构造（`Msg.progress(3, 10)`），单独写出来没有意义。
+                //   不拦的话会掉进下面的 struct 字段访问分支，变成"读类型名上的字段"之类的远因错。
+                if (var_sym && var_sym->type && var_sym->type->kind == TYPE_STRUCT) {
+                    Ast* _psd = (Ast*)var_sym->type_decl_ast;
+                    if (_psd && _psd->kind == AST_STRUCT_DEF && _psd->u.struct_def.enum_src) {
+                        Ast* _esrc = _psd->u.struct_def.enum_src;
+                        const char* _mn = ast->u.module_access.member_name;
+                        int _mi = sem_payload_member_index(_esrc, _mn);
+                        if (_mi >= 0) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                "带载荷 enum '%s' 的成员 '%s' 需要 %d 个参数 —— 不能单独当值用："
+                                "构造请写 `%s.%s(实参…)`；匹配请写 `case %s.%s(绑定变量…)`",
+                                _esrc->u.enum_def.name, _mn,
+                                _esrc->u.enum_def.member_param_counts[_mi],
+                                _esrc->u.enum_def.name, _mn,
+                                _esrc->u.enum_def.name, _mn);
+                        } else {
+                            error_add_at_fmt(ERR_UNDEFINED_VAR, ast->line, ast->column,
+                                "带载荷 enum '%s' 里没有成员 '%s'",
+                                _esrc->u.enum_def.name, _mn ? _mn : "?");
+                        }
+                        if (ast->cached_type) type_free(ast->cached_type);
+                        ast->cached_type = type_new(TYPE_POISON);
+                        symref_dispose(&ref);
+                        break;
+                    }
+                }
 
                 Ast* var_ast = ast_new(AST_VAR, ast->line);
                 var_ast->u.var.name = strdup(ast->u.module_access.module_name);

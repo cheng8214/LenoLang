@@ -825,6 +825,12 @@
             //   局部变量都在本语句结束失效 ⇒ 记标记、末尾回退。
             int _mark_switch = sem_local_mark(s);
 
+            // ★ 2026-11-10（P4 enum 载荷 步 4/6）：带载荷 enum 的 switch 模式
+            //   `case Msg.progress(d, t)` ⇒ `switch m.tag { case 0 { var d = m.p0; … } }`
+            //   ⚠ 必须在下面 visit 主题之前：改写会把主题换成 `m.tag`、把 case 值换成
+            //     tag 常量；晚改就会先把 `Msg.progress(d, t)` 当成"构造"改写掉 ✗
+            sem_enum_payload_desugar_switch(s, ast);
+
             visit(s, ast->u.switch_.expr);
 
             // ★ N15（2026-10-24）：**case 常量值的类型与 switch 表达式不一致** ⇒ 警告。

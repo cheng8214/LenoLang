@@ -287,7 +287,10 @@ struct Ast {
             SymRef* refs;         // 符号引用数组
         } assign;
         struct { char* name; Ast* value; SymRef ref; LenoTokenType op; } compound_assign;  // 复合赋值
-        struct { char* name; Ast* init; SymRef ref; TypeInfo* type; int is_const; } var_decl;
+        // is_synthetic：编译器改写出来的声明（目前是"带载荷 enum 的 case 绑定变量"）
+        //   ⇒ 不参与 WARN_UNUSED_VAR（用户没写这条声明，让他去"删掉"或改 `_` 没有意义）
+        struct { char* name; Ast* init; SymRef ref; TypeInfo* type; int is_const;
+                 int is_synthetic; } var_decl;
         struct { Ast* expr; } expr_stmt;
         struct { char* module_name; char* alias; char* file_path; } import;
         struct { Ast* decl; } export;
@@ -353,6 +356,16 @@ struct Ast {
             char** const_names;       // 关联常量名数组
             Ast** const_values;       // 关联常量值表达式数组
             int const_count;          // 关联常量数量
+            // ★ 2026-11-10（P4 enum 载荷 步 2/6）：这个 struct 是**编译器合成的**
+            //   （目前只有"带载荷 enum 降级"这一种，见 docs/enum载荷_设计草案.md）。
+            //   为 1 时跳过面向用户源码的诊断（字段未初始化 / 与 native 或导入模块同名 …）——
+            //   用户根本没写这个 struct，报给他也无处可改 ✓
+            int is_synthetic;
+            // ★ 2026-11-10（P4 enum 载荷 步 2/6）：本 struct 由某条**带载荷 enum** 降级而来
+            //   ⇒ 指向那条 `AST_ENUM_DEF`（**借用**，不拥有、不释放；两条声明都在同一个
+            //   block 的语句列表里）。判据"是不是带载荷 enum 的隐藏 struct"**只看这一条**，
+            //   不要去看名字前缀（名字就是 enum 名，见 semantic.c 的合成说明）。
+            Ast* enum_src;
         } struct_def;
         struct {
             char* module_name;       // 可空：`extend p.Player` 的 "p"；空 = 本文件/本模块
@@ -418,6 +431,12 @@ struct Ast {
             char*** member_param_names;      // [member][param] 参数名
             TypeInfo*** member_param_types;  // [member][param] 参数类型
             int* member_param_counts;        // 每个成员的参数个数（0 = 无载荷）
+            // ★ 2026-11-10（P4 enum 载荷 步 2/6）：降级状态（见 semantic.c 的合成函数）
+            //   0 = 老写法（纯 int 成员）⇒ 本字段全 0，行为与改动前**逐字节一致** ✓
+            //   1 = 已降级成 `struct <同名>{ tag, p0..pn }`，payload_struct 指向它（借用）
+            //   2 = 降级失败（合成阶段已报过错）⇒ 语义与 codegen 都跳过这条 enum
+            int payload_state;
+            Ast* payload_struct;
             SymRef ref;        // 符号引用信息（用于模块变量索引）
         } enum_def;
         struct {
@@ -429,6 +448,10 @@ struct Ast {
             TypeInfo** generic_type_args;   // 具体类型参数数组（如 [TYPE_INT]）
             int generic_type_count;         // 类型参数数量
             int has_dtor;                   // 该 struct 是否有析构函数（语义分析阶段设置）
+            // ★ 2026-11-10（P4 enum 载荷 步 3/6）：这个 `new` 节点是**编译器改写出来的**
+            //   （`Msg.progress(3,10)` ⇒ `new Msg(tag=0, p0=3, …)`）。
+            //   用户显式写 `new Msg(...)` 要报"带载荷 enum 不能用 new 构造"，这一位用来区分。
+            int from_enum_payload;
         } struct_init;
         struct {
             Ast* obj;          // 对象表达式

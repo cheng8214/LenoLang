@@ -2497,6 +2497,11 @@ static void gen_struct_def(CodeGen* gen, Ast* ast) {
 }
 
 static void gen_enum_def(CodeGen* gen, Ast* ast) {
+    // ★ 2026-11-10（P4 enum 载荷 步 2/6）：带载荷 enum 已经在语义阶段降级成**同名 struct**
+    //   ⇒ 这里什么都不发（成员不是 int 常量；运行期只需要那份 struct 定义，
+    //   它由 gen_struct_def 正常发射）。旧写法（payload_state == 0）逐字节不变 ✓
+    if (ast->u.enum_def.payload_state != 0) return;
+
     int r = reg_alloc(gen);
     ObjString* nm = str_copy(ast->u.enum_def.name, (int)strlen(ast->u.enum_def.name));
     int name_const = make_constant(gen, val_obj((Object*)nm));
