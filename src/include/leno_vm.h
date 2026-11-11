@@ -549,6 +549,21 @@ typedef enum {
     OP_GET_FIELD_FAST_W, // iABC + EXTRAARG   R[A] = R[B].field(idx24)（codegen 已核实是 struct）
     OP_GET_FIELD_ADDR_W, // iABC + EXTRAARG   R[A] = &R[B].field(idx24)（cstruct）
 
+    // ★ 2026-11-11（P0）：cstruct **数组**的「索引 + 字段」融合读写（**追加在枚举末尾**）。
+    //   为什么需要：`a[i].x` 原先 = `a[i]`（OP_INDEX，每次 **gc_alloc 一个视图对象**）
+    //   + `["x"]`（OP_INDEX_SET / OP_INDEX 的字符串下标分支，每次再做一次字段名比较）。
+    //   实测 20 万顶点 × 4 字段：融合前 **52 ms**，手写 ffi.write_float 只要 **9 ms**
+    //   ⇒ 「用连续 cstruct 数组代替手工偏移」反而是 5.8 倍的反向优化。
+    //   编码：A = 值寄存器（读=结果 / 写=被写的值），B = cstruct 数组寄存器，
+    //         C = 下标寄存器（int），**紧随一条 OP_EXTRAARG** 携带 24 位字段索引
+    //         （与 OP_GET_FIELD_W 同一惯例：VM 侧 READ_CONST_IDX(0) 读走它）。
+    //   ⚠ codegen 只在「接收者静态类型是 cstruct + 下标是数字 + 字段索引编译期已知」时发射；
+    //     其它形态（动态下标、字段名运行期才知道）仍走老的 OP_INDEX + OP_INDEX_SET，行为不变。
+    //     运行时 B 不是 OBJ_CSTRUCT_ARRAY 时（静态推断只知 TYPE_CSTRUCT，实例也可能是单对象
+    //     或 Ptr[T]）**逐条回退**到老语义与老文案，不比现状更差。
+    OP_CSTRUCT_ARR_GETF, // iABC + EXTRAARG   R[A] = R[B][R[C]].field(idx24)
+    OP_CSTRUCT_ARR_SETF, // iABC + EXTRAARG   R[B][R[C]].field(idx24) = R[A]
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

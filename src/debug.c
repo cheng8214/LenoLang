@@ -102,6 +102,9 @@ static const char* opCodeNames[] = {
     "OP_SET_FIELD_W",       // R[B].field(idx24) = R[A]
     "OP_GET_FIELD_FAST_W",  // 同上，静态类型已核实是 struct
     "OP_GET_FIELD_ADDR_W",  // &R[B].field(idx24)（cstruct）
+    // ★ 2026-11-11（P0）：cstruct 数组的「索引 + 字段」融合读写
+    "OP_CSTRUCT_ARR_GETF",  // R[A] = R[B][R[C]].field(idx24)
+    "OP_CSTRUCT_ARR_SETF",  // R[B][R[C]].field(idx24) = R[A]
     "OP_OPCODE_COUNT",
     };
 

@@ -440,6 +440,20 @@ static int verify_one(const Chunk* c, int pos, int cap,
             size = 8;
             break;
         }
+        // ★ 2026-11-11（P0）：cstruct 数组的「索引 + 字段」融合读写 ——
+        //   A/B/C **全是寄存器**（A=值 / B=数组 / C=下标），字段索引同样在紧随的 EXTRAARG。
+        case OP_CSTRUCT_ARR_GETF:
+        case OP_CSTRUCT_ARR_SETF: {
+            REG_CHK(a);
+            REG_CHK(b);
+            REG_CHK(cc);
+            if (pos + 8 > len || c->code[pos + 4] != (uint8_t)OP_EXTRAARG) goto bad;
+            int fidx = ((int)c->code[pos + 5] << 16) | ((int)c->code[pos + 6] << 8) |
+                       (int)c->code[pos + 7];
+            if (fidx < 0) goto bad;
+            size = 8;
+            break;
+        }
         case OP_RETURN: {
             int nr = b - 1;
             if (nr > 0) {

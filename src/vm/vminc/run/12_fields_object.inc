@@ -585,6 +585,137 @@
     // OP_GET_FIELD_ADDR A B C: R[A] = &R[B].field(C)（仅 cstruct 字段）
     LABEL(OP_GET_FIELD_ADDR): VM_FIELD_ADDR_BODY(READ_C())
     LABEL(OP_GET_FIELD_ADDR_W): VM_FIELD_ADDR_BODY(READ_CONST_IDX(0))
+
+    // ★ 2026-11-11（P0）：cstruct **数组**的「索引 + 字段」融合读写。
+    //   为什么：`a[i].x` 原先要「OP_INDEX 建视图（每次 gc_alloc）+ 字符串下标字段写」
+    //   两步 ⇒ 20 万顶点 × 4 字段实测 **52 ms**，手写 ffi.write_float 只要 **9 ms**
+    //   （见 docs/密集数据与FFI能力评估_2026-11-11.md）。
+    //   做法：只承认 B 是 OBJ_CSTRUCT_ARRAY；其余类型（静态推断只知 TYPE_CSTRUCT，
+    //   可能是单实例或 Ptr[T]）**逐条回退**，文案与 OP_INDEX / OP_INDEX_SET 保持一致，
+    //   不比现状更差。
+    //   ⚠ 标量字段用 C 栈上的临时 ObjCStruct 算地址 ⇒ 零 GC 分配；
+    //     但「数组字段 / 嵌套 cstruct」读出来是**视图**（视图里存了父对象指针），
+    //     父对象必须在 GC 堆上 ⇒ 这两类仍走 cstruct_array_get 建真对象。
+    LABEL(OP_CSTRUCT_ARR_GETF): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        int fi = READ_CONST_IDX(0);          // ⚠ 必须在任何早退之前读走（它会推进 ip）
+        int line = GET_CURRENT_LINE();
+        Value ov = R(b);
+        if (unlikely(!val_is_obj(ov) || val_as_obj(ov)->type != OBJ_CSTRUCT_ARRAY)) {
+            if (!throw_runtime_error("下标读取: 对象不支持索引", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjCStructArray* ca = (ObjCStructArray*)val_as_obj(ov);
+        Value iv = R(c);
+        if (unlikely(!val_is_int(iv))) {
+            if (!throw_runtime_error("cstruct 数组索引必须是数字", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        int ci = (int)val_as_int(iv);
+        if (unlikely(ci < 0 || ci >= ca->count)) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "cstruct 数组索引越界: 索引 %d, 长度 %d", ci, ca->count);
+            if (!throw_runtime_error(msg, line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        if (unlikely(fi < 0 || fi >= ca->def->field_count)) {
+            if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        CStructFieldInfo* f = &ca->def->fields[fi];
+        int need_view = (f->type == TYPE_CSTRUCT) ||
+                        (f->array_dim > 0 && f->type != TYPE_STR16);
+        if (unlikely(need_view)) {
+            ObjCStruct* elem = cstruct_array_get(ca, ci);
+            if (unlikely(!elem)) {
+                runtime_error("内存不足", line);
+                return -1;
+            }
+            R(a) = vm_cstruct_field_read(elem, fi);
+        } else {
+            ObjCStruct tmp;
+            memset(&tmp, 0, sizeof(tmp));
+            tmp.def = ca->def;
+            tmp.data = ca->data + (size_t)ci * (size_t)ca->element_size;
+            tmp.owns_memory = 0;
+            R(a) = vm_cstruct_field_read(&tmp, fi);
+        }
+        DISPATCH();
+    }
+    LABEL(OP_CSTRUCT_ARR_SETF): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        int fi = READ_CONST_IDX(0);
+        int line = GET_CURRENT_LINE();
+        Value ov = R(b);
+        if (unlikely(!val_is_obj(ov) || val_as_obj(ov)->type != OBJ_CSTRUCT_ARRAY)) {
+            if (!throw_runtime_error("下标赋值: 对象不支持索引", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        ObjCStructArray* ca = (ObjCStructArray*)val_as_obj(ov);
+        Value iv = R(c);
+        if (unlikely(!val_is_int(iv))) {
+            if (!throw_runtime_error("cstruct 数组索引必须是数字", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        int ci = (int)val_as_int(iv);
+        if (unlikely(ci < 0 || ci >= ca->count)) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "cstruct 数组索引越界: 索引 %d, 长度 %d", ci, ca->count);
+            if (!throw_runtime_error(msg, line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        if (unlikely(fi < 0 || fi >= ca->def->field_count)) {
+            if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        Value nv = R(a);
+        CStructFieldInfo* f = &ca->def->fields[fi];
+        TypeKind ft = f->type;
+        // ★ 快路径：顶点/矩阵场景 99% 是 f32 与 i32 标量。原先每次写都跨 TU 调
+        //   cstruct_set_field_value（它内部还要再 switch 一遍）—— 80 万次写实测多花
+        //   ~4 ms（12ms vs 手写 ffi.write_float 的 8ms）。这里直接按字段类型 memcpy，
+        //   转换口径与原实现逐条一致（val_as_num 对 int/float 的语义相同）。
+        //   ⚠ bigint 不走快路径（原实现用 bigint_to_double，语义不同）；其余类型回落。
+        uint8_t* faddr = ca->data + (size_t)ci * (size_t)ca->element_size + (size_t)f->offset;
+        if (likely(ft == TYPE_F32 && (val_is_int(nv) || val_is_float(nv)))) {
+            float fv = (float)val_as_num(nv);
+            memcpy(faddr, &fv, sizeof(fv));
+            DISPATCH();
+        }
+        if (likely(ft == TYPE_I32 && val_is_int(nv))) {
+            int32_t iv = (int32_t)val_as_int(nv);
+            memcpy(faddr, &iv, sizeof(iv));
+            DISPATCH();
+        }
+        if (likely((ft == TYPE_F64 || ft == TYPE_FLOAT) && (val_is_int(nv) || val_is_float(nv)))) {
+            double dv = val_as_num(nv);
+            memcpy(faddr, &dv, sizeof(dv));
+            DISPATCH();
+        }
+        // 慢路径：其余类型/值形态，口径与 VM_FIELD_WRITE_BODY 的 cstruct 分支逐条一致
+        if (val_is_int(nv) && (ft == TYPE_F32 || ft == TYPE_F64)) {
+            nv = val_float((double)val_as_int(nv));
+        } else if (val_is_bigint(nv) && (ft == TYPE_F32 || ft == TYPE_F64)) {
+            nv = val_float(bigint_to_double(val_as_bigint(nv)));
+        } else if (val_is_float(nv) && (ft >= TYPE_I8 && ft <= TYPE_U64)) {
+            nv = val_num(val_as_num(nv));
+        }
+        ObjCStruct tmp;
+        memset(&tmp, 0, sizeof(tmp));
+        tmp.def = ca->def;
+        tmp.data = ca->data + (size_t)ci * (size_t)ca->element_size;
+        tmp.owns_memory = 0;
+        cstruct_set_field_value(&tmp, fi, nv);
+        DISPATCH();
+    }
     // OP_SET_PTR_ELEM_TYPE A B: R[A] 若是 FFI 指针，设置其 element_type = (TypeKind)B
     //   由 `Ptr[u32] p = ffi.malloc(...)` 这类**声明**发射（gen_var_decl）。ffi.read_at /
     //   write_at 靠 element_type 算元素宽度，读不到就报「需要 Ptr[T] 类型指针」

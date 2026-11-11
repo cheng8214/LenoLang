@@ -1826,6 +1826,60 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
     int obj_reg, idx_reg = 0, val_reg, val_is_temp, idx_is_temp = 0, obj_is_temp = 0;
     // 先定"发哪条指令"：struct 字段写（`ps[i].y = 9`）时**下标不必求值**（字段索引编译期已知），
     // 与读路径的立即数下标同一手法（跳过求值就必须跳过释放）。
+    // ★ 2026-11-11（P0）：`a[i].x = v`（cstruct 数组 + 字面量字段名）融合成 **一条**指令。
+    //   原先 = `a[i]`（OP_INDEX，每次 **gc_alloc 一个视图对象**）+ OP_INDEX_SET 的字符串
+    //   下标分支（再做一次字段名比较）。实测 20 万顶点 × 4 字段 **52 ms** vs 手写
+    //   ffi.write_float 的 9 ms。根因与实测见 docs/密集数据与FFI能力评估_2026-11-11.md。
+    //   判据与读路径（codegen_expr.c 的 AST_INDEX 分支）**逐条同源**：
+    //     接收者是 `a[非字符串下标]` + `a[i]` 与 `a` 的静态类型都是 cstruct + 字段索引解析得出。
+    //   求值顺序：arr、下标先求值，右值最后（与下面通用路径一致）；右值可能改写这两个
+    //   槽位时先把它们搬进临时寄存器（口径同 snap_needed，见 1815 行那段说明）。
+    if (obj_ast && obj_ast->kind == AST_INDEX && idx_ast && idx_ast->kind == AST_STRING &&
+        idx_ast->u.string.value && idx_ast->u.string.value[0] &&
+        obj_ast->u.index.obj && obj_ast->u.index.index &&
+        obj_ast->u.index.index->kind != AST_STRING) {
+        TypeInfo* et = infer_expr_type(gen->sem, obj_ast);
+        TypeInfo* rt = infer_expr_type(gen->sem, obj_ast->u.index.obj);
+        int is_cs_arr = (et && et->kind == TYPE_CSTRUCT && rt && rt->kind == TYPE_CSTRUCT);
+        int cs_fi = -1;
+        if (is_cs_arr) {
+            TypeInfo* ft = infer_field_type(gen->sem, et, idx_ast->u.string.value, &cs_fi);
+            if (ft) type_free(ft);
+        }
+        if (et) type_free(et);
+        if (rt) type_free(rt);
+        if (is_cs_arr && cs_fi >= 0) {
+            Ast* cs_arr_ast = obj_ast->u.index.obj;
+            Ast* cs_idx_ast = obj_ast->u.index.index;
+            int cs_arr_slot = direct_local_reg(cs_arr_ast);
+            int cs_idx_slot = direct_local_reg(cs_idx_ast);
+            int cs_snap = 0;
+            if (cs_arr_slot >= 0 && ast_may_write_slot(val_ast, cs_arr_slot)) cs_snap = 1;
+            if (cs_idx_slot >= 0 && ast_may_write_slot(val_ast, cs_idx_slot)) cs_snap = 1;
+            int cs_arr, cs_idx, cs_arr_tmp = 0, cs_idx_tmp = 0;
+            if (cs_arr_slot >= 0 && !cs_snap) { cs_arr = cs_arr_slot; }
+            else { cs_arr = gen_expr(gen, cs_arr_ast); cs_arr_tmp = 1; }
+            if (cs_idx_slot >= 0 && !cs_snap) { cs_idx = cs_idx_slot; }
+            else { cs_idx = gen_expr(gen, cs_idx_ast); cs_idx_tmp = 1; }
+            int cs_val = direct_local_reg(val_ast);
+            int cs_val_tmp = 0;
+            if (cs_val < 0) {
+                cs_val = val_ast ? gen_expr(gen, val_ast) : -1;
+                cs_val_tmp = 1;
+                if (cs_val < 0) {
+                    cs_val = reg_alloc(gen);
+                    emit_loadnil_to(gen, cs_val, ast->line);
+                }
+            }
+            reg_encode_iABC(gen->chunk, OP_CSTRUCT_ARR_SETF, cs_val, cs_arr, cs_idx, ast->line);
+            reg_encode_iAx(gen->chunk, OP_EXTRAARG, cs_fi, ast->line);
+            if (dst >= 0 && dst != cs_val) emit_mov(gen, dst, cs_val, ast->line);
+            if (cs_val_tmp) reg_free(gen, cs_val);
+            if (cs_idx_tmp) reg_free(gen, cs_idx);
+            if (cs_arr_tmp) reg_free(gen, cs_arr);
+            return;
+        }
+    }
     int field_idx = -1;
     OpCode set_op = index_set_op_for(gen, obj_ast, idx_ast, &field_idx);
     // 立即数下标版同样**跳过下标求值**（与字段写同一手法：跳过求值就必须跳过释放 ——
@@ -1989,6 +2043,48 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 //   OP_SET_FIELD 时**下标不必求值** —— 原先这条分支无条件 gen_expr(idx)，
                 //   于是每次字段写都白发一条 `LOADK "字段名"`（dump 实证，死寄存器）。
                 //   判据/手法与 gen_index_assign 完全一致（跳过求值就必须跳过释放）。
+                // ★ 2026-11-11（P0）：`a[i].x = v`（cstruct 数组 + 字面量字段名）融合成一条
+                //   指令。**语句位置的赋值走的是本函数**（gen_assign），不是 gen_index_assign
+                //   ⇒ 两处都要有，否则 `a[i].x = 1.0` 这条最常见写法拿不到优化
+                //   （实测：只改 gen_index_assign 时基准一点没变）。判据与那段逐条同源。
+                if (obj_ast && obj_ast->kind == AST_INDEX && idx_ast && idx_ast->kind == AST_STRING &&
+                    idx_ast->u.string.value && idx_ast->u.string.value[0] &&
+                    obj_ast->u.index.obj && obj_ast->u.index.index &&
+                    obj_ast->u.index.index->kind != AST_STRING) {
+                    TypeInfo* et = infer_expr_type(gen->sem, obj_ast);
+                    TypeInfo* rt = infer_expr_type(gen->sem, obj_ast->u.index.obj);
+                    int is_cs_arr = (et && et->kind == TYPE_CSTRUCT && rt && rt->kind == TYPE_CSTRUCT);
+                    int cs_fi = -1;
+                    if (is_cs_arr) {
+                        TypeInfo* ft = infer_field_type(gen->sem, et, idx_ast->u.string.value, &cs_fi);
+                        if (ft) type_free(ft);
+                    }
+                    if (et) type_free(et);
+                    if (rt) type_free(rt);
+                    if (is_cs_arr && cs_fi >= 0) {
+                        Ast* cs_arr_ast = obj_ast->u.index.obj;
+                        Ast* cs_idx_ast = obj_ast->u.index.index;
+                        int cs_arr_slot = direct_local_reg(cs_arr_ast);
+                        int cs_idx_slot = direct_local_reg(cs_idx_ast);
+                        int cs_snap = 0;
+                        if (cs_arr_slot >= 0 && ast_may_write_slot(value, cs_arr_slot)) cs_snap = 1;
+                        if (cs_idx_slot >= 0 && ast_may_write_slot(value, cs_idx_slot)) cs_snap = 1;
+                        int cs_arr, cs_idx, cs_arr_tmp = 0, cs_idx_tmp = 0;
+                        if (cs_arr_slot >= 0 && !cs_snap) { cs_arr = cs_arr_slot; }
+                        else { cs_arr = gen_expr(gen, cs_arr_ast); cs_arr_tmp = 1; }
+                        if (cs_idx_slot >= 0 && !cs_snap) { cs_idx = cs_idx_slot; }
+                        else { cs_idx = gen_expr(gen, cs_idx_ast); cs_idx_tmp = 1; }
+                        int cs_val = (pre_reg < 0) ? direct_local_reg(value) : -1;
+                        int cs_val_tmp = 0;
+                        if (cs_val < 0) { cs_val = ASSIGN_VAL(); cs_val_tmp = 1; }
+                        reg_encode_iABC(gen->chunk, OP_CSTRUCT_ARR_SETF, cs_val, cs_arr, cs_idx, ast->line);
+                        reg_encode_iAx(gen->chunk, OP_EXTRAARG, cs_fi, ast->line);
+                        if (cs_val_tmp) ASSIGN_FREE_VAL(cs_val);
+                        if (cs_idx_tmp) reg_free(gen, cs_idx);
+                        if (cs_arr_tmp) reg_free(gen, cs_arr);
+                        break;
+                    }
+                }
                 int mf_idx = -1;
                 OpCode mf_op = index_set_op_for(gen, obj_ast, idx_ast, &mf_idx);
                 // 立即数下标版同样跳过下标求值（同 gen_index_assign 的说明：跳过求值 ⇒ 跳过释放）

@@ -586,6 +586,45 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             Ast* iidx = ast->u.index.index;
             int obj_reg, idx_reg;
             int obj_is_temp = 1, idx_is_temp = 1;
+            // ★ 2026-11-11（P0）：`a[i].x`（cstruct 数组 + 字面量字段名）融合成 **一条**指令。
+            //   原先 = `a[i]`（OP_INDEX，每次 **gc_alloc 一个视图对象**）+ 字符串下标取字段
+            //   （OP_INDEX 的 cstruct 分支，再做一次字段名比较）。实测 20 万顶点 × 4 字段
+            //   **52 ms**，而手写 ffi.write_float 只要 9 ms ⇒「用连续 cstruct 数组代替手工偏移」
+            //   反而慢 5.8 倍。根因与实测见 docs/密集数据与FFI能力评估_2026-11-11.md。
+            //   ⚠ 必须放在**求值 obj_reg 之前**：obj_reg 一旦生成，视图分配就已经发生了。
+            //   判据（任一不满足 ⇒ 走原路径，字节码与语义都不变）：
+            //     ① 接收者是 AST_INDEX 且下标非字符串（`a[0]` / `a[i]`）
+            //     ② `a[i]` 的静态类型是 cstruct，且 `a` 的静态类型也是 cstruct
+            //        （malloc_array 返回 TYPE_CSTRUCT；单实例也是 TYPE_CSTRUCT ⇒ VM 侧再判型回退）
+            //     ③ 字段名是字面量且能在 cstruct 定义里解析出字段索引
+            if (iobj && iobj->kind == AST_INDEX && iidx && iidx->kind == AST_STRING &&
+                iidx->u.string.value && iidx->u.string.value[0] &&
+                iobj->u.index.obj && iobj->u.index.index &&
+                iobj->u.index.index->kind != AST_STRING) {
+                TypeInfo* et = infer_expr_type(gen->sem, iobj);
+                TypeInfo* rt = infer_expr_type(gen->sem, iobj->u.index.obj);
+                int is_cs_arr = (et && et->kind == TYPE_CSTRUCT && rt && rt->kind == TYPE_CSTRUCT);
+                int cs_fi = -1;
+                if (is_cs_arr) {
+                    TypeInfo* ft = infer_field_type(gen->sem, et, iidx->u.string.value, &cs_fi);
+                    if (ft) type_free(ft);
+                }
+                if (et) type_free(et);
+                if (rt) type_free(rt);
+                if (is_cs_arr && cs_fi >= 0) {
+                    int cs_arr = direct_local_reg(iobj->u.index.obj);
+                    int cs_arr_tmp = 0;
+                    if (cs_arr < 0) { cs_arr = gen_expr(gen, iobj->u.index.obj); cs_arr_tmp = 1; }
+                    int cs_idx = direct_local_reg(iobj->u.index.index);
+                    int cs_idx_tmp = 0;
+                    if (cs_idx < 0) { cs_idx = gen_expr(gen, iobj->u.index.index); cs_idx_tmp = 1; }
+                    reg_encode_iABC(gen->chunk, OP_CSTRUCT_ARR_GETF, dst, cs_arr, cs_idx, ast->line);
+                    reg_encode_iAx(gen->chunk, OP_EXTRAARG, cs_fi, ast->line);
+                    if (cs_idx_tmp) reg_free(gen, cs_idx);
+                    if (cs_arr_tmp) reg_free(gen, cs_arr);
+                    break;
+                }
+            }
             if (iobj && iobj->kind == AST_VAR) {
                 SymRef* r0 = &iobj->u.var.ref;
                 if ((r0->kind == SYM_LOCAL || r0->kind == SYM_PARAM) && r0->index >= 0) {

@@ -1,0 +1,85 @@
+// cstruct 数组的「索引 + 字段」融合读写（2026-11-11，P0）
+//
+// 背景：`a[i].x` 原先 = `a[i]`（OP_INDEX，每次 **gc_alloc 一个视图对象**）+ 字符串下标取字段。
+//   实测 20 万顶点 × 4 字段要 **52 ms**，而手写 ffi.write_float 只要 9 ms ⇒ 用连续 cstruct
+//   数组代替手工偏移反而慢 5.8 倍。融合后走 OP_CSTRUCT_ARR_GETF / SETF（零视图分配）。
+//
+// 本用例守的是**语义**（性能由 tmp 基准看守，不进断言套件）：
+//   ① 逐字段读写与变量下标、表达式下标；
+//   ② int 字面量写 f32 字段要自动提升；
+//   ③ 数组字段仍必须返回视图（不能被融合路径弄坏）；
+//   ④ 普通 struct 的字段访问不受影响；
+//   ⑤ 越界仍然报「cstruct 数组索引越界」。
+import ffi
+
+cstruct V3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+cstruct WithArr {
+    i32 n
+    u8 data[4]
+}
+
+struct Plain {
+    int x = 0
+    int y = 0
+}
+
+main() {
+    // ① 连续数组逐字段读写
+    var vs = V3.malloc_array(4)
+    for 0 : 3 to i {
+        vs[i].x = _float(i)
+        vs[i].y = _float(i * 2)
+        vs[i].z = _float(i * 3)
+    }
+    assert_eq(vs[0].x, 0.0, "vs[0].x")
+    assert_eq(vs[3].z, 9.0, "vs[3].z")
+    assert_eq(vs[2].y, 4.0, "vs[2].y")
+
+    // ② int 字面量写 f32 字段要提升成 float（不能写成 0）
+    vs[1].x = 1
+    assert_eq(vs[1].x, 1.0, "int→f32 提升")
+
+    // ③ 变量下标 / 表达式下标
+    int k = 2
+    assert_eq(vs[k].x, 2.0, "变量下标")
+    assert_eq(vs[k - 1].x, 1.0, "表达式下标")
+
+    // ④ 读后写 / 写后读混用（累加）
+    float sum = 0.0
+    for 0 : 3 to i {
+        sum = sum + vs[i].z
+    }
+    assert_eq(sum, 18.0, "字段读累加")
+
+    // ⑤ 数组字段仍返回可写视图
+    var w = WithArr.malloc_array(2)
+    w[0].n = 7
+    w[0].data[2] = 200
+    assert_eq(w[0].n, 7, "i32 字段")
+    assert_eq(w[0].data[2], 200, "u8 数组字段视图可写")
+
+    // ⑥ 普通 struct 的字段访问不受影响
+    Plain p = new Plain(x = 3, y = 4)
+    assert_eq(p.x, 3, "struct 字段读")
+    p.y = 9
+    assert_eq(p.y, 9, "struct 字段写")
+
+    // ⑦ 越界仍要报错
+    bool caught = false
+    try {
+        vs[4].x = 1.0
+    } catch e {
+        caught = true
+        assert_true(e.msg.has("cstruct 数组索引越界"), "越界文案；实际=" + e.msg)
+    }
+    assert_eq(caught, true, "越界必须抛异常")
+
+    vs.free_all()
+    w.free_all()
+    print("PASS test_cstruct_array_field")
+}
