@@ -148,6 +148,21 @@ main()
     assert_eq(ffi.read_int(pw.memory, 4), 99)
     ffi.free(pw.memory)
 
+    // ---- files.exists 是"路径存在"，不是"能否以读方式打开"（2026-11-11 修）----
+    //   旧实现 `fopen(path, "r")` ⇒ **目录**在 Windows 上打不开 ⇒ 返回 false ✗，
+    //   而 dirs.exists(同一路径) 是 true —— 同名函数两种口径（实测踩到）。
+    //   现在两者都用"取属性"判存在：文件、目录都算存在。
+    var exdir = dirs.join(work, "exists_dir")
+    dirs.mkdir_p(exdir)
+    var exfile = dirs.join(work, "exists_file.txt")
+    files.write(exfile, "x")
+    assert_eq(files.exists(exdir), true, "目录也属于「存在」（与 dirs.exists 同口径）")
+    assert_eq(files.exists(exdir), dirs.exists(exdir), "files.exists 与 dirs.exists 对目录一致")
+    assert_eq(files.exists(exfile), true, "文件存在")
+    assert_eq(files.exists(dirs.join(work, "no_such_thing")), false, "不存在的路径")
+    assert_eq(files.exists(""), false, "空路径 ⇒ false（不抛）")
+    files.delete(exfile)
+
     // 清理
     dirs.delete(work)
 

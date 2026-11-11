@@ -129,12 +129,18 @@ f2.close()
 
 ### `exists(path)`
 
-检查文件是否存在。
+检查**路径**是否存在（文件或目录都算存在）。
 
 **参数**:
 - `path` (string): 文件路径
 
 **返回**: `bool` - 是否存在
+
+> ⚠ **口径（2026-11-11 修）**：判据是"**路径在不在**"（Windows 取属性 / POSIX `stat`），
+> 与 `dirs.exists` **完全一致**。此前实现是 `fopen(path, "r")` ⇒ 那是"能不能以读方式打开"：
+> **目录**返回 `false`（实测：`mkdir_p` 建好的目录 `files.exists(dir)` 是 false，而
+> `dirs.exists(dir)` 是 true），无读权限的文件也返回 `false`。要判"是文件还是目录"
+> 用 `dirs.is_file` / `dirs.is_dir`。
 
 ```leno
 import files

@@ -434,21 +434,22 @@ static Value native_files_exists(int argCount, Value* args) {
     }
 
     ObjString* path = (ObjString*)val_as_obj(args[0]);
+    // ★ 2026-11-11：改成**真正的"路径是否存在"**（与 dirs.exists 同一口径）。
+    //   旧实现是 `fopen(path, "r")` —— 那是"能不能以读方式打开"，于是：
+    //     · **目录** ⇒ Windows 上 _wfopen 失败 ⇒ 返回 false ✗（实测：mkdir_p 建好的目录，
+    //       `files.exists(dir)` 是 false，而 `dirs.exists(dir)` 是 true —— 同名函数两种口径 ✗）
+    //     · 无读权限的文件 ⇒ 同样 false（文件明明在）
+    //   现在用"取属性"判存在（目录、文件都算存在），语义就是函数名说的那个意思。
 #ifdef _WIN32
     wchar_t* wpath = utf8_to_utf16(path->chars);
-    FILE* fp = NULL;
-    if (wpath) {
-        fp = _wfopen(wpath, L"r");
-    }
+    if (!wpath) return val_bool(0);
+    DWORD attr = GetFileAttributesW(wpath);
     free(wpath);
+    return val_bool(attr != INVALID_FILE_ATTRIBUTES);
 #else
-    FILE* fp = fopen(path->chars, "r");
+    struct stat st;
+    return val_bool(stat(path->chars, &st) == 0);
 #endif
-    if (fp) {
-        fclose(fp);
-        return val_bool(1);
-    }
-    return val_bool(0);
 }
 
 // files.size(path) -> int
