@@ -1,0 +1,53 @@
+// `Ptr[Ptr[u8]]` = C 的 `char**`（2026-11-11）
+//
+// 声明、写入、读回、传参、二级指针出参**全部支持**；唯一限制是
+// `var x = pp[0]` 这种"纯推断"拿不到元素类型（写成 `Ptr[u8] x = pp[0]` 即可）。
+//
+// 本用例覆盖真实用法：
+//   ① 造 argv 风格的字符串数组（每个元素 malloc + write_string + 存指针）
+//   ② 遍历读回（ffi.read_string 只看指针本身，**不需要**元素类型）
+//   ③ 读出的元素若要按字节下标访问 ⇒ 显式标注 `Ptr[u8] p = pp[i]`
+//   ④ 二级指针出参：被调方把新指针写回 `pp[0]`（`func(char**)` 的常见形态）
+import ffi
+
+main() {
+    // ① argv 风格
+    Array[string] words = ["alpha", "beta", "gamma"]
+    int n = words.len()
+    Ptr[Ptr[u8]] argv = ffi.malloc(8 * n)
+
+    for 0 : n - 1 to i {
+        string w = words[i]
+        Ptr[u8] buf = ffi.malloc(w.len() + 1)
+        ffi.write_string(buf, 0, w)
+        argv[i] = buf
+    }
+
+    // ② 遍历读回
+    string joined = ""
+    for 0 : n - 1 to i {
+        joined = joined + ffi.read_string(argv[i], 0) + ";"
+    }
+    assert_eq(joined, "alpha;beta;gamma;", "char** 的 argv 风格读回")
+
+    // ③ 显式标注后按字节下标访问
+    Ptr[u8] p0 = argv[0]
+    assert_eq(p0[0], 97, "'a' 的字节值")            // 'a' = 97
+    assert_eq(p0[4], 97, "'alpha' 的第 5 个字节 'a'")
+
+    // ④ 二级指针出参
+    Ptr[Ptr[u8]] out = ffi.malloc(8)
+    out[0] = null
+    ffi.write_ptr(out, 0, ffi.malloc(8))
+    assert_true(ffi.read_ptr(out, 0) != null, "出参位置应被写回非 null")
+
+    // ⑤ 释放（二级指针的每一层都要自己 free —— 与 C 一致）
+    for 0 : n - 1 to i {
+        ffi.free(argv[i])
+    }
+    ffi.free(out[0])
+    ffi.free(argv)
+    ffi.free(out)
+
+    print("test_ptr_ptr_charpp passed")
+}
