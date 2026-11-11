@@ -137,9 +137,25 @@ static void emit_type_spec(CodeGen* gen, TypeInfo* t, int line) {
 }
 
 // 发射"规格版"指令：4 字节头（B/C 保留 0）+ 类型规格
-static void emit_type_spec_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int line) {
+//   （非 static：`emit_decl_runtime_type` 也要用它发 OP_SET_PTR_SPEC，见 codegen_stmt.c）
+void emit_type_spec_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int line) {
     reg_encode_iABC(gen->chunk, op, reg, 0, 0, line);
     emit_type_spec(gen, t, line);
+}
+
+// Ptr[T] 的元素类型标注 —— **唯一发射点**（var_decl / 变量赋值 / 字段 / 返回 / 实参都走它）。
+//   标量元素 → OP_SET_PTR_ELEM_TYPE（紧凑：一个 TypeKind，既有字节码不变）
+//   复合元素 → OP_SET_PTR_SPEC（带完整类型子树：`Ptr[Ptr[u8]]` 的第二层要留住）
+void emit_ptr_elem_annotation(CodeGen* gen, int reg, TypeInfo* elem, int line) {
+    if (!elem) return;
+    int composite = (elem->kind == TYPE_PTR_GENERIC || elem->kind == TYPE_ARRAY ||
+                     elem->kind == TYPE_DICT || elem->kind == TYPE_STRUCT ||
+                     elem->kind == TYPE_FACE || elem->kind == TYPE_ENUM);
+    if (composite) {
+        emit_type_spec_op(gen, OP_SET_PTR_SPEC, reg, elem, line);
+    } else {
+        reg_encode_iABC(gen->chunk, OP_SET_PTR_ELEM_TYPE, reg, (int)elem->kind, 0, line);
+    }
 }
 
 // ============================================================================
@@ -2177,8 +2193,7 @@ static void gen_call_args_to(CodeGen* gen, Ast* ast, int base, Ast* fdef) {
         for (int i = 0; i < pc && i < na; i++) {
             TypeInfo* pt = fdef->u.func.param_types[i];
             if (pt && pt->kind == TYPE_PTR_GENERIC && pt->element_type) {
-                reg_encode_iABC(gen->chunk, OP_SET_PTR_ELEM_TYPE, base + 1 + i,
-                                (int)pt->element_type->kind, 0, ast->line);
+                emit_ptr_elem_annotation(gen, base + 1 + i, pt->element_type, ast->line);
             }
         }
     }

@@ -564,6 +564,18 @@ typedef enum {
     OP_CSTRUCT_ARR_GETF, // iABC + EXTRAARG   R[A] = R[B][R[C]].field(idx24)
     OP_CSTRUCT_ARR_SETF, // iABC + EXTRAARG   R[B][R[C]].field(idx24) = R[A]
 
+    // ★ 2026-11-11（Ptr 设计复查）：`Ptr[T]` 的**完整类型规格**标注（末尾追加）。
+    //   为什么需要：`ObjFFIPointer.element_type` 只有一个 TypeKind（一层）⇒ `Ptr[Ptr[u8]]`
+    //   运行期只知道"指向某个指针"，第二层是 u8 这件事丢了。于是 `pp[0]` 读出来的对象
+    //   是"无元素 Ptr" ⇒ 必须靠 codegen 在**每一个值落点**补标注，漏一处就静默不可用。
+    //   本条指令把整棵类型树写进尾随字节（复用 OP_TYPE_CHECK_SPEC 的**同一套规格格式**
+    //   与 `type_spec_size`）⇒ 对象自带完整元素类型，`pp[0]` 读出来就自带下一层，
+    //   **不再依赖"落点穷举"**。
+    //   编码：iABC 头（A = 目标寄存器，B/C 保留 0）+ 自定界类型规格（描述"元素类型"）。
+    //   ⚠ 只在**元素是复合类型**（Ptr/Array/Dict）时才发；标量元素仍走紧凑的
+    //     OP_SET_PTR_ELEM_TYPE（既有字节码逐位不变）。
+    OP_SET_PTR_SPEC,     // iABC + 类型规格   R[A] 是 FFI 指针时设元素类型规格
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

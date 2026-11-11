@@ -1,0 +1,70 @@
+// `Ptr[Ptr[T]]` 的元素类型**随指针传递**（2026-11-11，OP_SET_PTR_SPEC）
+//
+// 背景：`ObjFFIPointer.element_type` 只有一个 TypeKind（一层）⇒ `Ptr[Ptr[u8]]` 的第二层
+// （u8）在运行期丢失。原先靠 codegen 在**每个值落点**（var_decl / 赋值 / 字段 / 返回 /
+// 实参）补标注，漏一处就静默不可用；`var x = pp[0]` 这种纯推断直接拿不到。
+//
+// 现在：元素是复合类型时用 `OP_SET_PTR_SPEC` 把**整棵子类型树**写进对象（malloc 一份，
+// 随对象释放），`ffi.read_at` 读 PTR 元素时**剥一层**给新对象 ⇒ 逐层自然正确。
+//
+// 本用例钉住：
+//   ① 两层（char**）：`var x = pp[0]` 不写标注也能 `x[0]`
+//   ② 三层（Ptr[Ptr[Ptr[u8]]]）：逐层剥，每层都自带下一层
+//   ③ cstruct 里存 `Ptr[Node]` 字段（元素是 struct ⇒ 走规格版）
+//   ④ 显式标注仍然可用（老写法不能坏）
+import ffi
+
+cstruct Node {
+    i32 v
+    Ptr[Node] next
+}
+
+main() {
+    // ① 两层
+    Ptr[Ptr[u8]] pp = ffi.malloc(8)
+    Ptr[u8] inner = ffi.malloc(4)
+    inner[0] = 65
+    inner[1] = 66
+    pp[0] = inner
+
+    var auto = pp[0]                       // ← 不写 Ptr[u8]
+    assert_eq(auto[0], 65, "var 推断的 char** 元素应可下标（'A' = 65）")
+    assert_eq(auto[1], 66, "第二字节（'B' = 66）")
+
+    // ② 三层：逐层剥
+    Ptr[Ptr[Ptr[u8]]] ppp = ffi.malloc(8)
+    Ptr[Ptr[u8]] mid = ffi.malloc(8)
+    Ptr[u8] leaf = ffi.malloc(2)
+    leaf[0] = 90
+    mid[0] = leaf
+    ppp[0] = mid
+
+    var l1 = ppp[0]                        // → Ptr[Ptr[u8]]
+    var l2 = l1[0]                         // → Ptr[u8]
+    assert_eq(l2[0], 90, "三层逐层剥：最内层字节")
+
+    // ③ cstruct 字段里的 Ptr[Node]（元素是 struct ⇒ 规格版）
+    var n0 = Node.malloc()
+    var n1 = Node.malloc()
+    n0.v = 1
+    n1.v = 2
+    // ⚠ `Ptr[cstruct]` 现在只能"存取指针本身"（传给 C 用）；`p[0].v` 这种按元素解引用
+    //   还不行 —— ffi.read_at 的元素类型表里没有 CSTRUCT（既有边界，不是本次改动）。
+    //   这里只钉"字段存得进、取得回"。
+    n0.next = n1.to_ptr()
+    assert_true(n0.next != null, "Ptr[Node] 字段能存指针")
+    n0.free()
+    n1.free()
+
+    // ④ 显式标注的老写法仍然可用
+    Ptr[u8] back = pp[0]
+    assert_eq(back[0], 65, "显式标注仍可用")
+
+    ffi.free(leaf)
+    ffi.free(mid)
+    ffi.free(ppp)
+    ffi.free(inner)
+    ffi.free(pp)
+
+    print("test_ptr_nested_spec passed")
+}

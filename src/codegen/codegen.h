@@ -100,6 +100,14 @@ void emit_mov(CodeGen* gen, int dst, int src, int line);
 //   但报错信息会指到"寄存器号"，人会被带偏；2026-11-04 已经为此修过一次文案）。
 void emit_field_op(CodeGen* gen, OpCode op, int a, int b, int field_idx, int line);
 
+// ★ 2026-11-11（Ptr 复查）：发"规格版"指令（4 字节头 + 自定界类型规格）。
+//   目前用于 OP_SET_PTR_SPEC（Ptr 元素类型是复合类型时，如 `Ptr[Ptr[u8]]`）。
+void emit_type_spec_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int line);
+
+// Ptr[T] 的元素类型标注（唯一发射点）：标量 → OP_SET_PTR_ELEM_TYPE，
+// 复合（Ptr/Array/Dict/Struct…）→ OP_SET_PTR_SPEC（带完整子树）。
+void emit_ptr_elem_annotation(CodeGen* gen, int reg, TypeInfo* elem, int line);
+
 // ★ 2026-11-09：局部量槽位自检（防"符号 kind 退化"整类 bug，实现与原因见 codegen_emit.c）
 //   读/写局部量之前都调一次：index 若是"模块/全局槽位号"被误当成寄存器号，这里当场报编译错误。
 void cg_check_local_slot(CodeGen* gen, const SymRef* ref, const Ast* ast);

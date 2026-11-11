@@ -289,6 +289,12 @@ void ffi_pointer_free_resources(Object* obj) {
         free(ptr->ptr);
         ptr->freed = 1;
     }
+    // ★ 2026-11-11：元素类型规格是 malloc 的一份拷贝（见 vm.c 的 ptr_annotate_elem）⇒
+    //   随对象一起释放，否则每个带嵌套元素类型的指针都漏一小块。
+    if (ptr->elem_spec) {
+        free(ptr->elem_spec);
+        ptr->elem_spec = NULL;
+    }
 }
 
 size_t ffi_pointer_get_data_size(Object* obj) {
@@ -1657,6 +1663,34 @@ static Value ffi_read_at_func(int argc, Value* args) {
             ret_ptr->size = 0;
             ret_ptr->owned = 0;
             ret_ptr->freed = 0;
+            ret_ptr->element_type = TYPE_PTR;
+            ret_ptr->elem_spec = NULL;
+            // ★ 2026-11-11（Ptr 设计复查）：**剥一层**规格。
+            //   `pp`（Ptr[Ptr[u8]]）的 elem_spec 描述"元素类型"= Ptr[u8]；
+            //   读出来的这个指针**本身就是那个 Ptr[u8]** ⇒ 它的元素类型 = spec 的第二层
+            //   （u8），若还有更深的就挂在自己的 elem_spec 上。
+            //   这一步让 `var x = pp[0]; x[0]` 不依赖任何 codegen 标注就能用。
+            if (ptr->elem_spec) {
+                const uint8_t* s = ptr->elem_spec;
+                if (s[0] == TYPE_PTR_GENERIC || s[0] == TYPE_ARRAY) {
+                    const uint8_t* sub = s + 1;
+                    TypeKind sk = (TypeKind)sub[0];
+                    int composite = (sk == TYPE_ARRAY || sk == TYPE_DICT ||
+                                     sk == TYPE_PTR_GENERIC || sk == TYPE_STRUCT ||
+                                     sk == TYPE_FACE || sk == TYPE_ENUM);
+                    ret_ptr->element_type = sk;
+                    if (composite) {
+                        int sz = type_spec_size(sub);
+                        if (sz > 0) {
+                            uint8_t* copy = (uint8_t*)malloc((size_t)sz);
+                            if (copy) {
+                                memcpy(copy, sub, (size_t)sz);
+                                ret_ptr->elem_spec = copy;
+                            }
+                        }
+                    }
+                }
+            }
             return val_obj((Object*)ret_ptr);
         }
         default:

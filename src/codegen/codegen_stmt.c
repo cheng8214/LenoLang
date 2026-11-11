@@ -1402,8 +1402,7 @@ static void emit_cast_for_return(CodeGen* gen, Ast* ret_ast, int reg, int line) 
     //   两条写法只差一个标注。标注点与 var_decl / 变量赋值同源（都是"值落到一个
     //   静态类型已知的位置"）。
     if (rt->kind == TYPE_PTR_GENERIC && rt->element_type) {
-        reg_encode_iABC(gen->chunk, OP_SET_PTR_ELEM_TYPE, reg,
-                        (int)rt->element_type->kind, 0, line);
+        emit_ptr_elem_annotation(gen, reg, rt->element_type, line);
     }
 }
 
@@ -1545,7 +1544,8 @@ static void gen_return_multi(CodeGen* gen, Ast* ast) {
 static void emit_decl_runtime_type(CodeGen* gen, int reg, TypeInfo* t, int line) {
     if (!t) return;
     if (t->kind == TYPE_PTR_GENERIC && t->element_type) {
-        reg_encode_iABC(gen->chunk, OP_SET_PTR_ELEM_TYPE, reg, (int)t->element_type->kind, 0, line);
+        // 标量元素走紧凑版；复合元素（Ptr[Ptr[u8]] 等）走规格版（见唯一发射点）
+        emit_ptr_elem_annotation(gen, reg, t->element_type, line);
     } else if (t->kind == TYPE_FACE && t->struct_name) {
         ObjString* face_name = str_copy(t->struct_name, (int)strlen(t->struct_name));
         int name_const = make_constant(gen, val_obj((Object*)face_name));

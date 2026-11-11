@@ -91,6 +91,13 @@ typedef struct ObjFFIPointer {
     int owned;                         // 是否由我们分配（1=是，0=否）
     int freed;                         // 是否已释放（防止 double-free 和 use-after-free）
     TypeKind element_type;             // Ptr[T] 中 T 的类型，TYPE_PTR 表示未指定（通用 Ptr）
+    // ★ 2026-11-11（Ptr 设计复查）：元素类型的**完整规格**（NULL = 只有上面那一层）。
+    //   上面那个 TypeKind 只能表达一层，`Ptr[Ptr[u8]]` 的第二层（u8）就丢了。
+    //   规格格式与 OP_TYPE_CHECK_SPEC 完全一致（见 codegen_expr.c 的 emit_type_spec /
+    //   vm.c 的 type_spec_size），由 OP_SET_PTR_SPEC 写入（malloc 一份，随对象释放）。
+    //   用途：`ffi.read_at` 读 PTR 元素时**剥一层**给新对象 ⇒ `pp[0]` 自带下一层类型，
+    //   不必再靠 codegen 在每个"值落点"补标注。
+    uint8_t* elem_spec;
 } ObjFFIPointer;
 
 // ============================================================================

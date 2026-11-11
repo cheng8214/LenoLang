@@ -797,6 +797,16 @@
         }
         DISPATCH();
     }
+    // OP_SET_PTR_SPEC A + <类型规格>：R[A] 是 FFI 指针时把**完整元素类型规格**记进对象。
+    //   用在"元素本身是复合类型"的场合（`Ptr[Ptr[u8]]` 的第二层 u8 就靠它保住）——
+    //   标量元素仍走上面那条紧凑版，既有字节码不受影响。
+    LABEL(OP_SET_PTR_SPEC): {
+        int a = READ_A();
+        const uint8_t* spec = frame->ip;
+        ptr_annotate_elem(R(a), spec);
+        frame->ip += type_spec_size(spec);   // 自定界：与发射端 / 反汇编端同一份长度实现
+        DISPATCH();
+    }
     // OP_SET_DECLARED_FACE A Bx: R[A] 若是 struct 实例，设置 declared_face = K[Bx]
     //   face 声明的变量（`Speaker s = ...`）：type()/数组元素类型推断会把实例当 face 看
     //   （types.c 读 obj->declared_face）。

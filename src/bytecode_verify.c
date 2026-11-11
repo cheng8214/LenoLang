@@ -651,6 +651,14 @@ static int verify_one(const Chunk* c, int pos, int cap,
             size = endp - pos;
             break;
         }
+        // ★ 2026-11-11（Ptr 复查）：Ptr 元素类型的完整规格（与上面同一套自定界格式）
+        case OP_SET_PTR_SPEC: {
+            REG_CHK(a);
+            int endp = 0;
+            if (!spec_scan(c, pos + 4, len, checks, 0, &endp)) goto bad;
+            size = endp - pos;
+            break;
+        }
 
         // --- 协程 ---
         case OP_AWAIT:

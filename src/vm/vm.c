@@ -592,18 +592,36 @@ static int type_spec_match(Value value, const uint8_t* spec, Chunk* chunk, int d
     return value_matches_kind(value, kind);
 }
 
-// Ptr[T] 的 `as` 语义：匹配后把元素类型记进 FFI 指针对象（与 vm_as_cast 原行为一致）。
-//   ObjFFIPointer 存的是**单个 TypeKind** ⇒ 只有叶子元素类型能记，嵌套的跳过。
+// Ptr[T] 的元素类型标注：把**整棵规格**记进 FFI 指针对象。
+//   ★ 2026-11-11（Ptr 设计复查）：此前"复合元素直接跳过" ⇒ `Ptr[Ptr[u8]]` 只知道
+//     "元素是 PTR"，第二层 u8 永远丢了 ⇒ `pp[0]` 读出来的对象是"无元素 Ptr"，
+//     只能靠 codegen 在每个"值落点"补标注（漏一处就静默不可用）。
+//     现在：复合元素也记 —— element_type 存第一层 kind（既有代码照旧可读），
+//     另存一份 malloc 的**完整规格**（随对象释放），供 ffi.read_at 剥层使用。
 static void ptr_annotate_elem(Value value, const uint8_t* elem_spec) {
     if (!elem_spec || !val_is_obj(value) || val_as_obj(value)->type != OBJ_FFI_POINTER) return;
+    ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)val_as_obj(value);
     TypeKind ek = (TypeKind)elem_spec[0];
-    if (ek == TYPE_ARRAY || ek == TYPE_DICT || ek == TYPE_PTR_GENERIC ||
-        ek == TYPE_STRUCT || ek == TYPE_FACE || ek == TYPE_ENUM) {
+
+    int composite = (ek == TYPE_ARRAY || ek == TYPE_DICT || ek == TYPE_PTR_GENERIC ||
+                     ek == TYPE_STRUCT || ek == TYPE_FACE || ek == TYPE_ENUM);
+    if (!composite) {
+        if (ffi_ptr->element_type == TYPE_ANY || ffi_ptr->element_type == TYPE_PTR) {
+            ffi_ptr->element_type = ek;
+        }
         return;
     }
-    ObjFFIPointer* ffi_ptr = (ObjFFIPointer*)val_as_obj(value);
-    if (ffi_ptr->element_type == TYPE_ANY || ffi_ptr->element_type == TYPE_PTR) {
-        ffi_ptr->element_type = ek;
+
+    // 复合元素：一层 kind + 完整规格（规格是自定界的，长度用唯一实现算）
+    ffi_ptr->element_type = ek;
+    int sz = type_spec_size(elem_spec);
+    if (sz > 0) {
+        uint8_t* copy = (uint8_t*)malloc((size_t)sz);
+        if (copy) {
+            memcpy(copy, elem_spec, (size_t)sz);
+            free(ffi_ptr->elem_spec);      // 重复标注：先释放旧的（同类型重复标注无害）
+            ffi_ptr->elem_spec = copy;
+        }
     }
 }
 

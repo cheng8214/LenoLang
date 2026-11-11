@@ -105,6 +105,8 @@ static const char* opCodeNames[] = {
     // ★ 2026-11-11（P0）：cstruct 数组的「索引 + 字段」融合读写
     "OP_CSTRUCT_ARR_GETF",  // R[A] = R[B][R[C]].field(idx24)
     "OP_CSTRUCT_ARR_SETF",  // R[B][R[C]].field(idx24) = R[A]
+    // ★ 2026-11-11（Ptr 复查）：Ptr 元素类型的完整规格（顺序必须与 leno_vm.h 一致）
+    "OP_SET_PTR_SPEC",      // R[A] 的 Ptr 元素类型规格（自定界）
     "OP_OPCODE_COUNT",
     };
 
