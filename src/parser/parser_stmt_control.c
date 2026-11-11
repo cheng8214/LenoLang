@@ -4,6 +4,106 @@
 // 代码块解析
 // ============================================================================
 
+// ★ 2026-11-11（P2）：defer 的「退出时求值」陷阱提示
+// ----------------------------------------------------------------------------
+// defer 表达式在**块退出时**求值（不是注册时，见 parse_defer_stmt 的说明）：
+//     var p = ffi.malloc(64)
+//     defer ffi.free(p)
+//     p = ffi.malloc(128)      // ⇒ 释放的是**新值**，旧缓冲泄漏
+// Go 的 defer 是**注册时**求值参数，Leno 不是 —— 而"闭着眼睛写 defer xxx.free()"
+// 正是最容易踩到它的写法（外部评审建议把 defer 普及成 RAII，恰好没提这条差异）。
+//
+// **只提示、不改语义**：改语义会破坏 assert/test_defer.leno 里"退出时求值"的既定
+// 契约（那份用例就是专门测它的），要改得单独评估。
+//
+// 判据**极保守**（宁漏勿误报）：
+//   ① 变量名只从 defer 表达式里能静态看到的节点收集（调用/索引/字段/二元/一元/块）；
+//      其它形状（闭包、字符串插值等）直接放弃 —— 不猜；
+//   ② 只扫**本块顶层语句**里的赋值目标（AST_ASSIGN 的 names[] / AST_COMPOUND_ASSIGN）；
+//      嵌套块里的赋值不追 ⇒ 会漏报，但不会误报。
+// ============================================================================
+#define DEFER_WARN_MAX_VARS 16
+
+static void defer_collect_vars(Ast* a, const char** names, int* count, int cap) {
+    if (!a || *count >= cap) return;
+    switch (a->kind) {
+        case AST_VAR:
+            // ⚠ 用 `u.var.name`（parser 阶段**只有**它；`u.var.ref` 是语义分析填的）
+            if (a->u.var.name) {
+                for (int i = 0; i < *count; i++) {
+                    if (strcmp(names[i], a->u.var.name) == 0) return;   // 去重
+                }
+                names[(*count)++] = a->u.var.name;
+            }
+            break;
+        case AST_CALL:
+            defer_collect_vars(a->u.call.callee, names, count, cap);
+            for (int i = 0; i < (int)a->u.call.args.count; i++) {
+                defer_collect_vars(a->u.call.args.items[i], names, count, cap);
+            }
+            break;
+        case AST_MODULE_CALL:
+            // `ffi.free(p)` 走的是模块调用节点（module_name + method_name + args），
+            // **不是** AST_CALL —— 漏了这条分支就一个变量都收不到
+            // （实测：`defer ffi.free(p)` 完全静默、零警告）。
+            for (int i = 0; i < (int)a->u.module_call.args.count; i++) {
+                defer_collect_vars(a->u.module_call.args.items[i], names, count, cap);
+            }
+            break;
+        case AST_INDEX:
+            defer_collect_vars(a->u.index.obj, names, count, cap);
+            defer_collect_vars(a->u.index.index, names, count, cap);
+            break;
+        case AST_FIELD_ACCESS:
+            defer_collect_vars(a->u.field_access.obj, names, count, cap);
+            break;
+        case AST_BINOP:
+            defer_collect_vars(a->u.binop.l, names, count, cap);
+            defer_collect_vars(a->u.binop.r, names, count, cap);
+            break;
+        case AST_UNARY:
+            defer_collect_vars(a->u.unary.operand, names, count, cap);
+            break;
+        case AST_BLOCK:
+            for (int i = 0; i < (int)a->u.block.count; i++) {
+                defer_collect_vars(a->u.block.items[i], names, count, cap);
+            }
+            break;
+        default:
+            break;      // 其余形状：不追（宁可漏报）
+    }
+}
+
+// 块内从 from 号语句起，是否有**顶层**赋值把 name 改了
+static int defer_block_assigns_name(Ast* block, int from, const char* name) {
+    if (!block || !name) return 0;
+    int n = (int)block->u.block.count;
+    for (int i = from; i < n; i++) {
+        Ast* s = block->u.block.items[i];
+        if (!s) continue;
+        // 语句位置的赋值被包在 AST_EXPR_STMT 里（`p = ffi.malloc(32)` 实测如此）
+        // —— 只看 s->kind 会一条都匹配不上。
+        if (s->kind == AST_EXPR_STMT && s->u.expr_stmt.expr) s = s->u.expr_stmt.expr;
+        if (s->kind == AST_ASSIGN) {
+            for (int k = 0; k < s->u.assign.name_count; k++) {
+                if (s->u.assign.names[k] && strcmp(s->u.assign.names[k], name) == 0) return 1;
+            }
+            // ⚠ parser 阶段赋值的**主数据是 targets[]**（AST_VAR 节点），
+            //   `names[]` 可能没填 —— 只看 names 会全漏（实测：一条都不报）。
+            if (s->u.assign.targets) {
+                for (int k = 0; k < s->u.assign.name_count; k++) {
+                    Ast* t = s->u.assign.targets[k];
+                    if (t && t->kind == AST_VAR && t->u.var.name &&
+                        strcmp(t->u.var.name, name) == 0) return 1;
+                }
+            }
+        } else if (s->kind == AST_COMPOUND_ASSIGN) {
+            if (s->u.compound_assign.name && strcmp(s->u.compound_assign.name, name) == 0) return 1;
+        }
+    }
+    return 0;
+}
+
 // 解析代码块 { stmt1; stmt2; ... }
 Ast* parse_block_internal(Parser* p) {
     int line = p->lex.current.line;
@@ -67,6 +167,25 @@ Ast* parse_block_internal(Parser* p) {
     }
 
     if (defer_count > 0) {
+        // ★ 2026-11-11（P2）：先把"defer 里的变量在 defer 之后又被赋值"提示出来
+        //   （判据与动机见文件顶部 defer 警告那段的说明）。必须在下面拆解/ast_free 之前。
+        for (int i = 0; i < defer_count; i++) {
+            const char* dvars[DEFER_WARN_MAX_VARS];
+            int dvn = 0;
+            defer_collect_vars(defers[i]->u.defer_.expr, dvars, &dvn, DEFER_WARN_MAX_VARS);
+            for (int k = 0; k < dvn; k++) {
+                if (defer_block_assigns_name(ast, defer_pos[i], dvars[k])) {
+                    warning_add_at_fmt(WARN_DEFER_LATE_WRITE, defers[i]->line, 0,
+                        "defer 里的 '%s' 在 defer **之后**被重新赋值：defer 的表达式是"
+                        "**块退出时**求值（不是注册时）⇒ 这里用的是新值。"
+                        "典型后果：`defer ffi.free(p)` 之后 `p = ffi.malloc(...)` 释放的是"
+                        "**新缓冲**、旧缓冲泄漏。要锁定注册时的值，先存局部副本："
+                        "`var saved = %s` 再 `defer ffi.free(saved)`",
+                        dvars[k], dvars[k]);
+                }
+            }
+        }
+
         // ★ 2026-10-23 修：按位置**逐层嵌套**（原来的"一刀切"有 bug）
         //   旧实现把所有语句分成"第一个 defer 之前/之后"两段、只包一层 finally，
         //   于是第二个 defer 引用"第一个 defer 之后才声明的变量"就会报「未定义变量」
