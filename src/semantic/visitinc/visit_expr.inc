@@ -741,6 +741,46 @@
                 if (index_ast->u.index.index->kind == AST_STRING) {
                     const char* method_name = index_ast->u.index.index->u.string.value;
                     TypeInfo* receiver_type = infer_expr_type(s, index_ast->u.index.obj);
+
+                    // ★ 2026-11-11（压测缺口）：cstruct **数组字段**的 `.len()`。
+                    //   数组字段的静态类型只有元素类型（`u8 data[16]` → int），`array_dim`
+                    //   只存在 cstruct 定义里 ⇒ `b[0].data.len()` 会报
+                    //   「类型 'int' 没有方法 'len'」，而长度其实是**编译期已知**的。
+                    //   这里把整条调用折叠成整数字面量（`.len()` 无参数、纯读、无副作用）。
+                    //
+                    //   安全前提：接收者表达式里**不含函数调用** —— 否则折叠会把它的副作用
+                    //   一起丢掉（`f().data.len()` 里的 f() 就再也不会执行）。
+                    if (method_name && strcmp(method_name, "len") == 0 &&
+                        ast->u.call.args.count == 0) {
+                        Ast* robj = index_ast->u.index.obj;
+                        const char* fname = NULL;
+                        Ast* base = NULL;
+                        if (robj && robj->kind == AST_INDEX && robj->u.index.index &&
+                            robj->u.index.index->kind == AST_STRING) {
+                            fname = robj->u.index.index->u.string.value;
+                            base = robj->u.index.obj;
+                        } else if (robj && robj->kind == AST_FIELD_ACCESS) {
+                            fname = robj->u.field_access.field_name;
+                            base = robj->u.field_access.obj;
+                        }
+                        if (fname && base && !sem_ast_has_call(robj)) {
+                            // 维度查询走**唯一实现**（同时用于下面"数组字段下标"的推断）
+                            int dim = sem_cstruct_array_field(s, robj, NULL);
+                            if (dim > 0) {
+                                if (receiver_type) { type_free(receiver_type); receiver_type = NULL; }
+                                // 折叠成整数字面量（与"struct 关联常量折叠"同一手法）
+                                ast->kind = AST_NUM;
+                                ast->u.num.value = (double)dim;
+                                ast->u.num.is_float = 0;
+                                ast->u.num.is_bigint = 0;
+                                ast->u.num.bigint_str = NULL;
+                                if (ast->cached_type) { type_free(ast->cached_type); }
+                                ast->cached_type = type_new(TYPE_INT);
+                                break;
+                            }
+                        }
+                    }
+
                     if (getenv("LENO_FACE_DEBUG")) {
                         fprintf(stderr, "[FACE-DBG] method-call: name=%s kind=%d struct_name=%s\n",
                                 method_name,

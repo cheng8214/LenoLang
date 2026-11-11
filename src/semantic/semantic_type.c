@@ -3006,6 +3006,22 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             return type_new(TYPE_ANY);
         }
         case AST_INDEX: {
+            // ★ 2026-11-11（压测缺口）：cstruct **数组字段**的下标 —— `buf.data[i]`、
+            //   `m[0].cols[i]`。字段的静态类型只是元素类型（u8 → int），"它是数组"
+            //   只写在 cstruct 定义里 ⇒ 这里否则推断成 any（实测 `int v = buf.data[i]`
+            //   报「期望 int，实际 any」）。元素类型走 sem_cstruct_array_field 同一份实现。
+            //   ⚠ 元素是**嵌套 cstruct** 时交给下面原有逻辑（要带 struct_name，不能只给 kind）。
+            {
+                TypeKind elem_kind = TYPE_UNKNOWN;
+                if (sem_cstruct_array_field(s, ast->u.index.obj, &elem_kind) > 0 &&
+                    elem_kind != TYPE_UNKNOWN && elem_kind != TYPE_CSTRUCT &&
+                    elem_kind != TYPE_FACE && elem_kind != TYPE_STRUCT) {
+                    if (ast->cached_type) { type_free(ast->cached_type); ast->cached_type = NULL; }
+                    ast->cached_type = type_new(elem_kind);
+                    return type_copy(ast->cached_type);
+                }
+            }
+
             // ★★ 字面量键 + struct 接收者 ⇒ 编译期就能查字段表（2026-09-30 补 ✓✓）
             //   为什么必须放这里：方法体里的**裸字段名**成员访问（`b.no_such_field` ✓
             //   —— file_manager:346 `btnBack._loaded` 的形态 ✓）实测**走的就是这条索引路**

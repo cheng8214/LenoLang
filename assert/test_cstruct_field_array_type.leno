@@ -1,0 +1,78 @@
+// cstruct **数组字段**的静态类型（2026-11-11 压测补）
+//
+// 背景：数组字段（`u8 data[16]`）的静态类型只有**元素类型**（u8 → int），
+//   "它是数组"这件事只写在 cstruct 定义里。由此产生两个编译期缺口：
+//     ① `b[0].data.len()` 报「类型 'int' 没有方法 'len'」—— 而长度是编译期常量；
+//     ② `int v = b[0].data[i]` 报「期望 int，实际 any」—— 数组字段再索引一次仍是元素类型。
+//
+// 修法（两处共用同一份查询 `sem_cstruct_array_field`）：
+//   · `.len()` 在语义阶段**折叠成整数字面量**（array_dim；前提：接收者表达式不含函数调用，
+//     否则折叠会丢副作用）；
+//   · 数组字段的下标在类型推断里返回元素类型。
+//
+// 本用例钉住：标量数组字段的 len / 动态下标 / 循环上界 / 形参上的写法，
+// 以及"普通 Array 的 len() 不受影响"。
+import ffi
+
+cstruct Buf {
+    i32 id
+    u8 data[16]
+    i32 ids[4]
+    f32 fs[3]
+}
+
+cstruct V3 { f32 x  f32 y  f32 z }
+cstruct Mat { V3 cols[2]  i32 id }
+
+func dataLen(Buf b): int {
+    return b.data.len()            // 形参（cstruct 实例）上的数组字段
+}
+
+func sumIds(Buf b): int {
+    int s = 0
+    for 0 : b.ids.len() - 1 to i {
+        s = s + b.ids[i]           // .len() 当上界 + 动态下标读
+    }
+    return s
+}
+
+main() {
+    var b = Buf.malloc_array(2)
+
+    // ---- A) .len() 折成编译期常量 ----
+    assert_eq(b[0].data.len(), 16, "u8[16].len()")
+    assert_eq(b[0].ids.len(), 4, "i32[4].len()")
+    assert_eq(b[1].fs.len(), 3, "f32[3].len()")
+    assert_eq(dataLen(b[0]), 16, "形参上的 .len()")
+
+    // ---- B) 数组字段的动态下标：静态类型 = 元素类型 ----
+    int k = 2
+    b[0].ids[k] = 55
+    int v = b[0].ids[k]            // ← 以前这里报「期望 int，实际 any」
+    assert_eq(v, 55, "动态下标读回 int")
+    b[0].data[3] = 7
+    int d = b[0].data[3]
+    assert_eq(d, 7, "u8 字段动态下标读回 int")
+    b[0].fs[1] = 1.5
+    float f = b[0].fs[1]
+    assert_eq(f, 1.5, "f32 字段下标读回 float")
+
+    // ---- C) 循环上界 + 累加 ----
+    for 0 : b[0].ids.len() - 1 to i { b[0].ids[i] = i + 1 }
+    assert_eq(sumIds(b[0]), 10, "1+2+3+4")
+
+    // ---- D) 嵌套 cstruct 数组字段（元素是 cstruct，不折叠成标量）----
+    var m = Mat.malloc_array(1)
+    assert_eq(m[0].cols.len(), 2, "嵌套 cstruct 数组的 .len()")
+    m[0].cols[1].x = 3.5
+    assert_eq(m[0].cols[1].x, 3.5, "嵌套数组元素仍可字段访问")
+
+    // ---- E) 普通 Array 的 len() / 下标不受影响 ----
+    Array[int] arr = [1, 2, 3]
+    assert_eq(arr.len(), 3, "Array.len() 不受影响")
+    assert_eq(arr[1], 2, "Array 下标不受影响")
+
+    b.free_all()
+    m.free_all()
+    print("test_cstruct_field_array_type passed")
+}

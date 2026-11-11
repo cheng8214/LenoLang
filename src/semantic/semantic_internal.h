@@ -21,6 +21,14 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast);
 void semantic_poison_expr(Ast* ast);
 TypeInfo* infer_method_return_type(Semantic* s, TypeInfo* obj_type, const char* method_name);
 TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_name, int* out_field_index);
+
+// cstruct **数组字段**查询（**唯一实现**，2026-11-11）：
+//   expr 是 `x.arr` / `x[i].arr` 形态，且 arr 在 cstruct 定义里带维度（`u8 data[16]`）时，
+//   返回维度（>0）并回填元素类型；否则返回 0（out_elem 不动）。
+//   为什么需要：数组字段的**静态类型只有元素类型**（u8 → int），"是数组"这件事只在
+//   cstruct 定义里 ⇒ 否则 `b.data.len()` 报「int 没有方法 len」、`int v = b.data[i]`
+//   被判成 any。⚠ 必须查 **AST 定义**（运行期的 cstruct_def_find 在编译期是空的）。
+int sem_cstruct_array_field(Semantic* s, Ast* expr, TypeKind* out_elem);
 // 「struct 有没有这个方法」的唯一判据（2026-10-28）：func_table 的 "Struct::method"（含跨模块
 //   占位符）+ struct 定义 AST 的 methods[]。给"成员方法当函数值取"那类检查用
 //   （`h.track_row_like` 在访问器与推断两条路上都要判，见 docs/待修_编译与语义问题.md §3）

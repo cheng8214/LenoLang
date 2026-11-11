@@ -1385,6 +1385,91 @@ static void sw_check_dup_cases(Ast* sw) {
 // ----------------------------------------------------------------------------
 #define SEM_MAX_AST_DEPTH 2000
 
+// 表达式里是否含函数调用 —— 给"把纯读操作折叠成常量"的地方做**安全前提**判断
+//   （唯一用户：cstruct 数组字段的 `.len()`，长度编译期已知 ⇒ 折成 int 字面量；
+//     若接收者表达式里有调用 `f().data.len()`，折叠会把 f() 的副作用一起丢掉）。
+//   判据保守：认不出的 kind 一律当"可能有调用"（返回 1 ⇒ 不折叠）。
+static int sem_ast_has_call(Ast* a) {
+    if (!a) return 0;
+    switch (a->kind) {
+        case AST_CALL:
+        case AST_MODULE_CALL:
+            return 1;
+        case AST_INDEX:
+            return sem_ast_has_call(a->u.index.obj) || sem_ast_has_call(a->u.index.index);
+        case AST_FIELD_ACCESS:
+            return sem_ast_has_call(a->u.field_access.obj);
+        case AST_BINOP:
+            return sem_ast_has_call(a->u.binop.l) || sem_ast_has_call(a->u.binop.r);
+        case AST_UNARY:
+            return sem_ast_has_call(a->u.unary.operand);
+        case AST_VAR:
+        case AST_NUM:
+        case AST_STRING:
+        case AST_BOOL:
+        case AST_NULL:
+            return 0;
+        default:
+            return 1;
+    }
+}
+
+// cstruct 数组字段查询（定义见 semantic_internal.h）—— **唯一实现**：
+//   `.len()` 折叠与"数组字段下标推断"都调它，避免两处各写一份 AST 查找。
+int sem_cstruct_array_field(Semantic* s, Ast* expr, TypeKind* out_elem) {
+    if (!s || !expr || !s->root) return 0;
+
+    const char* fname = NULL;
+    Ast* base = NULL;
+    if (expr->kind == AST_INDEX && expr->u.index.index &&
+        expr->u.index.index->kind == AST_STRING) {
+        fname = expr->u.index.index->u.string.value;
+        base = expr->u.index.obj;
+    } else if (expr->kind == AST_FIELD_ACCESS) {
+        fname = expr->u.field_access.field_name;
+        base = expr->u.field_access.obj;
+    }
+    if (!fname || !base) return 0;
+
+    TypeInfo* bt = infer_expr_type(s, base);
+    if (!bt || bt->kind != TYPE_CSTRUCT || !bt->struct_name) {
+        if (bt) type_free(bt);
+        return 0;
+    }
+
+    int dim = 0;
+    for (int si = 0; si < s->root->u.block.count && dim == 0; si++) {
+        Ast* stmt = s->root->u.block.items[si];
+        Ast* cdef_ast = NULL;
+        if (stmt->kind == AST_CSTRUCT_DEF) {
+            cdef_ast = stmt;
+        } else if (stmt->kind == AST_EXPORT && stmt->u.export.decl &&
+                   stmt->u.export.decl->kind == AST_CSTRUCT_DEF) {
+            cdef_ast = stmt->u.export.decl;
+        }
+        if (!cdef_ast || !cdef_ast->u.cstruct_def.name) continue;
+        if (strcmp(cdef_ast->u.cstruct_def.name, bt->struct_name) != 0) continue;
+
+        for (int fi = 0; fi < cdef_ast->u.cstruct_def.field_count; fi++) {
+            const char* fn = cdef_ast->u.cstruct_def.field_names
+                                 ? cdef_ast->u.cstruct_def.field_names[fi] : NULL;
+            if (!fn || strcmp(fn, fname) != 0) continue;
+            dim = cdef_ast->u.cstruct_def.field_array_dims
+                      ? cdef_ast->u.cstruct_def.field_array_dims[fi] : 0;
+            if (dim > 0 && out_elem) {
+                TypeInfo* ft = cdef_ast->u.cstruct_def.field_types
+                                   ? cdef_ast->u.cstruct_def.field_types[fi] : NULL;
+                TypeKind k = ft ? ft->kind : TYPE_UNKNOWN;
+                TypeKind lk = c_layout_type_to_leno(k);
+                *out_elem = (lk != k) ? lk : k;   // C 标量 → Leno 类型；cstruct 保持原样
+            }
+            break;
+        }
+    }
+    type_free(bt);
+    return dim;
+}
+
 static void visit_node(Semantic* s, Ast* ast);
 
 void visit(Semantic* s, Ast* ast) {
