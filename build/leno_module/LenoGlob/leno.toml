@@ -1,6 +1,6 @@
 [package]
 name = "LenoGlob"
-version = "0.1.0"
+version = "0.1.1"
 description = "Leno glob module: *, ?, [abc], ** matching + directory walk (pure Leno)"
 authors = ""
 license = "Apache-2.0"

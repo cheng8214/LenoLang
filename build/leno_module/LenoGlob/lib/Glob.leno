@@ -12,11 +12,15 @@
 //
 // 语义（有意与 shell/glob 对齐）：
 //   *     匹配**一个路径段内**的任意串（不跨 '/'）
-//   ?     匹配一个非 '/' 字符
-//   [abc] / [a-z] / [!0-9]  字符类（`!` 或 `^` 取反）
+//   ?     匹配一个非 '/' **字符**（按 Unicode 字符，不是字节 —— 见下）
+//   [abc] / [a-z] / [!0-9]  字符类（`!` 或 `^` 取反；范围按字符比较）
 //   **    跨目录任意层级；`**/` 还能匹配"零层"（所以 `**/*.txt` 也命中根目录的 a.txt）
 // 路径分隔符统一按 '/' 处理（Windows 的 '\' 会先归一化）。
 // 大小写**区分**（与 Linux/shell 一致；要忽略大小写请自己 to_lower 两侧再比）。
+//
+// ★ 2026-11-11：匹配按**字符**（`to_codepoints()`）而不是字节 —— 此前按字节时
+//   `?.txt` 匹配不到「中.txt`（一个汉字算 3 个字节）、`[一-龥]` 这种范围也按字节比较（无意义）。
+//   改成字符后 `?` / 字符类 / 范围都符合上面写的语义，中文路径也照常可用。
 import strings
 import dirs
 import files
@@ -87,7 +91,8 @@ func _m(Array[int] p, Array[int] s, int pi, int si): bool {
 
 // 整个路径与模式是否匹配
 export func match(string pattern, string path): bool {
-    return _m(_slash(pattern).to_bytes(), _slash(path).to_bytes(), 0, 0)
+    // 按**字符**比（见文件头的 ★）：`?` = 一个字符、字符类范围按字符比较
+    return _m(_slash(pattern).to_codepoints(), _slash(path).to_codepoints(), 0, 0)
 }
 
 func _hasWild(string p): bool {

@@ -88,7 +88,20 @@ main() {
     eqInt(glob.globIn(base, "**/*.nothing").len(), 0, "② 不存在的扩展名")
     print("② 目录查找 ok（" + _str(t1.len()) + " 个 txt）")
 
-    // ---------- ③ filter ----------
+    // ---------- ③ 中文路径：匹配按**字符**（2026-11-11 修）----------
+    //   修前 `_m` 按字节比 ⇒ `?` 只吃一个字节 ⇒ `?.txt` 匹配不到「中.txt」（汉字占 3 字节）、
+    //   `[一-龥]` 这种范围也在按字节比较（无意义）。改成 `to_codepoints()` 后下面全部成立。
+    if not glob.match("?.txt", "中.txt") { fail("③ ? 应匹配一个汉字") }
+    if not glob.match("??.txt", "中文.txt") { fail("③ ?? 应匹配两个汉字") }
+    if glob.match("?.txt", "中文.txt") { fail("③ ? 不该多吃") }
+    if not glob.match("*.txt", "中文.txt") { fail("③ * 应匹配中文") }
+    if not glob.match("**/*.md", "中文/文档.md") { fail("③ ** 应匹配中文目录") }
+    if not glob.match("[中英].txt", "中.txt") { fail("③ 字符类含汉字") }
+    if not glob.match("[!中].txt", "英.txt") { fail("③ 反字符类") }
+    if not glob.match("[一-龥].txt", "中.txt") { fail("③ 汉字范围类") }
+    print("③ 中文路径 8 条 ok")
+
+    // ---------- ④ filter ----------
     Array[string] all = ["a.txt", "b.md", "c.txt"]
     Array[string] ft = glob.filter("*.txt", all)
     eqInt(ft.len(), 2, "③ filter 数量")
@@ -101,5 +114,5 @@ main() {
     files.delete(dirs.join(base, "a", "b", "z.md"))
     files.delete(dirs.join(base, "a", "c.log"))
 
-    print("test_glob passed（3 组断言）")
+    print("test_glob passed（4 组断言）")
 }
