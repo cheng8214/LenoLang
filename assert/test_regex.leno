@@ -298,5 +298,22 @@ main() {
     assert_eq(regexs.match("-", "[\\-]"), true)
     assert_eq(regexs.find("a\\b", "\\\\"), 1)   // `\\` = 一个字面反斜杠，位于下标 1
 
+    // ========== `.` 按**字符**前进（2026-11-11 修）==========
+    //   修前 `.` 走 1 **字节** ⇒ `extract("中文", ".")` 返回半个汉字（0xE4，非法 UTF-8，
+    //   打印成 `�`）；而文档写的是"匹配任意单个字符"，且 find / find_all 的位置本来就是
+    //   按字符计的 ⇒ 这是静默错值。字符类（`[...]` / `\w` / `\d`）仍按 ASCII 字节判。
+    assert_eq(regexs.extract("中文", "."), "中", "`.` 吃一整个汉字")
+    assert_eq(regexs.extract("中文", ".").to_codepoints().len(), 1, "`.` 结果是一个码点")
+    assert_eq(regexs.extract("中文abc", ".."), "中文", "`..` 两个汉字")
+    assert_eq(regexs.extract("中文abc", ".+"), "中文abc", "`.+` 吃满")
+    assert_eq(regexs.extract("a🙂b", "."), "a", "emoji 串照旧从头开始")
+    assert_eq(regexs.find_all("中文", ".").len(), 2, "find_all(\".\") = 2 个字符")
+    assert_eq(regexs.replace("中文", ".", "X"), "X文", "replace 只替首个（整字符）")
+    assert_eq(regexs.replace_all("中文", ".", "X"), "XX", "replace_all 逐字符")
+    assert_eq(regexs.extract("a中b", ".中."), "a中b", "`.` 与汉字字面量混用")
+    var dm = regexs.find_all("a中b", ".")[1]
+    assert_eq(dm.start, 1, "`.` 匹配位置按字符")
+    assert_eq("a中b"[dm.start : dm.end - 1], "中", "位置切片得到整字")
+
     print("\n=== 所有测试通过! ===")
 }

@@ -551,6 +551,21 @@ static bool m_repeat(ReNode* node, const char* pos, ReCtx* ctx, const char** out
     return false;
 }
 
+// 当前位置那个 UTF-8 字符占几个**字节**（`.` 前进用）。
+// 与"按字节"的字符类不同，`.` 必须整字符前进：否则返回的是半个汉字（非法 UTF-8）。
+static int re_utf8_char_len_at(const char* p) {
+    unsigned char c = (unsigned char)*p;
+    int n = 1;
+    if (c >= 0xF0 && c <= 0xF4) n = 4;
+    else if (c >= 0xE0) n = 3;
+    else if (c >= 0xC0) n = 2;
+    // 截断保护：串尾不足一整字符时（非法/截断的 UTF-8）只走到字符串结尾
+    for (int i = 1; i < n; i++) {
+        if (p[i] == '\0') return i;
+    }
+    return n;
+}
+
 // 链匹配：node 为 NULL ⇒ 整条链走完 ⇒ 成功（*out = pos）✓
 static bool m_chain(ReNode* node, const char* pos, ReCtx* ctx, const char** out) {
     if (!node) { *out = pos; return true; }
@@ -564,7 +579,15 @@ static bool m_chain(ReNode* node, const char* pos, ReCtx* ctx, const char** out)
             if (*pos && *pos == node->ch) ok = m_chain(node->next, pos + 1, ctx, out);
             break;
         case RE_ANY:
-            if (*pos) ok = m_chain(node->next, pos + 1, ctx, out);
+            // ★ 2026-11-11：`.` 按**字符**走（吃掉一整个 UTF-8 序列），不再按字节。
+            //   文档写的是"匹配任意单个字符"，而按字节前进会让 `extract("中文", ".")`
+            //   返回**半个汉字**（0xE4，非法 UTF-8，打印成 `�`）—— 静默错值 ✗。
+            //   字符类（`[...]` / `\w` / `\d`）仍是**按 ASCII 字节**判（引擎本来就是逐字节的），
+            //   这一点在 docs/module_regexs.md 的"注意事项"里写明。
+            if (*pos) {
+                int clen = re_utf8_char_len_at(pos);
+                ok = m_chain(node->next, pos + clen, ctx, out);
+            }
             break;
         case RE_CLASS:
         case RE_CLASS_NEG:
