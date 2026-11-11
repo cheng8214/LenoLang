@@ -1,0 +1,56 @@
+// cstruct 数组的元素视图在 free_all 之后必须"响"（2026-11-11 压测）
+//
+// 背景：`var e = a[0]` 是**不拥有内存**的视图（data 指向数组那块内存）。数组
+// `free_all()` 之后，视图的 data 就悬空了 —— 原先再读 `e.x` **静默读到 1**
+// （内存还没被覆盖，纯属运气；一旦被复用就是垃圾值，且完全不报错）。
+//
+// 修法：ObjCStruct 回指父数组（owner_arr），字段读写先问"父数组还活着吗"
+// （free 时 data 置 NULL）⇒ use-after-free 变成明确报错。
+// 回归点：① 视图读/写；② 融合读写（`a[0].x`）；③ double free_all 不崩；
+//         ④ malloc_array(0) 是真空数组（任何下标越界）。
+import ffi
+
+cstruct V3 { f32 x  f32 y  f32 z }
+
+main() {
+    // ① 视图存起来 → free_all → 读 / 写都必须抛异常
+    var a = V3.malloc_array(4)
+    a[0].x = 1.0
+    var e = a[0]
+    assert_eq(e.x, 1.0, "释放前视图能读")
+    a.free_all()
+
+    bool caught = false
+    try { var _v = e.x } catch err { caught = true }
+    assert_eq(caught, true, "free_all 后视图读必须抛异常（不许静默读到已释放内存）")
+
+    caught = false
+    try { e.x = 2.0 } catch err2 { caught = true }
+    assert_eq(caught, true, "free_all 后视图写必须抛异常")
+
+    // ② 融合读写同样要抛（count 归零 ⇒ 越界）
+    caught = false
+    try { var _w = a[0].x } catch err3 { caught = true }
+    assert_eq(caught, true, "free_all 后 a[0].x 读必须抛异常")
+
+    caught = false
+    try { a[0].x = 3.0 } catch err4 { caught = true }
+    assert_eq(caught, true, "free_all 后 a[0].x 写必须抛异常")
+
+    // ③ double free_all 不崩
+    a.free_all()
+
+    // ④ malloc_array(0) 是真空数组
+    var z = V3.malloc_array(0)
+    assert_eq(z.len(), 0, "malloc_array(0) 应为空数组")
+    caught = false
+    try { z[0].x = 1.0 } catch err5 { caught = true }
+    assert_eq(caught, true, "空数组任何下标都必须越界")
+
+    // ⑤ malloc_array(-1) 直接报错
+    caught = false
+    try { var _bad = V3.malloc_array(-1) } catch err6 { caught = true }
+    assert_eq(caught, true, "malloc_array(-1) 必须报错")
+
+    print("test_cstruct_view_lifetime passed")
+}

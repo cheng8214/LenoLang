@@ -19,6 +19,21 @@
     //   复制一份就等于埋一份"改一处漏三处"（本文件开头就已经为文案踩过这个坑）。
     //   ⚠ 宏里含 DISPATCH / return，只能在 handler 里用；a/b 由宏自己从指令里读，
     //     字段索引由调用方给（8 位版给 READ_C()，宽索引版给 READ_CONST_IDX(0)）。
+    // ★ 2026-11-11（奇葩组合压测）：cstruct **元素视图**的父数组已被 free_all 释放时，
+    //   必须明确报错而不是继续读 —— 视图的 `data` 指向已被 free 的那块内存，
+    //   实测 `var e = a[0]; a.free_all(); e.x` **静默读到 1**（内存还没被覆盖，纯属运气；
+    //   一旦被复用就是垃圾值 ✗）。判据靠 ObjCStruct 的回指 owner_arr（见 leno_value.h）。
+    #define CSTRUCT_VIEW_ALIVE_CHECK(co)                                              \
+    do {                                                                              \
+        if (unlikely((co)->owner_arr && !(co)->owner_arr->data)) {                     \
+            if (!throw_runtime_error(                                                  \
+                    "cstruct 数组已释放（free_all 之后不能再通过元素视图读写字段）",    \
+                    line)) return -1;                                                  \
+            frame = &vm.frames[vm.frame_cnt - 1];                                      \
+            DISPATCH();                                                                \
+        }                                                                              \
+    } while (0)
+
     #define VM_FIELD_READ_BODY(idx_expr)                                              \
     {                                                                                 \
         int a = READ_A(), b = READ_B();                                               \
@@ -33,6 +48,7 @@
         /* cstruct（C 布局）字段读：数组/嵌套字段返回视图（见 vm_cstruct_field_read） */ \
         if (val_as_obj(obj)->type == OBJ_CSTRUCT) {                                   \
             ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);                            \
+            CSTRUCT_VIEW_ALIVE_CHECK(co);                                             \
             if (unlikely(c < 0 || c >= co->def->field_count)) {                       \
                 if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;    \
                 frame = &vm.frames[vm.frame_cnt - 1];                                 \
@@ -97,6 +113,7 @@
         /* cstruct（C 布局）字段写：数值类型自动提升 */                               \
         if (val_as_obj(obj)->type == OBJ_CSTRUCT) {                                   \
             ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);                            \
+            CSTRUCT_VIEW_ALIVE_CHECK(co);                                             \
             if (unlikely(c < 0 || c >= co->def->field_count)) {                       \
                 if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;    \
                 frame = &vm.frames[vm.frame_cnt - 1];                                 \
@@ -188,6 +205,7 @@
         //   语义与"GET_FIELD ×n + ADD_F ×(n-1)"逐位等价：double 左到右累加 + val_float。
         if (val_as_obj(obj)->type == OBJ_CSTRUCT) {
             ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
+            CSTRUCT_VIEW_ALIVE_CHECK(co);
             if (unlikely(!co->data)) {
                 if (!throw_runtime_error("cstruct 数据已释放（free 之后不能再读字段）", line)) return -1;
                 frame = &vm.frames[vm.frame_cnt - 1];

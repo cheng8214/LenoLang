@@ -444,6 +444,10 @@ static Value cstruct_method_malloc_array(int argc, Value* args) {
     // 创建 cstruct 数组
     ObjCStructArray* array = cstruct_array_new(def, count);
     if (!array) {
+        // ★ 2026-11-11（压测）：原来**静默返回 null** —— `V3.malloc_array(2000000000)`
+        //   （24GB）拿到的变量是 null，直到后面 `a[0].x = ...` 才报「对象不支持索引」，
+        //   完全看不出真因是分配失败。现在直接报分配失败。
+        native_throw_error("malloc_array 分配失败（内存不足，或元素个数过大）");
         return val_null();
     }
     

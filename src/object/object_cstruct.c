@@ -667,6 +667,7 @@ ObjCStructArray* cstruct_array_new(ObjCStructDef* def, int count) {
     if (count < 0) return NULL;
 
     ObjCStructArray* array = (ObjCStructArray*)gc_alloc(sizeof(ObjCStructArray), OBJ_CSTRUCT_ARRAY);
+    if (!array) return NULL;
     array->def = def;
     array->count = count;
     array->element_size = def->total_size;
@@ -699,7 +700,10 @@ ObjCStruct* cstruct_array_get(ObjCStructArray* array, int index) {
     obj->def = array->def;
     obj->data = array->data + (index * array->element_size);
     obj->owns_memory = 0;  // 不拥有内存，由数组管理
-    
+    // ★ 2026-11-11（压测）：回指父数组 —— 数组 free 后 data 置 NULL，视图据此判定
+    //   "父已释放"（否则 `var e = a[0]; a.free_all(); e.x` 会静默读到已释放内存）
+    obj->owner_arr = array;
+
     return obj;
 }
 

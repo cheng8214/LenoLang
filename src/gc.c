@@ -966,10 +966,13 @@ void gc_scan_children(Object* obj) {
             gc_mark_object((Object*)view->cstruct);
             break;
         }
-        // C 结构体实例：标记结构体定义
+        // C 结构体实例：标记结构体定义 + **所属数组**
+        //   ★ 2026-11-11：元素视图回指父数组（owner_arr，用于判定"数组已 free_all"）。
+        //     不标记它就是 UAF：`var e = a[0]` 之后丢掉 a，父数组被回收 ⇒ e.owner_arr 悬空。
         case OBJ_CSTRUCT: {
             ObjCStruct* cs = (ObjCStruct*)obj;
             gc_mark_object((Object*)cs->def);
+            if (cs->owner_arr) gc_mark_object((Object*)cs->owner_arr);
             break;
         }
         // C 结构体数组：标记结构体定义

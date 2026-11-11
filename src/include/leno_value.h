@@ -627,12 +627,31 @@ typedef struct {
     ObjModule* owner;              // 声明来源模块（同 ObjStructDef::owner）
 } ObjCStructDef;
 
+// C 布局结构体数组对象（批量操作）
+//   ⚠ 定义**必须**在 ObjCStruct 之前：元素视图要回指它（见 owner_arr）。
+typedef struct {
+    Object header;
+    ObjCStructDef* def;            // 结构体定义
+    uint8_t* data;                 // 原始内存数据（连续数组）；free 后置 NULL
+    int count;                     // 数组元素个数；free 后置 0
+    int element_size;              // 单个元素大小
+} ObjCStructArray;
+
 // C 布局结构体实例对象
 typedef struct {
     Object header;
     ObjCStructDef* def;            // 结构体定义
     uint8_t* data;                 // 原始内存数据（按 C 布局）
     int owns_memory;               // 是否拥有内存（需要 free）
+    // ★ 2026-11-11（奇葩组合压测）：该实例是某个 cstruct 数组的**元素视图**时指向它
+    //   （NULL = 独立实例 / 拥有自己的内存）。
+    //   为什么需要：`var e = a[0]` 之后 `a.free_all()`，视图的 data 就悬空了 ——
+    //   实测再读 `e.x` **静默读到 1**（已释放内存未被覆盖，纯属运气，覆盖后就是垃圾）。
+    //   有了回指，字段读写先问一句"父数组还活着吗"（`owner_arr->data == NULL` ⇒ 已释放），
+    //   把 use-after-free 变成明确报错。
+    //   ⚠ 它是一条**对象引用** ⇒ GC 必须 mark（gc.c 的 OBJ_CSTRUCT 分支），
+    //     否则"丢掉数组只留视图"时父数组被回收，回指本身就成了 UAF。
+    ObjCStructArray* owner_arr;
 } ObjCStruct;
 
 // C 布局结构体数组字段视图对象
@@ -644,15 +663,6 @@ typedef struct {
     int element_size;              // 元素大小（字节）
     int array_dim;                 // 数组维度
 } ObjCStructArrayView;
-
-// C 布局结构体数组对象（批量操作）
-typedef struct {
-    Object header;
-    ObjCStructDef* def;            // 结构体定义
-    uint8_t* data;                 // 原始内存数据（连续数组）
-    int count;                     // 数组元素个数
-    int element_size;              // 单个元素大小
-} ObjCStructArray;
 
 // 结构体定义对象（编译期）
 typedef struct {
