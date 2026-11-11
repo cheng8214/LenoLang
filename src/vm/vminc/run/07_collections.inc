@@ -827,6 +827,15 @@
                 cstruct_set_field_value(co, fi, nv);
                 DISPATCH();
             }
+            // cstruct 数组：**整体写元素没有意义**（`a[i] = x` 不知道写哪个字段）。
+            // ★ 2026-11-11（压测补文案）：原先落到文件末尾的兜底 ⇒ 报「对象不支持索引」，
+            //   对一个明明是数组的接收者这么说会让人以为语言不支持 cstruct 数组。
+            if (ot == OBJ_CSTRUCT_ARRAY) {
+                if (!throw_runtime_error(
+                        "cstruct 数组不能整体赋值元素（写字段请用 `a[i].字段名 = 值`）", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
             // cstruct 数组字段视图：按整数索引写元素（`v.arr[0] = 1`）
             if (ot == OBJ_CSTRUCT_ARRAY_VIEW) {
                 ObjCStructArrayView* view = (ObjCStructArrayView*)val_as_obj(obj);

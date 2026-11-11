@@ -432,8 +432,13 @@ static Value cstruct_method_malloc_array(int argc, Value* args) {
         count = (int)val_as_num(args[1]);
     }
     
-    if (count <= 0) {
-        count = 1;
+    // ★ 2026-11-11（cstruct 压测发现）：原来 `count <= 0` 一律改成 1 —— **静默改写用户意图**：
+    //   `X.malloc_array(0)` 拿到的是**一个可写元素**（len() 返回 1、[0] 不越界），
+    //   于是"上界算错成 0"的循环不会暴露，反而往合法元素里写脏数据。
+    //   现在：0 ⇒ 真空数组（len()==0，任何下标都越界）；负数 ⇒ 直接报错。
+    if (count < 0) {
+        native_throw_error("malloc_array 的个数不能为负");
+        return val_null();
     }
     
     // 创建 cstruct 数组

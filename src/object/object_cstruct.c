@@ -368,7 +368,11 @@ Value cstruct_get_field_value(ObjCStruct* obj, int field_index) {
         }
         case TYPE_U64: {
             uint64_t v; memcpy(&v, field_addr, sizeof(v));
-            return val_int_safe((int64_t)v);
+            // ★ 2026-11-11（cstruct 压测发现）：原来 `val_int_safe((int64_t)v)` 对
+            //   > INT64_MAX 的值会**变成负数**（静默错值）。与 ffi.read_at 同口径：
+            //   能装进 int64 就走 int48（必要时自动装箱），否则造 uint64 bigint。
+            if (v <= (uint64_t)INT64_MAX) return val_int_safe((int64_t)v);
+            return val_bigint_from_uint64(v);
         }
         case TYPE_F32: {
             float v; memcpy(&v, field_addr, sizeof(v));
@@ -503,11 +507,22 @@ void cstruct_set_field_value(ObjCStruct* obj, int field_index, Value value) {
             break;
         }
         case TYPE_I64: {
-            int64_t v = (int64_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
+            // ★ 2026-11-11（cstruct 压测发现）：原来只走 `val_as_num` ⇒ **bigint 写进来变 0**。
+            //   Leno 的 int 是 int48，超过 2^47 会自动装箱成 bigint：
+            //   实测 `a[0].i64v = -9007199254740993`（9e15，必然 bigint）读回 **0**。
+            //   bigint 走 bigint_to_int64，与 ffi.write_at 的 TYPE_I64 分支同口径。
+            int64_t v = val_is_bigint(value)
+                        ? bigint_to_int64(val_as_bigint(value))
+                        : (int64_t)val_as_num(value);
+            memcpy(field_addr, &v, sizeof(v));
             break;
         }
         case TYPE_U64: {
-            uint64_t v = (uint64_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
+            // 同上（bigint ⇒ bigint_to_int64 再转无符号，与 ffi.write_at 一致）
+            uint64_t v = val_is_bigint(value)
+                         ? (uint64_t)bigint_to_int64(val_as_bigint(value))
+                         : (uint64_t)val_as_num(value);
+            memcpy(field_addr, &v, sizeof(v));
             break;
         }
         case TYPE_F32: {
@@ -519,7 +534,13 @@ void cstruct_set_field_value(ObjCStruct* obj, int field_index, Value value) {
             break;
         }
         case TYPE_BOOL: {
-            uint8_t v = val_as_num(value) != 0 ? 1 : 0; memcpy(field_addr, &v, sizeof(v));
+            // ★ 2026-11-11（cstruct 压测发现）：`val_as_num(true)` **不是 1**（bool 是
+            //   NaN-boxing 的 tagged value，不是数字）⇒ 原来写 bool 字段**永远得到 0**：
+            //   实测 `a[0].bv = true` 读回 false。读侧 (v != 0) 是对的，只有写侧错。
+            uint8_t v = val_is_bool(value)
+                        ? (val_as_bool(value) ? 1 : 0)
+                        : (val_as_num(value) != 0 ? 1 : 0);
+            memcpy(field_addr, &v, sizeof(v));
             break;
         }
         case TYPE_C_INT: {
@@ -643,16 +664,19 @@ void cstruct_init_methods(void) {
 
 // 创建 C 布局结构体数组
 ObjCStructArray* cstruct_array_new(ObjCStructDef* def, int count) {
-    if (count <= 0) return NULL;
-    
+    if (count < 0) return NULL;
+
     ObjCStructArray* array = (ObjCStructArray*)gc_alloc(sizeof(ObjCStructArray), OBJ_CSTRUCT_ARRAY);
     array->def = def;
     array->count = count;
     array->element_size = def->total_size;
-    
+
     // 分配连续内存
-    size_t total_size = (size_t)array->element_size * count;
-    array->data = (uint8_t*)calloc(1, total_size);
+    // ★ 2026-11-11（cstruct 压测发现）：count == 0 以前直接返回 NULL ⇒ `malloc_array(0)`
+    //   拿不到数组。现在允许"空数组"：data 仍给一块**非 NULL** 的 1 字节（很多地方只判
+    //   data 非空），count = 0 让所有下标在边界检查处越界。
+    size_t total_size = (size_t)array->element_size * (size_t)count;
+    array->data = (uint8_t*)calloc(1, total_size ? total_size : 1);
     if (!array->data) {
         // 内存分配失败
         return NULL;

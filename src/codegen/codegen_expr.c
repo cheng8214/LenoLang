@@ -611,7 +611,15 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                 }
                 if (et) type_free(et);
                 if (rt) type_free(rt);
-                if (is_cs_arr && cs_fi >= 0) {
+                // ⚠ 排除「a 本身是**字段访问**」的形态（`m[0].cols[1].x`）：
+                //   `m[0].cols` 的静态类型同样是 TYPE_CSTRUCT（类型系统不区分"cstruct 实例"
+                //   与"数组字段视图"），但它运行期是 **OBJ_CSTRUCT_ARRAY_VIEW**，不是
+                //   OBJ_CSTRUCT_ARRAY ⇒ 融合指令会把 VIEW 当数组解释（字段错位）。
+                //   实测：`m[0].cols[1].x = 7.5` 报「下标赋值: 对象不支持索引」。
+                int a_is_field = (iobj->u.index.obj->kind == AST_INDEX &&
+                                  iobj->u.index.obj->u.index.index &&
+                                  iobj->u.index.obj->u.index.index->kind == AST_STRING);
+                if (is_cs_arr && cs_fi >= 0 && !a_is_field) {
                     int cs_arr = direct_local_reg(iobj->u.index.obj);
                     int cs_arr_tmp = 0;
                     if (cs_arr < 0) { cs_arr = gen_expr(gen, iobj->u.index.obj); cs_arr_tmp = 1; }
@@ -1243,6 +1251,11 @@ int direct_local_reg(Ast* e) {
 //   ④ 字段数 2..MAX_ACC_FIELDS、字段索引 0..255。
 //   ⚠ int 字段/混合类型**绝不能**融合：原路径走 ADD_INT（结果是 int），
 //     而融合版结果恒为 float ⇒ 会改变语义。
+//   ★ 2026-11-11（cstruct 压测）：**cstruct 与 struct 都覆盖**（判据不看接收者的
+//     struct/cstruct 种类，只看字段静态类型）。VM 侧原先只认 OBJ_STRUCT ⇒
+//     `func addv(V3 v): float { return v.x + v.y + v.z }`（V3 是 cstruct）能编译、
+//     必然运行期报「字段访问需要结构体对象」。已让 OP_ACC_FIELDS 也认 OBJ_CSTRUCT
+//     （按 C 布局读 f32/f64），两边判据自此一致。
 // ============================================================================
 #define MAX_ACC_FIELDS 32
 

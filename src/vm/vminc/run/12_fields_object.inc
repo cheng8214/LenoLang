@@ -175,7 +175,48 @@
         int line = GET_CURRENT_LINE();
         frame->ip += c;                       // 跳过尾随的字段索引字节
         const uint8_t* idx = frame->ip - c;
-        if (unlikely(!val_is_obj(obj) || val_as_obj(obj)->type != OBJ_STRUCT)) {
+        if (unlikely(!val_is_obj(obj))) {
+            if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        // ★ 2026-11-11（cstruct 压测发现）：**cstruct 也走这条融合**。
+        //   原来这里只认 OBJ_STRUCT ⇒ codegen 的 try_emit_acc_fields 判据（"叶子全是字段
+        //   访问 + 同一对象 + 静态类型都是 float"）对 cstruct 同样成立、照发不误，
+        //   于是 `func addv(V3 v): float { return v.x + v.y + v.z }` 直接报
+        //   「字段访问需要结构体对象」—— 一个**能编译、必然运行期报错**的坑。
+        //   语义与"GET_FIELD ×n + ADD_F ×(n-1)"逐位等价：double 左到右累加 + val_float。
+        if (val_as_obj(obj)->type == OBJ_CSTRUCT) {
+            ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
+            if (unlikely(!co->data)) {
+                if (!throw_runtime_error("cstruct 数据已释放（free 之后不能再读字段）", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            double csum = 0.0;
+            for (int i = 0; i < c; i++) {
+                int fi = (int)idx[i];
+                if (unlikely(fi < 0 || fi >= co->def->field_count)) {
+                    if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                CStructFieldInfo* cf = &co->def->fields[fi];
+                // codegen 只在"字段静态类型全是 float"时发这条 ⇒ 正常只走前两支
+                if (cf->type == TYPE_F32) {
+                    float fv; memcpy(&fv, co->data + cf->offset, sizeof(fv));
+                    csum += (double)fv;
+                } else if (cf->type == TYPE_F64 || cf->type == TYPE_FLOAT) {
+                    double dv; memcpy(&dv, co->data + cf->offset, sizeof(dv));
+                    csum += dv;
+                } else {
+                    csum += val_as_num_ex(vm_cstruct_field_read(co, fi));
+                }
+            }
+            R(a) = val_float(csum);
+            DISPATCH();
+        }
+        if (unlikely(val_as_obj(obj)->type != OBJ_STRUCT)) {
             if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();

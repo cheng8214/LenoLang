@@ -1848,7 +1848,13 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
         }
         if (et) type_free(et);
         if (rt) type_free(rt);
-        if (is_cs_arr && cs_fi >= 0) {
+        // ⚠ 排除「a 本身是字段访问」（`m[0].cols[1].x`）：`m[0].cols` 静态类型也是
+        //   TYPE_CSTRUCT，但运行期是 OBJ_CSTRUCT_ARRAY_VIEW（数组字段视图）⇒ 融合指令
+        //   会把 VIEW 当数组用（字段错位）。实测报「下标赋值: 对象不支持索引」。
+        int cs_a_is_field = (obj_ast->u.index.obj->kind == AST_INDEX &&
+                             obj_ast->u.index.obj->u.index.index &&
+                             obj_ast->u.index.obj->u.index.index->kind == AST_STRING);
+        if (is_cs_arr && cs_fi >= 0 && !cs_a_is_field) {
             Ast* cs_arr_ast = obj_ast->u.index.obj;
             Ast* cs_idx_ast = obj_ast->u.index.index;
             int cs_arr_slot = direct_local_reg(cs_arr_ast);
@@ -1983,6 +1989,19 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                             gen_expr_to(gen, value, ref->index);
                             emit_cast_for_target(gen, ref->type_kind, value, ref->index, ast->line);
                         }
+                        // ★ 2026-11-11（P1 压测发现）：`Ptr[u8] p = ffi.malloc(8)` 之后
+                        //   再 `p = ffi.malloc(8)`，运行期的 element_type 会**丢** ——
+                        //   OP_SET_PTR_ELEM_TYPE 只在 gen_var_decl 处发射，赋值处不补 ⇒
+                        //   静态类型仍是 `Ptr[u8]`，但 `p[0]` 报「write_at 需要 Ptr[T]
+                        //   类型指针」（实测 tmp_stress_ptr 的"重新 malloc 后 p[0]"）。
+                        //   这里按 SymRef 里记的元素类型补发一次（其它类型没有运行期标注）。
+                        if (ref->type_kind == TYPE_PTR_GENERIC &&
+                            ref->element_type_kind != TYPE_ANY &&
+                            ref->element_type_kind != TYPE_UNKNOWN &&
+                            ref->index >= 0 && ref->index < MAX_REG) {
+                            reg_encode_iABC(gen->chunk, OP_SET_PTR_ELEM_TYPE, ref->index,
+                                            (int)ref->element_type_kind, 0, ast->line);
+                        }
                         break;
                     case SYM_GLOBAL: {
                         int r = ASSIGN_VAL();
@@ -2061,7 +2080,11 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                     }
                     if (et) type_free(et);
                     if (rt) type_free(rt);
-                    if (is_cs_arr && cs_fi >= 0) {
+                    // ⚠ 同 gen_index_assign 那条：排除「a 本身是字段访问」（数组字段视图）
+                    int cs_a_is_field = (obj_ast->u.index.obj->kind == AST_INDEX &&
+                                         obj_ast->u.index.obj->u.index.index &&
+                                         obj_ast->u.index.obj->u.index.index->kind == AST_STRING);
+                    if (is_cs_arr && cs_fi >= 0 && !cs_a_is_field) {
                         Ast* cs_arr_ast = obj_ast->u.index.obj;
                         Ast* cs_idx_ast = obj_ast->u.index.index;
                         int cs_arr_slot = direct_local_reg(cs_arr_ast);
