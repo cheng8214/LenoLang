@@ -474,9 +474,17 @@ static Value cstruct_method_free_all(int argc, Value* args) {
 // cstruct 数组的 len() 方法 - 返回数组长度
 static Value cstruct_array_method_len(int argc, Value* args) {
     (void)argc;
-    
+
+    // ★ 2026-11-11（压测）：**数组字段视图**（`m[0].cols`）也要能 len() ——
+    //   原来只认 OBJ_CSTRUCT_ARRAY，视图一律返回 0（实测 `m[0].cols.len()` 得 0，
+    //   而它明明是 2 个元素）。视图的元素个数就是 array_dim。
+    if (val_is_obj(args[0]) && val_as_obj(args[0])->type == OBJ_CSTRUCT_ARRAY_VIEW) {
+        ObjCStructArrayView* view = (ObjCStructArrayView*)val_as_obj(args[0]);
+        return val_int(view->array_dim);
+    }
+
     // receiver 必须是 cstruct 数组
-    if (val_as_obj(args[0])->type != OBJ_CSTRUCT_ARRAY) {
+    if (!val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_CSTRUCT_ARRAY) {
         return val_int(0);
     }
 

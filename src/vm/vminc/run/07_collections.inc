@@ -424,6 +424,16 @@
                     DISPATCH();
                 }
                 ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
+                // ★ 2026-11-11（压测）：**这条路径此前没有"父数组已释放"检查**。
+                //   `h.v.x` 编译成 GET_FIELD(h,"v") + OP_INDEX(view,"x")（不是 OP_GET_FIELD）
+                //   ⇒ 只挂在 12_fields_object.inc 的检查覆盖不到，实测 free_all 之后
+                //   **静默读到旧值 9**。这里补上与 CSTRUCT_VIEW_ALIVE_CHECK 同一口径的检查。
+                if (unlikely((co->owner_arr && !co->owner_arr->data) || !co->data)) {
+                    if (!throw_runtime_error(
+                            "cstruct 数据已释放（free/free_all 之后不能再读写字段）", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
                 int fi = cstruct_get_field_index(co->def, ((ObjString*)val_as_obj(idx))->chars);
                 if (unlikely(fi < 0)) {
                     char msg[256];
@@ -478,6 +488,13 @@
                     DISPATCH();
                 }
                 ObjCStruct* parent = view->cstruct;
+                // ★ 2026-11-11（压测）：父对象可能已 free（free/free_all 之后）
+                if (unlikely(!parent->data || (parent->owner_arr && !parent->owner_arr->data))) {
+                    if (!throw_runtime_error(
+                            "cstruct 数据已释放（free/free_all 之后不能再读写字段）", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
                 CStructFieldInfo* vf = &parent->def->fields[view->field_index];
                 uint8_t* elem_addr = parent->data + vf->offset + (ci * view->element_size);
                 // 元素本身是嵌套 cstruct ⇒ 非拥有视图；否则按元素类型取值
@@ -806,6 +823,13 @@
                     DISPATCH();
                 }
                 ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
+                // ★ 2026-11-11（压测）：写路径同样要拦"父数组已释放 / 实例已 free"
+                if (unlikely((co->owner_arr && !co->owner_arr->data) || !co->data)) {
+                    if (!throw_runtime_error(
+                            "cstruct 数据已释放（free/free_all 之后不能再读写字段）", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
                 int fi = cstruct_get_field_index(co->def, ((ObjString*)val_as_obj(idx))->chars);
                 if (unlikely(fi < 0)) {
                     char msg[256];
@@ -848,8 +872,36 @@
                     DISPATCH();
                 }
                 ObjCStruct* parent = view->cstruct;
+                // ★ 2026-11-11（压测）：父对象可能已 free（free/free_all 之后）
+                if (unlikely(!parent->data || (parent->owner_arr && !parent->owner_arr->data))) {
+                    if (!throw_runtime_error(
+                            "cstruct 数据已释放（free/free_all 之后不能再读写字段）", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
                 CStructFieldInfo* vf = &parent->def->fields[view->field_index];
                 uint8_t* elem_addr = parent->data + vf->offset + (ci * view->element_size);
+                // ★ 2026-11-11（压测）：元素是**嵌套 cstruct** 时不能按标量写 ——
+                //   vm_c_layout_write_scalar 对 CSTRUCT 走 default 分支 ⇒ **静默什么都不做**
+                //   （实测 `cols[0] = cols[1]` 一声不响、值没变，是"接受了但没生效"）。
+                //   这里按整元素拷贝（memmove 兜住自赋值）。
+                if (view->element_type == TYPE_CSTRUCT) {
+                    Value nv = R(a);
+                    if (unlikely(!val_is_obj(nv) || val_as_obj(nv)->type != OBJ_CSTRUCT)) {
+                        if (!throw_runtime_error(
+                                "嵌套 cstruct 数组的元素赋值需要同类型的 cstruct 值", line)) return -1;
+                        frame = &vm.frames[vm.frame_cnt - 1];
+                        DISPATCH();
+                    }
+                    ObjCStruct* src = (ObjCStruct*)val_as_obj(nv);
+                    if (unlikely(!src->data)) {
+                        if (!throw_runtime_error("源 cstruct 已释放，不能赋值", line)) return -1;
+                        frame = &vm.frames[vm.frame_cnt - 1];
+                        DISPATCH();
+                    }
+                    memmove(elem_addr, src->data, (size_t)view->element_size);
+                    DISPATCH();
+                }
                 vm_c_layout_write_scalar(elem_addr, view->element_type, R(a));
                 DISPATCH();
             }

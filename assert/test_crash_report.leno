@@ -10,7 +10,16 @@
 //   `AddVectoredExceptionHandler`（SEH 在有调试器时不触发）；崩溃行补上
 //   `@ 函数 xx / file.leno:行（当前指令 OP_XXX）` + 野指针排查提示。
 //
-// 本用例只钉"会报、且报得能定位"，不钉具体措辞。
+// ★ 2026-11-11 调整（压测改进，不是放松判据）：
+//   本用例原来拿"cstruct free 之后再写字段"当崩溃触发器。那条路径现在**已经被拦住**
+//   了 —— VM 的 OP_GET_FIELD / OP_INDEX / 融合读写都会先判 `data == NULL`，
+//   报可 catch 的「cstruct 数据已释放（free/free_all 之后不能再读写字段）」。
+//   能报位置的可控错误比"崩溃兜底"更好，所以：
+//     ① 用例 A 改成钉这条**新**行为（可控错误 + 位置 + 不继续执行）；
+//     ② 另加用例 B —— 拿 `to_ptr()`（非拥有、size 未知）+ free + 远偏移写制造
+//        **真正的**野指针，继续钉"[崩溃] 兜底要报位置"这条能力（它不能退化）。
+//
+// 用例只钉"会报、且报得能定位"，不钉具体措辞。
 
 import "helpers/compiler.leno" as ce
 import dirs
@@ -22,7 +31,7 @@ main() {
     dirs.delete(work)
     dirs.mkdir_p(work)
 
-    // cstruct use-after-free：malloc → free → 再写字段（必访问违例）
+    // ---- A) cstruct use-after-free：现在是**可控运行时错误**（不再是崩溃）----
     var f1 = dirs.join(work, "uaf.leno")
     files.write(f1, @"cstruct Tiny {
     i32 x
@@ -40,28 +49,56 @@ main() {
     print(""不该走到这里"")
 }
 ")
-    // ⚠ 用 expect_error 而不是 cmd_for：崩溃 = 非 0 退出码，且它会**带回输出**（cmd_for 只给命令行）
-    var out1 = ce.expect_error(f1, "野指针崩溃要报出位置（不是无声死亡）", "[崩溃]", 0)
-    assert_true(strings.has(out1, "访问违例") or strings.has(out1, "收到信号"),
-        "要说明是访问违例（Windows 文案）/ 收到信号（Unix 文案）；实际=" + out1)
-    assert_true(strings.has(out1, "@ 函数 boom"),
-        "要报出**函数名**（原来只有异常码，指不到位置）；实际=" + out1)
+    // 行号检查传 0：运行期错误的落点格式是 `file.leno:9:`（不是编译期诊断的 `(9,`），
+    // 这里改用下面的 strings.has("uaf.leno:9") 自己断言。
+    var out1 = ce.expect_error(f1, "cstruct use-after-free 要报可控错误（不是崩溃）",
+                              "cstruct 数据已释放", 0)
+    assert_true(strings.has(out1, "boom"),
+        "要能定位到函数；实际=" + out1)
     assert_true(strings.has(out1, "uaf.leno:9"),
         "要报出**文件:行**（use-after-free 那一行）；实际=" + out1)
-    assert_true(strings.has(out1, "提示"),
-        "要给野指针的排查提示；实际=" + out1)
     assert_true(not strings.has(out1, "不该走到这里"),
-        "崩溃后不得继续执行；实际=" + out1)
+        "报错后不得继续执行；实际=" + out1)
+    assert_true(not strings.has(out1, "[崩溃]"),
+        "这条路径不该再走到崩溃兜底；实际=" + out1)
 
-    // 对照：正常程序**不得**有任何崩溃噪声
-    var f2 = dirs.join(work, "ok.leno")
-    files.write(f2, @"main() {
+    // ---- B) 真正的野指针：`ffi.ptr_from_int(16)` 造一个非法地址再写 ----
+    //   非拥有指针（owned=0、size=0）⇒ 不做越界检查 ⇒ 必然访问违例（不受控）⇒
+    //   必须由崩溃兜底报出位置。这条能力不能因为 A 的改进而退化。
+    var f2 = dirs.join(work, "wild.leno")
+    files.write(f2, @"import ffi
+
+func boom() {
+    Ptr[u8] bad = ffi.ptr_from_int(16)
+    bad[0] = 1
+}
+
+main() {
+    boom()
+    print(""不该走到这里"")
+}
+")
+    var out2 = ce.expect_error(f2, "野指针崩溃要报出位置（不是无声死亡）", "[崩溃]", 0)
+    assert_true(strings.has(out2, "访问违例") or strings.has(out2, "收到信号"),
+        "要说明是访问违例（Windows 文案）/ 收到信号（Unix 文案）；实际=" + out2)
+    assert_true(strings.has(out2, "@ 函数 boom"),
+        "要报出**函数名**（原来只有异常码，指不到位置）；实际=" + out2)
+    assert_true(strings.has(out2, "wild.leno:5"),
+        "要报出**文件:行**（野指针那一行）；实际=" + out2)
+    assert_true(strings.has(out2, "提示"),
+        "要给野指针的排查提示；实际=" + out2)
+    assert_true(not strings.has(out2, "不该走到这里"),
+        "崩溃后不得继续执行；实际=" + out2)
+
+    // ---- C) 对照：正常程序**不得**有任何崩溃噪声 ----
+    var f3 = dirs.join(work, "ok.leno")
+    files.write(f3, @"main() {
     print(""fine"")
 }
 ")
-    var out2 = ce.expect_ok(f2, "正常程序照旧", "fine")
-    assert_true(not strings.has(out2, "[崩溃]"),
-        "正常程序不得出现崩溃噪声；实际=" + out2)
+    var out3 = ce.expect_ok(f3, "正常程序照旧", "fine")
+    assert_true(not strings.has(out3, "[崩溃]"),
+        "正常程序不得出现崩溃噪声；实际=" + out3)
 
     print("=== test_crash_report ALL passed ===")
 }

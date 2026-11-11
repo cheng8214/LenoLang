@@ -1,0 +1,100 @@
+// cstruct 数组字段视图 / 释放后访问的语义（2026-11-11 压测）
+//
+// 背景（本轮压测发现并修复的 5 个问题）：
+//   ① `m[0].cols.len()` 恒为 0 —— len() 只认 OBJ_CSTRUCT_ARRAY，视图（ARRAY_VIEW）
+//      一律返回 0，而它明明是 2 个元素；
+//   ② `var cols = m[0].cols; cols[0].x` 报「下标读取: 对象不支持索引」—— 视图的静态
+//      类型同样是 TYPE_CSTRUCT，codegen 分不出"cstruct 数组"与"数组字段视图"，
+//      融合指令照发 ⇒ VM 只认 OBJ_CSTRUCT_ARRAY。现在融合读写都补了视图分支；
+//   ③ `cols[0] = cols[1]`（嵌套 cstruct 元素整体赋值）**静默什么都没做** ——
+//      vm_c_layout_write_scalar 对 CSTRUCT 走 default 分支；
+//   ④ `var v = V3.malloc(); v.free(); v.x` **直接 0xC0000005 崩溃**（不可 catch）——
+//      OP_GET_FIELD 拿已置 NULL 的 data 当基址；
+//   ⑤ `h.v.x`（struct 字段里的视图）在 free_all 之后**静默读到旧值** —— 那条路径走的是
+//      OP_INDEX 的 cstruct 字符串下标分支，那里没有"父数组已释放"检查。
+//
+// 本用例钉住：视图的 len / 下标读写 / 整元素赋值，以及上面四条"该报错就要报错"。
+import ffi
+
+cstruct V3 { f32 x  f32 y  f32 z }
+cstruct Mat { V3 cols[2]  i32 id }
+
+struct Holder { V3 v = null  int n = 0 }
+
+main() {
+    // ---- A) 数组字段视图：len / 下标读写（经变量，不是内联）----
+    var m = Mat.malloc_array(1)
+    m[0].cols[0].x = 1.0
+    m[0].cols[1].x = 2.0
+
+    var cols = m[0].cols
+    assert_eq(cols.len(), 2, "数组字段视图的 len()")
+    assert_eq(cols[0].x, 1.0, "视图下标读")
+    cols[1].x = 22.0
+    assert_eq(m[0].cols[1].x, 22.0, "视图下标写要写回父对象")
+
+    // ---- B) 嵌套 cstruct 元素的整体赋值（必须是真拷贝，不能静默无操作）----
+    cols[0] = cols[1]
+    assert_eq(cols[0].x, 22.0, "嵌套整元素赋值：cols[0] 应变成 cols[1] 的内容")
+    // 反向再拷一次，确认不是"只把指针改掉"
+    cols[1].x = 33.0
+    assert_eq(cols[0].x, 22.0, "整元素赋值是**值拷贝**（改 cols[1] 不影响 cols[0]）")
+
+    // ---- C) free_all 之后：视图的下标读写都要抛（可 catch），不能崩/静默读 ----
+    m.free_all()
+
+    bool caught = false
+    try { var _v = cols[0].x } catch e { caught = true }
+    assert_eq(caught, true, "free_all 后视图下标读必须抛异常")
+
+    caught = false
+    try { cols[0].x = 1.0 } catch e2 { caught = true }
+    assert_eq(caught, true, "free_all 后视图下标写必须抛异常")
+
+    // ---- D) struct 字段里存的视图：free 后必须抛，不能静默读旧值 ----
+    var a = V3.malloc_array(2)
+    a[0].x = 5.0
+    var h = new Holder(n = 2)
+    h.v = a[0]
+    a.free_all()
+
+    caught = false
+    try { var _w = h.v.x } catch e3 { caught = true }
+    assert_eq(caught, true, "free 后 struct 字段里的视图读必须抛异常")
+
+    caught = false
+    try { h.v.x = 6.0 } catch e4 { caught = true }
+    assert_eq(caught, true, "free 后 struct 字段里的视图写必须抛异常")
+
+    // ---- E) 单实例 free 之后：字段读写都抛（原来是 0xC0000005 崩溃）----
+    var v = V3.malloc()
+    v.x = 1.0
+    v.free()
+
+    caught = false
+    try { var _q = v.x } catch e5 { caught = true }
+    assert_eq(caught, true, "free 后 v.x 必须抛异常（不是崩溃）")
+
+    caught = false
+    try { v.x = 2.0 } catch e6 { caught = true }
+    assert_eq(caught, true, "free 后 v.x= 必须抛异常")
+
+    caught = false
+    try { var _r = v["x"] } catch e7 { caught = true }
+    assert_eq(caught, true, "free 后 v[\"x\"] 必须抛异常")
+
+    caught = false
+    try { var _s = v.x + v.y + v.z } catch e8 { caught = true }
+    assert_eq(caught, true, "free 后多字段累加必须抛异常")
+
+    // ---- F) double free / 空数组 double free_all 不崩 ----
+    var dbl = V3.malloc()
+    dbl.free()
+    dbl.free()                       // 不该崩
+    var z = V3.malloc_array(0)
+    assert_eq(z.len(), 0, "空数组 len()")
+    z.free_all()
+    z.free_all()                     // 不该崩
+
+    print("test_cstruct_view_semantics passed")
+}

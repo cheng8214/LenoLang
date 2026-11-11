@@ -25,9 +25,15 @@
     //   一旦被复用就是垃圾值 ✗）。判据靠 ObjCStruct 的回指 owner_arr（见 leno_value.h）。
     #define CSTRUCT_VIEW_ALIVE_CHECK(co)                                              \
     do {                                                                              \
-        if (unlikely((co)->owner_arr && !(co)->owner_arr->data)) {                     \
+        /* ★ 2026-11-11（压测）：**两种**失效都要拦 ——                                      \
+         *   ① 元素视图的父数组被 free_all（data 置 NULL）；                              \
+         *   ② 实例自己 free()（data 就地置 NULL）。                                        \
+         *   原先只判 ① ⇒ `var v = V3.malloc(); v.free(); v.x` 直接      \
+         *   **0xC0000005 崩溃**（OP_GET_FIELD 拿 NULL 当基址加偏移）。                    \
+         *   崩溃不受控（不进 try/catch）⇒ 必须在这里变成可捕获的运行时错误。 */            \
+        if (unlikely(((co)->owner_arr && !(co)->owner_arr->data) || !(co)->data)) {     \
             if (!throw_runtime_error(                                                  \
-                    "cstruct 数组已释放（free_all 之后不能再通过元素视图读写字段）",    \
+                    "cstruct 数据已释放（free/free_all 之后不能再读写字段）",          \
                     line)) return -1;                                                  \
             frame = &vm.frames[vm.frame_cnt - 1];                                      \
             DISPATCH();                                                                \
@@ -205,12 +211,8 @@
         //   语义与"GET_FIELD ×n + ADD_F ×(n-1)"逐位等价：double 左到右累加 + val_float。
         if (val_as_obj(obj)->type == OBJ_CSTRUCT) {
             ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
+            // 数据已释放（实例 free / 元素视图的父数组 free_all）一律走同一条检查
             CSTRUCT_VIEW_ALIVE_CHECK(co);
-            if (unlikely(!co->data)) {
-                if (!throw_runtime_error("cstruct 数据已释放（free 之后不能再读字段）", line)) return -1;
-                frame = &vm.frames[vm.frame_cnt - 1];
-                DISPATCH();
-            }
             double csum = 0.0;
             for (int i = 0; i < c; i++) {
                 int fi = (int)idx[i];
@@ -669,6 +671,55 @@
         int fi = READ_CONST_IDX(0);          // ⚠ 必须在任何早退之前读走（它会推进 ip）
         int line = GET_CURRENT_LINE();
         Value ov = R(b);
+        // ★ 2026-11-11（压测）：B 可能是**数组字段视图** —— `var cols = m[0].cols` 之后
+        //   `cols[0].x`。视图的静态类型同样是 TYPE_CSTRUCT，codegen 分不出"cstruct 数组"
+        //   与"数组字段视图" ⇒ 融合指令照发不误，实测报「下标读取: 对象不支持索引」。
+        //   这里补视图分支：元素地址 = 父对象 data + 字段偏移 + ci * 元素大小。
+        if (likely(val_is_obj(ov)) && val_as_obj(ov)->type == OBJ_CSTRUCT_ARRAY_VIEW) {
+            ObjCStructArrayView* view = (ObjCStructArrayView*)val_as_obj(ov);
+            Value ivv = R(c);
+            if (unlikely(!val_is_int(ivv))) {
+                if (!throw_runtime_error("cstruct 数组索引必须是数字", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            int vci = (int)val_as_int(ivv);
+            if (unlikely(vci < 0 || vci >= view->array_dim)) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "cstruct 数组索引越界: 索引 %d, 长度 %d",
+                         vci, view->array_dim);
+                if (!throw_runtime_error(msg, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            ObjCStruct* parent = view->cstruct;
+            // ★ 2026-11-11（压测）：父对象已 free（自己 free / 所属数组 free_all）⇒ 报错
+            if (unlikely(!parent->data || (parent->owner_arr && !parent->owner_arr->data))) {
+                if (!throw_runtime_error(
+                        "cstruct 数据已释放（free/free_all 之后不能再读写字段）", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            CStructFieldInfo* vf = &parent->def->fields[view->field_index];
+            if (unlikely(view->element_type != TYPE_CSTRUCT || !vf->struct_name)) {
+                if (!throw_runtime_error("数组字段的元素不是 cstruct，不能用 .字段 访问", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            ObjCStructDef* edef = cstruct_def_find(vf->struct_name);
+            if (unlikely(!edef || fi < 0 || fi >= edef->field_count)) {
+                if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            ObjCStruct vtmp;
+            memset(&vtmp, 0, sizeof(vtmp));
+            vtmp.def = edef;
+            vtmp.data = parent->data + (size_t)vf->offset + (size_t)vci * (size_t)view->element_size;
+            vtmp.owns_memory = 0;
+            R(a) = vm_cstruct_field_read(&vtmp, fi);
+            DISPATCH();
+        }
         if (unlikely(!val_is_obj(ov) || val_as_obj(ov)->type != OBJ_CSTRUCT_ARRAY)) {
             if (!throw_runtime_error("下标读取: 对象不支持索引", line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
@@ -719,6 +770,52 @@
         int fi = READ_CONST_IDX(0);
         int line = GET_CURRENT_LINE();
         Value ov = R(b);
+        // ★ 2026-11-11（压测）：B 是**数组字段视图**时按视图语义写（同读路径那段说明）
+        if (likely(val_is_obj(ov)) && val_as_obj(ov)->type == OBJ_CSTRUCT_ARRAY_VIEW) {
+            ObjCStructArrayView* view = (ObjCStructArrayView*)val_as_obj(ov);
+            Value ivv = R(c);
+            if (unlikely(!val_is_int(ivv))) {
+                if (!throw_runtime_error("cstruct 数组索引必须是数字", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            int vci = (int)val_as_int(ivv);
+            if (unlikely(vci < 0 || vci >= view->array_dim)) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "cstruct 数组索引越界: 索引 %d, 长度 %d",
+                         vci, view->array_dim);
+                if (!throw_runtime_error(msg, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            ObjCStruct* parent = view->cstruct;
+            // ★ 2026-11-11（压测）：父对象已 free ⇒ 报错（同读路径）
+            if (unlikely(!parent->data || (parent->owner_arr && !parent->owner_arr->data))) {
+                if (!throw_runtime_error(
+                        "cstruct 数据已释放（free/free_all 之后不能再读写字段）", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            CStructFieldInfo* vf = &parent->def->fields[view->field_index];
+            if (unlikely(view->element_type != TYPE_CSTRUCT || !vf->struct_name)) {
+                if (!throw_runtime_error("数组字段的元素不是 cstruct，不能用 .字段 访问", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            ObjCStructDef* edef = cstruct_def_find(vf->struct_name);
+            if (unlikely(!edef || fi < 0 || fi >= edef->field_count)) {
+                if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            ObjCStruct vtmp;
+            memset(&vtmp, 0, sizeof(vtmp));
+            vtmp.def = edef;
+            vtmp.data = parent->data + (size_t)vf->offset + (size_t)vci * (size_t)view->element_size;
+            vtmp.owns_memory = 0;
+            cstruct_set_field_value(&vtmp, fi, R(a));
+            DISPATCH();
+        }
         if (unlikely(!val_is_obj(ov) || val_as_obj(ov)->type != OBJ_CSTRUCT_ARRAY)) {
             if (!throw_runtime_error("下标赋值: 对象不支持索引", line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
