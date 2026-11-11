@@ -1,0 +1,72 @@
+// `Ptr[T]` 与 `Ptr[U]` 的元素类型不能被"宽松赋值"糊过去（2026-11-11）
+//
+// 为什么必须拦（实测）：`element_type` 是 ObjFFIPointer 上的**就地位段**，而
+//   `Ptr[i8] b = a` 只复制引用 ⇒ 标注会把 a、b 共用的那个对象的读法一并改掉：
+//
+//     Ptr[u8] a = ffi.malloc(4); a[0] = 200
+//     Ptr[i8] b = a            // 此刻 a 的 element_type 被改成 i8
+//     a[0]                     // 200 → -56  ← 静默错值
+//
+// 语义上这就是两个不同的类型（C 里 `unsigned char*` → `signed char*` 同样要警告）。
+// 反向的"不该报"同样重要：
+//   · 裸 `Ptr` ↔ `Ptr[T]` 双向兼容（FFI 里到处是裸 Ptr）
+//   · clib 调用处 `Ptr[T]` ↔ `Ptr[U]` **放行**（实参直接进 C，没有"按元素解引用"的
+//     函数体，元素字面宽度不影响 ABI —— 见 type.c 的 type_is_clib_arg_compatible）
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+var HEAD = "import ffi\n\n"
+// HEAD 占 2 行 ⇒ body 第 1 行是文件第 3 行。
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_ptr_elem_kind_guard")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 应报：声明式初始化 Ptr[u8] → Ptr[i8] ----
+    var f1 = dirs.join(work, "decl_mismatch.leno")
+    files.write(f1, HEAD + strings.join([
+        "main() {",
+        "    Ptr[u8] a = ffi.malloc(4)",
+        "    Ptr[i8] b = a",
+        "    print(_str(b[0]))",
+        "}",
+        ""], "\n"))
+    ce.expect_error(f1, "Ptr[u8] 赋给 Ptr[i8] 要报错", "类型不匹配", 5)
+
+    // ---- ② 应报：传参 Ptr[u8] → Ptr[i8] ----
+    var f2 = dirs.join(work, "arg_mismatch.leno")
+    files.write(f2, HEAD + strings.join([
+        "func takeI8(Ptr[i8] p): int {",
+        "    return p[0]",
+        "}",
+        "",
+        "main() {",
+        "    Ptr[u8] a = ffi.malloc(4)",
+        "    print(_str(takeI8(a)))",
+        "}",
+        ""], "\n"))
+    ce.expect_error(f2, "Ptr[u8] 传给 Ptr[i8] 形参要报错", "类型不匹配", 9)
+
+    // ---- ③ 不该报：裸 Ptr ↔ Ptr[T] 双向、同元素类型 ----
+    var ok1 = dirs.join(work, "ok_forms.leno")
+    files.write(ok1, HEAD + strings.join([
+        "main() {",
+        "    Ptr[u8] a = ffi.malloc(4)",
+        "    a[0] = 200",
+        "    Ptr bare = a",              // Ptr[T] → 裸 Ptr
+        "    Ptr[u8] b = bare",           // 裸 Ptr → Ptr[T]
+        "    Ptr[u8] c = a",              // 同元素类型
+        "    print(_str(b[0]) + \"/\" + _str(c[0]))",
+        "    print(_str(ffi.read_string(bare, 0) != null))",
+        "    ffi.free(a)",
+        "    print(\"OK_FORMS\")",
+        "}",
+        ""], "\n"))
+    ce.expect_ok(ok1, "裸 Ptr 与 Ptr[T] 互转、同元素类型赋值都不能误报", "OK_FORMS")
+
+    dirs.delete(work)
+    print("test_ptr_elem_kind_guard passed")
+}

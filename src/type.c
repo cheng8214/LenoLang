@@ -997,6 +997,22 @@ static int kind_accepts_null_ref(TypeKind k) {
     }
 }
 
+// clib 调用实参的兼容性：比脚本函数之间的赋值**宽一档** —— `Ptr[T]` ↔ `Ptr[U]` 放行。
+// ----------------------------------------------------------------------------
+// 为什么必须宽：clib 是用户手写的 C 原型，实参直接进 C，**不存在"函数体里按元素类型
+//   解引用"** ⇒ 元素的字面宽度不影响 ABI（两者传进去都是 void*）。
+//   而既存代码大量拿 `Ptr[u8]` 当"不透明句柄"传给 `int*` 形参 —— 实测 LenoWeb 的
+//   `multiPerform(Ptr[u8] multi, Ptr[u8] running)` 直接喂给 `curl_multi_perform(CURLM*, int*)`
+//   ⇒ 若照脚本函数的严格口径（`type_is_compatible`）判，LenoWeb 66 个文件全红。
+//   反过来，**脚本函数**之间仍然严格：那边函数体里 `p[0]` 真的按元素类型解引用，
+//   而 element_type 是对象上的就地位段 ⇒ `Ptr[i8] b = a` 会把 a 的读法一起改掉
+//   （实测 200 → -56，静默错值）。
+int type_is_clib_arg_compatible(TypeInfo* expected, TypeInfo* actual) {
+    if (!expected || !actual) return 1;
+    if (expected->kind == TYPE_PTR_GENERIC && actual->kind == TYPE_PTR_GENERIC) return 1;
+    return type_is_compatible(expected, actual);
+}
+
 // 检查类型是否兼容（用于赋值）
 int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     if (!target || !source) return 1;  // 任意类型都可以
@@ -1014,6 +1030,21 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     //   visit_expr.inc 的实例通道分支）：泛型参数传给**具体类型**的 native 形参 ⇒ 报错 ✓
     if (target->kind == TYPE_GENERIC_PARAM) return 1;
     if (source->kind == TYPE_GENERIC_PARAM) return 1;
+
+    // ★ 2026-11-11（Ptr 设计复查）：**`Ptr[T]` 与 `Ptr[U]` 只有 T == U 才兼容**
+    //   （任一侧元素未知/any 则放行；裸 `Ptr` 与本类型之间照旧双向兼容，走后面的原判据）。
+    //   为什么必须拦：`element_type` 是 **ObjFFIPointer 上的就地位段**，而 `Ptr[i8] b = a`
+    //   只复制引用 ⇒ 标注会把 a、b 共用的那个对象的读法一并改掉。实测：
+    //     Ptr[u8] a = ffi.malloc(4); a[0] = 200
+    //     Ptr[i8] b = a            // 此刻 a 的 element_type 被改成 i8
+    //     a[0]                     // 200 → -56  ← **静默错值**
+    //   这不是"类型放宽"，是别名污染；C 里 `unsigned char*` → `signed char*` 同样要警告。
+    if (target->kind == TYPE_PTR_GENERIC && source->kind == TYPE_PTR_GENERIC) {
+        TypeKind te = target->element_type ? target->element_type->kind : TYPE_ANY;
+        TypeKind se = source->element_type ? source->element_type->kind : TYPE_ANY;
+        if (te != TYPE_ANY && se != TYPE_ANY && te != se) return 0;
+        return 1;
+    }
 
     // ★ 2026-11-10（载荷 enum 跨模块）：**同名 STRUCT ↔ ENUM 视为兼容**。
     //   载荷 enum 在生产端降级成**同名 struct**，但导出的函数签名里那一位可能仍是

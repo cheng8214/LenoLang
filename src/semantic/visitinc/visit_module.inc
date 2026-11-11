@@ -834,7 +834,7 @@
                                         TypeInfo* expected_param = clib_sym->clib_func_param_types[fi][pi];
                                         Ast* arg = ast->u.module_call.args.items[pi];
                                         TypeInfo* arg_type = infer_expr_type(s, arg);
-                                        if (expected_param && arg_type && !type_is_compatible(expected_param, arg_type)) {
+                                        if (expected_param && arg_type && !type_is_clib_arg_compatible(expected_param, arg_type)) {
                                             // ★ 参数序号走 `%s5`（format_type_error 的第 5 槽 ✓）⇒ 一行收尾：
                                             //   原来这里要"先出模板、再 snprintf 把 %d 填掉"两层缓冲，
                                             //   因为 `%s1..%s4` 四个槽被（两个类型 + 结构名 + 方法名）占满了 ✗

@@ -563,6 +563,9 @@ TypeInfo* type_copy(TypeInfo* type);
 const char* type_to_string(TypeInfo* type);
 const char* type_kind_to_string(TypeKind kind);
 int type_is_compatible(TypeInfo* target, TypeInfo* source);
+// clib 实参的兼容性：比赋值宽一档（Ptr[T] ↔ Ptr[U] 放行，因为实参直接进 C、没有
+// "按元素类型解引用"的函数体）。理由见 type.c 的说明。
+int type_is_clib_arg_compatible(TypeInfo* expected, TypeInfo* actual);
 // 整数类判定（口径：**枚举 = int**，C 布局整型也算整数）——凡是"必须是整数"的地方都该走它，
 //   别再各写一份 `kind == TYPE_INT` 的小判据（历史教训：抄漏一处就出「期望 'int'，但传入 'int'」
 //   这类自相矛盾的假报错，见 2026-10-12 的那批修复 ✓）
