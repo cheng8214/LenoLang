@@ -1,0 +1,38 @@
+// generic_field_mod.leno —— 跨模块泛型**字段类型**的生产端（2026-11-11）
+//
+// 为什么要单独一个模块：被修掉的 bug 只在**跨模块**时出现 ——
+//   字段类型是泛型形参（`T v` / `T val`）时，模块符号表里名字只存在 type_info
+//   （`type_generic_param("T")`），消费端若按扁平三元组重建 TypeInfo 就丢了名字 ⇒
+//   type_substitute 匹配不上 ⇒ 字段类型退化成 any ⇒ `b.v.token.len()` 报
+//   「不能在 any 类型上调用方法 'len'」✗（同模块内完全正常，所以本地测不出来）。
+//
+// 覆盖两种载体：自定义泛型 struct（Box[T]）与标准库形态的 Result[T]。
+import "Result" as rstd
+use rstd.(Result, Option)
+
+export struct Pay {
+    string token = ""
+    int uid = 0
+}
+
+export struct Box[T] {
+    T v
+    string label = "box"
+}
+
+export func mkBox(string token, int uid): Box[Pay] {
+    return new Box[Pay](v = new Pay(token = token, uid = uid), label = "made")
+}
+
+export func mkOk(string token, int uid): Result[Pay] {
+    return rstd.ok[Pay](new Pay(token = token, uid = uid))
+}
+
+export func mkErr(string msg): Result[Pay] {
+    return rstd.err[Pay](rstd.ErrCode.INTERNAL, msg)
+}
+
+// 泛型函数透传：返回值类型的泛型实参也要能带到消费端
+export func pass[U](Result[U] r): Result[U] {
+    return r
+}

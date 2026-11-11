@@ -869,7 +869,18 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
                     //   且行号对不上，同一次访问还会被多个调用点各报一遍 ✗
                     //   ⇒ 统一由 pri_check_field_access（拿得到 ast）在字段访问/赋值/下标
                     //   各条路径上报 ✓（2026-11-08）
-                    TypeInfo* result = type_new(ssym->fields[fi].type);
+                    // ★ 2026-11-11：**优先用 type_info**（与 semantic_type_utils.c 的同名搬运用
+                    //   同一口径）。只拿扁平三元组（type / struct_name / element_type）会丢
+                    //   TYPE_GENERIC_PARAM 的**形参名** —— 那个名字只存在 type_info 里（
+                    //   `type_generic_param("T")`），而 `type_new(TYPE_GENERIC_PARAM)` 的
+                    //   type_param_name 是 NULL ⇒ 下面的 type_substitute 按名字匹配失败 ⇒
+                    //   字段类型停在"没有名字的泛型参数"⇒ 消费方按 any 处理 ✗
+                    //   实测：跨模块 `Result[Pay].val.token.len()` / `Box[Pay].v` 报
+                    //   「不能在 any 类型上调用方法 'len'」，而同模块内完全正常。
+                    TypeInfo* result = ssym->fields[fi].type_info
+                        ? type_copy(ssym->fields[fi].type_info)
+                        : type_new(ssym->fields[fi].type);
+                    if (!ssym->fields[fi].type_info) {
                                 if (ssym->fields[fi].struct_name) {
                                     result->struct_name = strdup(ssym->fields[fi].struct_name);
                                 }
@@ -880,6 +891,7 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
                                         result->element_type->struct_name = strdup(ssym->fields[fi].element_struct_name);
                                     }
                                 }
+                    }
                                 // 泛型参数替换
                                 if (obj_type->generic_count > 0 && obj_type->generic_args &&
                                     ssym->type_param_count > 0 && ssym->type_param_names) {

@@ -1,0 +1,38 @@
+// test_generic_field_cross_module.leno —— 跨模块泛型**字段类型**（2026-11-11 钉住）
+//
+// 修前：字段类型是泛型形参（`T v` / `T val`）时，跨模块读出来的字段类型是 **any** ⇒
+//   `b.v.token.len()` / `r.val.token.len()` 报「不能在 any 类型上调用方法 'len'」✗，
+//   而同模块内完全正常（所以只在"库 + 应用"分仓时才暴露）。
+// 根因：infer_field_type 的跨模块分支按**扁平三元组**（type / struct_name / element_type）
+//   重建 TypeInfo，丢掉了只存在于 type_info 里的**形参名** ⇒ type_substitute 按名字匹配
+//   失败 ⇒ 停在"无名泛型参数"⇒ 当 any 用。
+// 修法：优先 type_copy(fields[fi].type_info)（与 semantic_type_utils.c 同一口径）。
+//
+// 本用例钉住 4 条消费路径，**任何一条**退化成 any 都会立刻红。
+import "helpers/generic_field_mod.leno" as m
+
+main() {
+    // ① 自定义泛型 struct 的泛型字段：Box[Pay].v 必须是 Pay
+    var b = m.mkBox("tok", 7)
+    assert_eq(b.v.token, "tok", "①a Box[Pay].v 字段读得到")
+    assert_eq(b.v.token.len(), 3, "①b v.token 是 string（能调 len）")
+    assert_eq(b.v.uid + 1, 8, "①c v.uid 是 int（能参与算术）")
+    assert_eq(b.label, "made", "①d 普通字段不受影响")
+
+    // ② 标准库形态的 Result[T]：载荷 .val 必须是 Pay
+    var r = m.mkOk("ab", 3)
+    assert_true(r.ok, "②a Result[Pay].ok")
+    assert_eq(r.val.token.len(), 2, "②b val.token 是 string")
+    assert_eq(r.val.uid, 3, "②c val.uid 是 int")
+
+    // ③ 失败结果：不读 val（无意义），只读 msg —— 这也要求 ok/msg 字段类型正确
+    var e = m.mkErr("坏了")
+    assert_false(e.ok, "③a 失败 is not ok")
+    assert_eq(e.msg, "坏了", "③b 失败原因在 msg")
+
+    // ④ 泛型函数透传：pass[U] 返回的 Result[U] 在调用点代入后仍是 Result[Pay]
+    var p = m.pass[Pay](r)
+    assert_eq(p.val.token.len(), 2, "④ 泛型函数返回值代入后字段类型仍精确")
+
+    print("test_generic_field_cross_module passed")
+}
