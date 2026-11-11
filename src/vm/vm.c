@@ -1408,9 +1408,29 @@ static inline Value vm_cstruct_field_read(ObjCStruct* co, int field_idx) {
         child->def = nested_def;
         child->data = co->data + f->offset;
         child->owns_memory = 0;
+        // ★ 2026-11-11（压测）：回指父实例 —— 否则 `var e = o.inner; o.free(); e.v = 7`
+        //   会**静默往已释放内存里写**（堆破坏），读则静默读到旧值。判活靠这个链。
+        child->parent_obj = co;
         return val_obj((Object*)child);
     }
     return cstruct_get_field_value(co, field_idx);
+}
+
+// cstruct 实例/视图"还活着吗"—— **唯一判据**（字段读写、数组字段视图、融合指令都调它）。
+//   两级失效来源：
+//     ① 自己 free()（data 置 NULL）；
+//     ② 作为**元素视图**时父数组 free_all（owner_arr->data 置 NULL）；
+//     ③ 作为**嵌套字段视图**时父实例 free（parent_obj 链上某一级失效）。
+//   ⚠ 深度上限 fail-closed：链异常长时按"已释放"处理（宁可报错，不要往野指针写）。
+static inline int vm_cstruct_alive(ObjCStruct* co) {
+    int depth = 0;
+    while (co && depth++ < 32) {
+        if (!co->data) return 0;
+        if (co->owner_arr) return co->owner_arr->data != NULL;
+        if (!co->parent_obj) return 1;
+        co = co->parent_obj;
+    }
+    return co == NULL;
 }
 
 // ============================================================================

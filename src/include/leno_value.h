@@ -645,7 +645,9 @@ typedef struct {
 } ObjCStructArray;
 
 // C 布局结构体实例对象
-typedef struct {
+//   ⚠ 用**具名** tag：下面的 parent_obj 要在结构体内部回指自己这一类（匿名结构体
+//     在体内拿不到自己的 typedef 名，`unknown type name 'ObjCStruct'`）。
+typedef struct ObjCStruct {
     Object header;
     ObjCStructDef* def;            // 结构体定义
     uint8_t* data;                 // 原始内存数据（按 C 布局）
@@ -659,6 +661,12 @@ typedef struct {
     //   ⚠ 它是一条**对象引用** ⇒ GC 必须 mark（gc.c 的 OBJ_CSTRUCT 分支），
     //     否则"丢掉数组只留视图"时父数组被回收，回指本身就成了 UAF。
     ObjCStructArray* owner_arr;
+    // ★ 2026-11-11（第三轮压测）：嵌套 cstruct 字段视图的**父实例**（NULL = 独立实例）。
+    //   为什么需要：`var e = o.inner` 是 data 指向 o 内存的非拥有视图，而 o.free() 只把
+    //   **o 自己**的 data 置 NULL ⇒ e 完全察觉不到。实测 `o.free(); e.v` 静默读到旧值 42、
+    //   `e.v = 7` 更糟：**静默往已释放内存里写**（堆破坏）。有了回指就能逐级判断存活。
+    //   ⚠ 同样必须被 GC mark（gc.c 的 OBJ_CSTRUCT 分支）。
+    struct ObjCStruct* parent_obj;
 } ObjCStruct;
 
 // C 布局结构体数组字段视图对象

@@ -25,13 +25,12 @@
     //   一旦被复用就是垃圾值 ✗）。判据靠 ObjCStruct 的回指 owner_arr（见 leno_value.h）。
     #define CSTRUCT_VIEW_ALIVE_CHECK(co)                                              \
     do {                                                                              \
-        /* ★ 2026-11-11（压测）：**两种**失效都要拦 ——                                      \
-         *   ① 元素视图的父数组被 free_all（data 置 NULL）；                              \
-         *   ② 实例自己 free()（data 就地置 NULL）。                                        \
-         *   原先只判 ① ⇒ `var v = V3.malloc(); v.free(); v.x` 直接      \
-         *   **0xC0000005 崩溃**（OP_GET_FIELD 拿 NULL 当基址加偏移）。                    \
-         *   崩溃不受控（不进 try/catch）⇒ 必须在这里变成可捕获的运行时错误。 */            \
-        if (unlikely(((co)->owner_arr && !(co)->owner_arr->data) || !(co)->data)) {     \
+        /* ★ 2026-11-11（压测）：三种失效都要拦 ——                                          \
+         *   ① 自己 free()（data 置 NULL）；② 元素视图的父数组 free_all；                    \
+         *   ③ 嵌套字段视图的父实例 free（parent_obj 链）。判据收敛在 vm_cstruct_alive。      \
+         *   原先只判 ② ⇒ `var v = V3.malloc(); v.free(); v.x` 直接 0xC0000005 崩溃，          \
+         *   而 `var e = o.inner; o.free(); e.v = 7` 更是静默写进已释放内存。 */              \
+        if (unlikely(!vm_cstruct_alive(co))) {                                         \
             if (!throw_runtime_error(                                                  \
                     "cstruct 数据已释放（free/free_all 之后不能再读写字段）",          \
                     line)) return -1;                                                  \
@@ -693,8 +692,8 @@
                 DISPATCH();
             }
             ObjCStruct* parent = view->cstruct;
-            // ★ 2026-11-11（压测）：父对象已 free（自己 free / 所属数组 free_all）⇒ 报错
-            if (unlikely(!parent->data || (parent->owner_arr && !parent->owner_arr->data))) {
+            // ★ 2026-11-11（压测）：父对象已 free（自己 free / 所属数组 free_all / 更上层）⇒ 报错
+            if (unlikely(!vm_cstruct_alive(parent))) {
                 if (!throw_runtime_error(
                         "cstruct 数据已释放（free/free_all 之后不能再读写字段）", line)) return -1;
                 frame = &vm.frames[vm.frame_cnt - 1];
@@ -790,7 +789,7 @@
             }
             ObjCStruct* parent = view->cstruct;
             // ★ 2026-11-11（压测）：父对象已 free ⇒ 报错（同读路径）
-            if (unlikely(!parent->data || (parent->owner_arr && !parent->owner_arr->data))) {
+            if (unlikely(!vm_cstruct_alive(parent))) {
                 if (!throw_runtime_error(
                         "cstruct 数据已释放（free/free_all 之后不能再读写字段）", line)) return -1;
                 frame = &vm.frames[vm.frame_cnt - 1];

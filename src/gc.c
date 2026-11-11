@@ -973,6 +973,8 @@ void gc_scan_children(Object* obj) {
             ObjCStruct* cs = (ObjCStruct*)obj;
             gc_mark_object((Object*)cs->def);
             if (cs->owner_arr) gc_mark_object((Object*)cs->owner_arr);
+            // 嵌套字段视图回指父实例（判定"父 free 了没有"）⇒ 同样要保活
+            if (cs->parent_obj) gc_mark_object((Object*)cs->parent_obj);
             break;
         }
         // C 结构体数组：标记结构体定义

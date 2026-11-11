@@ -18,6 +18,8 @@ import ffi
 
 cstruct V3 { f32 x  f32 y  f32 z }
 cstruct Mat { V3 cols[2]  i32 id }
+cstruct Inner { i32 v  f32 w }
+cstruct Outer { Inner inner  i32 id }
 
 struct Holder { V3 v = null  int n = 0 }
 
@@ -95,6 +97,23 @@ main() {
     assert_eq(z.len(), 0, "空数组 len()")
     z.free_all()
     z.free_all()                     // 不该崩
+
+    // ---- G) 嵌套 cstruct 字段视图逃逸：父 free 后读写都必须抛 ----
+    //   原先这条路径**两种**都静默：读拿到旧值，写更糟 —— 往已释放内存写（堆破坏）。
+    //   判活靠 ObjCStruct.parent_obj 链（父实例 free ⇒ 子视图失效）。
+    var o = Outer.malloc()
+    o.inner.v = 42
+    var inner = o.inner
+    assert_eq(inner.v, 42, "嵌套视图正常读")
+    o.free()
+
+    caught = false
+    try { var _tv = inner.v } catch e9 { caught = true }
+    assert_eq(caught, true, "父 free 后嵌套视图读必须抛异常（不许静默读旧值）")
+
+    caught = false
+    try { inner.v = 7 } catch e10 { caught = true }
+    assert_eq(caught, true, "父 free 后嵌套视图写必须抛异常（不许往已释放内存写）")
 
     print("test_cstruct_view_semantics passed")
 }

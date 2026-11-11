@@ -428,7 +428,7 @@
                 //   `h.v.x` 编译成 GET_FIELD(h,"v") + OP_INDEX(view,"x")（不是 OP_GET_FIELD）
                 //   ⇒ 只挂在 12_fields_object.inc 的检查覆盖不到，实测 free_all 之后
                 //   **静默读到旧值 9**。这里补上与 CSTRUCT_VIEW_ALIVE_CHECK 同一口径的检查。
-                if (unlikely((co->owner_arr && !co->owner_arr->data) || !co->data)) {
+                if (unlikely(!vm_cstruct_alive(co))) {
                     if (!throw_runtime_error(
                             "cstruct 数据已释放（free/free_all 之后不能再读写字段）", line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
@@ -489,7 +489,7 @@
                 }
                 ObjCStruct* parent = view->cstruct;
                 // ★ 2026-11-11（压测）：父对象可能已 free（free/free_all 之后）
-                if (unlikely(!parent->data || (parent->owner_arr && !parent->owner_arr->data))) {
+                if (unlikely(!vm_cstruct_alive(parent))) {
                     if (!throw_runtime_error(
                             "cstruct 数据已释放（free/free_all 之后不能再读写字段）", line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
@@ -824,7 +824,7 @@
                 }
                 ObjCStruct* co = (ObjCStruct*)val_as_obj(obj);
                 // ★ 2026-11-11（压测）：写路径同样要拦"父数组已释放 / 实例已 free"
-                if (unlikely((co->owner_arr && !co->owner_arr->data) || !co->data)) {
+                if (unlikely(!vm_cstruct_alive(co))) {
                     if (!throw_runtime_error(
                             "cstruct 数据已释放（free/free_all 之后不能再读写字段）", line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
@@ -873,7 +873,7 @@
                 }
                 ObjCStruct* parent = view->cstruct;
                 // ★ 2026-11-11（压测）：父对象可能已 free（free/free_all 之后）
-                if (unlikely(!parent->data || (parent->owner_arr && !parent->owner_arr->data))) {
+                if (unlikely(!vm_cstruct_alive(parent))) {
                     if (!throw_runtime_error(
                             "cstruct 数据已释放（free/free_all 之后不能再读写字段）", line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
