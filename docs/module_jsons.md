@@ -229,6 +229,12 @@ jsons.encode([s])        // [{"name":"晴天","dur":269}]
 > 现在按字段名写成 JSON 对象；转义走的是同一条 `json_encode_string`，
 > 所以字段里含 `"` / 换行也是合法 JSON。
 
+> ⚠ **NaN / ±Infinity 会抛错（2026-11-11 起）**：JSON 没有这三个字面量。此前直接走
+> `val_format_float` ⇒ 输出裸 `nan` / `inf` / `-inf`（**非法 JSON**，本库 `decode` 也读不回来）。
+> 现在 `encode` 明确抛「编码失败：浮点值是 NaN 或 Infinity…」——编码前先把非有限值
+> 替换成有限数或 `null`。对应地，`decode` 的非法数字统一走"解析失败 ⇒ `null`"
+> （此前 `decode("-inf")` 会被 `strtod` 静默读成 `0.0`）。
+
 ---
 
 ### `fill(target, json)`（2026-11-09 新增，P1 记录类型）

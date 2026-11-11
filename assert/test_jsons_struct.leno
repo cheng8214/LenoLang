@@ -196,5 +196,35 @@ main() {
     jsons.fill(okb, "{\"ints\":[1,2]}")
     assert_eq(jsons.encode(okb.ints), "[1,2]", "全是 int ⇒ 原样（不重建数组）")
 
+    // ==================== ⑥ 非有限浮点：NaN / ±Infinity（2026-11-11）====================
+    //   encode 以前走 val_format_float ⇒ 裸 `nan` / `inf` / `-inf`（**非法 JSON**，
+    //   连本库 decode 都读不回来）；decode 那边 `-inf` 还会被 strtod 静默读成 0.0。
+    //   现在：encode 明确抛错；decode 的非法数字统一走"解析失败 ⇒ null"契约。
+    assert_eq(jsons.decode("inf"), null, "decode(inf) ⇒ null（非法 JSON）")
+    assert_eq(jsons.decode("-inf"), null, "decode(-inf) ⇒ null（以前静默 0.0）")
+    assert_eq(jsons.decode("-"), null, "decode(裸 '-') ⇒ null")
+    assert_eq(jsons.decode("-1.5"), -1.5, "合法负数不受影响")
+
+    var wide = 1e308
+    var inf6 = wide * 10.0
+    var nan6 = inf6 - inf6
+    var encThrew = ""
+    try {
+        var _s = jsons.encode(inf6)
+        encThrew = "no"
+    } catch e {
+        encThrew = "yes"
+    }
+    assert_eq(encThrew, "yes", "encode(Infinity) 抛错（不再输出裸 inf）")
+    encThrew = ""
+    try {
+        var _s2 = jsons.encode([1.0, nan6])
+        encThrew = "no"
+    } catch e2 {
+        encThrew = "yes"
+    }
+    assert_eq(encThrew, "yes", "嵌套/数组里的 NaN 也抛错")
+    assert_eq(jsons.encode(1.5), "1.5", "有限浮点照常")
+
     print("test_jsons_struct passed\n")
 }

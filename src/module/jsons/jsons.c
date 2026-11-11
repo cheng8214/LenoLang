@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <inttypes.h>
 #include <errno.h>
+#include <math.h>
 
 // 前向声明
 extern ObjString* dict_key_to_string(Value key);
@@ -213,7 +214,21 @@ static JsonToken json_lexer_read_number(JsonLexer* lexer) {
     }
     
     token.len = (lexer->input + lexer->pos) - token.start;
-    
+
+    // ★ 2026-11-11：数字里必须**至少有一位数字** —— 否则 `-`（`-inf` 的前缀）这类
+    //   非法 JSON 会被 strtod 静默读成 0.0（实测 `decode("-inf")` ⇒ 0.0，
+    //   而 `decode("inf")` ⇒ null；同一个非法输入给出两种结果）。现在一律
+    //   JSON_TOKEN_ERROR ⇒ decode 走"解析失败 ⇒ null"这条既有契约。
+    int has_digit = 0;
+    for (int i = 0; i < token.len; i++) {
+        if (isdigit((unsigned char)token.start[i])) { has_digit = 1; break; }
+    }
+    if (!has_digit) {
+        token.type = JSON_TOKEN_ERROR;
+        token.len = 0;
+        return token;
+    }
+
     char* num_str = malloc(token.len + 1);
     strncpy(num_str, token.start, token.len);
     num_str[token.len] = '\0';
@@ -1010,7 +1025,8 @@ static Value jsons_fill_func(int argc, Value* args) {
 // JSON Encoder
 
 // `depth` = 当前嵌套层数（超 JSON_MAX_DEPTH 就置 *err 并停止递归）；
-// `err`   = 溢出标志，由顶层统一检查后抛错。
+// `err`   = 错误标志：0 正常 / 1 深度溢出 / 2 浮点非有限（NaN、±Infinity），
+//           由顶层统一检查后抛错（2 是 2026-11-11 加的，见 VAL_FLOAT 分支）。
 //   ⚠ 不能在这里直接 `native_throw_error` —— 它**不跳转**（只登记异常，见 native.h:446），
 //     调用后递归会继续走下去 ⇒ 照样爆栈。
 static void json_encode_value(StringBuilder* sb, Value value, int indent, bool pretty,
@@ -1304,9 +1320,20 @@ static void json_encode_value(StringBuilder* sb, Value value, int indent, bool p
         case VAL_INT:
             sb_append_int(sb, val_as_num(value));
             break;
-        case VAL_FLOAT:
-            sb_append_float(sb, val_as_num(value));
+        case VAL_FLOAT: {
+            // ★ 2026-11-11：NaN / ±Infinity **不是合法 JSON**。此前直接走
+            //   val_format_float ⇒ 输出裸 `nan` / `inf` / `-inf`（实测），
+            //   连本库自己的 decode 都读不回来（inf ⇒ null、-inf ⇒ 0.0）——
+            //   又是"静默交出坏数据"。这里置 2，由顶层抛错（与深度溢出同一收尾路径）。
+            double num = val_as_num(value);
+            if (isnan(num) || isinf(num)) {
+                *err = 2;
+                sb_append_cstr(sb, "null");   // 占位；顶层会据此抛错，不会把它交出去
+                break;
+            }
+            sb_append_float(sb, num);
             break;
+        }
         case VAL_OBJ:
             switch (val_as_obj(value)->type) {
                 case OBJ_BIGINT: {
@@ -1357,6 +1384,19 @@ static Value json_encode_overflow(void) {
     return val_null();
 }
 
+// 浮点非有限（NaN / ±Infinity）时的统一收尾：JSON 没有这三个字面量，
+// 直接写出去就是**非法 JSON**（且本库 decode 也读不回来）。宁可明确报错。
+static Value json_encode_nonfinite(void) {
+    native_throw_error("编码失败：浮点值是 NaN 或 Infinity —— JSON 不支持这三个值；"
+                       "请在编码前替换成有限数或 null");
+    return val_null();
+}
+
+// 顶层统一收尾：err 为 1 / 2 时分别抛对应错误（由调用方先 sb_free）
+static Value json_encode_fail(int err) {
+    return err == 2 ? json_encode_nonfinite() : json_encode_overflow();
+}
+
 // jsons.encode
 static Value jsons_encode_func(int argc, Value* args) {
     (void)argc;
@@ -1366,7 +1406,7 @@ static Value jsons_encode_func(int argc, Value* args) {
     
     int enc_err = 0;
     json_encode_value(&sb, args[0], 0, false, 0, &enc_err);
-    if (enc_err) { sb_free(&sb); return json_encode_overflow(); }
+    if (enc_err) { sb_free(&sb); return json_encode_fail(enc_err); }
     
     ObjString* result = str_new(sb.data, sb.len);
     sb_free(&sb);
@@ -1383,7 +1423,7 @@ static Value jsons_encode_pretty_func(int argc, Value* args) {
     
     int enc_err = 0;
     json_encode_value(&sb, args[0], 0, true, 0, &enc_err);
-    if (enc_err) { sb_free(&sb); return json_encode_overflow(); }
+    if (enc_err) { sb_free(&sb); return json_encode_fail(enc_err); }
     
     ObjString* result = str_new(sb.data, sb.len);
     sb_free(&sb);
