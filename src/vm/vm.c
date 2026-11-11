@@ -1427,6 +1427,8 @@ static inline int vm_cstruct_alive(ObjCStruct* co) {
     while (co && depth++ < 32) {
         if (!co->data) return 0;
         if (co->owner_arr) return co->owner_arr->data != NULL;
+        // 来自 `Ptr[cstruct]` 的下标（`p[0]`）：指针被 ffi.free 之后视图必须失效
+        if (co->owner_ptr) return !co->owner_ptr->freed;
         if (!co->parent_obj) return 1;
         co = co->parent_obj;
     }

@@ -975,6 +975,8 @@ void gc_scan_children(Object* obj) {
             if (cs->owner_arr) gc_mark_object((Object*)cs->owner_arr);
             // 嵌套字段视图回指父实例（判定"父 free 了没有"）⇒ 同样要保活
             if (cs->parent_obj) gc_mark_object((Object*)cs->parent_obj);
+            // `Ptr[cstruct]` 下标出来的视图回指那个 FFI 指针（free 后失效）
+            if (cs->owner_ptr) gc_mark_object((Object*)cs->owner_ptr);
             break;
         }
         // C 结构体数组：标记结构体定义
@@ -992,8 +994,13 @@ void gc_scan_children(Object* obj) {
             break;
         case OBJ_FFI_LIBRARY:
             break;
-        case OBJ_FFI_POINTER:
+        case OBJ_FFI_POINTER: {
+            // 元素类型是 cstruct 时持有定义指针（`Ptr[V3]`）⇒ 必须保活，
+            // 否则 read_at 用一个被回收的 def 算元素大小
+            ObjFFIPointer* fp = (ObjFFIPointer*)obj;
+            if (fp->elem_cdef) gc_mark_object((Object*)fp->elem_cdef);
             break;
+        }
         case OBJ_FFI_CALLBACK: {
             ObjFFICallback* cb = (ObjFFICallback*)obj;
             gc_mark_value(cb->func_val);

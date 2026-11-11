@@ -1,0 +1,67 @@
+// cstruct 的 **C 布局整型字段/方法**参与算术时，结果类型必须是 int（2026-11-11）
+//
+// 背景：`arr[i].id`（i32）与 `V3.size()`（i32）在二元运算的类型推导里不被认作 int
+//   ⇒ 一路落到末尾兜底 `result = FLOAT`，于是
+//     `int t = arr[i].id + 1`        → 「期望 int，实际 float」
+//     `ffi.malloc(V3.size() * 3)`    → 「ffi.malloc 参数 1 类型错误: 期望 int，但传入 float」
+//   值本身是对的，只有**静态类型**错 —— 属于"能编译不过/不能编译，但不是真错"的坑。
+//
+// 修法：AST_BINOP 推断入口把 C 布局整型（i8..u64 / c_int..c_size）归一成 int
+//   （与枚举同一手法；口径走 type_is_integer_kind）。
+import ffi
+
+cstruct V3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+cstruct Rec {
+    i32 id
+    i64 big
+    u8 flag
+    f32 ratio
+}
+
+main() {
+    // ---- A) 方法返回的 i32 参与算术 ----
+    int sz = V3.size() * 3
+    assert_eq(sz, 36, "V3.size() * 3 是 int")
+    int off = V3.offset_of("y") + 4
+    assert_eq(off, 8, "offset_of + int 是 int")
+    var p = ffi.malloc(V3.size() * 2)          // 期望 int 形参
+    assert_true(p != null, "ffi.malloc(V3.size() * 2) 应可编译")
+    ffi.free(p)
+
+    // ---- B) 字段的 i32 / i64 / u8 参与算术 ----
+    var r = Rec.malloc_array(2)
+    r[0].id = 7
+    r[0].big = 8
+    r[0].flag = 3
+    r[1].ratio = 1.5
+
+    int a = r[0].id + 1
+    assert_eq(a, 8, "i32 字段 + 1")
+    int b = r[0].id * 2 - 4
+    assert_eq(b, 10, "i32 字段 * 2 - 4")
+    int c = r[0].flag + 100
+    assert_eq(c, 103, "u8 字段 + 100")
+    // i64 也当整数（值不溢出 int48 时）
+    int d = _int(r[0].big) + 1
+    assert_eq(d, 9, "i64 字段经 _int 再算")
+
+    // ---- C) 浮点字段仍然是 float ----
+    float f = r[1].ratio * 2.0
+    assert_eq(f, 3.0, "f32 字段参与算术仍是 float")
+    float f2 = r[1].ratio + r[0].id       // float + int → float
+    assert_eq(f2, 8.5, "float + int 仍是 float")
+
+    // ---- D) 比较 / 位运算不受影响 ----
+    assert_true(r[0].id < 8, "i32 比较")
+    assert_true(r[0].id == 7, "i32 等值比较")
+    int e = r[0].id & 3
+    assert_eq(e, 3, "i32 位与")
+
+    r.free_all()
+    print("test_cstruct_int_arith passed")
+}

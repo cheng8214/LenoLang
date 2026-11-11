@@ -659,6 +659,12 @@ static int verify_one(const Chunk* c, int pos, int cap,
             size = endp - pos;
             break;
         }
+        // ★ 2026-11-11（Ptr[cstruct]）：iABx —— A 是寄存器，Bx 是类型名的常量索引
+        case OP_SET_PTR_CDEF: {
+            REG_CHK(a);
+            CONST_CHK(bx);
+            break;
+        }
 
         // --- 协程 ---
         case OP_AWAIT:

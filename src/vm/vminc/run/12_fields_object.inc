@@ -39,6 +39,23 @@
         }                                                                              \
     } while (0)
 
+    // cstruct **数组**（或数组字段视图）被当成**单个实例**访问时的专用文案。
+    //   原先统一落到 VM_MSG_FIELD_NEEDS_STRUCT（"这个值不是 struct 实例…跨线程…"），
+    //   对"明明是数组"的接收者误导性很强。实测来源：`func f(V3 v)` 传
+    //   `V3.malloc_array(n)` 的结果、或 `V3 v = arr; v.x`。
+    #define VM_FIELD_NOT_INSTANCE_GUARD(objv)                                         \
+    do {                                                                              \
+        if (unlikely(val_is_obj(objv) &&                                              \
+                     (val_as_obj(objv)->type == OBJ_CSTRUCT_ARRAY ||                  \
+                      val_as_obj(objv)->type == OBJ_CSTRUCT_ARRAY_VIEW))) {           \
+            if (!throw_runtime_error(                                                 \
+                    "这是 cstruct **数组**（malloc_array / 数组字段的结果），不是单个实例：" \
+                    "请用 `a[i].字段名` 访问元素字段", line)) return -1;               \
+            frame = &vm.frames[vm.frame_cnt - 1];                                     \
+            DISPATCH();                                                               \
+        }                                                                             \
+    } while (0)
+
     #define VM_FIELD_READ_BODY(idx_expr)                                              \
     {                                                                                 \
         int a = READ_A(), b = READ_B();                                               \
@@ -62,6 +79,7 @@
             R(a) = vm_cstruct_field_read(co, c);                                      \
             DISPATCH();                                                               \
         }                                                                             \
+        VM_FIELD_NOT_INSTANCE_GUARD(obj);                                             \
         if (unlikely(val_as_obj(obj)->type != OBJ_STRUCT)) {                           \
             if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;     \
             frame = &vm.frames[vm.frame_cnt - 1];                                     \
@@ -136,6 +154,7 @@
             cstruct_set_field_value(co, c, nv);                                       \
             DISPATCH();                                                               \
         }                                                                             \
+        VM_FIELD_NOT_INSTANCE_GUARD(obj);                                             \
         if (unlikely(val_as_obj(obj)->type != OBJ_STRUCT)) {                          \
             if (!throw_runtime_error("字段赋值需要结构体对象", line)) return -1;      \
             frame = &vm.frames[vm.frame_cnt - 1];                                     \
@@ -244,6 +263,7 @@
             R(a) = val_float(csum);
             DISPATCH();
         }
+        VM_FIELD_NOT_INSTANCE_GUARD(obj);
         if (unlikely(val_as_obj(obj)->type != OBJ_STRUCT)) {
             if (!throw_runtime_error(VM_MSG_FIELD_NEEDS_STRUCT, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
@@ -901,6 +921,33 @@
         const uint8_t* spec = frame->ip;
         ptr_annotate_elem(R(a), spec);
         frame->ip += type_spec_size(spec);   // 自定界：与发射端 / 反汇编端同一份长度实现
+        DISPATCH();
+    }
+    // OP_SET_PTR_CDEF A Bx：`Ptr[cstruct]` 的元素类型标注
+    //   Bx = 类型名字符串的常量索引；在这里（有 chunk + 常量表）就把定义解析好存进对象 ——
+    //   `ffi.read_at` 在 ffi 层执行、没有 chunk 上下文，之后只能靠这个指针算元素大小。
+    LABEL(OP_SET_PTR_CDEF): {
+        int a = READ_A();
+        int bx = READ_Bx();
+        Value v = R(a);
+        if (val_is_obj(v) && val_as_obj(v)->type == OBJ_FFI_POINTER) {
+            const char* nm = NULL;
+            if (bx >= 0 && bx < frame->chunk->const_cnt) {
+                Value cv = frame->chunk->constants[bx];
+                if (val_is_obj(cv) && val_as_obj(cv)->type == OBJ_STRING) {
+                    nm = ((ObjString*)val_as_obj(cv))->chars;
+                }
+            }
+            if (nm) {
+                ObjCStructDef* cdef = cstruct_def_find(nm);
+                ObjFFIPointer* fp = (ObjFFIPointer*)val_as_obj(v);
+                if (!fp->freed && cdef) {
+                    fp->element_type = TYPE_CSTRUCT;
+                    fp->elem_cdef = cdef;
+                }
+                // 找不到定义（类型来自别的模块且尚未注册）⇒ 不标，read_at 会给出明确报错
+            }
+        }
         DISPATCH();
     }
     // OP_SET_DECLARED_FACE A Bx: R[A] 若是 struct 实例，设置 declared_face = K[Bx]

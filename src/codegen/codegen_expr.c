@@ -148,6 +148,14 @@ void emit_type_spec_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int line) 
 //   复合元素 → OP_SET_PTR_SPEC（带完整类型子树：`Ptr[Ptr[u8]]` 的第二层要留住）
 void emit_ptr_elem_annotation(CodeGen* gen, int reg, TypeInfo* elem, int line) {
     if (!elem) return;
+    // 元素是 **cstruct**：名字要在 VM 侧解析成 ObjCStructDef（ffi.read_at 没有 chunk
+    // 上下文，算不了元素大小）⇒ 走专门的 OP_SET_PTR_CDEF（iABx + 名字常量）。
+    if (elem->kind == TYPE_CSTRUCT && elem->struct_name) {
+        int nc = make_constant(gen, val_obj((Object*)str_copy(elem->struct_name,
+                                                             (int)strlen(elem->struct_name))));
+        emit_reg_iABx(gen, OP_SET_PTR_CDEF, reg, nc, line);
+        return;
+    }
     int composite = (elem->kind == TYPE_PTR_GENERIC || elem->kind == TYPE_ARRAY ||
                      elem->kind == TYPE_DICT || elem->kind == TYPE_STRUCT ||
                      elem->kind == TYPE_FACE || elem->kind == TYPE_ENUM);

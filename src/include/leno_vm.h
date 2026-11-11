@@ -576,6 +576,14 @@ typedef enum {
     //     OP_SET_PTR_ELEM_TYPE（既有字节码逐位不变）。
     OP_SET_PTR_SPEC,     // iABC + 类型规格   R[A] 是 FFI 指针时设元素类型规格
 
+    // ★ 2026-11-11（Ptr[cstruct] 支持）：把元素类型是 **cstruct** 的指针标上定义。
+    //   为什么单独一条而不是走 OP_SET_PTR_SPEC：规格里的 struct 名字是 **chunk 常量索引**，
+    //   而 `ffi.read_at` 在 ffi 层执行、**没有 chunk 上下文** ⇒ 必须在 VM 侧（有 chunk +
+    //   常量表）就把 `ObjCStructDef*` 解析好存进指针对象，read_at 才能按元素大小造视图。
+    //   编码：iABx（A = 目标寄存器，Bx = 类型名字符串的常量索引）。
+    //   语义：R[A] 若是 FFI 指针 ⇒ element_type = TYPE_CSTRUCT、elem_cdef = 解析结果。
+    OP_SET_PTR_CDEF,     // iABx   R[A].elem_cdef = cstruct_def_find(K[Bx])
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

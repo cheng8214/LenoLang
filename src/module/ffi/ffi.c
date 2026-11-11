@@ -1597,6 +1597,24 @@ static Value ffi_read_at_func(int argc, Value* args) {
         case TYPE_F64:   case TYPE_FLOAT:                  elem_size = 8; break;
         case TYPE_PTR_GENERIC: case TYPE_PTR: case TYPE_STR8: case TYPE_STR16:
             elem_size = sizeof(void*); break;
+        // ★ 2026-11-11（Ptr[cstruct]）：元素是 cstruct ⇒ 大小由定义决定（C 布局）
+        case TYPE_CSTRUCT:
+            if (!ptr->elem_cdef) {
+                native_throw_error("Ptr[cstruct] 缺少元素类型信息（请写成 `Ptr[类型名]`）");
+                return val_null();
+            }
+            elem_size = (size_t)ptr->elem_cdef->total_size;
+            if (elem_size == 0) {
+                native_throw_error("Ptr[cstruct] 的元素类型大小为 0");
+                return val_null();
+            }
+            break;
+        // 普通 struct / face / enum 是 **GC 引用**，不是 C 布局 ⇒ 不能当指针元素
+        case TYPE_STRUCT: case TYPE_FACE: case TYPE_ENUM:
+            native_throw_error(
+                "Ptr[普通 struct] 不支持：普通 struct/face/enum 是 GC 引用、不是 C 布局。"
+                "要按连续内存访问请改用 cstruct（`cstruct V3 { f32 x f32 y f32 z }` + `Ptr[V3]`）");
+            return val_null();
         default:
             native_throw_error("read_at 不支持的元素类型");
             return val_null();
@@ -1693,6 +1711,18 @@ static Value ffi_read_at_func(int argc, Value* args) {
             }
             return val_obj((Object*)ret_ptr);
         }
+        // ★ 2026-11-11（Ptr[cstruct]）：返回**非拥有视图**（直接指向那元素内存），
+        //   可以继续 `p[0].字段名` 读写。生命周期挂在指针上（owner_ptr）：ffi.free 之后
+        //   vm_cstruct_alive 会判定失效 ⇒ 明确报错，不静默读写野内存。
+        case TYPE_CSTRUCT: {
+            ObjCStruct* view = (ObjCStruct*)gc_alloc(sizeof(ObjCStruct), OBJ_CSTRUCT);
+            if (!view) { native_throw_error("内存不足"); return val_null(); }
+            view->def = ptr->elem_cdef;
+            view->data = (uint8_t*)ptr->ptr + offset;
+            view->owns_memory = 0;
+            view->owner_ptr = ptr;
+            return val_obj((Object*)view);
+        }
         default:
             native_throw_error("read_at 不支持的元素类型");
             return val_null();
@@ -1726,6 +1756,24 @@ static Value ffi_write_at_func(int argc, Value* args) {
         case TYPE_F64:   case TYPE_FLOAT:                  elem_size = 8; break;
         case TYPE_PTR_GENERIC: case TYPE_PTR: case TYPE_STR8: case TYPE_STR16:
             elem_size = sizeof(void*); break;
+        // ★ 2026-11-11（Ptr[cstruct]）：元素是 cstruct ⇒ 大小由定义决定（C 布局）
+        case TYPE_CSTRUCT:
+            if (!ptr->elem_cdef) {
+                native_throw_error("Ptr[cstruct] 缺少元素类型信息（请写成 `Ptr[类型名]`）");
+                return val_null();
+            }
+            elem_size = (size_t)ptr->elem_cdef->total_size;
+            if (elem_size == 0) {
+                native_throw_error("Ptr[cstruct] 的元素类型大小为 0");
+                return val_null();
+            }
+            break;
+        // 同 read_at：普通 struct/face/enum 是 GC 引用，不是 C 布局
+        case TYPE_STRUCT: case TYPE_FACE: case TYPE_ENUM:
+            native_throw_error(
+                "Ptr[普通 struct] 不支持：普通 struct/face/enum 是 GC 引用、不是 C 布局。"
+                "要按连续内存访问请改用 cstruct（`cstruct V3 { f32 x f32 y f32 z }` + `Ptr[V3]`）");
+            return val_null();
         default:
             native_throw_error("write_at 不支持的元素类型");
             return val_null();
@@ -1804,6 +1852,25 @@ static Value ffi_write_at_func(int argc, Value* args) {
                 val = NULL;
             }
             memcpy(addr, &val, sizeof(void*)); break;
+        }
+        // ★ 2026-11-11（Ptr[cstruct]）：整元素拷贝（写入对象本身的 C 布局数据）
+        case TYPE_CSTRUCT: {
+            Value nv = args[2];
+            if (!val_is_obj(nv) || val_as_obj(nv)->type != OBJ_CSTRUCT) {
+                native_throw_error("Ptr[cstruct] 的元素赋值需要同类型的 cstruct 值");
+                return val_null();
+            }
+            ObjCStruct* src = (ObjCStruct*)val_as_obj(nv);
+            if (!src->data) {
+                native_throw_error("源 cstruct 已释放，不能赋值");
+                return val_null();
+            }
+            if (src->def != ptr->elem_cdef) {
+                native_throw_error("Ptr[cstruct] 的元素赋值类型不一致");
+                return val_null();
+            }
+            memcpy(addr, src->data, elem_size);
+            break;
         }
         default:
             native_throw_error("write_at 不支持的元素类型");

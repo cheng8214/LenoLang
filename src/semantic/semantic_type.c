@@ -1567,6 +1567,27 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 right = conv;
             }
 
+            // ★ 2026-11-11（压测）：**C 布局整型**（i8..u64 / c_int..c_size）同样归一成 int。
+            //   它们来自 cstruct 字段（`arr[i].id`）或类型方法（`V3.size()` /`offset_of`），
+            //   而下方的数值推导链只认 TYPE_INT ⇒ `int * 字面量` 一路落到末尾兜底
+            //   `result = FLOAT`：实测 `int a = V3.size() * 3`、`int t = arr[i].id + 1`
+            //   都报「期望 int，实际 float」（值本身是对的，只是**类型**错）。
+            //   口径与 `type_is_integer_kind` 一致（枚举 / C 布局整型都算整数）。
+            if (left && left->kind != TYPE_INT && left->kind != TYPE_BIGINT &&
+                type_is_integer_kind(left->kind)) {
+                TypeInfo* conv = type_new(TYPE_INT);
+                conv->nullable = left->nullable;
+                type_free(left);
+                left = conv;
+            }
+            if (right && right->kind != TYPE_INT && right->kind != TYPE_BIGINT &&
+                type_is_integer_kind(right->kind)) {
+                TypeInfo* conv = type_new(TYPE_INT);
+                conv->nullable = right->nullable;
+                type_free(right);
+                right = conv;
+            }
+
             // ★ T11：**确定是 null** 的操作数 ⇒ 编译错误
             //   （`var a = null; a + 1` / `int? a = null; a + 1`；不确定的走下面的警告 + VM 运行期检查）
             if (is_arith_or_bitop_for_null_check(ast->u.binop.op)) {

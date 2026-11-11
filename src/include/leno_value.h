@@ -82,6 +82,7 @@ typedef struct Object {
 // 前向声明
 struct VM;
 struct Chunk;
+typedef struct ObjCStructDef ObjCStructDef;   // 定义在后面（ObjFFIPointer 要存 elem_cdef）
 
 // FFI 指针对象（提前定义，供 val_is_truthy 使用）
 typedef struct ObjFFIPointer {
@@ -91,6 +92,11 @@ typedef struct ObjFFIPointer {
     int owned;                         // 是否由我们分配（1=是，0=否）
     int freed;                         // 是否已释放（防止 double-free 和 use-after-free）
     TypeKind element_type;             // Ptr[T] 中 T 的类型，TYPE_PTR 表示未指定（通用 Ptr）
+    // ★ 2026-11-11：元素是 **cstruct** 时解析出的定义（`Ptr[V3]`）。
+    //   为什么单独存：read_at 要按它算元素大小并造视图，而规格里的 struct 名字是
+    //   **chunk 常量索引**，ffi 层没有 chunk 上下文 ⇒ 在标注时（VM 有 chunk）就解析好。
+    //   ⚠ GC 必须 mark（gc.c 的 OBJ_FFI_POINTER 分支）。
+    ObjCStructDef* elem_cdef;
     // ★ 2026-11-11（Ptr 设计复查）：元素类型的**完整规格**（NULL = 只有上面那一层）。
     //   上面那个 TypeKind 只能表达一层，`Ptr[Ptr[u8]]` 的第二层（u8）就丢了。
     //   规格格式与 OP_TYPE_CHECK_SPEC 完全一致（见 codegen_expr.c 的 emit_type_spec /
@@ -618,8 +624,8 @@ typedef struct CStructFieldHashEntry {
     struct CStructFieldHashEntry* next;  // 链表处理冲突
 } CStructFieldHashEntry;
 
-// C 布局结构体定义对象
-typedef struct {
+// C 布局结构体定义对象（具名 tag：ObjFFIPointer 的 elem_cdef 要前置引用它）
+typedef struct ObjCStructDef {
     Object header;
     char* name;                    // 结构体名称
     CStructFieldInfo* fields;      // 字段信息数组
@@ -667,6 +673,10 @@ typedef struct ObjCStruct {
     //   `e.v = 7` 更糟：**静默往已释放内存里写**（堆破坏）。有了回指就能逐级判断存活。
     //   ⚠ 同样必须被 GC mark（gc.c 的 OBJ_CSTRUCT 分支）。
     struct ObjCStruct* parent_obj;
+    // ★ 2026-11-11：视图来自 `Ptr[cstruct]` 的下标（`p[0]`）时指向那个 FFI 指针 ——
+    //   指针 `ffi.free()` 后（freed = 1）视图必须失效，否则又是一条静默 UAF。
+    //   ⚠ GC 同样要 mark。
+    struct ObjFFIPointer* owner_ptr;
 } ObjCStruct;
 
 // C 布局结构体数组字段视图对象

@@ -1,0 +1,75 @@
+// `Ptr[cstruct]` 的下标解引用（2026-11-11）
+//
+// 背景：`ffi.read_at / write_at` 的元素类型表原先没有 CSTRUCT ⇒ `Ptr[V3] p` 只能压成
+//   `p[0].字段` 报「read_at 不支持的元素类型」，等于"能声明、不能用"。
+//
+// 实现：新增 opcode `OP_SET_PTR_CDEF`（iABx）—— 在 VM 侧（有 chunk + 常量表）把类型名
+//   解析成 `ObjCStructDef*` 存进指针对象（`ObjFFIPointer.elem_cdef`），read_at 才能按
+//   C 布局算元素大小并造**非拥有视图**（指向那元素内存，`.字段` 直接读写原地）。
+//
+// 本用例钉住：
+//   ① `p[i].字段` 读写 → 写进原内存（元素偏移按 cstruct 大小算）
+//   ② `p[i] = v` 整元素赋值 → **值拷贝**（改源不影响目标）
+//   ③ 与 `ffi.read_float / write_float` 两种视角一致
+//   ④ 越界 / 负下标 → 抛异常
+//   ⑤ 指针 `ffi.free` 之后，之前取出的视图**必须失效**（不许静默读写野内存）
+import ffi
+
+cstruct V3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+main() {
+    Ptr[V3] p = ffi.malloc(12 * 3)      // V3 是 3 个 f32 = 12 字节，留 3 个元素
+
+    // ---- ① 字段读写 ----
+    p[0].x = 1.0
+    p[0].y = 2.0
+    p[1].z = 3.5
+    assert_eq(p[0].x, 1.0, "p[0].x 写入")
+    assert_eq(p[0].y, 2.0, "p[0].y 写入")
+    assert_eq(p[1].z, 3.5, "p[1].z 写入（元素偏移按 cstruct 大小）")
+    assert_eq(p[1].x, 0.0, "p[1].x 未写为 0（确认没有串元素）")
+
+    // ---- ② 整元素赋值（值拷贝）----
+    var v = V3.malloc()
+    v.x = 7.0
+    v.y = 8.0
+    v.z = 9.0
+    p[2] = v
+    assert_eq(p[2].x, 7.0, "p[2] = v 后 x")
+    assert_eq(p[2].z, 9.0, "p[2] = v 后 z")
+    v.x = 100.0
+    assert_eq(p[2].x, 7.0, "整元素赋值是值拷贝（改源不影响目标）")
+
+    // ---- ③ 与 ffi 视角一致 ----
+    assert_eq(ffi.read_float(p, 0), 1.0, "ffi 视角读到 p[0].x")
+    ffi.write_float(p, 4, 42.0)                 // p[0].y
+    assert_eq(p[0].y, 42.0, "ffi 写后 cstruct 视角读到")
+
+    // ---- ④ 越界 / 负下标 ----
+    bool caught = false
+    try { p[3].x = 1.0 } catch e1 { caught = true }
+    assert_eq(caught, true, "p[3] 越界必须抛")
+
+    caught = false
+    try { var _q = p[-1].x } catch e2 { caught = true }
+    assert_eq(caught, true, "p[-1] 负下标必须抛")
+
+    // ---- ⑤ free 后视图失效 ----
+    var keep = p[0]
+    ffi.free(p)
+
+    caught = false
+    try { var _r = keep.x } catch e3 { caught = true }
+    assert_eq(caught, true, "指针 free 后视图读必须抛（不许静默读野内存）")
+
+    caught = false
+    try { keep.x = 1.0 } catch e4 { caught = true }
+    assert_eq(caught, true, "指针 free 后视图写必须抛")
+
+    v.free()
+    print("test_ptr_cstruct passed")
+}
