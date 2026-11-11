@@ -454,4 +454,11 @@ void native_throw_error(const char* msg);
 
 Value ffi_reload_library(const char* path);
 
+// ★ 2026-11-11（P1）：`Ptr[T]` 的下标读写（VM 的 OP_INDEX / OP_INDEX_SET 用）。
+//   语义唯一来源是 ffi 的 read_at / write_at（薄包装，见 ffi.c 的说明）——
+//   元素宽度、越界口径、装箱拆箱都与 `ffi.read_at(p, i)` 逐条一致。
+//   ⚠ 调用后必须检查 vm.has_exception 并走 throw_pending_exception（同 OP_CALL_NATIVE）。
+Value ffi_vm_index_read(Value ptr_val, Value idx_val);
+Value ffi_vm_index_write(Value ptr_val, Value idx_val, Value val);
+
 #endif

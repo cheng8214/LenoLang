@@ -333,11 +333,17 @@ extern Object* gc_alloc(size_t size, ObjType type);
         } \
     } while(0)
 
-/* 边界检查宏（对 owned 指针有效） */
+/* 边界检查宏（对 owned 指针有效）
+ * ★ 2026-11-11（P1 附带发现）：**必须先判 offset < 0**。
+ *   原实现只判 `(size_t)offset + access_size > size` —— 而负偏移转 size_t 会变成
+ *   巨大的数，再 + access_size 就**回绕**：`q[-1] = v`（offset = -4, size = 16）
+ *   得到 (size_t)(-4)+4 == 0，`0 > 16` 为假 ⇒ **检查静默放行**，于是往 ptr-4 写。
+ *   实测：`Ptr[f32] q = ffi.malloc(16); q[-1] = 1.0` 直接 0xC0000005 崩溃。
+ *   负下标现在与正向越界走同一条报错（"内存访问越界"）。 */
 #define CHECK_BOUNDS(ptr, offset, access_size) \
     do { \
         if ((ptr)->owned && (ptr)->size > 0) { \
-            if ((size_t)(offset) + (access_size) > (ptr)->size) { \
+            if ((offset) < 0 || (size_t)(offset) + (access_size) > (ptr)->size) { \
                 native_throw_error("内存访问越界"); \
                 return val_null(); \
             } \
@@ -1770,6 +1776,31 @@ static Value ffi_write_at_func(int argc, Value* args) {
             return val_null();
     }
     return val_null();
+}
+
+/* ===== Ptr[T] 下标（`p[i]`）的 VM 入口（2026-11-11，P1）=====
+ * 为什么是"薄包装"而不是另写一份分派：`p[i]` 与 `ffi.read_at / write_at` **必须是同一份
+ * 语义** —— 元素宽度（element_type → sizeof(T)）、越界口径（owned 指针按 size 判）、
+ * 类型装箱/拆箱，三件事任何一处漂移都会变成"同一个下标，read_at 报越界、p[i] 不报"
+ * 这种最难查的错。报错文案也一律沿用上面两个实现（native_throw_error）。
+ *
+ * 调用约定：VM 侧调用后**必须**检查 vm.has_exception，并按 throw_pending_exception
+ * 统一转成 VM 异常（与 OP_CALL_NATIVE 那条路径同口径，见 06_call.inc）。
+ * 为什么不在 VM 里复制一段 switch：同上 —— 复制一份就等于埋一份"改一处漏三处"。
+ */
+Value ffi_vm_index_read(Value ptr_val, Value idx_val) {
+    Value args[2];
+    args[0] = ptr_val;
+    args[1] = idx_val;
+    return ffi_read_at_func(2, args);
+}
+
+Value ffi_vm_index_write(Value ptr_val, Value idx_val, Value val) {
+    Value args[3];
+    args[0] = ptr_val;
+    args[1] = idx_val;
+    args[2] = val;
+    return ffi_write_at_func(3, args);
 }
 
 /* ffi.read_string(ptr, off) - 读取以 null 结尾的字符串 */

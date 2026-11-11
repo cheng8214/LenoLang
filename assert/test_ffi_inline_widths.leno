@@ -125,13 +125,17 @@ func test_errors() {
     ffi.write_uint16(p, 6, 0x1234)
     assert_eq(ffi.read_uint16(p, 6), 0x1234)
 
-    // 负偏移：判据是 (size_t)offset + access_size > size（无符号算术），
-    // 所以 -1 回绕成 0 不会报错（任何实现都必须如此，不许"顺手加检查"），
-    // 而 -9 回绕后是天文数字，必须报越界。
+    // 负偏移：**一律判越界**（2026-11-11 修正契约）。
+    //   原实现只判 `(size_t)offset + access_size > size` —— 负偏移转 size_t 后确实是
+    //   天文数字，但**再加 access_size 会回绕**：`q[-1]`（offset = -4、size = 16）
+    //   得到 (size_t)(-4)+4 == 0，`0 > 16` 为假 ⇒ 检查静默放行 ⇒ 往 ptr-4 写。
+    //   实测 `Ptr[f32] q = ffi.malloc(16); q[-1] = 1.0` 直接 0xC0000005 崩溃。
+    //   此前这里写着"任何实现都必须如此，不许顺手加检查"——那条契约本身是个
+    //   **内存破坏口子**（读路径 -1 恰好读到 p[0] 只是运气），已废除；
+    //   现在负偏移与正向越界走同一条报错。
     caught = false
-    var before = ffi.read_byte(p, -1)
-    assert_eq(caught, false)
-    assert_true(before >= 0)
+    try { ffi.read_byte(p, -1) } catch e { caught = true; assert_true(e.msg.find("越界") >= 0) }
+    assert_eq(caught, true)
 
     caught = false
     try { ffi.read_byte(p, -9) } catch e { caught = true; assert_true(e.msg.find("越界") >= 0) }

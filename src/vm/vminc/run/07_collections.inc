@@ -499,6 +499,28 @@
                 }
                 DISPATCH();
             }
+            // ★ 2026-11-11（P1）：`Ptr[T]` 的下标读 —— `p[i]` 等价于 `ffi.read_at(p, i)`。
+            //   此前**完全没有这个分支** ⇒ 静态类型明明是 Ptr[T]，却要跑到**运行期**才报
+            //   「下标访问: 对象不支持索引」（codegen 也拦不住：它只推断类型、不拦语法）。
+            //   语义唯一来源是 ffi 的 read_at（薄包装 ffi_vm_index_read，见 ffi.c）。
+            //   报错口径（空指针/已释放/越界/元素类型不支持）全部沿用那边，不在此另造文案。
+            if (ot == OBJ_FFI_POINTER) {
+                if (unlikely(!val_is_int(idx))) {
+                    if (!throw_runtime_error("指针下标必须是整数（Ptr[T] 按元素索引，不是字节偏移）", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                Value out = ffi_vm_index_read(obj, idx);
+                if (unlikely(vm.has_exception)) {
+                    // 与 OP_CALL_NATIVE 同口径：原生只登记了裸消息 ⇒ 统一转成 VM 异常
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    if (!throw_pending_exception(line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                R(a) = out;
+                DISPATCH();
+            }
         }
 
         if (!throw_runtime_error("下标访问: 对象不支持索引", line)) return -1;
@@ -820,6 +842,24 @@
                 CStructFieldInfo* vf = &parent->def->fields[view->field_index];
                 uint8_t* elem_addr = parent->data + vf->offset + (ci * view->element_size);
                 vm_c_layout_write_scalar(elem_addr, view->element_type, R(a));
+                DISPATCH();
+            }
+            // ★ 2026-11-11（P1）：`Ptr[T]` 的下标写 —— `p[i] = v` 等价于
+            //   `ffi.write_at(p, i, v)`。理由与上面读路径那段逐条相同（同一份语义，
+            //   薄包装 ffi_vm_index_write）。越界 / 空指针 / 已释放都在那边报。
+            if (ot == OBJ_FFI_POINTER) {
+                if (unlikely(!val_is_int(idx))) {
+                    if (!throw_runtime_error("指针下标必须是整数（Ptr[T] 按元素索引，不是字节偏移）", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                ffi_vm_index_write(obj, idx, R(a));
+                if (unlikely(vm.has_exception)) {
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    if (!throw_pending_exception(line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
                 DISPATCH();
             }
         }

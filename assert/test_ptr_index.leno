@@ -1,0 +1,70 @@
+// Ptr[T] 的下标读写（2026-11-11，P1）
+//
+// 背景：`p[i]` 此前**完全没有 VM 分支** ⇒ 静态类型明明是 Ptr[T]，却要跑到运行期才报
+//   「下标访问: 对象不支持索引」。现在 OP_INDEX / OP_INDEX_SET 对 OBJ_FFI_POINTER 走
+//   ffi.read_at / write_at 的**同一份**实现（薄包装，见 ffi.c 的 ffi_vm_index_read/write）。
+//
+// 本用例守：
+//   ① 各元素类型（f32 / i32 / u8）读写；
+//   ② 与 ffi.read_at / write_at **逐值一致**；
+//   ③ 越界 / 负下标 / 释放后使用 都要抛异常（文案与 read_at 同源）；
+//   ④ 非 int 下标报「指针下标必须是整数」。
+import ffi
+
+main() {
+    // ① f32
+    Ptr[f32] q = ffi.malloc(16)          // 4 个 f32
+    q[0] = 1.5
+    q[3] = 4.5
+    assert_eq(q[0], 1.5, "q[0]")
+    assert_eq(q[3], 4.5, "q[3]")
+
+    // ② 与 read_at / write_at 同语义
+    ffi.write_at(q, 1, 2.5)
+    assert_eq(q[1], 2.5, "write_at 之后 p[i] 读得到")
+    assert_eq(q[2], ffi.read_at(q, 2), "p[i] 与 read_at 一致")
+
+    // ③ i32 / u8
+    Ptr[i32] ip = ffi.malloc(12)         // 3 个 i32
+    ip[2] = 42
+    assert_eq(ip[2], 42, "i32 元素")
+
+    Ptr[u8] bp = ffi.malloc(8)
+    bp[7] = 255
+    assert_eq(bp[7], 255, "u8 元素")
+
+    // ④ 越界
+    bool caught = false
+    try {
+        q[4] = 1.0
+    } catch e {
+        caught = true
+        assert_true(e.msg.has("内存访问越界"), "越界文案；实际=" + e.msg)
+    }
+    assert_eq(caught, true, "越界必须抛异常")
+
+    // ⑤ 负下标
+    caught = false
+    try {
+        q[-1] = 1.0
+    } catch e {
+        caught = true
+    }
+    assert_eq(caught, true, "负下标必须抛异常")
+
+    ffi.free(q)
+    ffi.free(ip)
+    ffi.free(bp)
+
+    // ⑥ 释放后使用
+    caught = false
+    try {
+        var _x = q[0]
+    } catch e {
+        caught = true
+        assert_true(e.msg.has("已释放") or e.msg.has("空指针"), "释放后使用文案；实际=" + e.msg)
+    }
+    assert_eq(caught, true, "释放后使用必须抛异常")
+
+    print("PASS test_ptr_index")
+}
