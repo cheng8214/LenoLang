@@ -1,0 +1,53 @@
+// Ptr[T] 的元素类型标注要在**所有值流动位置**存活（2026-11-11 压测）
+//
+// 背景：`Ptr[T]` 的 T 不写在裸 `void*` 里，靠 `OP_SET_PTR_ELEM_TYPE` 在"值落到一个
+// 静态类型已知的位置"时补标注。原先只有 var_decl 补 ⇒ 下列写法里 `p[0]` 会报
+// 「write_at 需要 Ptr[T] 类型指针（如 Ptr[u32]），不支持无类型 Ptr」：
+//   · `var b = makeBuf(8)`（函数返回 Ptr[u8]）—— 只差一个类型标注就静默不能用
+//   · `useBuf(ffi.malloc(8))`（实参传给声明 Ptr[u8] 的形参）
+// 现在 5 个位置全覆盖：var_decl / 变量赋值 / 结构体字段 / 函数返回 / 调用实参。
+import ffi
+
+cstruct Holder {
+    Ptr[u8] buf
+    i32 n
+}
+
+func makeBuf(int n): Ptr[u8] {
+    return ffi.malloc(n)
+}
+
+func useBuf(Ptr[u8] p): int {
+    p[0] = 7
+    return p[0]
+}
+
+main() {
+    // ① var_decl
+    Ptr[u8] p1 = ffi.malloc(4)
+    p1[0] = 1
+    assert_eq(p1[0], 1, "var_decl 的 Ptr[u8]")
+
+    // ② 变量赋值（重新 malloc 后 element_type 不能丢）
+    Ptr[u8] p2 = ffi.malloc(4)
+    p2 = ffi.malloc(8)
+    p2[0] = 2
+    assert_eq(p2[0], 2, "变量赋值的 Ptr[u8]")
+
+    // ③ 函数返回
+    var p3 = makeBuf(4)
+    p3[0] = 3
+    assert_eq(p3[0], 3, "函数返回的 Ptr[u8]")
+
+    // ④ 调用实参（裸 Ptr 直接传给声明 Ptr[u8] 的形参）
+    assert_eq(useBuf(ffi.malloc(4)), 7, "实参位置的 Ptr[u8]")
+
+    // ⑤ cstruct 字段
+    var h = Holder.malloc()
+    h.buf = ffi.malloc(4)
+    h.buf[0] = 5
+    assert_eq(h.buf[0], 5, "结构体字段的 Ptr[u8]")
+    h.free()
+
+    print("test_ptr_elem_type passed")
+}

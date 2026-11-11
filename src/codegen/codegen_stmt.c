@@ -1395,6 +1395,16 @@ static void emit_cast_for_return(CodeGen* gen, Ast* ret_ast, int reg, int line) 
     TypeInfo* rt = fn->u.func.return_type;
     if (!rt) return;
     emit_cast_for_target(gen, rt->kind, ret_ast, reg, line);
+    // ★ 2026-11-11（奇葩组合压测）：返回 `Ptr[T]` 时补发 element_type 标注。
+    //   否则 `func makeBuf(n): Ptr[u8] { return ffi.malloc(n) }` + `var b = makeBuf(8)`
+    //   拿到的是**裸 Ptr**（裸 void* 自身不带元素类型）⇒ `b[0]` 报
+    //   「write_at 需要 Ptr[T] 类型指针」—— 而写成 `Ptr[u8] b = makeBuf(8)` 就正常，
+    //   两条写法只差一个标注。标注点与 var_decl / 变量赋值同源（都是"值落到一个
+    //   静态类型已知的位置"）。
+    if (rt->kind == TYPE_PTR_GENERIC && rt->element_type) {
+        reg_encode_iABC(gen->chunk, OP_SET_PTR_ELEM_TYPE, reg,
+                        (int)rt->element_type->kind, 0, line);
+    }
 }
 
 // 本次 return 是否需要按声明类型插 CAST（判据与 emit_cast_for_return 完全一致）
@@ -1405,6 +1415,10 @@ static int return_cast_needed(CodeGen* gen, Ast* ret_ast) {
     if (fn->u.func.is_ctor) return 0;
     TypeInfo* rt = fn->u.func.return_type;
     if (!rt) return 0;
+    // ★ 2026-11-11（压测）：返回 `Ptr[T]` 时**必须**走临时寄存器 —— 补发的
+    //   OP_SET_PTR_ELEM_TYPE 是就地改对象字段，直接落在变量寄存器上会改掉那个
+    //   变量本身的 element_type（`return q` 之后 q 被别人当别的元素类型用就错了）。
+    if (rt->kind == TYPE_PTR_GENERIC && rt->element_type) return 1;
     return assign_cast_needed(gen, rt->kind, ret_ast);
 }
 

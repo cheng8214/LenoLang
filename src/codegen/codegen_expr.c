@@ -2153,17 +2153,34 @@ static int is_async_callee(Ast* ast, Ast* fdef) {
 //    ast->u.call.arg_eval 记录了**书写顺序**的 (节点, 目标槽)，这里照它求值；
 //   没有命名实参时为 NULL ⇒ 退回原位顺序循环（零行为变化）。
 // ----------------------------------------------------------------------------
-static void gen_call_args_to(CodeGen* gen, Ast* ast, int base) {
+static void gen_call_args_to(CodeGen* gen, Ast* ast, int base, Ast* fdef) {
     if (ast->u.call.arg_eval && ast->u.call.arg_eval_slots &&
         ast->u.call.arg_eval_count > 0) {
         for (int e = 0; e < ast->u.call.arg_eval_count; e++) {
             gen_expr_to(gen, ast->u.call.arg_eval[e],
                         base + 1 + ast->u.call.arg_eval_slots[e]);
         }
-        return;
+    } else {
+        for (int i = 0; i < ast->u.call.args.count; i++) {
+            gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
+        }
     }
-    for (int i = 0; i < ast->u.call.args.count; i++) {
-        gen_expr_to(gen, ast->u.call.args.items[i], base + 1 + i);
+
+    // ★ 2026-11-11（奇葩组合压测）：形参是 `Ptr[T]` 时给实参补发 element_type 标注。
+    //   裸 `void*` 自己不带元素类型：`useBuf(ffi.malloc(8))`（形参 `Ptr[u8]`）在函数体里
+    //   `p[0]` 会报「需要 Ptr[T] 类型指针」—— 而先把实参存进 `Ptr[u8]` 变量再传就正常。
+    //   标注点与 var_decl / 变量赋值 / 函数返回同源（值落到静态类型已知的位置）。
+    //   命名实参已由语义阶段按形参名重排（args / arg_eval_slots 都是形参序）⇒ 按槽位对齐。
+    if (fdef && fdef->kind == AST_FUNC_DEF && fdef->u.func.param_types) {
+        int pc = fdef->u.func.pcnt;
+        int na = (int)ast->u.call.args.count;
+        for (int i = 0; i < pc && i < na; i++) {
+            TypeInfo* pt = fdef->u.func.param_types[i];
+            if (pt && pt->kind == TYPE_PTR_GENERIC && pt->element_type) {
+                reg_encode_iABC(gen->chunk, OP_SET_PTR_ELEM_TYPE, base + 1 + i,
+                                (int)pt->element_type->kind, 0, ast->line);
+            }
+        }
     }
 }
 
@@ -2290,7 +2307,7 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
                     if (pt->kind != TYPE_INT && pt->kind != TYPE_FLOAT) { typed_ok = 0; break; }
                 }
 
-                gen_call_args_to(gen, ast, base);
+                gen_call_args_to(gen, ast, base, fdef);
                 expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
                 if (typed_ok) {
                     dce_note_slot_ref(ref->index);   // DCE：typed 直呼同样是对槽位的引用
@@ -2307,7 +2324,7 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
             }
             int base = reg_alloc_block(gen, expected + 1);
             emit_getglobalfunc_to(gen, base, ref->index, ast->line);
-            gen_call_args_to(gen, ast, base);
+            gen_call_args_to(gen, ast, base, fdef);
             expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
             // ★ async 函数：调用不直接执行函数体，而是建协程并立刻返回 Future
             if (is_async_callee(ast, fdef)) {
@@ -2332,7 +2349,7 @@ void gen_call(CodeGen* gen, Ast* ast, int dst) {
 
     int base = reg_alloc_block(gen, expected + 1);
     gen_expr_to(gen, callee, base);
-    gen_call_args_to(gen, ast, base);
+    gen_call_args_to(gen, ast, base, fdef);
     expected = fill_default_args(gen, fdef, 0, nargs, base, ast->line);
     // async 函数（含局部 async 函数）：走协程创建路径，返回 Future
     if (is_async_callee(ast, fdef)) {
@@ -2404,7 +2421,9 @@ int gen_call_multi(CodeGen* gen, Ast* ast, int nresults, int line) {
         } else {
             reg_encode_iABC(gen->chunk, OP_GET_METHOD, base, base, nc, line);
         }
-        gen_call_args_to(gen, ast, base);
+        // 方法调用：形参表含 self（param_types[0]），而实参从 base+1 起、不含 self
+        // ⇒ 槽位与形参索引**错开一位**，这里不补 Ptr[T] 标注（传 NULL），避免标错位置。
+        gen_call_args_to(gen, ast, base, NULL);
         expected = fill_default_args(gen, mdef, 0, nargs, base, line);
         emit_call(gen, base, expected, nresults, line);
         return base;
@@ -2421,7 +2440,7 @@ int gen_call_multi(CodeGen* gen, Ast* ast, int nresults, int line) {
     if (nresults > block) block = nresults;   // 同上：结果区必须落在块内
     int base = reg_alloc_block(gen, block);
     gen_expr_to(gen, callee, base);
-    gen_call_args_to(gen, ast, base);
+    gen_call_args_to(gen, ast, base, fdef);
     expected = fill_default_args(gen, fdef, 0, nargs, base, line);
     emit_call(gen, base, expected, nresults, line);
     return base;
