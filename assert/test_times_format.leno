@@ -1,0 +1,60 @@
+// test_times_format.leno —— `times.format` 的字面量 / 长度 / 说明符（2026-11-11 钉住）
+//
+// 修前三个**静默错值**（都不报错，只是给出空串或坏字节）：
+//   ① 格式串里含**非 ASCII 字面量** ⇒ 整串返回 ""（文档示例 `"%Y年%m月%d日"` 正好踩中）。
+//      根因：实现把整串交给 MSVC 的 strftime，它在 C locale 下校验编码，UTF-8 多字节非法 ⇒ 返回 0。
+//   ② 输出超过 256 字节 ⇒ 同样返回 ""（长模板静默变空）。
+//   ③ `%Z`（时区名）拿到本地代码页字节（中文系统是 GBK），而 Leno 的 string 一律 UTF-8
+//      ⇒ 字符串里是非法 UTF-8（打印成 "�й���׼ʱ��"）。
+// 现在：逐字节扫描格式串，字面量原样拷贝，只有 `%X` 交给 strftime（Windows 上再转 UTF-8），
+// 输出走可增长缓冲；未知说明符 / 结尾裸 `%` / 1970 年之前的时间戳都**明确报错**。
+import times
+import strings
+
+main() {
+    // ① 中文模板（文档示例）与 ASCII 模板
+    assert_eq(times.format(0, "%Y年%m月%d日"), "1970年01月01日", "①a 中文格式串不再返回空串")
+    assert_eq(times.format(0, "%Y/%m/%d %H:%M"), "1970/01/01 08:00", "①b ASCII 模板不受影响")
+    assert_eq(times.format(0, "纯文本"), "纯文本", "①c 纯字面量原样输出")
+    assert_eq(times.format(0, ""), "", "①d 空格式 ⇒ 空串")
+    assert_eq(times.format(0, "%%"), "%", "①e %% ⇒ 单个百分号")
+
+    // ② 长输出（> 256 字节）不再整串丢失
+    var f = ""
+    for 0 : 39 to _i { f = f + "%c" }
+    assert_eq(times.format(0, f).len(), 960, "② 40 段 %c = 960 字符（可增长缓冲）")
+
+    // ③ %Z 必须是合法 UTF-8：按码点切开再拼回应完全相同
+    var z = times.format(0, "%z|%Z")
+    var rebuilt = ""
+    for z.to_codepoints() to cp { rebuilt = rebuilt + strings.from_codepoint(cp) }
+    assert_eq(rebuilt, z, "③ %Z 输出是合法 UTF-8（码点往返）")
+    assert_true(z.len() > 0, "③b %Z 非空")
+
+    // ④ 糟糕输入必须报错（以前静默给 ""）
+    var caught = ""
+    try {
+        var _a = times.format(0, "%Q")
+        caught = "no"
+    } catch e {
+        caught = "yes"
+    }
+    assert_eq(caught, "yes", "④a 未知说明符抛错")
+    caught = ""
+    try {
+        var _b = times.format(0, "abc%")
+        caught = "no"
+    } catch e2 {
+        caught = "yes"
+    }
+    assert_eq(caught, "yes", "④b 结尾裸 % 抛错")
+    var negThrew = false
+    try {
+        var _c = times.format(-1, "%Y")
+    } catch e3 {
+        negThrew = true
+    }
+    assert_true(negThrew, "④c 1970 年之前的负时间戳抛错（不再是空串）")
+
+    print("test_times_format passed")
+}

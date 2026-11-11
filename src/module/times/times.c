@@ -1,6 +1,8 @@
 #include "include/lenolang.h"
 #include "include/native.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -104,6 +106,77 @@ static Value native_times_now(int argCount, Value* args) {
     return val_int_safe((int64_t)t);
 }
 
+// ==================== times.format 的实现（2026-11-11 重写）====================
+//
+// 旧实现是"一次 strftime 渲到底"，有三个**静默错值**（都不是报错，而是给空串 / 坏字节）：
+//   ① 格式串里含**非 ASCII 字面量**（文档示例 `"%Y年%m月%d日"`）⇒ 整串返回 ""。
+//      MSVC 的 strftime 会校验格式串的编码，UTF-8 多字节序列在 C locale 下非法 ⇒ 返回 0。
+//   ② 输出超过 256 字节 ⇒ strftime 返回 0 ⇒ 同样返回 ""（长模板静默变空）。
+//   ③ `%Z`（时区名）拿到的是**本地代码页**字节（实测中文系统是 GBK），而 Leno 的 string
+//      一律 UTF-8 ⇒ 字符串里出现非法 UTF-8（打印成 `�й���׼ʱ��`）。
+//
+// 现在：自己逐字节扫描格式串 —— 字面量原样拷贝（不动 UTF-8），只有 `%X` 才交给
+// strftime 渲（单条说明符不可能超长），Windows 上再把该条结果从 ACP 转成 UTF-8；
+// 输出用可增长缓冲。任何真没法渲的情况（未知说明符 / 结尾裸 `%` / 1970 年之前）都
+// **明确报错**，不再静默返回空串。
+typedef struct {
+    char* data;
+    int len;
+    int cap;
+} TimesFmtBuf;
+
+static int tfb_reserve(TimesFmtBuf* b, int extra) {
+    if (!b) return 0;
+    int need = b->len + extra + 1;
+    if (need <= b->cap) return 1;
+    int ncap = b->cap > 0 ? b->cap : 64;
+    while (ncap < need) ncap *= 2;
+    char* nd = (char*)realloc(b->data, (size_t)ncap);
+    if (!nd) return 0;
+    b->data = nd;
+    b->cap = ncap;
+    return 1;
+}
+
+static void tfb_append(TimesFmtBuf* b, const char* s, int n) {
+    if (!b || !s || n <= 0) return;
+    if (!tfb_reserve(b, n)) return;
+    memcpy(b->data + b->len, s, (size_t)n);
+    b->len += n;
+    b->data[b->len] = '\0';
+}
+
+// strftime 的**单条说明符**产出：Windows 上是本地代码页字节（%Z / %A / %B / %p …）⇒ 转 UTF-8。
+// 纯数字/ASCII 的说明符转完与原样一致（恒等），所以不必区分是哪一条。
+static void tfb_append_locale(TimesFmtBuf* b, const char* s, int n) {
+#ifdef _WIN32
+    if (n <= 0) return;
+    int wlen = MultiByteToWideChar(CP_ACP, 0, s, n, NULL, 0);
+    if (wlen <= 0) { tfb_append(b, s, n); return; }        // 转不了就原样给（不丢内容）
+    wchar_t* w = (wchar_t*)malloc(sizeof(wchar_t) * (size_t)wlen);
+    if (!w) { tfb_append(b, s, n); return; }
+    MultiByteToWideChar(CP_ACP, 0, s, n, w, wlen);
+    int ulen = WideCharToMultiByte(CP_UTF8, 0, w, wlen, NULL, 0, NULL, NULL);
+    if (ulen <= 0) {
+        free(w);
+        tfb_append(b, s, n);
+        return;
+    }
+    char* u8 = (char*)malloc((size_t)ulen);
+    if (!u8) {
+        free(w);
+        tfb_append(b, s, n);
+        return;
+    }
+    WideCharToMultiByte(CP_UTF8, 0, w, wlen, u8, ulen, NULL, NULL);
+    tfb_append(b, u8, ulen);
+    free(u8);
+    free(w);
+#else
+    tfb_append(b, s, n);
+#endif
+}
+
 // 格式化时间戳
 static Value native_times_format(int argCount, Value* args) {
     (void)argCount;
@@ -123,17 +196,63 @@ static Value native_times_format(int argCount, Value* args) {
 #endif
     
     if (!tm_info) {
-        return val_obj((Object*)str_copy("", 0));
+        // 不再返回空串（那是"看着成功、其实是垃圾"）：说清楚是时间戳不行
+        native_throw_error("times.format: 该时间戳无法转换为本地时间"
+                           "（Windows 的 localtime 不支持 1970 年之前的负时间戳）");
+        return val_null();
     }
     
-    char buffer[256];
-    int result_len = strftime(buffer, sizeof(buffer), fmt, tm_info);
-    
-    if (result_len == 0) {
-        return val_obj((Object*)str_copy("", 0));
+    TimesFmtBuf out = { NULL, 0, 0 };
+    if (!tfb_reserve(&out, 64)) {
+        native_throw_error("times.format: 内存不足");
+        return val_null();
+    }
+    out.data[0] = '\0';
+
+    const char* p = fmt;
+    while (*p) {
+        if (*p != '%') {
+            // 字面量（含 UTF-8 多字节）原样拷贝：UTF-8 的续字节都 >= 0x80，
+            // 不可能等于 '%' ⇒ 逐字节扫描对 UTF-8 是安全的
+            tfb_append(&out, p, 1);
+            p++;
+            continue;
+        }
+        if (p[1] == '\0') {
+            free(out.data);
+            native_throw_error("times.format: 格式串以 '%' 结尾（要输出百分号请写 '%%'）");
+            return val_null();
+        }
+        if (p[1] == '%') {
+            tfb_append(&out, "%", 1);
+            p += 2;
+            continue;
+        }
+        // `%Ec` / `%Ow` 这类带修饰符的也算一条（strftime 支持，别把它拆坏）
+        int spec_len = ((p[1] == 'E' || p[1] == 'O') && p[2] != '\0') ? 3 : 2;
+        char spec[4];
+        spec[0] = '%';
+        spec[1] = p[1];
+        spec[2] = (spec_len == 3) ? p[2] : '\0';
+        spec[3] = '\0';
+
+        char tmp[256];
+        size_t n = strftime(tmp, sizeof(tmp), spec, tm_info);
+        if (n == 0) {
+            char msg[128];
+            snprintf(msg, sizeof(msg),
+                     "times.format: 无法识别的格式说明符 '%s'（支持 C 标准 strftime 的说明符，"
+                     "要输出百分号请写 '%%'）", spec);
+            free(out.data);
+            native_throw_error(msg);
+            return val_null();
+        }
+        tfb_append_locale(&out, tmp, (int)n);
+        p += spec_len;
     }
     
-    ObjString* result = str_new(buffer, result_len);
+    ObjString* result = str_new(out.data ? out.data : "", out.len);
+    free(out.data);
     return val_obj((Object*)result);
 }
 
