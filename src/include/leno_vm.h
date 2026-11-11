@@ -1056,6 +1056,11 @@ struct Scope {
     int sym_capacity;         // 符号表容量
     int is_func;
     int is_loop;              // 作用域是否是循环作用域
+    // ★ 2026-11-11：switch 的 case 作用域。`break` 在 switch 里是**合法**的
+    //   （codegen 的 loop_head 把 switch 当 break 目标，见 codegen_stmt.c 的 AST_BREAK），
+    //   但语义期此前只认 is_loop ⇒ `switch x { case 1 { break } }`（不在循环里）被误报
+    //   「break 不能用在循环外」✗。`continue` 仍然只认 is_loop（要跳过 switch 到真循环）。
+    int is_switch;
     int depth;
     int local_count;
     int param_count;

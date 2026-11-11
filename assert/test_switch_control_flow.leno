@@ -1,0 +1,101 @@
+// test_switch_control_flow.leno —— switch 的控制流语义（2026-11-11 钉住）
+//
+// Leno 的 switch **自己就是一个 break 目标**（见 codegen_stmt.c 的 AST_BREAK 注释）：
+//   · 每个 case 天然不穿透（匹配后执行完就离开 switch）；
+//   · case 里的 `break` ⇒ 离开**该 switch**；循环体里 switch 之后的语句**照常执行**，
+//     循环继续（这是"break 跳到最近的 break 目标"，与 C 的 switch 一致）；
+//   · `continue` 跳过 switch，作用于**外层循环**；
+//   · 不在循环、也不在 switch 里写 break ⇒ 编译期报错；
+//     此前语义期只认 is_loop ⇒ `switch x { case 1 { break } }`（无循环）被误报 ✗。
+// 这些行为此前文档没写、也没有用例钉住，改 codegen 时很容易被"顺手"改掉。
+
+main() {
+    // ① 不穿透：匹配 case 1 之后不会执行 case 2
+    var a = ""
+    int v = 1
+    switch v {
+        case 1 { a = a + "one" }
+        case 2 { a = a + "two" }
+        default { a = a + "d" }
+    }
+    assert_eq(a, "one", "① switch 不穿透")
+
+    // ② 区间（闭区间）与默认分支
+    var r = ""
+    Array[int] ns = [0, 9, 10, 99]
+    for ns to n {
+        switch n {
+            case 0 { r = r + "z" }
+            case 1:9 { r = r + "s" }
+            case 10 { r = r + "t" }
+            default { r = r + "b" }
+        }
+    }
+    assert_eq(r, "zstb", "② 区间 case 闭区间 + default")
+
+    // ③ break 只离开 switch：之后的 "x" 照常执行，循环继续到 i=3
+    var trace = ""
+    for 0 : 3 to i {
+        switch i {
+            case 1 { continue }          // continue 作用于**循环**
+            case 2 { break }             // break 只离开**switch**
+            default { trace = trace + _str(i) }
+        }
+        trace = trace + "x"
+    }
+    assert_eq(trace, "0xx3x", "③ continue 跳循环；break 只离开 switch，循环体后续照常")
+
+    // ④ while 里同理：k=5 的 break 只离开 switch ⇒ 还会补一个 "-"，循环跑到 6
+    int k = 0
+    var w = ""
+    while k < 6 {
+        k = k + 1
+        switch k {
+            case 2 { continue }
+            case 5 { break }
+            default { w = w + _str(k) }
+        }
+        w = w + "-"
+    }
+    assert_eq(w, "1-3-4--6-", "④ break 离开 switch 后 while 继续（k=5 也补了 '-'）")
+    assert_eq(k, 6, "④ 循环一直跑到 k == 6")
+
+    // ⑤ switch 里 break（**不在任何循环里**）必须合法：只离开 switch
+    var solo = ""
+    switch 1 {
+        case 0 { solo = solo + "zero" }
+        case 1 { solo = solo + "one"; break }
+        default { solo = solo + "d" }
+    }
+    assert_eq(solo, "one", "⑤ 无循环的 switch 里 break 合法且只离开 switch")
+
+    // ⑥ 嵌套 switch：内层 break 只离开内层
+    var nest = ""
+    for 0 : 1 to i {
+        switch i {
+            case 0 {
+                switch i {
+                    case 0 { nest = nest + "in" }
+                    default { nest = nest + "?" }
+                }
+                nest = nest + "+"
+            }
+            default { nest = nest + "o" }
+        }
+    }
+    assert_eq(nest, "in+o", "⑥ 嵌套 switch：内层执行完回到外层")
+
+    // ⑦ 字符串 switch
+    var s = ""
+    Array[string] cmds = ["add", "remove", "x"]
+    for cmds to c {
+        switch c {
+            case "add" { s = s + "A" }
+            case "remove" { s = s + "R" }
+            default { s = s + "?" }
+        }
+    }
+    assert_eq(s, "AR?", "⑦ 字符串 switch + default")
+
+    print("test_switch_control_flow passed")
+}

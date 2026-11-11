@@ -37,7 +37,7 @@ main() {
     break
 }
 ")
-    ce.expect_error(b1, "break 在循环外要报错", "'break' 不能用在循环外", 2)
+    ce.expect_error(b1, "break 在循环外要报错", "'break' 不能用在循环或 switch 外", 2)
 
     var b2 = dirs.join(work, "continue_outside.leno")
     files.write(b2, @"func f():int {
@@ -57,7 +57,7 @@ main() {
     f()
 }
 ")
-    ce.expect_error(b3, "闭包体内的 break 不属于外层循环", "'break' 不能用在循环外", 3)
+    ce.expect_error(b3, "闭包体内的 break 不属于外层循环", "'break' 不能用在循环或 switch 外", 3)
 
     // ---- B4：重复参数名 ----
     var d1 = dirs.join(work, "dup_param.leno")
@@ -1891,6 +1891,31 @@ main() { print(""x"") }
 ")
     ce.expect_error(gpCmpC, "约束 face 方法参数个数不匹配",
         "来自泛型约束 'F'", 3)
+
+    // ---- 2026-11-11：switch 是 break 目标（codegen 一直是这么做的，语义期漏了）----
+    //   正向：switch 里 break（**不在循环里**）合法；continue 仍需真循环
+    var b4 = dirs.join(work, "break_in_switch_ok.leno")
+    files.write(b4, @"main() {
+    var s = """"
+    switch 1 {
+        case 1 { s = ""one""; break }
+        default { s = ""d"" }
+    }
+    print(s)
+}
+")
+    ce.expect_ok(b4, "switch 里的 break 合法（离开 switch）", "one")
+
+    //   负向：switch 里 continue 但没有循环 ⇒ 仍报「循环外」
+    var b5 = dirs.join(work, "continue_in_switch.leno")
+    files.write(b5, @"main() {
+    switch 1 {
+        case 1 { continue }
+        default { print(""d"") }
+    }
+}
+")
+    ce.expect_error(b5, "switch 里 continue 无循环 ⇒ 报循环外", "'continue' 不能用在循环外", 3)
 
     print("=== test_diag_static_errors ALL passed ===")
 }

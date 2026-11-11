@@ -165,15 +165,25 @@
         case AST_CONTINUE: {
             // B3：循环外使用 break/continue——此前静默通过（编译不报错、运行期什么都不做）
             // 沿作用域链向上找循环作用域；先碰到函数边界（闭包体）即视为不在循环内
+            // ★ 2026-11-11：`break` 在 switch 的 case 里**合法**（codegen 把 switch 当
+            //   break 目标 ⇒ 离开该 switch）；此前只认 is_loop ⇒ `switch x { case 1 { break } }`
+            //   在不带循环的函数里被误报「break 不能用在循环外」✗。`continue` 仍只认循环。
             int in_loop = 0;
+            int in_switch = 0;
             for (Scope* sc = s->current; sc; sc = sc->parent) {
                 if (sc->is_loop) { in_loop = 1; break; }
+                if (sc->is_switch) { in_switch = 1; continue; }   // 不 break：continue 要越过 switch 找循环
                 if (sc->is_func) break;
             }
-            if (!in_loop) {
+            if (ast->kind == AST_CONTINUE) {
+                if (!in_loop) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                             "'continue' 不能用在循环外（只能出现在 for/while 循环体内）");
+                }
+            } else if (!in_loop && !in_switch) {
                 error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                         "'%s' 不能用在循环外（只能出现在 for/while 循环体内）",
-                         ast->kind == AST_BREAK ? "break" : "continue");
+                         "'break' 不能用在循环或 switch 外（只能出现在 for/while 循环体内，"
+                         "或 switch 的 case 分支里）");
             }
             break;
         }

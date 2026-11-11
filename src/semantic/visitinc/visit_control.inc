@@ -882,6 +882,9 @@
 
             for (int i = 0; i < ast->u.switch_.case_count; i++) {
                 Scope* case_scope = scope_new(s->current, 0);
+                // ★ 2026-11-11：case 作用域标记 is_switch ⇒ `break` 在 case 里合法
+                //   （离开 switch；见 visit_stmt.inc 的 AST_BREAK / codegen 的 loop_head）
+                case_scope->is_switch = 1;
                 s->current = case_scope;
 
                 // case is Type 模式：解析 guard_var 的符号引用，并修正类型（struct -> face/enum）
@@ -1071,6 +1074,7 @@
 
             if (ast->u.switch_.default_body) {
                 Scope* default_scope = scope_new(s->current, 0);
+                default_scope->is_switch = 1;   // 同 case：default 分支里的 break 也合法
                 s->current = default_scope;
                 if (ast->u.switch_.default_body->kind == AST_BLOCK) {
                     visit_list(s, &ast->u.switch_.default_body->u.block);

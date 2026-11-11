@@ -2584,6 +2584,14 @@ main() {
 }
 ```
 
+> **`break` / `continue` 在 switch 里的语义（2026-11-11 明确并钉住）**：
+> - switch **自己是一个 break 目标**：`case` 里写 `break` ⇒ **离开该 switch**
+>   （case 本来就不穿透，break 主要用于"提前离开"；循环体里 switch 之后的语句照常执行，
+>   循环继续）。与 C 的 switch 一致。
+> - `continue` **跳过 switch**，作用于外层循环（switch 不是循环）。
+> - 不在循环、也不在 switch 里写 `break` ⇒ 编译期报错（`continue` 同理，只认循环）。
+> - 回归用例：`assert/test_switch_control_flow.leno`。
+
 ### switch 区间 case `case 1:3`
 
 区间 case 用 **`:`** 表示**闭区间**（两端都含）—— 与切片 `arr[2:8]`、
@@ -4328,13 +4336,15 @@ var[string, int](a, b) = get_user()   // 错误：槽位 string 与返回值 int
 - 参数**只能是字面量**：字符串 / 数字 / `true` / `false` / 字符串数组。
   不能写表达式、不能引用变量 —— 注解是“编译期数据”，一旦允许求值就要设计
   “求值失败怎么办、按什么顺序求”，不值得
-- 可以叠加：
+- 可以叠加（语法上允许写多条注解；**目前只有 `@optkeys`**，所以暂时用不到叠加）：
 
 ```leno
 @optkeys(["w", "h"])
-@deprecated("改用 createBox")
 export func createHBox(Dict opts): HBox { ... }
 ```
+
+> ⚠ `@deprecated` 这类注解**尚未实现**（parser 会报「不认识的注解」）——
+> 想标废弃请在函数注释里写明，不要把 `@deprecated` 写进代码（会编译失败）。
 
 > 相邻的两个函数**互不影响**：`@optkeys` 只属于它下面那一个声明，
 > 后面没写注解的函数照旧不检查。
