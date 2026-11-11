@@ -69,6 +69,18 @@ static void defer_collect_vars(Ast* a, const char** names, int* count, int cap) 
                 defer_collect_vars(a->u.block.items[i], names, count, cap);
             }
             break;
+        // ★ 2026-11-11（P2 压测补）：`defer { if p != null { ffi.free(p) } }` —— 块形式
+        //   最常见的写法就是带 if 守卫；不认 AST_IF 就一个变量都收不到（实测漏报）。
+        case AST_IF:
+            defer_collect_vars(a->u.if_.cond, names, count, cap);
+            defer_collect_vars(a->u.if_.then, names, count, cap);
+            defer_collect_vars(a->u.if_.else_, names, count, cap);
+            break;
+        case AST_TRY:
+            defer_collect_vars(a->u.try_.try_body, names, count, cap);
+            defer_collect_vars(a->u.try_.catch_body, names, count, cap);
+            defer_collect_vars(a->u.try_.finally_body, names, count, cap);
+            break;
         default:
             break;      // 其余形状：不追（宁可漏报）
     }
