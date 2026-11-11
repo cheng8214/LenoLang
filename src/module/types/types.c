@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <limits.h>
+#include <math.h>    // `_int(float)` 判 NaN / Infinity（2026-11-11）
 #include <errno.h>   // `_int` 字符串分支要看 ERANGE（超出 int64 ⇒ 交 bigint ✓）
 
 // 辅助函数：获取值的基础类型
@@ -616,10 +617,21 @@ static Value native_to_int(int argCount, Value* args) {
             return value;
         case VAL_FLOAT: {
             // ⚠ 同款 32 位坑：`val_int((int)d)` 对超过 int32 的浮点数（如 `_int(1e12)`）是溢出 ✗
-            //   ⇒ 先夹到 int64 边界，再走 `val_int_safe`（超出 int48 ⇒ BigInt ✓）
+            //   ⇒ 走 int64，再交给 `val_int_safe`（超出 int48 ⇒ BigInt ✓）
             double d = val_as_num(value);
-            if (d >= 9.223372036854775e18) return val_bigint_from_int64(INT64_MAX);
-            if (d <= -9.223372036854775e18) return val_bigint_from_int64(INT64_MIN);
+            // ★ 2026-11-11：Leno 的 int 是**任意精度**，超出 int64 的浮点不能再夹到 INT64_MAX
+            //   （实测 `_int(1e20)` ⇒ 9223372036854775807 —— 与文档"_int() 保持原值、
+            //   不改变数值"直接矛盾，且是静默错值 ✗）。`%.0f` 给出该 double 的精确十进制
+            //   展开（double 本身就是整数），再交 bigint ⇒ 1e20 精确成 100000000000000000000 ✓
+            if (isnan(d) || isinf(d)) {
+                native_throw_error("_int() 无法把 NaN / Infinity 转成整数");
+                return val_int(0);
+            }
+            if (d >= 9223372036854775808.0 || d < -9223372036854775808.0) {
+                char buf[512];   // double 最大 ~1.8e308 ⇒ 309 位数字 + 符号
+                snprintf(buf, sizeof(buf), "%.0f", d);
+                return val_bigint_from_string(buf);
+            }
             return val_int_safe((int64_t)d);
         }
         case VAL_BOOL:

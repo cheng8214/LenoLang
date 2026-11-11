@@ -5,7 +5,8 @@
 //      `_int("9999999999999999")` 被**饱和**成 2147483647；而在 `long` 是 64 位的平台上
 //      `(int)` 又变成**截断**（同一份代码跨平台两种错法 ✗）。现为 `strtoll` + `val_int_safe` ✓
 //   ② `_int(float)`：原 `val_int((int)d)` ⇒ `_int(1000000000000.0)` = -2147483648 ✗。
-//      现先夹到 int64 边界再 `val_int_safe` ✓
+//      现走 int64 + `val_int_safe` ✓；**超出 int64 的浮点**（2026-11-11）不再夹到
+//      INT64_MAX，而是按 double 的精确十进制展开交 bigint（`_int(1e20)` 必须就是 10^20）✓
 //   ③ 模块级 `export var` 字面量预登记：原 `val_int((int)…)` ⇒ `export var BIG = 3000000000`
 //      跨模块读到 -2147483648 ✗（见 test_int_range_convert_mod.leno ✓）
 //
@@ -55,8 +56,35 @@ main() {
     assert_eq(_int(-1000000000000.0), -1000000000000)
     assert_eq(_int(3000000000.0), 3000000000)
     assert_eq(_int(140737488355328.0), 140737488355328)   // 刚过 int48
-    // 超出 int64：**刻意**夹到 int64 边界（不是截断、也不是饱和成 int32 ✗）
-    assert_eq(_int(9223372036854775808.0), 9223372036854775807)
+    // 超出 int64：按 double 的**精确十进制展开**给 bigint（2026-11-11 改）——
+    //   以前夹到 INT64_MAX，`_int(1e20)` 得到 9223372036854775807（静默错值 ✗）。
+    assert_eq(_str(_int(9223372036854775808.0)), "9223372036854775808")   // 2^63
+    assert_eq(_str(_int(1e20)), "100000000000000000000")
+    assert_eq(_str(_int(-1e20)), "-100000000000000000000")
+    // 1e30 的 double 真值不是 10^30：输出该 double 精确展开（301 位的 1e300 同理）
+    assert_eq(_str(_int(1e30)), "1000000000000000019884624838656")
+    assert_eq(_str(_int(1e300)).len(), 301)
+
+    // NaN / Infinity 不能转整数 ⇒ 明确报错（不静默给 0 / INT64_MIN）
+    var bigf = 1e308
+    var infv = bigf * 10.0
+    var nanv = infv - infv
+    var convThrew = ""
+    try {
+        var _i1 = _int(infv)
+        convThrew = "no"
+    } catch e {
+        convThrew = "yes"
+    }
+    assert_eq(convThrew, "yes", "_int(Infinity) 抛错")
+    convThrew = ""
+    try {
+        var _i2 = _int(nanv)
+        convThrew = "no"
+    } catch e2 {
+        convThrew = "yes"
+    }
+    assert_eq(convThrew, "yes", "_int(NaN) 抛错")
 
     // === ③ 模块级大字面量（修复前 m.BIG = -2147483648 ✗）===
     assert_eq(m.BIG, 3000000000)
