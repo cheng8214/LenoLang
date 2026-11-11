@@ -1,0 +1,106 @@
+// test_diag_cstruct_field.leno —— cstruct 字段名拼错的**编译期**校验
+//
+// 背景（2026-11-11 压测缺口）：`a[0].nope`（索引 + 字段名）走的是 AST_INDEX 这条路，
+// 而字段存在性检查原先只写在 AST_FIELD_ACCESS 那条（visit_field_access.inc 的 cstruct
+// 分支）⇒ 数组元素 / 嵌套访问的字段名拼错，**编译期一句不报**，运行期才炸
+// 「[错误] cstruct 不存在字段 'nope'」。字段名是字面量、接收者类型已知，编译期完全可判。
+//
+// 本用例钉两类判据：
+//   ① 该报的：写不存在字段 / 读不存在字段 / 单实例的字符串键形态
+//   ② **不该报的**（误报比漏报更糟）：合法字段、cstruct 内置方法（`v.free()` 的 callee
+//      也是 AST_INDEX）、数组方法（`a.free_all()` / `a.len()`）、`to_ptr()`、动态键 `v[k]`
+//
+// ⚠ 源码用 `strings.join` 拼（不能用 `@"…"`：那个形态遇到内容里的引号会提前结束）。
+// 行号 = TIER_IMPORT(1 行) + 空行(1 行) + V3_DEF(5 行) + body 内的序号。
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+var HEAD = "import ffi\n\n" + @"cstruct V3 {
+    f32 x
+    f32 y
+    f32 z
+}
+"
+// HEAD 占 7 行（import / 空行 / cstruct 5 行）⇒ body 第 1 行是文件第 8 行。
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_cstruct_field")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 写不存在的字段（数组元素）：body 第 3 行 ⇒ 文件第 10 行 ----
+    var f1 = dirs.join(work, "write_missing.leno")
+    files.write(f1, HEAD + strings.join([
+        "main() {",
+        "    var a = V3.malloc_array(2)",
+        "    a[0].nope = 1.0",
+        "}",
+        ""], "\n"))
+    ce.expect_error(f1, "写不存在的字段要编译期报错", "cstruct 'V3' 没有字段 'nope'", 10)
+
+    // ---- ② 读不存在的字段（数组元素）----
+    var f2 = dirs.join(work, "read_missing.leno")
+    files.write(f2, HEAD + strings.join([
+        "main() {",
+        "    var a = V3.malloc_array(2)",
+        "    var q = a[0].nope",
+        "    print(_str(q))",
+        "}",
+        ""], "\n"))
+    ce.expect_error(f2, "读不存在的字段要编译期报错", "cstruct 'V3' 没有字段 'nope'", 10)
+
+    // ---- ③ 单实例的字符串键形态（`v[\"nope\"]` 也是 AST_INDEX）----
+    var f3 = dirs.join(work, "single_missing.leno")
+    files.write(f3, HEAD + strings.join([
+        "main() {",
+        "    var v = V3.malloc()",
+        "    v[\"nope\"] = 1.0",
+        "}",
+        ""], "\n"))
+    ce.expect_error(f3, "单实例写不存在字段要编译期报错", "cstruct 'V3' 没有字段 'nope'", 10)
+
+    // ---- ④ 不该报：合法字段 + cstruct 方法 + 数组方法 + 动态键 ----
+    var ok1 = dirs.join(work, "ok_forms.leno")
+    files.write(ok1, HEAD + strings.join([
+        "main() {",
+        "    var a = V3.malloc_array(2)",
+        "    a[0].x = 1.0",
+        "    a[1].y = 2.0",
+        "    a[0].z = a[1].y",
+        "    print(_str(a[0].x + a[0].y + a[0].z))",
+        "    print(_str(a.len()))",
+        "    a.free_all()",
+        "",
+        "    var v = V3.malloc()",
+        "    v.x = 3.0",
+        "    print(_str(v.x))",
+        "    var p = v.to_ptr()",
+        "    print(type(p))",
+        "    print(_str(v.size()))",
+        "    var k = \"x\"",
+        "    print(_str(v[k]))",
+        "    v.free()",
+        "",
+        "    print(\"OK_FORMS\")",
+        "}",
+        ""], "\n"))
+    ce.expect_ok(ok1, "合法字段 / 方法 / 动态键都不得误报", "OK_FORMS")
+
+    // ---- ⑤ 不该报：`v.free()`（方法名同样解析不出字段索引）----
+    var ok2 = dirs.join(work, "ok_method.leno")
+    files.write(ok2, HEAD + strings.join([
+        "main() {",
+        "    var v = V3.malloc()",
+        "    v.x = 1.0",
+        "    v.free()",
+        "    print(\"OK_METHOD\")",
+        "}",
+        ""], "\n"))
+    ce.expect_ok(ok2, "cstruct 方法调用不得被当字段误报", "OK_METHOD")
+
+    dirs.delete(work)
+    print("test_diag_cstruct_field passed")
+}

@@ -2287,6 +2287,32 @@
                 }
             }
 
+            // ★ 2026-11-11（压测缺口）：**cstruct 字段名的编译期校验（AST_INDEX 这条路）**
+            //   `a[0].nope`（索引 + 字段名）原先**没有任何字段存在性检查** —— 那项检查只写在
+            //   AST_FIELD_ACCESS 那条（visit_field_access.inc 的 cstruct 分支）。
+            //   实测：`var q = a[0].nope` 与 `a[0].nope = 1.0` 都**编译期静默通过**，
+            //   运行期才报「cstruct 不存在字段 'nope'」—— 而字段名是字面量、接收者类型已知，
+            //   编译期完全可判。
+            //   判据（宁漏勿误报）：
+            //     ① 接收者静态类型确知是 cstruct 且有类型名（推断不出就跳过）
+            //     ② 下标是**字符串字面量**（`v[k]` 动态键不查）
+            //     ③ 该名字**不是** cstruct 内置方法 —— `a[0].free()` 的 callee 也是 AST_INDEX，
+            //        方法名同样解析不出字段索引，照字段报错就是误报（examples 里满地都是）
+            if (obj_type && obj_type->kind == TYPE_CSTRUCT && obj_type->struct_name &&
+                ast->u.index.index && ast->u.index.index->kind == AST_STRING &&
+                ast->u.index.index->u.string.value && ast->u.index.index->u.string.value[0]) {
+                const char* cfname = ast->u.index.index->u.string.value;
+                int cfidx = -1;
+                TypeInfo* cft = infer_field_type(s, obj_type, cfname, &cfidx);
+                if (cft) {
+                    type_free(cft);
+                } else if (!cstruct_find_method(cfname)) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                        "cstruct '%s' 没有字段 '%s'（写字段请核对字段名；取方法则是方法不存在）",
+                        obj_type->struct_name, cfname);
+                }
+            }
+
             // 检查 struct 关联常量访问（Module.StructName.CONST 或 StructName.CONST via AST_INDEX）
             if (obj_type && obj_type->kind == TYPE_STRUCT && obj_type->struct_name &&
                 ast->u.index.index->kind == AST_STRING) {

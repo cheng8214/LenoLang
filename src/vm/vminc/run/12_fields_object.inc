@@ -209,8 +209,17 @@
                 } else if (cf->type == TYPE_F64 || cf->type == TYPE_FLOAT) {
                     double dv; memcpy(&dv, co->data + cf->offset, sizeof(dv));
                     csum += dv;
-                } else {
+                } else if (cf->type >= TYPE_I8 && cf->type <= TYPE_U64) {
+                    // 整数字段：codegen 的判据要求"字段静态类型全是 float" ⇒ 正常走不到，
+                    // 这里是防御性分支（按标量读，数值口径与 ADD_F 的 val_as_num_ex 一致）
                     csum += val_as_num_ex(vm_cstruct_field_read(co, fi));
+                } else {
+                    // 数组字段 / 嵌套 cstruct / 字符串：读出来是视图对象或字符串，
+                    // 参与浮点累加毫无意义 ⇒ 明确报错，不要静默读成 0
+                    if (!throw_runtime_error(
+                            "多字段累加只支持数值字段（该字段是数组/嵌套 cstruct/字符串）", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
                 }
             }
             R(a) = val_float(csum);
