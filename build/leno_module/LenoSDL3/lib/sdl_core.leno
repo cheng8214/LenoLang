@@ -21,14 +21,6 @@ export cstruct SDL_Point {
     i32 x; i32 y
 }
 
-cstruct SDL_Event {
-    u32 type
-    u32 _reserved
-    u64 _timestamp
-    u32 _window_id
-    u8  _data[108]
-}
-
 // ==================== 各事件类型 cstruct（替换手动偏移读取） ====================
 
 export cstruct SDL_KeyboardEvent {
@@ -113,6 +105,26 @@ export cstruct SDL_DropEvent {
     u32 _pad         // 28  (8字节对齐填充)
     Ptr[u8] source   // 32  (const char*)
     Ptr[u8] data     // 40  (const char*)
+}
+
+// ==================== SDL_Event：C 里是 **union**（2026-11-12 改用 union）====================
+//   C 原型：`typedef union SDL_Event { Uint32 type; SDL_CommonEvent common; … 
+//            SDL_KeyboardEvent key; SDL_MouseButtonEvent button; … Uint8 padding[128]; }`
+//   以前用 `cstruct { u32 type; …; u8 _data[108] }` 把 union "压平"成填充数组 ⇒ 读事件
+//   必须**每种类型各 from_ptr 一次**（sdl_event 15 处 + sdl_window 7 处）。
+//   现在所有成员偏移都是 0、共享同一块内存，一个 `SDL_Event.from_ptr(raw)` 就能按
+//   `ev.key.scancode` / `ev.motion.x` / `ev.text.text` 取值；
+//   `padding[128]` 保证总大小与 C 的 128 字节完全一致（实测 size() == 128）。
+export union SDL_Event {
+    u32 type
+    SDL_KeyboardEvent    key
+    SDL_MouseButtonEvent button
+    SDL_MouseMotionEvent motion
+    SDL_MouseWheelEvent  wheel
+    SDL_TextInputEvent   text
+    SDL_WindowEvent      window
+    SDL_DropEvent        drop
+    u8 padding[128]
 }
 
 export cstruct SDL_Color {

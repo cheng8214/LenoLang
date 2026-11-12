@@ -14,7 +14,7 @@ import maths          // 控件透明度夹取 / 定时等待夹取（2026-11-01
 import "sdl_core.leno" as core
 import "sdl_clickthrough.leno" as ct      // 整窗鼠标穿透（2026-10-21；只依赖 core，无循环引用 ✓）
 use core.SDL_KeyboardEvent     // ★ 2026-10-13：testKeyDown 注入按键要用（Leno 要求"出现它的每一处都在 use 列表里" ✓）
-use core.(sdl3, SDL_Point, Size, SDL_WindowEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent)   // 后两个供自测注入点击/移动 ✓
+use core.(sdl3, SDL_Point, Size, SDL_Event, SDL_WindowEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent)   // 后两个供自测注入点击/移动 ✓
 use core.SDL_MouseWheelEvent    // ★ 2026-11-01：testWheelAt 注入滚轮要用 ✓
 
 sdl3 _lib = core.lib()
@@ -354,17 +354,17 @@ export func testMouseAt(int wid, float x, float y, bool pressed): bool {
 
 // 投递一条鼠标移动（自测用：悬停 / 拖拽阈值 ✓）
 export func testMoveAt(int wid, float x, float y): bool {
-    Ptr[u8] e = ffi.malloc(128)
-    for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
-    SDL_MouseMotionEvent me = SDL_MouseMotionEvent.from_ptr(e)
-    me.type = core.EventType.MOUSE_MOTION
-    me.windowID = wid
-    me.which = 0
-    me.state = 0
-    me.x = x
-    me.y = y
-    bool r = _lib.SDL_PushEvent(e)
-    ffi.free(e)
+    // ★ 2026-11-12：`SDL_Event` 改成 union 后，直接按成员写法构造（等价 C 的
+    //   `ev.motion.type = …`），且 `malloc()` 已零初始化 ⇒ 不再手工 malloc + 清零循环。
+    var e = SDL_Event.malloc()
+    e.motion.type = core.EventType.MOUSE_MOTION
+    e.motion.windowID = wid
+    e.motion.which = 0
+    e.motion.state = 0
+    e.motion.x = x
+    e.motion.y = y
+    bool r = _lib.SDL_PushEvent(e)      // union 实例自动转指针
+    e.free()
     return r
 }
 
@@ -373,17 +373,15 @@ export func testMoveAt(int wid, float x, float y): bool {
 //   `dy` 与 SDL 同号：**负 = 向下滚**（内容往上走，scrollY 变大）
 //   x/y 是**客户区**坐标（与 testMoveAt 一致）：滚轮事件自带鼠标位置，控件用它做命中判断 ✓
 export func testWheelAt(int wid, float x, float y, float dy): bool {
-    Ptr[u8] e = ffi.malloc(128)
-    for 128 to i { ffi.write_byte(e, i, 0) }
-    SDL_MouseWheelEvent we = SDL_MouseWheelEvent.from_ptr(e)
-    we.type = core.EventType.MOUSE_WHEEL
-    we.windowID = wid
-    we.which = 0
-    we.y = dy
-    we.mouse_x = x
-    we.mouse_y = y
+    var e = SDL_Event.malloc()
+    e.wheel.type = core.EventType.MOUSE_WHEEL
+    e.wheel.windowID = wid
+    e.wheel.which = 0
+    e.wheel.y = dy
+    e.wheel.mouse_x = x
+    e.wheel.mouse_y = y
     bool r = _lib.SDL_PushEvent(e)
-    ffi.free(e)
+    e.free()
     return r
 }
 
@@ -392,25 +390,21 @@ export func testWheelAt(int wid, float x, float y, float dy): bool {
 //   有了它就能在探针里"展开下拉 → 注入失焦 → 断言已收起" ✓（与 testClickAt 同一思路 ✓）
 //   ⚠ 只投递失焦本身；是否真的换了焦点由各控件自己按语义处理 ✓
 export func testFocusLost(int wid): bool {
-    Ptr[u8] e = ffi.malloc(128)
-    for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
-    SDL_WindowEvent we = SDL_WindowEvent.from_ptr(e)
-    we.type = core.EventType.WINDOW_FOCUS_LOST
-    we.windowID = wid
+    var e = SDL_Event.malloc()
+    e.window.type = core.EventType.WINDOW_FOCUS_LOST
+    e.window.windowID = wid
     bool r = _lib.SDL_PushEvent(e)
-    ffi.free(e)
+    e.free()
     return r
 }
 
 // 注入一次**窗口获得焦点**（与 testFocusLost 配对；同样只用来自测 ✓）
 export func testFocusGained(int wid): bool {
-    Ptr[u8] e = ffi.malloc(128)
-    for 128 to i { ffi.write_byte(e, i, 0) }
-    SDL_WindowEvent we = SDL_WindowEvent.from_ptr(e)
-    we.type = core.EventType.WINDOW_FOCUS_GAINED
-    we.windowID = wid
+    var e = SDL_Event.malloc()
+    e.window.type = core.EventType.WINDOW_FOCUS_GAINED
+    e.window.windowID = wid
     bool r = _lib.SDL_PushEvent(e)
-    ffi.free(e)
+    e.free()
     return r
 }
 
@@ -419,39 +413,35 @@ export func testFocusGained(int wid): bool {
 //   scancode 用 `core.Scancode.TAB` / `.RETURN` / `.SPACE` 这类常量 ✓；mod 用 SDL 修饰位掩码（Shift = 0x0003 ✓）
 //   ⚠ 与 testClickAt 同款：**只投递事件**，是否消费由窗口/控件按语义自己决定 ✓
 export func testKeyDown(int wid, int scancode, int mod = 0): bool {
-    Ptr[u8] e = ffi.malloc(128)
-    for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
-    SDL_KeyboardEvent ke = SDL_KeyboardEvent.from_ptr(e)
-    ke.type = core.EventType.KEY_DOWN
-    ke.windowID = wid
-    ke.scancode = scancode
-    ke.mod = mod
+    var e = SDL_Event.malloc()
+    e.key.type = core.EventType.KEY_DOWN
+    e.key.windowID = wid
+    e.key.scancode = scancode
+    e.key.mod = mod
     bool r = _lib.SDL_PushEvent(e)
-    ffi.free(e)
+    e.free()
     return r
 }
 
 // 投递一条鼠标按键事件（内部用；SDL_Event 缓冲取 128 字节 ✓）
 //   ⚠ 模块级"私有"只用 `_` 前缀即可 —— 写成 `pri func` 会被解析器判成语法错误 ✗（实测 ✓）
 func _pushMouseEvent(bool pressed, int wid, float x, float y, int button = 1): bool {
-    Ptr[u8] e = ffi.malloc(128)
-    for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
-    SDL_MouseButtonEvent me = SDL_MouseButtonEvent.from_ptr(e)
+    var e = SDL_Event.malloc()
     if pressed {
-        me.type = core.EventType.MOUSE_BUTTON_DOWN
-        me.down = 1
+        e.button.type = core.EventType.MOUSE_BUTTON_DOWN
+        e.button.down = 1
     } else {
-        me.type = core.EventType.MOUSE_BUTTON_UP
-        me.down = 0
+        e.button.type = core.EventType.MOUSE_BUTTON_UP
+        e.button.down = 0
     }
-    me.windowID = wid
-    me.which = 0
-    me.button = button                              // 1 = 左键 / 2 = 中键 / 3 = 右键（默认左键 ✓）
-    me.clicks = 1
-    me.x = x
-    me.y = y
+    e.button.windowID = wid
+    e.button.which = 0
+    e.button.button = button                        // 1 = 左键 / 2 = 中键 / 3 = 右键（默认左键 ✓）
+    e.button.clicks = 1
+    e.button.x = x
+    e.button.y = y
     bool r = _lib.SDL_PushEvent(e)
-    ffi.free(e)
+    e.free()
     return r
 }
 
@@ -556,13 +546,11 @@ export struct Window {
         //   现在用 `Event.isUserClose()` 区分；标记在事件被消费时清掉。
         int wid = getID()
         event.markSelfClose(wid)        // 登记"这是程序自己发的关闭"，供 Event.isUserClose() 判断 ✓
-        Ptr[u8] e = ffi.malloc(128)                     // SDL_Event 缓冲
-        for 128 to i { ffi.write_byte(e, i, 0) }        // 先清零（未用字段别带垃圾 ✓）
-        SDL_WindowEvent we = SDL_WindowEvent.from_ptr(e)
-        we.type = core.EventType.WINDOW_CLOSE_REQUESTED // 偏移 0（cstruct 已标注布局 ✓）
-        we.windowID = wid                               // 偏移 16
+        var e = SDL_Event.malloc()                      // 128 字节、零初始化
+        e.window.type = core.EventType.WINDOW_CLOSE_REQUESTED
+        e.window.windowID = wid
         bool r = _lib.SDL_PushEvent(e)
-        ffi.free(e)
+        e.free()
         return r
     }
 

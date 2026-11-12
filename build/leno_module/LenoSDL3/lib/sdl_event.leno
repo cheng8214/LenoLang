@@ -8,19 +8,26 @@
 //   }
 import ffi
 import "sdl_core.leno" as core
-use core.(sdl3, SDL_KeyboardEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent, SDL_MouseWheelEvent, SDL_TextInputEvent, SDL_WindowEvent, SDL_DropEvent)
+use core.(sdl3, SDL_Event, SDL_KeyboardEvent, SDL_MouseButtonEvent, SDL_MouseMotionEvent, SDL_MouseWheelEvent, SDL_TextInputEvent, SDL_WindowEvent, SDL_DropEvent)
 
 sdl3 _lib = core.lib()
 
 export struct Event {
     Ptr[u8] raw     // SDL_Event 原始内存（128 字节）
     bool has = false    // 上次 poll 是否有事件（显式初值，消 [字段未初始化] 警告）
-
     // 分配事件内存
     func init(): bool {
         raw = ffi.malloc(128)
         has = false
         return true
+    }
+
+    // ★ 2026-11-12：`SDL_Event` 现在按 C 的样子定义成 **union** ⇒ 取事件数据时
+    //   不再需要"每种事件类型各 from_ptr 一次"，一个视图就能按成员取：
+    //     ev().type / ev().key.scancode / ev().motion.x / ev().text.text / ev().drop.data
+    //   （`from_ptr` 只是造一个指向 raw 的轻量视图，偏移全 0，不拷贝内存。）
+    func ev(): SDL_Event {
+        return SDL_Event.from_ptr(raw)
     }
 
     // 从事件队列中轮询一个事件，返回是否有事件待处理
@@ -38,8 +45,7 @@ export struct Event {
 
     // 获取事件类型（所有事件 cstruct 头部相同，故用 KeyboardEvent 读取）
     func sdl3_type(): int {
-        SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
-        return e.type
+        return ev().type
     }
 
     // ==================== 通用 ====================
@@ -49,8 +55,7 @@ export struct Event {
 
     // 获取触发事件的窗口 ID
     func windowID(): int {
-        SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
-        return e.windowID
+        return ev().key.windowID
     }
 
     // ==================== 窗口事件 ====================
@@ -89,22 +94,19 @@ export struct Event {
 
     // 获取物理扫描码（与键盘布局无关，如 SCANCODE_A, SCANCODE_ESCAPE）
     func scancode(): int {
-        SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
-        return e.scancode
+        return ev().key.scancode
     }
 
     // 是否为按键重复事件（长按产生的自动重复）
     func keyRepeat(): bool {
-        SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
-        return e.repeat != 0
+        return ev().key.repeat != 0
     }
 
     // 获取修饰键状态（位掩码：Shift/Ctrl/Alt/GUI 等）
     func keyMod(): int {
         int t = sdl3_type()
         if t == core.EventType.KEY_DOWN or t == core.EventType.KEY_UP {
-            SDL_KeyboardEvent e = SDL_KeyboardEvent.from_ptr(raw)
-            return e.mod
+            return ev().key.mod
         }
         // 鼠标/滚轮等非键盘事件不含 mod 字段，改用全局修饰键状态
         return _lib.SDL_GetModState()
@@ -119,47 +121,41 @@ export struct Event {
 
     // 鼠标位置（相对于窗口，浮点精度）
     func mousePos(): [float, float] {
-        SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
-        return e.x, e.y
+        var e = ev()
+        return e.motion.x, e.motion.y
     }
 
     // 鼠标相对移动量（自上一帧的增量）
     func mouseDelta(): [float, float] {
-        SDL_MouseMotionEvent e = SDL_MouseMotionEvent.from_ptr(raw)
-        return e.xrel, e.yrel
+        var e = ev()
+        return e.motion.xrel, e.motion.yrel
     }
 
     // 鼠标按钮编号：1=左键, 2=中键, 3=右键
     func mouseButton(): int {
-        SDL_MouseButtonEvent e = SDL_MouseButtonEvent.from_ptr(raw)
-        return e.button
+        return ev().button.button
     }
 
     // 点击次数：1=单击, 2=双击
     func mouseClicks(): int {
-        SDL_MouseButtonEvent e = SDL_MouseButtonEvent.from_ptr(raw)
-        return e.clicks
+        return ev().button.clicks
     }
 
     // 滚轮滚动量（正值向右/远离用户，负值向左/朝向用户）
     func wheelX(): float {
-        SDL_MouseWheelEvent e = SDL_MouseWheelEvent.from_ptr(raw)
-        return e.x
+        return ev().wheel.x
     }
     func wheelY(): float {
-        SDL_MouseWheelEvent e = SDL_MouseWheelEvent.from_ptr(raw)
-        return e.y
+        return ev().wheel.y
     }
 
     // 滚轮事件发生时的鼠标坐标（注意：滚轮事件的结构与鼠标移动不同，
     // 必须用 SDL_MouseWheelEvent.mouse_x / mouse_y，不能用 mouseX()/mouseY()）
     func wheelMouseX(): float {
-        SDL_MouseWheelEvent e = SDL_MouseWheelEvent.from_ptr(raw)
-        return e.mouse_x
+        return ev().wheel.mouse_x
     }
     func wheelMouseY(): float {
-        SDL_MouseWheelEvent e = SDL_MouseWheelEvent.from_ptr(raw)
-        return e.mouse_y
+        return ev().wheel.mouse_y
     }
     // ==================== 文本输入 ====================
     // 注意：必须先调用 SDL_StartTextInput() 启用文本输入，否则不会收到此事件
@@ -169,8 +165,7 @@ export struct Event {
 
     // 获取输入的文本内容（UTF-8 字符串，只在此次 poll 内有效）
     func text(): string {
-        SDL_TextInputEvent e = SDL_TextInputEvent.from_ptr(raw)
-        return ffi.read_string(e.text, 0)
+        return ffi.read_string(ev().text.text, 0)
     }
 
     // ==================== 拖放事件 ====================
@@ -180,8 +175,7 @@ export struct Event {
 
     // 获取拖放的文件路径或文本内容
     func dropPath(): string {
-        SDL_DropEvent e = SDL_DropEvent.from_ptr(raw)
-        return ffi.read_string(e.data, 0)
+        return ffi.read_string(ev().drop.data, 0)
     }
 
     // 将当前 raw 缓冲区内容复制到 dst（用于事件合并时保存/恢复事件数据）
