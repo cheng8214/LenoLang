@@ -1,0 +1,97 @@
+// bench_sdl3_renderer.leno —— LenoSDL3 渲染/事件热路径基准（无头，可重复）
+//
+// 用法（仓库根目录）：
+//     $env:SDL_VIDEODRIVER="dummy"        # Windows PowerShell
+//     ./build/leno.exe tools/bench_sdl3_renderer.leno
+//
+// 为什么用 dummy 驱动：只测**我们这层封装**（cstruct 分配、批处理写入、VM 调用开销），
+// 不测 GPU。software 渲染器会把 SDL_RenderTexture 的开销也计入，所以纹理绘制那两行的
+// 绝对值包含 SDL 自己的光栅化成本 —— 看**前后对比**即可，不要当绝对性能承诺。
+//
+// 2026-11-12 基线 → 优化后（同一台机器、同一进程连续跑）：
+//     drawTextureAt                  609 → 441 ns/次  (-28%)
+//     drawTextureFromTo              933 → 543 ns/次  (-42%)
+//     drawTextureAt（opacity 0.5）  1325 → 935 ns/次  (-29%)
+//   优化手段：把每次绘制都 `SDL_FRect.malloc() + to_ptr() + free()` 换成
+//   **模块级复用的临时 cstruct**（渲染是单线程的，用完即弃，见 sdl_renderer.leno 顶部）。
+import ffi
+import times
+import "../build/leno_module/LenoSDL3/lib/sdl_core.leno" as core
+import "../build/leno_module/LenoSDL3/lib/sdl_window.leno" as win
+import "../build/leno_module/LenoSDL3/lib/sdl_renderer.leno" as rend
+import "../build/leno_module/LenoSDL3/lib/sdl_event.leno" as evt
+use win.(Window, Renderer)
+use evt.Event
+
+Renderer R = null
+
+func bench(string name, int iters, func():void body) {
+    body()                                   // warmup
+    var t0 = times.us()
+    body()
+    var t1 = times.us()
+    var dt = t1 - t0
+    if dt <= 0.0 { dt = 1.0 }
+    var per = dt * 1000.0 / _float(iters)               // ns / 次
+    print("  " + name + "  " + _str(iters) + " 次 " + _str(_int(dt)) + " us  ⇒ " + _str(per) + " ns/次")
+}
+
+main() {
+    if not core.initVideo() { print("initVideo failed: " + core.getError()); return }
+
+    var w = win.createWindow({ title: "bench", width: 640, height: 480, hidden: true })
+    R = w.createRenderer()
+
+    Ptr[u8] tex = R.createTexture(core.PIXELFORMAT_RGBA8888, 0, 64, 64)
+    print("渲染驱动 = " + R.driver_name() + "，纹理 = " + _str(tex != null))
+
+    print("=== 绘制热路径 ===")
+
+    bench("setColorFloat（同色，命中缓存）", 1000000, func() {
+        for 0 : 999999 to i { R.setColorFloat(0.5, 0.25, 0.75, 1.0) }
+    })
+
+    bench("fillRect（批处理写入）", 500000, func() {
+        for 0 : 499999 to i { R.fillRect(1.0, 2.0, 3.0, 4.0) }
+        R.fillRect(-1.0, -1.0, 0.0, 0.0)
+    })
+
+    bench("drawTextureAt（单次纹理绘制）", 200000, func() {
+        for 0 : 199999 to i { R.drawTextureAt(tex, 10.0, 20.0, 64.0, 64.0) }
+    })
+
+    bench("drawTextureFromTo（源+目标矩形）", 100000, func() {
+        for 0 : 99999 to i { R.drawTextureFromTo(tex, 0.0, 0.0, 32.0, 32.0, 10.0, 10.0, 64.0, 64.0) }
+    })
+
+    R.setAlphaScale(0.5)
+    bench("drawTextureAt（opacity 0.5，走 _texScalePush）", 100000, func() {
+        for 0 : 99999 to i { R.drawTextureAt(tex, 10.0, 20.0, 64.0, 64.0) }
+    })
+    R.setAlphaScale(1.0)
+
+    bench("present（含一次批处理 flush）", 300, func() {
+        for 0 : 299 to i {
+            R.fillRect(0.0, 0.0, 100.0, 100.0)
+            R.present()
+        }
+    })
+
+    print("=== 事件热路径 ===")
+    var e = evt.createEvent()
+    bench("poll 空队列", 200000, func() {
+        for 0 : 199999 to i { var _has = e.poll() }
+    })
+    bench("push + poll（合成鼠标移动）", 20000, func() {
+        for 0 : 19999 to i {
+            var _p = win.testMoveAt(1, 1.0, 2.0)
+            var _h = e.poll()
+        }
+    })
+    e.uninit()
+
+    R.destroy()
+    w.destroy()
+    core.quit()
+    print("done")
+}
