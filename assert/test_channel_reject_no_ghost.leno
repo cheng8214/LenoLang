@@ -1,0 +1,72 @@
+// 被拒的 `send` 不得在通道里留下"幽灵 null"（2026-11-12 压测）
+//
+// 背景：`channel_send` 先 `value_clone_for_channel` 再入队。跨线程不允许的类型
+//   （cstruct / Ptr / 闭包…）会让 clone 返回 null **并登记异常** —— 但发送方照样
+//   把这个 null 塞进了 buffer。于是：
+//
+//     try { ch.send(cstruct) } catch {}     // 失败
+//     ch.send(42)                           // 成功
+//     ch.receive()                          // → null  ← 幽灵槽
+//     ch.receive()                          // → 42    ← 真正的值被推后一格
+//
+//   静默错位：接收方拿到的是 null，且之后每条消息都晚一拍。
+//
+// 修法：`channel_send` / `channel_send_for` / `channel_try_send` 三处在克隆后加闸
+//   （原值非 null 而克隆为 null ⇒ 被拒，直接返回 -3、不入队）；
+//   `channel_method_send` 也不再把它覆盖成"通道已关闭"。
+//
+// 本用例钉住：被拒后通道仍然**逐条对应**，且 `send(null)` 这种合法 null 照旧。
+import ffi
+import threads
+
+cstruct V3 { f32 x  f32 y  f32 z }
+
+main() {
+    var ch = threads.channel(8)
+    var v = V3.malloc()
+    v.x = 1.0
+
+    // ---- ① 失败的 send(cstruct) 之后，通道仍逐条对应 ----
+    bool caught = false
+    try { ch.send(v) } catch e { caught = true }
+    assert_eq(caught, true, "send(cstruct) 必须抛异常")
+
+    ch.send(42)
+    var got = ch.receive()          // Channel 无类型标注 ⇒ receive() 静态是 any
+    assert_eq(_int(got), 42, "被拒之后 send(42) 必须原样收到（不能是幽灵 null）")
+
+    // ---- ② 失败的 send(Ptr) 同理 ----
+    Ptr[u8] p = ffi.malloc(8)
+    caught = false
+    try { ch.send(p) } catch e2 { caught = true }
+    assert_eq(caught, true, "send(Ptr) 必须抛异常")
+
+    ch.send("hello")
+    var s = ch.receive()
+    assert_eq(_str(s), "hello", "被拒之后 send(string) 必须原样收到")
+
+    // ---- ③ 连续多条不丢不乱序 ----
+    ch.send(1)
+    ch.send(2)
+    ch.send(3)
+    assert_eq(ch.receive(), 1, "第 1 条")
+    assert_eq(ch.receive(), 2, "第 2 条")
+    assert_eq(ch.receive(), 3, "第 3 条")
+
+    // ---- ④ 合法 null 仍然可以传 ----
+    ch.send(null)
+    var n = ch.receive()
+    assert_true(n == null, "send(null) 应正常收到 null")
+
+    // ---- ⑤ try_send 被拒时同样**抛异常**（类型错是编程错误，不该被吞成 false），
+    //         且通道仍然逐条对应 ----
+    caught = false
+    try { ch.try_send(v) } catch e3 { caught = true }
+    assert_eq(caught, true, "try_send(cstruct) 也必须抛异常（不许静默 false）")
+    ch.send(7)
+    assert_eq(ch.receive(), 7, "try_send 被拒后通道仍逐条对应")
+
+    ffi.free(p)
+    v.free()
+    print("test_channel_reject_no_ghost passed")
+}

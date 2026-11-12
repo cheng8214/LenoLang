@@ -150,6 +150,9 @@ static Value channel_method_send(int argc, Value* args) {
     ObjChannel* channel = (ObjChannel*)val_as_obj(args[0]);
     Value value = args[1];
     int result = channel_send(channel, value);
+    // -3 = 克隆被拒（cstruct / Ptr / 闭包…）：异常已由 channel_clone_reject 登记，
+    //   **不能**再覆盖成"通道已关闭"（那会把真因彻底盖掉）
+    if (result == -3) return val_null();
     if (result != 0) {
         native_throw_error("Cannot send to closed channel");
         return val_null();
@@ -182,7 +185,9 @@ static Value channel_method_send_for(int argc, Value* args) {
         return val_null();
     }
     int timeout_ms = (int)val_as_num(args[2]);
-    return val_bool(channel_send_for(channel, value, timeout_ms) == 0);
+    int r = channel_send_for(channel, value, timeout_ms);
+    if (r == -3) return val_bool(false);      // 克隆被拒：异常已登记，返回 false 且不覆盖文案
+    return val_bool(r == 0);
 }
 
 static Value channel_method_try_send(int argc, Value* args) {
@@ -190,6 +195,7 @@ static Value channel_method_try_send(int argc, Value* args) {
     ObjChannel* channel = (ObjChannel*)val_as_obj(args[0]);
     Value value = args[1];
     int result = channel_try_send(channel, value);
+    if (result == -3) return val_bool(false);   // 克隆被拒：异常已登记
     return val_bool(result == 0);
 }
 

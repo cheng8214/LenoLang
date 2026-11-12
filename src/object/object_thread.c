@@ -95,14 +95,39 @@ static Value channel_clone_value(Value val, int depth);
 // 不可跨线程类型的**统一报错**（单一文案来源 ✓，下面两处 default 都调它 ✓）
 //   ⚠ 报错**不是**可选项：放行跨堆引用 ⇒ 收尾时同一块内存被两个堆各释放一次 ⇒ 0xC0000374 堆损坏。
 //   `type_tag` 是运行时类型标记（VAL_* 或 ObjectType），只用于诊断。
+// 诊断：对象标记 → 人话（**只用于报错文案**；认不出返回 NULL）
+//   ★ 2026-11-12（压测）：原来报「类型标记 17」，用户看到的是个内部枚举值，等于没说话。
+static const char* obj_tag_name(int tag) {
+    switch (tag) {
+        case OBJ_CSTRUCT:            return "cstruct（裸 C 内存）";
+        case OBJ_CSTRUCT_ARRAY:      return "cstruct 数组";
+        case OBJ_CSTRUCT_ARRAY_VIEW: return "cstruct 数组字段视图";
+        case OBJ_FFI_POINTER:        return "Ptr（原生指针）";
+        case OBJ_FFI_LIBRARY:        return "FFI 库句柄";
+        case OBJ_FFI_CALLBACK:       return "FFI 回调";
+        case OBJ_THREAD:             return "Thread";
+        case OBJ_COROUTINE:          return "协程";
+        case OBJ_FUTURE:             return "Future";
+        case OBJ_SOCKET:             return "Socket";
+        default:                     return NULL;
+    }
+}
+
 static void channel_clone_reject(int type_tag) {
     const char* support = "跨线程只支持 标量 / string / Array / Dict / struct / Channel / 闭包 / 函数";
+    char kindbuf[64];
+    const char* nm = obj_tag_name(type_tag);
+    if (nm) {
+        snprintf(kindbuf, sizeof(kindbuf), "%s", nm);
+    } else {
+        snprintf(kindbuf, sizeof(kindbuf), "值类型标记 %d", type_tag);
+    }
     if (g_channel_clone_ctx[0] != '\0') {
         // 上界 = 上下文 192 字节 + 提示 68 + 中文固定部分 ⇒ 320 会被 GCC 判 -Wformat-truncation
         char msg[384];
         snprintf(msg, sizeof(msg),
-                 "不能跨线程传递此类型（来自 %s，类型标记 %d）—— %s",
-                 g_channel_clone_ctx, type_tag, support);
+                 "不能跨线程传递此类型（来自 %s，%s）—— %s",
+                 g_channel_clone_ctx, kindbuf, support);
         native_throw_error(msg);
         return;
     }
@@ -201,7 +226,16 @@ static Value channel_clone_value(Value val, int depth) {
                         copy->elements = (Value*)malloc(copy->capacity * sizeof(Value));
                         if (!copy->elements) return val_null();
                         for (int i = 0; i < arr->count; i++) {
+                            // 诊断上下文：`数组[3]`（与 struct 字段同一套机制）——
+                            // 否则"Array 里混进一个 cstruct"只能报到数组本身，用户不知道是第几个
+                            char saved_ctx[sizeof(g_channel_clone_ctx)];
+                            memcpy(saved_ctx, g_channel_clone_ctx, sizeof(saved_ctx));
+                            size_t cl = strlen(g_channel_clone_ctx);
+                            snprintf(g_channel_clone_ctx + cl,
+                                     sizeof(g_channel_clone_ctx) - cl,
+                                     "%s[%d]", cl > 0 ? "" : "数组", i);
                             copy->elements[i] = channel_clone_value(arr->elements[i], depth + 1);
+                            memcpy(g_channel_clone_ctx, saved_ctx, sizeof(g_channel_clone_ctx));
                         }
                     }
                     return val_obj((Object*)copy);
@@ -297,7 +331,9 @@ static Value channel_clone_value(Value val, int depth) {
             }
         }
         default:
-            channel_clone_reject((int)val_get_type(val));
+            // 对象就报**对象类型**（能翻成人话），非对象才退回值标记
+            channel_clone_reject(val_is_obj(val) ? (int)val_as_obj(val)->type
+                                                : (int)val_get_type(val));
             return val_null();
     }
 }
@@ -1134,9 +1170,19 @@ void channel_close(ObjChannel* channel) {
     platform_mutex_unlock(&channel->mutex);
 }
 
+// 克隆是否**被拒**（跨线程不允许的类型：cstruct / Ptr / 闭包…）
+//   `channel_clone_reject` 已经登记了异常，这里只负责让发送方**别把 null 入队**。
+//   判据：原值非 null 而克隆结果是 null —— 克隆永远不会把非 null 合法地变成 null
+//   （唯一例外是 OOM，那时同样不该入队 ✓）。
+//   ★ 2026-11-12（压测）：原先没有这道闸 ⇒ `try { ch.send(cstruct) } catch {}` 之后
+//     buffer 里留下一个**幽灵 null**：紧接着 `send(42); receive()` 得到 null、
+//     真正的 42 被推后一格（静默错位，实测 tmp_d7）。
+#define CHANNEL_CLONE_REJECTED(orig, cloned) (!val_is_null(orig) && val_is_null(cloned))
+
 int channel_send(ObjChannel* channel, Value value) {
     gc_note_channel_use();          // ★ 本线程用过 channel ⇒ 退出时不能整堆释放（见 object_thread.c ✓）
     Value cloned = value_clone_for_channel(value);
+    if (CHANNEL_CLONE_REJECTED(value, cloned)) return -3;   // -3 = 克隆被拒（异常已登记）
 
     platform_mutex_lock(&channel->mutex);
 
@@ -1242,6 +1288,7 @@ int channel_try_take(ObjChannel* channel, Value* out) {
 int channel_send_for(ObjChannel* channel, Value value, int timeout_ms) {
     gc_note_channel_use();
     Value cloned = value_clone_for_channel(value);   // 克隆在发送方堆；超时丢弃时由本线程 GC 回收 ✓
+    if (CHANNEL_CLONE_REJECTED(value, cloned)) return -3;   // 同上：被拒时不许入队
 
     platform_mutex_lock(&channel->mutex);
 
@@ -1281,6 +1328,7 @@ int channel_send_for(ObjChannel* channel, Value value, int timeout_ms) {
 int channel_try_send(ObjChannel* channel, Value value) {
     gc_note_channel_use();          // ★ 同上
     Value cloned = value_clone_for_channel(value);
+    if (CHANNEL_CLONE_REJECTED(value, cloned)) return -3;   // 同上
 
     platform_mutex_lock(&channel->mutex);
 
