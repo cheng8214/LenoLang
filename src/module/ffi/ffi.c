@@ -3687,15 +3687,23 @@ static Value ffi_free_callback_func(int argc, Value* args) {
      *
      * 两种类型都接受：裸 Ptr 形态（历史用法）与回调用对象形态 ✓ */
     void* tramp = NULL;
+    ObjFFICallback* cbobj = NULL;
     if (obj->type == OBJ_FFI_POINTER) {
         tramp = ((ObjFFIPointer*)obj)->ptr;
     } else if (obj->type == OBJ_FFI_CALLBACK) {
-        tramp = ((ObjFFICallback*)obj)->trampoline;
+        cbobj = (ObjFFICallback*)obj;
+        tramp = cbobj->trampoline;
     }
     if (!tramp) return val_bool(0);
     for (int i = 0; i < MAX_FFI_CALLBACKS; i++) {
         if (g_callback_registry[i].active && g_callback_registry[i].trampoline == tramp) {
-            callback_registry_release(i);
+            /* ★ 2026-11-12：按身份释放（槽位可能在这条循环与被抢走之间被别的线程复用），
+             *   并把对象上的 callback_id 置 -1 —— 这样 GC 回收该对象时
+             *   `ffi_callback_free_resources()` 不会再按旧 id 释放一遍（那会清掉别人的活槽，
+             *   见 callback_registry_release_if_owned 的说明）。
+             *   ⚠ 不能把 cbobj->trampoline 置 NULL：GC 路径要靠它释放可执行内存。 */
+            callback_registry_release_if_owned(i, tramp);
+            if (cbobj) cbobj->callback_id = -1;
             return val_bool(1);
         }
     }
