@@ -195,6 +195,34 @@ static void callback_registry_release(int cb_id) {
     if (g_callback_mutex_ready) platform_mutex_unlock(&g_callback_mutex);
 }
 
+/* ★ 2026-11-12 修：**按身份**释放回调槽位（只清"确实还属于这个 trampoline"的槽）。
+ *
+ * 为什么需要：槽位是**进程级共享**的，而 `callback_id` 存在回调对象上。旧对象在
+ * GC 回收 / `ffi.free` 时按 id 无条件 release ⇒ 如果该 id 已被**别的线程**的回调复用，
+ * 就会把**别人的槽**清掉（active=0）。
+ * 实测现场（Aria，2026-11-12）：主线程关闭 HttpClient 之后，子线程 reserve 到同一批 id，
+ * 紧接着主线程旧对象的释放把它们清了 ⇒ libcurl 的写回调分发时 `active==0` 直接返回 0
+ * ⇒ `curl=23 (Failed writing received data)`、响应正文恒为空 ⇒ 首页「为你推荐 / 最近添加」
+ * 时有时无（竞态）。
+ * 修法：释放时比对槽位里登记的 trampoline —— 不匹配就是陈旧对象的二次释放，**忽略**。
+ * ⚠ 宁可漏释放一个槽（能在 `ffi.callbackCount()` 里看出来）也不能误伤别的线程的活槽。 */
+static void callback_registry_release_if_owned(int cb_id, void* trampoline) {
+    if (cb_id < 0 || cb_id >= MAX_FFI_CALLBACKS) return;
+    if (!trampoline) return;
+    if (g_callback_mutex_ready) platform_mutex_lock(&g_callback_mutex);
+    if (g_callback_registry[cb_id].trampoline != trampoline ||
+        !g_callback_registry[cb_id].active) {
+        if (g_callback_mutex_ready) platform_mutex_unlock(&g_callback_mutex);
+        return;
+    }
+    g_callback_registry[cb_id].active = 0;
+    g_callback_registry[cb_id].sig = NULL;
+    g_callback_registry[cb_id].func_val = val_null();
+    g_callback_registry[cb_id].obj = val_null();
+    g_callback_registry[cb_id].trampoline = NULL;
+    if (g_callback_mutex_ready) platform_mutex_unlock(&g_callback_mutex);
+}
+
 /* ===== 上次 FFI 调用的错误码缓存 ===== */
 static int64_t g_last_error = 0;
 
@@ -1252,7 +1280,7 @@ static Value ffi_free_func(int argc, Value* args) {
     }
     case OBJ_FFI_CALLBACK: {
         ObjFFICallback* cb = (ObjFFICallback*)obj;
-        callback_registry_release(cb->callback_id);
+        callback_registry_release_if_owned(cb->callback_id, cb->trampoline);
         if (cb->trampoline) {
             free_executable_memory(cb->trampoline, 256);
             cb->trampoline = NULL;
@@ -3213,8 +3241,10 @@ static void free_executable_memory(void* ptr, size_t size) {
 
 void ffi_callback_free_resources(Object* obj) {
     ObjFFICallback* cb = (ObjFFICallback*)obj;
-    /* 走线程安全的释放：GC 可能在别的线程正在 ffi.callback 时被触发 */
-    callback_registry_release(cb->callback_id);
+    /* 走线程安全的释放：GC 可能在别的线程正在 ffi.callback 时被触发。
+     * ★ 必须按身份释放（见 callback_registry_release_if_owned）：cb->callback_id 可能
+     *   早已被别的线程复用，无条件 release 会把**活槽**清掉 ⇒ C 库回调返回 0（curl 23）。 */
+    callback_registry_release_if_owned(cb->callback_id, cb->trampoline);
     if (cb->trampoline) {
         free_executable_memory(cb->trampoline, 256);
         cb->trampoline = NULL;
