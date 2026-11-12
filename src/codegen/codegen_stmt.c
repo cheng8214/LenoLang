@@ -1655,6 +1655,12 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
     }
     // Ptr[T] / face 的运行时类型标注（局部变量同样需要：ffi.read_at 等要靠它）
     emit_decl_runtime_type(gen, dst, ast->u.var_decl.type, ast->line);
+    // ★ 2026-11-12：记下槽位的声明类型 —— 之后 `p = ffi.malloc(...)` 重新赋值时，
+    //   补标注需要 element 的**完整类型**（cstruct 要类型名）。见 leno_codegen.h 的说明。
+    if (dst >= 0 && dst < MAX_REG && ast->u.var_decl.type &&
+        ast->u.var_decl.type->kind == TYPE_PTR_GENERIC) {
+        gen->ptr_decl_local[dst] = ast->u.var_decl.type;
+    }
     emit_lock_if_const(gen, ast, dst);
 
     // 追踪带析构的 struct 局部变量：作用域结束 / return 时发 OP_DTOR_LOCAL。
@@ -2009,17 +2015,66 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                         //   静态类型仍是 `Ptr[u8]`，但 `p[0]` 报「write_at 需要 Ptr[T]
                         //   类型指针」（实测 tmp_stress_ptr 的"重新 malloc 后 p[0]"）。
                         //   这里按 SymRef 里记的元素类型补发一次（其它类型没有运行期标注）。
+                        // ★ 2026-11-12（Ptr[cstruct] 压测）：改用**目标的静态类型**补发，
+                        //   不再只看 SymRef 里那一个 `element_type_kind` —— 元素是 cstruct 时
+                        //   光有 TypeKind 拿不到定义：`Ptr[V3] gp = null; gp = ffi.malloc(12);`
+                        //   之后 `gp[0].x` 报「read_at 需要 Ptr[T] 类型指针（不支持无类型 Ptr）」
+                        //   （实测 tmp_g1）。目标的静态类型在 codegen 期可推断 ⇒ 走同一个
+                        //   `emit_ptr_elem_annotation`，标量/复合/cstruct 三种都能覆盖。
                         if (ref->type_kind == TYPE_PTR_GENERIC &&
-                            ref->element_type_kind != TYPE_ANY &&
-                            ref->element_type_kind != TYPE_UNKNOWN &&
                             ref->index >= 0 && ref->index < MAX_REG) {
-                            reg_encode_iABC(gen->chunk, OP_SET_PTR_ELEM_TYPE, ref->index,
-                                            (int)ref->element_type_kind, 0, ast->line);
+                            int done = 0;
+                            // 元素是 **cstruct / 嵌套指针**：拿不到定义就只能查静态类型。
+                            // 优先用**声明处记下的 TypeInfo**（`ptr_decl_local`，AST 持有，
+                            // 不需要释放）；取不到再退回推断（局部量上推断常常拿不到）。
+                            if (ref->element_type_kind == TYPE_CSTRUCT ||
+                                ref->element_type_kind == TYPE_PTR_GENERIC) {
+                                TypeInfo* vt = (ref->index >= 0 && ref->index < MAX_REG)
+                                                   ? gen->ptr_decl_local[ref->index] : NULL;
+                                int owned = 0;
+                                if (!vt) {
+                                    vt = infer_expr_type(gen->sem, target);
+                                    owned = 1;
+                                }
+                                if (vt && vt->kind == TYPE_PTR_GENERIC && vt->element_type &&
+                                    vt->element_type->kind == ref->element_type_kind) {
+                                    emit_ptr_elem_annotation(gen, ref->index, vt->element_type, ast->line);
+                                    done = 1;
+                                }
+                                if (owned && vt) type_free(vt);
+                            }
+                            // 标量元素：沿用紧凑版（一个 TypeKind 就够，不依赖静态推断）
+                            if (!done && ref->element_type_kind != TYPE_ANY &&
+                                ref->element_type_kind != TYPE_UNKNOWN) {
+                                reg_encode_iABC(gen->chunk, OP_SET_PTR_ELEM_TYPE, ref->index,
+                                                (int)ref->element_type_kind, 0, ast->line);
+                            }
                         }
                         break;
                     case SYM_GLOBAL: {
                         int r = ASSIGN_VAL();
                         emit_cast_for_target(gen, ref->type_kind, value, r, ast->line);
+                        // ★ 2026-11-12：**全局变量**的 Ptr 元素类型标注同样按目标静态类型补发
+                        //   （局部量那条早就有，全局这条一直没有 ⇒ `Ptr[V3] gp = null;
+                        //    gp = ffi.malloc(12); gp[0].x` 直接不可用）
+                        if (ref->type_kind == TYPE_PTR_GENERIC) {
+                            int done = 0;
+                            if (ref->element_type_kind == TYPE_CSTRUCT ||
+                                ref->element_type_kind == TYPE_PTR_GENERIC) {
+                                TypeInfo* vt = infer_expr_type(gen->sem, target);
+                                if (vt && vt->kind == TYPE_PTR_GENERIC && vt->element_type &&
+                                    vt->element_type->kind == ref->element_type_kind) {
+                                    emit_ptr_elem_annotation(gen, r, vt->element_type, ast->line);
+                                    done = 1;
+                                }
+                                if (vt) type_free(vt);
+                            }
+                            if (!done && ref->element_type_kind != TYPE_ANY &&
+                                ref->element_type_kind != TYPE_UNKNOWN) {
+                                reg_encode_iABC(gen->chunk, OP_SET_PTR_ELEM_TYPE, r,
+                                                (int)ref->element_type_kind, 0, ast->line);
+                            }
+                        }
                         emit_setglobal(gen, r, ref->index, ast->line);
                         ASSIGN_FREE_VAL(r);
                         break;

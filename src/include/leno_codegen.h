@@ -96,6 +96,13 @@ typedef struct {
     int free_regs[MAX_REG]; // 空闲寄存器栈
     int freetop;            // 空闲栈顶
     int scope_base;         // 当前作用域起始寄存器（作用域退出时回退到此）
+    // ★ 2026-11-12：局部槽位的**声明类型**（NULL = 不是 Ptr[T]）。
+    //   用途：赋值处补发 Ptr 元素类型标注时，元素是 **cstruct / 嵌套指针** 需要
+    //   `TypeInfo`（要类型名的定义），而 `SymRef.element_type_kind` 只有一个 TypeKind
+    //   —— 实测 `Ptr[V3] p = ffi.malloc(12); p = ffi.malloc(12); p[0].x`
+    //   报「Ptr[cstruct] 缺少元素类型信息」。这里记的是 AST 里的 TypeInfo（生命周期够长）。
+    //   ⚠ 每函数入口清零（槽位会在函数间复用）。
+    TypeInfo* ptr_decl_local[MAX_REG];
     // --- 析构追踪 ---
     DtorEntry* dtor_entries;
     int dtor_count;

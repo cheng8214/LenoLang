@@ -926,6 +926,32 @@
     // OP_SET_PTR_CDEF A Bx：`Ptr[cstruct]` 的元素类型标注
     //   Bx = 类型名字符串的常量索引；在这里（有 chunk + 常量表）就把定义解析好存进对象 ——
     //   `ffi.read_at` 在 ffi 层执行、没有 chunk 上下文，之后只能靠这个指针算元素大小。
+    // OP_SET_PTR_INNER_CDEF A Bx：`Ptr[Ptr[cstruct]]` 的**内层**定义标注
+    //   （element_type = PTR_GENERIC、inner_cdef = 定义）；read_at 读 PTR 元素时
+    //   把它带给新指针 ⇒ `var x = pp[0]` 自带 elem_cdef，不必显式标注。
+    LABEL(OP_SET_PTR_INNER_CDEF): {
+        int a = READ_A();
+        int bx = READ_Bx();
+        Value v = R(a);
+        if (val_is_obj(v) && val_as_obj(v)->type == OBJ_FFI_POINTER) {
+            const char* nm = NULL;
+            if (bx >= 0 && bx < frame->chunk->const_cnt) {
+                Value cv = frame->chunk->constants[bx];
+                if (val_is_obj(cv) && val_as_obj(cv)->type == OBJ_STRING) {
+                    nm = ((ObjString*)val_as_obj(cv))->chars;
+                }
+            }
+            if (nm) {
+                ObjCStructDef* cdef = cstruct_def_find(nm);
+                ObjFFIPointer* fp = (ObjFFIPointer*)val_as_obj(v);
+                if (!fp->freed && cdef) {
+                    fp->element_type = TYPE_PTR_GENERIC;
+                    fp->inner_cdef = cdef;
+                }
+            }
+        }
+        DISPATCH();
+    }
     LABEL(OP_SET_PTR_CDEF): {
         int a = READ_A();
         int bx = READ_Bx();

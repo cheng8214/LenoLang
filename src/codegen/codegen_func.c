@@ -222,11 +222,14 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     //   入口标注对普通调用是**幂等重复**（同一元素类型，后写覆盖前写），无副作用；
     //   顺带也覆盖了"跨模块调用 / 方法引用"等所有拿不到调用点标注的路径。
     //   形参槽位就是 0..pcnt-1（`base_reg = func->arity` 从 arity 起分配临时寄存器）。
+    // 槽位声明类型表是按函数独立的（槽位号在函数间复用）⇒ 入口清零
+    memset(gen->ptr_decl_local, 0, sizeof(gen->ptr_decl_local));
     if (ast->u.func.param_types) {
         for (int i = 0; i < ast->u.func.pcnt; i++) {
             TypeInfo* pt = ast->u.func.param_types[i];
             if (pt && pt->kind == TYPE_PTR_GENERIC && pt->element_type) {
                 emit_ptr_elem_annotation(gen, i, pt->element_type, ast->line);
+                if (i < MAX_REG) gen->ptr_decl_local[i] = pt;   // 赋值处补标注要用
             }
         }
     }

@@ -999,6 +999,8 @@ void gc_scan_children(Object* obj) {
             // 否则 read_at 用一个被回收的 def 算元素大小
             ObjFFIPointer* fp = (ObjFFIPointer*)obj;
             if (fp->elem_cdef) gc_mark_object((Object*)fp->elem_cdef);
+            // `Ptr[Ptr[cstruct]]` 的内层定义（`pp[0]` 要靠它带上 elem_cdef）
+            if (fp->inner_cdef) gc_mark_object((Object*)fp->inner_cdef);
             break;
         }
         case OBJ_FFI_CALLBACK: {

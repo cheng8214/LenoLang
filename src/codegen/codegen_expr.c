@@ -156,6 +156,14 @@ void emit_ptr_elem_annotation(CodeGen* gen, int reg, TypeInfo* elem, int line) {
         emit_reg_iABx(gen, OP_SET_PTR_CDEF, reg, nc, line);
         return;
     }
+    // `Ptr[Ptr[cstruct]]`：一条指令同时记下"元素是指针" + 内层 cstruct 定义
+    if (elem->kind == TYPE_PTR_GENERIC && elem->element_type &&
+        elem->element_type->kind == TYPE_CSTRUCT && elem->element_type->struct_name) {
+        const char* nm = elem->element_type->struct_name;
+        int nc = make_constant(gen, val_obj((Object*)str_copy(nm, (int)strlen(nm))));
+        emit_reg_iABx(gen, OP_SET_PTR_INNER_CDEF, reg, nc, line);
+        return;
+    }
     int composite = (elem->kind == TYPE_PTR_GENERIC || elem->kind == TYPE_ARRAY ||
                      elem->kind == TYPE_DICT || elem->kind == TYPE_STRUCT ||
                      elem->kind == TYPE_FACE || elem->kind == TYPE_ENUM);

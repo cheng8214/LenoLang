@@ -1,0 +1,80 @@
+// 跨线程与 cstruct / Ptr 的边界（2026-11-12）
+//
+// 三条规则（本用例逐条钉住）：
+//   ① **传参**（`threads.start(f, x)`）里 x 的静态类型是 cstruct ⇒ **编译期**报错
+//      （cstruct 是裸 C 内存，没有可安全深克隆的语义）；
+//   ② **通道**（`ch.send(x)`）运行期拒绝 cstruct / Ptr，且**不留幽灵槽**；
+//   ③ **全局变量**里的 `Ptr[T]` / cstruct 是**共享**的（同一进程地址空间），
+//      线程写、主线程能看见 —— 没有任何同步 ⇒ 并发写同一块内存是数据竞争，
+//      需要自己保证"一块内存只有一个线程写"（或走 Channel 传值）。
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import ffi
+import strings
+import threads
+
+cstruct V3 { f32 x  f32 y  f32 z }
+
+// ---- ③ 的载体：全局 Ptr（线程能看见并写）----
+Ptr[V3] g_buf = null
+
+func worker(int n): int {
+    if g_buf == null { return -1 }
+    g_buf[0].x = 1.5           // 直接写共享内存（无同步）
+    return _int(g_buf[0].x * 10.0)
+}
+
+main() {
+    // ---- ① 编译期：threads.start 不能传 cstruct ----
+    var work = dirs.join(_tmpdir(), "leno_thread_cstruct")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+    var f1 = dirs.join(work, "start_cstruct.leno")
+    files.write(f1, strings.join([
+        "import threads",
+        "",
+        "cstruct V3 { f32 x }",
+        "",
+        "func work(int n): int { return n }",
+        "",
+        "main() {",
+        "    var v = V3.malloc()",
+        "    var t = threads.start(work, v)",
+        "    print(_str(t.join()))",
+        "}",
+        ""], "\n"))
+    ce.expect_error(f1, "threads.start 传 cstruct 要编译期报错", "跨线程不能传 cstruct", 0)
+
+    // ---- ② 运行期：Channel 拒绝 cstruct / Ptr，且不留幽灵槽 ----
+    var ch = threads.channel(4)
+    var v = V3.malloc()
+    v.x = 1.0
+
+    bool caught = false
+    try { ch.send(v) } catch e { caught = true }
+    assert_eq(caught, true, "ch.send(cstruct) 必须抛异常")
+
+    ch.send(42)
+    assert_eq(_int(ch.receive()), 42, "被拒之后通道仍逐条对应（无幽灵 null）")
+
+    Ptr[u8] p = ffi.malloc(8)
+    caught = false
+    try { ch.send(p) } catch e2 { caught = true }
+    assert_eq(caught, true, "ch.send(Ptr) 必须抛异常")
+
+    // ---- ③ 全局 Ptr 是共享的（线程写、主线程可见）----
+    g_buf = ffi.malloc(12)
+    g_buf[0].x = 0.5
+    var t = threads.start(worker, 1)
+    int r = t.join()
+    assert_eq(r, 15, "子线程读到并写入共享内存（返回值 = 1.5*10）")
+    assert_eq(g_buf[0].x, 1.5, "主线程能看到子线程的写入 ⇒ 全局 Ptr 是共享的")
+
+    ffi.free(p)
+    ffi.free(g_buf)
+    g_buf = null
+    v.free()
+    dirs.delete(work)
+    print("test_thread_cstruct_boundary passed")
+}

@@ -1716,6 +1716,17 @@ static Value ffi_read_at_func(int argc, Value* args) {
             //   读出来的这个指针**本身就是那个 Ptr[u8]** ⇒ 它的元素类型 = spec 的第二层
             //   （u8），若还有更深的就挂在自己的 elem_spec 上。
             //   这一步让 `var x = pp[0]; x[0]` 不依赖任何 codegen 标注就能用。
+            // ★ 2026-11-12（Ptr[Ptr[cstruct]]）：内层定义已由 OP_SET_PTR_INNER_CDEF
+            //   在 VM 侧解析好（ffi 层没有 chunk，解析不了规格里的常量索引）⇒
+            //   读出来的这个指针本身就是 `Ptr[V3]`，直接带上 elem_cdef。
+            if (ptr->inner_cdef) {
+                // ⚠ 新对象是 **`Ptr[V3]`**（pp 的元素），不是 `Ptr[Ptr[V3]]` ⇒
+                //   它的元素类型是 **CSTRUCT**（配 elem_cdef），不是 PTR_GENERIC；
+                //   写成 PTR_GENERIC 会让 `auto[0]` 去读 8 字节指针而不是 V3。
+                ret_ptr->element_type = TYPE_CSTRUCT;
+                ret_ptr->elem_cdef = ptr->inner_cdef;
+                return val_obj((Object*)ret_ptr);
+            }
             if (ptr->elem_spec) {
                 const uint8_t* s = ptr->elem_spec;
                 if (s[0] == TYPE_PTR_GENERIC || s[0] == TYPE_ARRAY) {

@@ -1,0 +1,59 @@
+// `Ptr[Ptr[cstruct]]`（二级指针指向结构体数组）（2026-11-12）
+//
+// 背景：`Ptr[PPtr[V3]] pp` 的 `pp[0]` 读出来是 `Ptr[V3]`，但它的 `elem_cdef`
+//   （内层 cstruct 定义）原先无处可取 —— 类型规格里的 struct 名字是 **chunk 常量索引**，
+//   而 `ffi.read_at` 在 ffi 层执行、没有 chunk ⇒ `var x = pp[0]; x[0].字段` 报
+//   「Ptr[cstruct] 缺少元素类型信息」。
+//
+// 修法：新 opcode `OP_SET_PTR_INNER_CDEF`（iABx）在 VM 侧（有 chunk）解析内层定义，
+//   存进 `ObjFFIPointer.inner_cdef`；read_at 读 PTR 元素时带给新指针
+//   （新对象的 element_type 是 **CSTRUCT**，因为它就是 `Ptr[V3]`）。
+import ffi
+
+cstruct V3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+main() {
+    Ptr[V3] arr = ffi.malloc(12 * 2)
+    arr[0].x = 5.0
+    arr[0].y = 6.0
+    arr[1].x = 7.0
+
+    Ptr[Ptr[V3]] pp = ffi.malloc(8)
+    pp[0] = arr
+    assert_true(pp[0] != null, "二级指针写入")
+
+    // ---- ① var 推断：不写标注也能一路解引用 ----
+    var auto = pp[0]
+    assert_eq(auto[0].x, 5.0, "var 推断后 auto[0].x")
+    assert_eq(auto[1].x, 7.0, "auto[1].x（元素偏移正确）")
+
+    // ---- ② 通过二级指针写回原内存 ----
+    auto[1].y = 9.0
+    assert_eq(arr[1].y, 9.0, "写回原内存")
+
+    // ---- ③ 显式标注仍然可用 ----
+    Ptr[V3] back = pp[0]
+    assert_eq(back[0].y, 6.0, "显式标注")
+
+    // ---- ④ 深度 3 不支持要**可控报错**（不是静默错值）----
+    Ptr[Ptr[Ptr[V3]]] ppp = ffi.malloc(8)
+    ppp[0] = pp
+    bool caught = false
+    try {
+        var l1 = ppp[0]          // → Ptr[Ptr[V3]]（这一层有 inner_cdef 吗？没有 ⇒ 下一层报错）
+        var l2 = l1[0]
+        var _v = l2[0].x
+    } catch e {
+        caught = true
+    }
+    assert_eq(caught, true, "深度 3 应可控报错（不允许静默错值）")
+
+    ffi.free(ppp)
+    ffi.free(pp)
+    ffi.free(arr)
+    print("test_ptr_ptr_cstruct passed")
+}

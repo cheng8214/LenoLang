@@ -108,6 +108,7 @@ static const char* opCodeNames[] = {
     // ★ 2026-11-11（Ptr 复查）：Ptr 元素类型的完整规格（顺序必须与 leno_vm.h 一致）
     "OP_SET_PTR_SPEC",      // R[A] 的 Ptr 元素类型规格（自定界）
     "OP_SET_PTR_CDEF",      // R[A].elem_cdef = cstruct_def_find(K[Bx])（Ptr[cstruct]）
+    "OP_SET_PTR_INNER_CDEF",// R[A].inner_cdef = …（Ptr[Ptr[cstruct]] 的内层）
     "OP_OPCODE_COUNT",
     };
 

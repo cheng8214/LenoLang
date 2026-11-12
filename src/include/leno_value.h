@@ -97,6 +97,12 @@ typedef struct ObjFFIPointer {
     //   **chunk 常量索引**，ffi 层没有 chunk 上下文 ⇒ 在标注时（VM 有 chunk）就解析好。
     //   ⚠ GC 必须 mark（gc.c 的 OBJ_FFI_POINTER 分支）。
     ObjCStructDef* elem_cdef;
+    // ★ 2026-11-12：`Ptr[Ptr[cstruct]]`（二级指针指向结构体数组）时，**内层**那级
+    //   cstruct 的定义。为什么单独存：`pp[0]` 读出来的是 `Ptr[V3]`，它的 elem_cdef
+    //   需要从 pp 的规格里拿 —— 而规格里的名字是 chunk 常量索引，read_at 在 ffi 层
+    //   没有 chunk ⇒ 只能在标注时（VM 有 chunk）先解析好放这儿。
+    //   ⚠ GC 必须 mark。
+    ObjCStructDef* inner_cdef;
     // ★ 2026-11-11（Ptr 设计复查）：元素类型的**完整规格**（NULL = 只有上面那一层）。
     //   上面那个 TypeKind 只能表达一层，`Ptr[Ptr[u8]]` 的第二层（u8）就丢了。
     //   规格格式与 OP_TYPE_CHECK_SPEC 完全一致（见 codegen_expr.c 的 emit_type_spec /

@@ -197,7 +197,11 @@
 //   为什么必须 bump：又是**变长尾随字节** —— 读错会把下一条指令当成数据头（"内存反序列化
 //   失败(6)"，而 --check 是绿的）。用途：`==` 按值比较 + `jsons.encode` 成员式输出。
 //   ⇒ LENO_MODCACHE_VERSION 同步升（模块字节码里同样是这份元数据）。
-#define LENO_BIN_VERSION    0x00030223  // v3.2.35（2026-11-11）—— 新增 opcode
+#define LENO_BIN_VERSION    0x00030224  // v3.2.36（2026-11-12）—— 新增 opcode
+                                        //   **OP_SET_PTR_INNER_CDEF**（iABx）：
+                                        //   `Ptr[Ptr[cstruct]]` 的内层 cstruct 定义标注，
+                                        //   使 `var x = pp[0]` 自动带上 elem_cdef
+                                        // v3.2.35（2026-11-11）—— 新增 opcode
                                         //   **OP_SET_PTR_CDEF**（iABx）：给 `Ptr[cstruct]`
                                         //   标上元素类型定义（`ObjCStructDef*` 存在指针对象里），
                                         //   使 `p[0]` 能按元素大小造 cstruct 视图。
@@ -423,7 +427,9 @@
 // v45（2026-11-09）：OP_STRUCT_DEF 的字段元数据多一个 `element_struct_name`
 //   （见 LENO_BIN_VERSION v3.2.29）。模块字节码里是同一份布局 ⇒ 必须同步升，
 //   否则旧 .lenomc 会被当成新格式读，字段定义整体错位。
-#define LENO_MODCACHE_VERSION  0x00000033  // v50 - 同 LENO_BIN_VERSION v3.2.35（新增 opcode
+#define LENO_MODCACHE_VERSION  0x00000034  // v51 - 同 LENO_BIN_VERSION v3.2.36（新增 opcode
+                                            //   OP_SET_PTR_INNER_CDEF ✓）
+                                            // v50 - 同 LENO_BIN_VERSION v3.2.35（新增 opcode
                                             //   OP_SET_PTR_CDEF ⇒ 模块字节码里同样含它 ✓）
                                             // v49 - 同 LENO_BIN_VERSION v3.2.34（新增 opcode
                                             //   OP_SET_PTR_SPEC ⇒ 模块字节码里同样含它 ⇒

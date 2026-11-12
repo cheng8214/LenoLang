@@ -584,6 +584,13 @@ typedef enum {
     //   语义：R[A] 若是 FFI 指针 ⇒ element_type = TYPE_CSTRUCT、elem_cdef = 解析结果。
     OP_SET_PTR_CDEF,     // iABx   R[A].elem_cdef = cstruct_def_find(K[Bx])
 
+    // ★ 2026-11-12（Ptr[Ptr[cstruct]]）：`Ptr[Ptr[V3]]` 的**内层** cstruct 定义标注。
+    //   语义：R[A] 是 FFI 指针 ⇒ element_type = TYPE_PTR_GENERIC、inner_cdef = 定义。
+    //   之后 `ffi.read_at(pp, 0)` 读出来的新指针直接带上 elem_cdef ⇒
+    //   `var x = pp[0]; x[0].字段` 不用显式标注也能用。
+    //   编码：iABx（A = 目标寄存器，Bx = 类型名字符串的常量索引）。
+    OP_SET_PTR_INNER_CDEF, // iABx  R[A].inner_cdef = cstruct_def_find(K[Bx])
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 
