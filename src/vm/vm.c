@@ -1428,6 +1428,19 @@ static inline Value vm_cstruct_field_read(ObjCStruct* co, int field_idx) {
 //     ② 作为**元素视图**时父数组 free_all（owner_arr->data 置 NULL）；
 //     ③ 作为**嵌套字段视图**时父实例 free（parent_obj 链上某一级失效）。
 //   ⚠ 深度上限 fail-closed：链异常长时按"已释放"处理（宁可报错，不要往野指针写）。
+// `Ptr[T]` 特化下标（OP_INDEX_PTR_* / OP_INDEX_SET_PTR_*）的前置判定：
+//   活着 + 区间在 size 内（size == 0 表示未知 ⇒ 不查，裸指针语义）。
+// 为什么抽出来：6 条特化指令原来是 6 份手写判据，改一处口径就得改六处 ——
+//   而"越界到底怎么判"必须与 `CHECK_BOUNDS`（ffi.c）逐条一致。
+static inline int vm_ptr_index_ok(ObjFFIPointer* p, int64_t idx, int esz) {
+    if (!p->ptr || p->freed) return 0;
+    if (p->size == 0) return 1;
+    {
+        int64_t off = idx * (int64_t)esz;
+        return off >= 0 && (size_t)off + (size_t)esz <= p->size;
+    }
+}
+
 static inline int vm_cstruct_alive(ObjCStruct* co) {
     int depth = 0;
     while (co && depth++ < 32) {

@@ -108,6 +108,12 @@ void emit_type_spec_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int line);
 // 复合（Ptr/Array/Dict/Struct…）→ OP_SET_PTR_SPEC（带完整子树）。
 void emit_ptr_elem_annotation(CodeGen* gen, int reg, TypeInfo* elem, int line);
 
+// `Ptr[T][i]` 下标特化指令的选择（**唯一实现**，读写两处共用）：
+//   读 → OP_INDEX_PTR_F32 / _I32 / _U8；写 → OP_INDEX_SET_PTR_*。
+//   返回 (OpCode)-1 表示该元素类型没有特化（调用方回落通用 OP_INDEX / OP_INDEX_SET）。
+OpCode ptr_index_op_for_kind(TypeKind elem);
+OpCode ptr_index_set_op_for_kind(TypeKind elem);
+
 // ★ 2026-11-09：局部量槽位自检（防"符号 kind 退化"整类 bug，实现与原因见 codegen_emit.c）
 //   读/写局部量之前都调一次：index 若是"模块/全局槽位号"被误当成寄存器号，这里当场报编译错误。
 void cg_check_local_slot(CodeGen* gen, const SymRef* ref, const Ast* ast);

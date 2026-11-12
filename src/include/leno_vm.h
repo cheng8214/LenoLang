@@ -600,6 +600,14 @@ typedef enum {
     //     通用实现，报错文案与判定口径仍只有那一份（不复制语义）。
     OP_INDEX_PTR_F32,
     OP_INDEX_SET_PTR_F32,
+    // 同族的 i32 / u8 版本（元素宽度 4 / 1）。用途：
+    //   · i32 —— C 侧 int 数组（配置表、索引表、计数器）
+    //   · u8  —— 逐字节打包 / 像素操作（LenoSDL3 的 PixelBuffer 就是这条路径）
+    //   编码与 f32 版逐位一致（iABC：A = 目标/值，B = 指针，C = 下标）。
+    OP_INDEX_PTR_I32,
+    OP_INDEX_SET_PTR_I32,
+    OP_INDEX_PTR_U8,
+    OP_INDEX_SET_PTR_U8,
 
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;

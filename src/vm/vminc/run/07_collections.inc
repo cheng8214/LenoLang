@@ -1066,9 +1066,7 @@
         if (likely(val_is_obj(ov) && val_as_obj(ov)->type == OBJ_FFI_POINTER && val_is_int(iv))) {
             ObjFFIPointer* p = (ObjFFIPointer*)val_as_obj(ov);
             int64_t off = val_as_int(iv) * 4;
-            if (likely(p->ptr != NULL && !p->freed &&
-                       (p->size == 0 ||
-                        (off >= 0 && (size_t)off + 4 <= p->size)))) {
+            if (likely(vm_ptr_index_ok(p, val_as_int(iv), 4))) {
                 float t;
                 memcpy(&t, (const uint8_t*)p->ptr + off, 4);
                 R(a) = val_float((double)t);
@@ -1097,15 +1095,114 @@
                    (val_is_int(nv) || val_is_float(nv)))) {
             ObjFFIPointer* p = (ObjFFIPointer*)val_as_obj(ov);
             int64_t off = val_as_int(iv) * 4;
-            if (likely(p->ptr != NULL && !p->freed &&
-                       (p->size == 0 ||
-                        (off >= 0 && (size_t)off + 4 <= p->size)))) {
+            if (likely(vm_ptr_index_ok(p, val_as_int(iv), 4))) {
                 float t = (float)val_as_num(nv);
                 memcpy((uint8_t*)p->ptr + off, &t, 4);
                 DISPATCH();
             }
         }
         ffi_vm_index_write(ov, iv, nv);                 // 慢路径：通用实现负责报错
+        if (unlikely(vm.has_exception)) {
+            frame = &vm.frames[vm.frame_cnt - 1];
+            if (!throw_pending_exception(line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        DISPATCH();
+    }
+    // ---- 同族的 i32 / u8 版本（前置判定统一走 vm_ptr_index_ok）----
+    LABEL(OP_INDEX_PTR_I32): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        Value ov = R(b);
+        Value iv = R(c);
+        int line = GET_CURRENT_LINE();
+        if (likely(val_is_obj(ov) && val_as_obj(ov)->type == OBJ_FFI_POINTER && val_is_int(iv))) {
+            ObjFFIPointer* p = (ObjFFIPointer*)val_as_obj(ov);
+            if (likely(vm_ptr_index_ok(p, val_as_int(iv), 4))) {
+                int32_t t;
+                memcpy(&t, (const uint8_t*)p->ptr + val_as_int(iv) * 4, 4);
+                R(a) = val_int((int)t);
+                DISPATCH();
+            }
+        }
+        {
+            Value out = ffi_vm_index_read(ov, iv);
+            if (unlikely(vm.has_exception)) {
+                frame = &vm.frames[vm.frame_cnt - 1];
+                if (!throw_pending_exception(line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            R(a) = out;
+            DISPATCH();
+        }
+    }
+    LABEL(OP_INDEX_SET_PTR_I32): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        Value ov = R(b);
+        Value iv = R(c);
+        Value nv = R(a);
+        int line = GET_CURRENT_LINE();
+        if (likely(val_is_obj(ov) && val_as_obj(ov)->type == OBJ_FFI_POINTER && val_is_int(iv) &&
+                   val_is_int(nv))) {
+            ObjFFIPointer* p = (ObjFFIPointer*)val_as_obj(ov);
+            if (likely(vm_ptr_index_ok(p, val_as_int(iv), 4))) {
+                int32_t t = (int32_t)val_as_int(nv);
+                memcpy((uint8_t*)p->ptr + val_as_int(iv) * 4, &t, 4);
+                DISPATCH();
+            }
+        }
+        ffi_vm_index_write(ov, iv, nv);
+        if (unlikely(vm.has_exception)) {
+            frame = &vm.frames[vm.frame_cnt - 1];
+            if (!throw_pending_exception(line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        DISPATCH();
+    }
+    LABEL(OP_INDEX_PTR_U8): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        Value ov = R(b);
+        Value iv = R(c);
+        int line = GET_CURRENT_LINE();
+        if (likely(val_is_obj(ov) && val_as_obj(ov)->type == OBJ_FFI_POINTER && val_is_int(iv))) {
+            ObjFFIPointer* p = (ObjFFIPointer*)val_as_obj(ov);
+            if (likely(vm_ptr_index_ok(p, val_as_int(iv), 1))) {
+                uint8_t t;
+                memcpy(&t, (const uint8_t*)p->ptr + val_as_int(iv), 1);
+                R(a) = val_int((int)t);
+                DISPATCH();
+            }
+        }
+        {
+            Value out = ffi_vm_index_read(ov, iv);
+            if (unlikely(vm.has_exception)) {
+                frame = &vm.frames[vm.frame_cnt - 1];
+                if (!throw_pending_exception(line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            R(a) = out;
+            DISPATCH();
+        }
+    }
+    LABEL(OP_INDEX_SET_PTR_U8): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        Value ov = R(b);
+        Value iv = R(c);
+        Value nv = R(a);
+        int line = GET_CURRENT_LINE();
+        if (likely(val_is_obj(ov) && val_as_obj(ov)->type == OBJ_FFI_POINTER && val_is_int(iv) &&
+                   val_is_int(nv))) {
+            ObjFFIPointer* p = (ObjFFIPointer*)val_as_obj(ov);
+            if (likely(vm_ptr_index_ok(p, val_as_int(iv), 1))) {
+                uint8_t t = (uint8_t)val_as_int(nv);
+                memcpy((uint8_t*)p->ptr + val_as_int(iv), &t, 1);
+                DISPATCH();
+            }
+        }
+        ffi_vm_index_write(ov, iv, nv);
         if (unlikely(vm.has_exception)) {
             frame = &vm.frames[vm.frame_cnt - 1];
             if (!throw_pending_exception(line)) return -1;

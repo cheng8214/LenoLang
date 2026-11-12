@@ -146,6 +146,27 @@ void emit_type_spec_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int line) 
 // Ptr[T] 的元素类型标注 —— **唯一发射点**（var_decl / 变量赋值 / 字段 / 返回 / 实参都走它）。
 //   标量元素 → OP_SET_PTR_ELEM_TYPE（紧凑：一个 TypeKind，既有字节码不变）
 //   复合元素 → OP_SET_PTR_SPEC（带完整类型子树：`Ptr[Ptr[u8]]` 的第二层要留住）
+// `Ptr[T][i]` / `p[i] = v` 的特化指令选择（元素宽度在**编译期**就定死）。
+//   只给真正常见的三类开特化：f32（顶点/坐标）、i32/int（C 的 int 数组）、u8（字节/像素）。
+//   其余（f64/u16/i64…）继续走通用 OP_INDEX 的内联快路径 —— 那条也不慢，且不用吃 opcode 预算。
+OpCode ptr_index_op_for_kind(TypeKind elem) {
+    switch (elem) {
+        case TYPE_F32:                                return OP_INDEX_PTR_F32;
+        case TYPE_I32: case TYPE_INT:                 return OP_INDEX_PTR_I32;
+        case TYPE_U8:                                 return OP_INDEX_PTR_U8;
+        default:                                      return (OpCode)-1;
+    }
+}
+
+OpCode ptr_index_set_op_for_kind(TypeKind elem) {
+    switch (elem) {
+        case TYPE_F32:                                return OP_INDEX_SET_PTR_F32;
+        case TYPE_I32: case TYPE_INT:                 return OP_INDEX_SET_PTR_I32;
+        case TYPE_U8:                                 return OP_INDEX_SET_PTR_U8;
+        default:                                      return (OpCode)-1;
+    }
+}
+
 void emit_ptr_elem_annotation(CodeGen* gen, int reg, TypeInfo* elem, int line) {
     if (!elem) return;
     // 元素是 **cstruct**：名字要在 VM 侧解析成 ObjCStructDef（ffi.read_at 没有 chunk
@@ -776,13 +797,16 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             //   只认 **静态类型明确是 Ptr[f32]、下标是 int** 的情况；其余（可空性、
             //   复合元素、下标是 float…）一律落回下面通用 OP_INDEX，语义不变。
             if (ot && ot->kind == TYPE_PTR_GENERIC && ot->element_type &&
-                ot->element_type->kind == TYPE_F32 && it && it->kind == TYPE_INT) {
-                reg_encode_iABC(gen->chunk, OP_INDEX_PTR_F32, dst, obj_reg, idx_reg, ast->line);
-                if (idx_is_temp) reg_free(gen, idx_reg);
-                if (obj_is_temp) reg_free(gen, obj_reg);
-                type_free(ot);
-                type_free(it);
-                break;
+                it && it->kind == TYPE_INT) {
+                OpCode pop = ptr_index_op_for_kind(ot->element_type->kind);
+                if (pop != (OpCode)-1) {
+                    reg_encode_iABC(gen->chunk, pop, dst, obj_reg, idx_reg, ast->line);
+                    if (idx_is_temp) reg_free(gen, idx_reg);
+                    if (obj_is_temp) reg_free(gen, obj_reg);
+                    type_free(ot);
+                    type_free(it);
+                    break;
+                }
             }
             reg_encode_iABC(gen->chunk, OP_INDEX, dst, obj_reg, idx_reg, ast->line);
             if (idx_is_temp) reg_free(gen, idx_reg);

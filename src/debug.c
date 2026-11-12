@@ -111,6 +111,10 @@ static const char* opCodeNames[] = {
     "OP_SET_PTR_INNER_CDEF",// R[A].inner_cdef = …（Ptr[Ptr[cstruct]] 的内层）
     "OP_INDEX_PTR_F32",     // R[A] = R[B][R[C]]（Ptr[f32] 特化）
     "OP_INDEX_SET_PTR_F32", // R[B][R[C]] = R[A]（Ptr[f32] 特化）
+    "OP_INDEX_PTR_I32",     // 同上（Ptr[i32]）
+    "OP_INDEX_SET_PTR_I32",
+    "OP_INDEX_PTR_U8",      // 同上（Ptr[u8]）
+    "OP_INDEX_SET_PTR_U8",
     "OP_OPCODE_COUNT",
     };
 
