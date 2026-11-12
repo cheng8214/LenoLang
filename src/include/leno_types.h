@@ -568,6 +568,16 @@ int type_equals(TypeInfo* a, TypeInfo* b);
 TypeInfo* type_copy(TypeInfo* type);
 const char* type_to_string(TypeInfo* type);
 const char* type_kind_to_string(TypeKind kind);
+// 宿主字节序 —— 只有**位域**的布局依赖它（bit_offset 从 LSB 起算）。
+//   大端平台上位域会**静默读反**，所以语义层在定义位域时直接报错（见 visit_ffi.inc）。
+//   MSVC 不定义 __BYTE_ORDER__，但 Windows 支持的架构都是小端 ⇒ 默认 0 正确。
+#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && \
+    (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+#define LENO_HOST_BIG_ENDIAN 1
+#else
+#define LENO_HOST_BIG_ENDIAN 0
+#endif
+
 int type_is_compatible(TypeInfo* target, TypeInfo* source);
 // clib 实参的兼容性：比赋值宽一档（Ptr[T] ↔ Ptr[U] 放行，因为实参直接进 C、没有
 // "按元素类型解引用"的函数体）。理由见 type.c 的说明。

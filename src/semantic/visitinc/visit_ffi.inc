@@ -76,6 +76,18 @@
                                 "union '%s' 里不支持位域（C 的 union 位域布局各编译器不一致）",
                                 ast->u.cstruct_def.name);
                         }
+                        // ★ 2026-11-12：位域布局按**小端**实现（bit_offset 从 LSB 起算）。
+                        //   大端平台上这样打包会**静默读反**（值错了、没有任何提示）⇒ 直接
+                        //   编译报错，而不是让它跑起来才发现。判据是编译期宏，运行时零开销。
+                        //   `LENO_FORCE_BE=1` 是**测试钩子**：让小端机器也能验证这条报错
+                        //   （否则这段代码在本仓所有 CI 上都是"永不执行"）。
+                        if (LENO_HOST_BIG_ENDIAN || getenv("LENO_FORCE_BE")) {
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                "cstruct '%s' 的位域 '%s : %d' 无法在这个目标上正确布局："
+                                "位域按**小端**实现，大端平台上位序会反（值静默读错）—— "
+                                "请改用位掩码手写（`(v >> n) & mask`），或去掉位域",
+                                ast->u.cstruct_def.name, ast->u.cstruct_def.field_names[i], bw);
+                        }
                     }
                 }
 
