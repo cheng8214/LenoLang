@@ -1720,9 +1720,14 @@ static OpCode index_set_op_for(CodeGen* gen, Ast* obj_ast, Ast* idx_ast, int* ou
         }
     }
     if (op == OP_INDEX_SET) {
-        int spec = (ot && ot->kind == TYPE_ARRAY && ot->element_type &&
+        // ★ 2026-11-12：`Ptr[f32]` 的 `p[i] = v` 特化（元素宽度编译期已知 = 4）
+        int pspec = (ot && ot->kind == TYPE_PTR_GENERIC && ot->element_type &&
+                     ot->element_type->kind == TYPE_F32 && it && it->kind == TYPE_INT);
+        int spec = (!pspec && ot && ot->kind == TYPE_ARRAY && ot->element_type &&
                     it && it->kind == TYPE_INT);
-        if (spec) {
+        if (pspec) {
+            op = OP_INDEX_SET_PTR_F32;
+        } else if (spec) {
             op = OP_INDEX_SET_ARRAY_INT;
             // ★ 2026-10-03：下标是 **[0,255] 整数字面量** ⇒ 发立即数版 OP_INDEX_SET_ARRAY_IMM
             //   （对应读路径的 OP_INDEX_ARRAY_IMM）。动机：`a[0] = v` 原先要

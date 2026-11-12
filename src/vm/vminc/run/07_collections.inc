@@ -1049,4 +1049,69 @@
     }
     #undef ARRAY_SPECIALIZED_NULL_GUARD
     #undef ARRAY_RECV_GUARD
+    // ============================================================================
+    // OP_INDEX_PTR_F32 / OP_INDEX_SET_PTR_F32 —— `Ptr[f32]` 的 `p[i]` / `p[i] = v`
+    // ----------------------------------------------------------------------------
+    // ★ 2026-11-12（性能）：通用 OP_INDEX 的 FFI 分支要依次做
+    //   ① obj 是不是 FFI 指针 ② 下标是不是 int ③ element_type 的 switch（算宽度）
+    //   才轮到 memcpy —— 而 ③ 的宽度在 `Ptr[f32]` 上是**编译期常量 4**。
+    //   这里把 ③ 彻底消掉、①② 各留一次最便宜的判定；任何一条不满足就落回通用实现，
+    //   所以越界/空指针/已释放/值类型不符的**判定与文案仍然只有那一份**。
+    // ============================================================================
+    LABEL(OP_INDEX_PTR_F32): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        Value ov = R(b);
+        Value iv = R(c);
+        int line = GET_CURRENT_LINE();
+        if (likely(val_is_obj(ov) && val_as_obj(ov)->type == OBJ_FFI_POINTER && val_is_int(iv))) {
+            ObjFFIPointer* p = (ObjFFIPointer*)val_as_obj(ov);
+            int64_t off = val_as_int(iv) * 4;
+            if (likely(p->ptr != NULL && !p->freed &&
+                       (p->size == 0 ||
+                        (off >= 0 && (size_t)off + 4 <= p->size)))) {
+                float t;
+                memcpy(&t, (const uint8_t*)p->ptr + off, 4);
+                R(a) = val_float((double)t);
+                DISPATCH();
+            }
+        }
+        {
+            Value out = ffi_vm_index_read(ov, iv);      // 慢路径：通用实现负责报错
+            if (unlikely(vm.has_exception)) {
+                frame = &vm.frames[vm.frame_cnt - 1];
+                if (!throw_pending_exception(line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            R(a) = out;
+            DISPATCH();
+        }
+    }
+    LABEL(OP_INDEX_SET_PTR_F32): {
+        int a = READ_A(), b = READ_B(), c = READ_C();
+        Value ov = R(b);
+        Value iv = R(c);
+        Value nv = R(a);
+        int line = GET_CURRENT_LINE();
+        if (likely(val_is_obj(ov) && val_as_obj(ov)->type == OBJ_FFI_POINTER && val_is_int(iv) &&
+                   (val_is_int(nv) || val_is_float(nv)))) {
+            ObjFFIPointer* p = (ObjFFIPointer*)val_as_obj(ov);
+            int64_t off = val_as_int(iv) * 4;
+            if (likely(p->ptr != NULL && !p->freed &&
+                       (p->size == 0 ||
+                        (off >= 0 && (size_t)off + 4 <= p->size)))) {
+                float t = (float)val_as_num(nv);
+                memcpy((uint8_t*)p->ptr + off, &t, 4);
+                DISPATCH();
+            }
+        }
+        ffi_vm_index_write(ov, iv, nv);                 // 慢路径：通用实现负责报错
+        if (unlikely(vm.has_exception)) {
+            frame = &vm.frames[vm.frame_cnt - 1];
+            if (!throw_pending_exception(line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        DISPATCH();
+    }
     // OP_SLICE A B C: R[A] = R[B][R[A+1] : R[A+2]]（结束索引**包含**；null 表示省略）

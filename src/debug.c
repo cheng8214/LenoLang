@@ -109,6 +109,8 @@ static const char* opCodeNames[] = {
     "OP_SET_PTR_SPEC",      // R[A] 的 Ptr 元素类型规格（自定界）
     "OP_SET_PTR_CDEF",      // R[A].elem_cdef = cstruct_def_find(K[Bx])（Ptr[cstruct]）
     "OP_SET_PTR_INNER_CDEF",// R[A].inner_cdef = …（Ptr[Ptr[cstruct]] 的内层）
+    "OP_INDEX_PTR_F32",     // R[A] = R[B][R[C]]（Ptr[f32] 特化）
+    "OP_INDEX_SET_PTR_F32", // R[B][R[C]] = R[A]（Ptr[f32] 特化）
     "OP_OPCODE_COUNT",
     };
 

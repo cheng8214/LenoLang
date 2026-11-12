@@ -591,6 +591,16 @@ typedef enum {
     //   编码：iABx（A = 目标寄存器，Bx = 类型名字符串的常量索引）。
     OP_SET_PTR_INNER_CDEF, // iABx  R[A].inner_cdef = cstruct_def_find(K[Bx])
 
+    // ★ 2026-11-12（Ptr 下标特化）：`Ptr[f32]` 的 `p[i]` / `p[i] = v`。
+    //   与 OP_INDEX / OP_INDEX_SET 的 FFI 分支语义**完全一致**，只是把三件事编掉了：
+    //     ① obj 判型（编译期已知是 FFI 指针）② 下标判型（已知 int）
+    //     ③ element_type → 元素宽度 switch（已知 4 字节）
+    //   编码 iABC：读 A = 目标、B = 指针、C = 下标；写 A = 值、B = 指针、C = 下标。
+    //   ⚠ 快路径的任何前置条件不满足（null / 已释放 / 越界 / 值不是数值）⇒ 一律落回
+    //     通用实现，报错文案与判定口径仍只有那一份（不复制语义）。
+    OP_INDEX_PTR_F32,
+    OP_INDEX_SET_PTR_F32,
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 

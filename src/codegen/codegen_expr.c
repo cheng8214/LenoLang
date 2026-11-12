@@ -771,6 +771,19 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                          ot->kind == TYPE_STRING))) {
                 dce_note_method_ref(NULL, iidx->u.string.value);
             }
+            // ★ 2026-11-12：`Ptr[f32]` 下标特化 —— 元素宽度编译期已知（4 字节），
+            //   运行期不必再判 element_type 走 switch（见 VM 的 OP_INDEX_PTR_F32）。
+            //   只认 **静态类型明确是 Ptr[f32]、下标是 int** 的情况；其余（可空性、
+            //   复合元素、下标是 float…）一律落回下面通用 OP_INDEX，语义不变。
+            if (ot && ot->kind == TYPE_PTR_GENERIC && ot->element_type &&
+                ot->element_type->kind == TYPE_F32 && it && it->kind == TYPE_INT) {
+                reg_encode_iABC(gen->chunk, OP_INDEX_PTR_F32, dst, obj_reg, idx_reg, ast->line);
+                if (idx_is_temp) reg_free(gen, idx_reg);
+                if (obj_is_temp) reg_free(gen, obj_reg);
+                type_free(ot);
+                type_free(it);
+                break;
+            }
             reg_encode_iABC(gen->chunk, OP_INDEX, dst, obj_reg, idx_reg, ast->line);
             if (idx_is_temp) reg_free(gen, idx_reg);
             if (obj_is_temp) reg_free(gen, obj_reg);

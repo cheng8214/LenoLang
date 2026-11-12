@@ -373,6 +373,8 @@ static int verify_one(const Chunk* c, int pos, int cap,
         case OP_INDEX_SET:
         case OP_INDEX_SET_ARRAY_INT:
         case OP_INDEX_DICT_INT: case OP_INDEX_SET_DICT_INT:
+        // ★ 2026-11-12（Ptr[f32] 下标特化）：同样是 iABC 三寄存器
+        case OP_INDEX_PTR_F32: case OP_INDEX_SET_PTR_F32:
         case OP_LT_F: case OP_LE_F: case OP_GT_F: case OP_GE_F:
         case OP_STR_APPEND:
             REG_CHK(a); REG_CHK(b); REG_CHK(cc);
