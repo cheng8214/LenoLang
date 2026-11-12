@@ -8,10 +8,23 @@
 // 不测 GPU。software 渲染器会把 SDL_RenderTexture 的开销也计入，所以纹理绘制那两行的
 // 绝对值包含 SDL 自己的光栅化成本 —— 看**前后对比**即可，不要当绝对性能承诺。
 //
-// 2026-11-12 基线 → 优化后（同一台机器、同一进程连续跑）：
-//     drawTextureAt                  609 → 441 ns/次  (-28%)
-//     drawTextureFromTo              933 → 543 ns/次  (-42%)
-//     drawTextureAt（opacity 0.5）  1325 → 935 ns/次  (-29%)
+// 2026-11-12 基线 → 优化后（同机、同脚本、各取 3 轮最好）：
+//
+//   单次调用：
+//     drawTextureAt                  597 → 424 ns/次  (-29%)
+//     drawTextureFromTo              892 → 567 ns/次  (-36%)
+//     drawTextureAt（opacity 0.5）  1348 → 954 ns/次  (-29%)
+//
+//   端到端一帧（含 present，**software** 渲染器）：
+//     50 纹理 + 50 矩形     155.2 → 161.5 us/帧   （噪声：只省 ~14us，present 18us 波动更大）
+//     200 纹理 + 200 矩形   613.5 → 600.9 us/帧   (-2.1%)
+//     1000 纹理 + 500 矩形  2852  → 2695  us/帧   (-5.5%)
+//
+//   ⚠ 帧级只降 2~6%，因为 **software 渲染器**的光栅化占大头：1000 精灵省下的 157us
+//     正好≈ 1000 × 173ns（= 单次的差额）⇒ 剩下 ~2.7us/精灵 全是软件 blit。
+//     真实 GPU 上 `SDL_RenderTexture` 只是入队、blit 近乎免费 ⇒ 我们这层的占比更高，
+//     帧级收益会接近上面的"单次调用"数字。留这份软件基准是为了**可重复、无显卡依赖**。
+//
 //   优化手段：把每次绘制都 `SDL_FRect.malloc() + to_ptr() + free()` 换成
 //   **模块级复用的临时 cstruct**（渲染是单线程的，用完即弃，见 sdl_renderer.leno 顶部）。
 import ffi
@@ -24,6 +37,38 @@ use win.(Window, Renderer)
 use evt.Event
 
 Renderer R = null
+Ptr[u8] G_TEX = null
+
+// 端到端「一帧」基准：模拟一帧里画 sprites 个纹理 + rects 个矩形 + 一次 present，
+// 直接报 µs/帧 与理论 FPS（比单次调用更接近真实观感）。
+//   ⚠ 这里是 **software 渲染器**：纹理光栅化成本被算进来了 ⇒ 真实 GPU 下
+//     `SDL_RenderTexture` 只是入队，我们这层的占比更高，本优化的收益只会更明显。
+func frameOnce(int sprites, int rects) {
+    for 0 : rects - 1 to i {
+        R.fillRect(_float(i % 40) * 8.0, _float(i / 40) * 8.0, 7.0, 7.0)
+    }
+    for 0 : sprites - 1 to i {
+        R.drawTextureAt(G_TEX, _float(i % 20) * 32.0, _float(i / 20) * 32.0, 32.0, 32.0)
+    }
+    R.present()
+}
+
+// **取 3 轮的最好成绩**：帧级基准的单轮波动能有 ±10%（调度 / 缓存预热），
+//   取 min 才能让"改动前后"的对比有意义。
+func benchFrames(string name, int frames, int sprites, int rects) {
+    for 0 : 2 to _w { frameOnce(sprites, rects) }        // warmup 3 帧
+    var best = -1.0
+    for 0 : 2 to _rep {
+        var t0 = times.us()
+        for 0 : frames - 1 to _f { frameOnce(sprites, rects) }
+        var t1 = times.us()
+        var per = (t1 - t0) / _float(frames)
+        if best < 0.0 or per < best { best = per }
+    }
+    if best <= 0.0 { best = 1.0 }
+    print("  " + name + "  " + _str(frames) + " 帧 ×3 轮取最好 ⇒ " + _str(best) + " us/帧，理论 "
+          + _str(1000000.0 / best) + " FPS")
+}
 
 func bench(string name, int iters, func():void body) {
     body()                                   // warmup
@@ -43,9 +88,15 @@ main() {
     R = w.createRenderer()
 
     Ptr[u8] tex = R.createTexture(core.PIXELFORMAT_RGBA8888, 0, 64, 64)
+    G_TEX = tex
     print("渲染驱动 = " + R.driver_name() + "，纹理 = " + _str(tex != null))
 
-    print("=== 绘制热路径 ===")
+    print("=== 端到端：一帧的成本（含 present）===")
+    benchFrames("轻量界面（50 纹理 + 50 矩形）", 200, 50, 50)
+    benchFrames("中等界面（200 纹理 + 200 矩形）", 150, 200, 200)
+    benchFrames("密集场景（1000 纹理 + 500 矩形）", 60, 1000, 500)
+
+    print("=== 绘制热路径（单次调用）===")
 
     bench("setColorFloat（同色，命中缓存）", 1000000, func() {
         for 0 : 999999 to i { R.setColorFloat(0.5, 0.25, 0.75, 1.0) }
