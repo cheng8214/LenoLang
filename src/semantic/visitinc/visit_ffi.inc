@@ -202,6 +202,17 @@
             }
             break;
 
+        // ★ 2026-11-12：clib 里的**裸 cstruct 类型名** = 指针（不是 C 的按值传结构体）。
+        //   运行期按 `FFI_TYPE_POINTER` 传（ffi.c 的"自动转换 cstruct 实例为指针"），
+        //   而照 C 头文件直译（`void f(SDL_Rect r)`）就会**静默传错** ⇒ 给一条警告，
+        //   提示显式写 `Ptr[T]` 确认语义（本仓口径：能静态看出来就别留到运行期）。
+        #define WARN_CLIB_CSTRUCT_AS_PTR_AT(fname, tname, is_ret)                        \
+            warning_add_at_fmt(WARN_CLIB_CSTRUCT_AS_PTR, ast->line, ast->column,         \
+                "clib 函数 '%s' 的%s类型 '%s' 会被当作 **指针**（等价 `Ptr[%s]`），"      \
+                "不是 C 的**按值传结构体** —— 照 C 头文件直译（如 `void f(SDL_Rect r)`）" \
+                "会静默传错；若确实要传指针，请显式写 `Ptr[%s]` 确认语义",               \
+                (fname), (is_ret) ? "返回" : "参数", (tname), (tname), (tname))
+
         case AST_CLIB_DEF:
             // 注册 clib 类型并存储函数签名信息
             {
@@ -243,7 +254,9 @@
                             type_free(ret_type);
                             ast->u.clib_def.func_return_types[i] = type_new(TYPE_STR16);
                         } else if (cstruct_def_find(ret_type->struct_name)) {
-                            // cstruct 类型名 — 修正为 TYPE_CSTRUCT
+                            // cstruct 类型名 — 修正为 TYPE_CSTRUCT（**语义是返回指针**）
+                            WARN_CLIB_CSTRUCT_AS_PTR_AT(ast->u.clib_def.func_names[i],
+                                                        ret_type->struct_name, 1);
                             char* name = strdup(ret_type->struct_name);
                             type_free(ret_type);
                             ast->u.clib_def.func_return_types[i] = type_new(TYPE_CSTRUCT);
@@ -253,6 +266,8 @@
                             Symbol* sym = scope_resolve(s->current, ret_type->struct_name);
                             if (!sym) sym = scope_resolve(s->root_scope, ret_type->struct_name);
                             if (sym && sym->type && sym->type->kind == TYPE_CSTRUCT) {
+                                WARN_CLIB_CSTRUCT_AS_PTR_AT(ast->u.clib_def.func_names[i],
+                                                            ret_type->struct_name, 1);
                                 char* name = strdup(ret_type->struct_name);
                                 type_free(ret_type);
                                 ast->u.clib_def.func_return_types[i] = type_new(TYPE_CSTRUCT);
@@ -300,6 +315,8 @@
                                 ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_STR16);
                             } else if (cstruct_def_find(param_type->struct_name)) {
                                 // cstruct 类型名 — 修正为 TYPE_CSTRUCT，语义为传指针
+                                WARN_CLIB_CSTRUCT_AS_PTR_AT(ast->u.clib_def.func_names[i],
+                                                            param_type->struct_name, 0);
                                 char* name = strdup(param_type->struct_name);
                                 type_free(param_type);
                                 ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_CSTRUCT);
@@ -309,6 +326,8 @@
                                 Symbol* sym = scope_resolve(s->current, param_type->struct_name);
                                 if (!sym) sym = scope_resolve(s->root_scope, param_type->struct_name);
                                 if (sym && sym->type && sym->type->kind == TYPE_CSTRUCT) {
+                                    WARN_CLIB_CSTRUCT_AS_PTR_AT(ast->u.clib_def.func_names[i],
+                                                                param_type->struct_name, 0);
                                     char* name = strdup(param_type->struct_name);
                                     type_free(param_type);
                                     ast->u.clib_def.func_param_types[i][j] = type_new(TYPE_CSTRUCT);

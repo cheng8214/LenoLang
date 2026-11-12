@@ -1,4 +1,6 @@
-// 测试嵌套 cstruct 作为 clib 参数传递
+// 测试嵌套 cstruct 作为 clib 参数传递 —— 形参写 `Ptr[T]`（显式"传指针"）
+//   ⚠ 裸写 `POINT lpPoint` 语义**也是**传指针，但和 C 的按值传结构体长得一样
+//     ⇒ 编译器会对此警告（见 examples/clib/test_clib_cstruct.leno 的说明）
 import ffi
 
 cstruct POINT {
@@ -23,9 +25,9 @@ cstruct MSG {
 }
 
 clib user32 {
-    i32 GetCursorPos(POINT lpPoint)
+    i32 GetCursorPos(Ptr[POINT] lpPoint)
     i32 SetCursorPos(i32 x, i32 y)
-    i32 PeekMessageW(MSG lpMsg, Ptr hWnd, i32 wMsgFilterMin, i32 wMsgFilterMax, i32 wRemoveMsg)
+    i32 PeekMessageW(Ptr[MSG] lpMsg, Ptr hWnd, i32 wMsgFilterMin, i32 wMsgFilterMax, i32 wRemoveMsg)
 }
 
 main() {

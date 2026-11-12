@@ -236,6 +236,11 @@ typedef enum {
                                 //   漏掉的值会"穿过去"什么都不做（运行期语义如此，不算错）⇒
                                 //   警告并列缺失成员。判据"宁漏勿误报"：case 值里有任何
                                 //   编译期认不出的形状就整条放弃检查 ✓
+    WARN_CLIB_CSTRUCT_AS_PTR,   // **clib 声明里用了裸 cstruct 类型名**（2026-11-12 加）
+                                //   语义：`void f(Point p)` 里的 `Point` 会被当作
+                                //   **指针**（等价 `Ptr[Point]`），而不是 C 的按值传结构体。
+                                //   照 C 头文件直译（`void f(SDL_Rect r)`）就会**静默传错**，
+                                //   所以给一条警告，提示显式写 `Ptr[Point]` 确认语义。
     WARN_DEFER_LATE_WRITE,      // **defer 表达式里的变量在 defer 之后被重新赋值**（2026-11-11 加）
                                 //   defer 是**块退出时求值**（不是 Go 那种注册时求值）⇒
                                 //   `defer ffi.free(p)` 之后 `p = ffi.malloc(...)` 释放的是

@@ -1,0 +1,74 @@
+// clib 里的裸 cstruct 类型名 = **指针**（不是 C 的按值传结构体）—— 给警告（2026-11-12）
+//
+// 背景：`clib { void f(Point p) }` 的 `Point` 会被当作 `Ptr[Point]`，
+//   运行期按 `FFI_TYPE_POINTER` 传（ffi.c 的"自动转换 cstruct 实例为指针"）。
+//   照 C 头文件直译（真实原型是 `void f(SDL_Rect r)`，按值）就会**静默传错**。
+//   现在编译期给警告，提示显式写 `Ptr[Point]` 确认语义。
+//
+// 本用例钉住：
+//   ① 裸 cstruct 参数 / 返回 → 各一条警告
+//   ② 显式 `Ptr[Point]` / 纯标量 → 不警告
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_clib_cstruct_ptr")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 裸 cstruct：参数 + 返回各一条警告 ----
+    var f1 = dirs.join(work, "bare.leno")
+    files.write(f1, strings.join([
+        "import ffi",
+        "",
+        "cstruct Point {",
+        "    i32 x",
+        "    i32 y",
+        "}",
+        "",
+        "clib mylib {",
+        "    void take_by_value(Point p)",
+        "    Point make_point(i32 x, i32 y)",
+        "}",
+        "",
+        "main() {",
+        "    print(\"ok\")",
+        "}",
+        ""], "\n"))
+    // ⚠ 只跑**一次**：第二次 `_exec` 同一文件时字节码已缓存、不再重新编译 ⇒ 不会再打印警告
+    //   （踩过一次：第二条断言拿到的是干净的 "ok"）。
+    var out1 = ce.expect_warning(f1, "裸 cstruct 参数要警告", "会被当作 **指针**", 0)
+    assert_true(strings.has(out1, "不是 C 的**按值传结构体**"),
+        "返回那条也要警告（应在同一份输出里）；输出=" + out1)
+    assert_true(strings.has(out1, "take_by_value"),
+        "警告要点名是哪个函数（参数那条）；输出=" + out1)
+    assert_true(strings.has(out1, "make_point"),
+        "警告要点名是哪个函数（返回那条）；输出=" + out1)
+
+    // ---- ② 显式 Ptr / 纯标量：不该有这条警告 ----
+    var f2 = dirs.join(work, "explicit.leno")
+    files.write(f2, strings.join([
+        "import ffi",
+        "",
+        "cstruct Point {",
+        "    i32 x",
+        "    i32 y",
+        "}",
+        "",
+        "clib mylib {",
+        "    void take_ptr(Ptr[Point] p)",
+        "    i32 add(i32 a, i32 b)",
+        "}",
+        "",
+        "main() {",
+        "    print(\"explicit_ok\")",
+        "}",
+        ""], "\n"))
+    var out2 = ce.expect_ok(f2, "显式 Ptr[Point] 与标量不警告", "explicit_ok")
+    ce.expect_no_warning(out2, "不该警告", "会被当作 **指针**")
+
+    dirs.delete(work)
+    print("test_diag_clib_cstruct_ptr passed")
+}

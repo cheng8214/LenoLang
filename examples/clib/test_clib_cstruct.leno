@@ -1,4 +1,8 @@
-// 测试 clib 支持 cstruct 参数 — cstruct 名作为参数类型，自动传指针
+// 测试 clib 支持 cstruct 参数 —— 形参写 `Ptr[POINT]`（显式"传指针"）
+//
+// ⚠ 也可以直接写裸 cstruct 名（`POINT lpPoint`），语义**同样是传指针**；
+//   但那样和 C 头文件里的**按值传结构体**（`void f(SDL_Rect r)`）长得一样，
+//   直译过来会静默传错 ⇒ 编译器对裸写法给警告，推荐显式 `Ptr[T]`。
 import ffi
 
 cstruct POINT {
@@ -14,8 +18,8 @@ cstruct RECT {
 }
 
 clib user32 {
-    i32 GetCursorPos(POINT lpPoint)
-    i32 GetWindowRect(Ptr hWnd, RECT lpRect)
+    i32 GetCursorPos(Ptr[POINT] lpPoint)
+    i32 GetWindowRect(Ptr hWnd, Ptr[RECT] lpRect)
     i32 SetCursorPos(i32 x, i32 y)
 }
 
