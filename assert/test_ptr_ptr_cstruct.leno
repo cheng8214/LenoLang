@@ -9,6 +9,7 @@
 //   存进 `ObjFFIPointer.inner_cdef`；read_at 读 PTR 元素时带给新指针
 //   （新对象的 element_type 是 **CSTRUCT**，因为它就是 `Ptr[V3]`）。
 import ffi
+import strings
 
 cstruct V3 {
     f32 x
@@ -39,18 +40,29 @@ main() {
     Ptr[V3] back = pp[0]
     assert_eq(back[0].y, 6.0, "显式标注")
 
-    // ---- ④ 深度 3 不支持要**可控报错**（不是静默错值）----
+    // ---- ④ 深度 3 不支持时必须**可控报错**（不是静默错值），且文案要**指路** ----
+    //   深度 ≥3 时 `var l1 = ppp[0]` 拿不到最内层的 cstruct 定义（运行期规格里没有
+    //   「CSTRUCT + 名字」这一层）⇒ 报错必须告诉用户"显式标注一次就行"，否则只能猜。
     Ptr[Ptr[Ptr[V3]]] ppp = ffi.malloc(8)
     ppp[0] = pp
     bool caught = false
+    string emsg = ""
     try {
-        var l1 = ppp[0]          // → Ptr[Ptr[V3]]（这一层有 inner_cdef 吗？没有 ⇒ 下一层报错）
-        var l2 = l1[0]
+        var l1 = ppp[0]          // → Ptr[Ptr[V3]]
+        var l2 = l1[0]           // → 无 cstruct 定义
         var _v = l2[0].x
     } catch e {
         caught = true
+        emsg = e.msg
     }
     assert_eq(caught, true, "深度 3 应可控报错（不允许静默错值）")
+    assert_eq(strings.has(emsg, "深度 ≥3"), true, "文案要点明深度 ≥3：" + emsg)
+    assert_eq(strings.has(emsg, "Ptr[V3] x = ppp[0]"), true, "文案要给显式标注的写法：" + emsg)
+
+    // 同一深度的**显式标注**必须照常工作（这是上面那条报错指的出路）
+    Ptr[Ptr[V3]] ppp_mid = ppp[0]
+    Ptr[V3] ppp_leaf = ppp_mid[0]
+    assert_eq(ppp_leaf[0].x, 5.0, "显式标注后深度 3 可读")
 
     ffi.free(ppp)
     ffi.free(pp)

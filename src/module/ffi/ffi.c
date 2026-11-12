@@ -1620,7 +1620,10 @@ static Value ffi_read_at_func(int argc, Value* args) {
 
     TypeKind et = ptr->element_type;
     if (et == TYPE_PTR || et == TYPE_ANY || et == TYPE_UNKNOWN) {
-        native_throw_error("read_at 需要 Ptr[T] 类型指针（如 Ptr[u32]），不支持无类型 Ptr");
+        native_throw_error(
+            "read_at 需要 Ptr[T] 类型指针（如 Ptr[u32]），当前是**无类型 Ptr** —— "
+            "常见于嵌套指针的下标（如 `pp[0]`）或 C 函数返回的裸指针；"
+            "请显式标注一次元素类型：`Ptr[u8] x = pp[0]`");
         return val_null();
     }
 
@@ -1638,7 +1641,10 @@ static Value ffi_read_at_func(int argc, Value* args) {
         // ★ 2026-11-11（Ptr[cstruct]）：元素是 cstruct ⇒ 大小由定义决定（C 布局）
         case TYPE_CSTRUCT:
             if (!ptr->elem_cdef) {
-                native_throw_error("Ptr[cstruct] 缺少元素类型信息（请写成 `Ptr[类型名]`）");
+                native_throw_error(
+                    "Ptr[cstruct] 缺少元素类型信息：这一级指针不知道自己指向哪个 cstruct"
+                    "（常见于**深度 ≥3 的指针**，如 `ppp[0]` 的结果）—— "
+                    "请显式标注一次元素类型：`Ptr[V3] x = ppp[0]`");
                 return val_null();
             }
             elem_size = (size_t)ptr->elem_cdef->total_size;
@@ -1790,7 +1796,10 @@ static Value ffi_write_at_func(int argc, Value* args) {
 
     TypeKind et = ptr->element_type;
     if (et == TYPE_PTR || et == TYPE_ANY || et == TYPE_UNKNOWN) {
-        native_throw_error("write_at 需要 Ptr[T] 类型指针（如 Ptr[u32]），不支持无类型 Ptr");
+        native_throw_error(
+            "write_at 需要 Ptr[T] 类型指针（如 Ptr[u32]），当前是**无类型 Ptr** —— "
+            "常见于嵌套指针的下标（如 `pp[0]`）或 C 函数返回的裸指针；"
+            "请显式标注一次元素类型：`Ptr[u8] x = pp[0]`");
         return val_null();
     }
 
@@ -1808,7 +1817,10 @@ static Value ffi_write_at_func(int argc, Value* args) {
         // ★ 2026-11-11（Ptr[cstruct]）：元素是 cstruct ⇒ 大小由定义决定（C 布局）
         case TYPE_CSTRUCT:
             if (!ptr->elem_cdef) {
-                native_throw_error("Ptr[cstruct] 缺少元素类型信息（请写成 `Ptr[类型名]`）");
+                native_throw_error(
+                    "Ptr[cstruct] 缺少元素类型信息：这一级指针不知道自己指向哪个 cstruct"
+                    "（常见于**深度 ≥3 的指针**，如 `ppp[0]` 的结果）—— "
+                    "请显式标注一次元素类型：`Ptr[V3] x = ppp[0]`");
                 return val_null();
             }
             elem_size = (size_t)ptr->elem_cdef->total_size;
