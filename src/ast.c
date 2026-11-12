@@ -530,6 +530,8 @@ break;
             free(ast->u.cstruct_def.field_types);
             free(ast->u.cstruct_def.field_offsets);
             free(ast->u.cstruct_def.field_array_dims);
+            free(ast->u.cstruct_def.field_bit_widths);
+            free(ast->u.cstruct_def.field_bit_offsets);
             free(ast->u.cstruct_def.ref.name);
             free(ast->u.cstruct_def.ref.struct_name);
             break;

@@ -44,6 +44,39 @@
                                  ast->u.cstruct_def.field_names[i],
                                  field_type ? type_to_string(field_type) : "?");
                     }
+
+                    // ★ 2026-11-12：位域校验（`u32 a : 3`）
+                    int bw = ast->u.cstruct_def.field_bit_widths
+                                 ? ast->u.cstruct_def.field_bit_widths[i] : 0;
+                    if (bw > 0) {
+                        TypeKind bk = field_type ? field_type->kind : TYPE_ANY;
+                        int is_int_kind = ((bk >= TYPE_I8 && bk <= TYPE_U64) ||
+                                           (bk >= TYPE_C_INT && bk <= TYPE_C_SSIZE));
+                        int unit_bits = is_int_kind ? c_layout_type_size(bk) * 8 : 0;
+                        if (!is_int_kind) {
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                "cstruct '%s' 的位域字段 '%s' 必须是整数类型（i8..u64 / c_int..c_ssize），"
+                                "不能用 '%s'",
+                                ast->u.cstruct_def.name, ast->u.cstruct_def.field_names[i],
+                                field_type ? type_to_string(field_type) : "?");
+                        } else if (bw > unit_bits) {
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                "cstruct '%s' 的位域 '%s : %d' 超过存储单元宽度（'%s' 只有 %d 位）",
+                                ast->u.cstruct_def.name, ast->u.cstruct_def.field_names[i], bw,
+                                type_to_string(field_type), unit_bits);
+                        }
+                        if (ast->u.cstruct_def.field_array_dims &&
+                            ast->u.cstruct_def.field_array_dims[i] != 0) {
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                "cstruct '%s' 的位域 '%s' 不能是数组",
+                                ast->u.cstruct_def.name, ast->u.cstruct_def.field_names[i]);
+                        }
+                        if (ast->u.cstruct_def.is_union) {
+                            error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                "union '%s' 里不支持位域（C 的 union 位域布局各编译器不一致）",
+                                ast->u.cstruct_def.name);
+                        }
+                    }
                 }
 
                 // 3. 计算 C 布局（字段偏移、总大小、对齐要求）
@@ -54,6 +87,16 @@
                 int* field_offsets = (int*)malloc(sizeof(int) * ast->u.cstruct_def.field_count);
                 int current_offset = 0;
                 int max_alignment = 1;
+                // 位域：每个字段"单元内位偏移"数组 + 当前单元的游标（见循环内说明）
+                int* bit_offsets = (int*)calloc((size_t)ast->u.cstruct_def.field_count, sizeof(int));
+                ast->u.cstruct_def.field_bit_offsets = bit_offsets;
+                int bw_unit_off = -1;    // 当前位域单元的字节偏移（-1 = 没有）
+                int bw_unit_size = 0;    // 单元大小（= 声明类型大小）
+                int bw_used = 0;         // 单元内已用位数
+                // ★ 2026-11-12：union 的布局 —— 所有字段偏移都是 0，总大小 = **最大字段**
+                //   （再按最终对齐向上取整）。其余（字段表、读写、to_ptr/size/offset_of）
+                //   全部复用 cstruct 的实现：字段只是偏移都等于 0 而已。
+                bool is_union_layout = ast->u.cstruct_def.is_union;
 
                 for (int i = 0; i < ast->u.cstruct_def.field_count; i++) {
                     TypeInfo* field_type = ast->u.cstruct_def.field_types[i];
@@ -85,16 +128,54 @@
                         max_alignment = field_align;
                     }
 
-                    // 对齐当前偏移
-                    current_offset = c_layout_align_up(current_offset, field_align);
-                    field_offsets[i] = current_offset;
-                    
                     // 计算字段大小（数组字段需要乘以维度）
                     int field_total_size = field_size;
                     if (array_dim > 0) {
                         field_total_size = field_size * array_dim;
                     }
-                    current_offset += field_total_size;
+
+                    // ★ 2026-11-12：**位域**（`u32 a : 3`）的布局，按 C 的常见规则：
+                    //   · 同类型、能塞进当前存储单元 ⇒ 接着往后排（LSB 起）；
+                    //   · 类型变了 / 塞不下 / 宽度 0（`u32 :0` 强制新单元）⇒ 按类型对齐开新单元。
+                    //   单元大小 = 声明类型大小；位偏移存在 field_bit_offsets[i]。
+                    int bit_width = ast->u.cstruct_def.field_bit_widths
+                                        ? ast->u.cstruct_def.field_bit_widths[i] : 0;
+                    if (bit_width > 0) {
+                        int unit_bits = field_size * 8;
+                        if (bw_unit_off < 0 || bw_unit_size != field_size ||
+                            bw_used + bit_width > unit_bits) {
+                            current_offset = c_layout_align_up(current_offset, field_align);
+                            bw_unit_off = current_offset;
+                            bw_unit_size = field_size;
+                            bw_used = 0;
+                            current_offset += field_size;
+                        }
+                        field_offsets[i] = bw_unit_off;
+                        bit_offsets[i] = bw_used;
+                        bw_used += bit_width;
+                        continue;   // 位域不参与"整字段偏移"的常规推进
+                    }
+                    if (bit_width == 0 && ast->u.cstruct_def.field_bit_widths &&
+                        ast->u.cstruct_def.field_bit_widths[i] == 0) {
+                        // 普通字段 ⇒ 结束当前位域单元（后续位域开新单元）
+                        bw_unit_off = -1;
+                        bw_unit_size = 0;
+                        bw_used = 0;
+                    }
+
+                    if (is_union_layout) {
+                        // union：所有字段共用起始地址；current_offset 在此语义下
+                        // 累积"最大字段大小"
+                        field_offsets[i] = 0;
+                        if (field_total_size > current_offset) {
+                            current_offset = field_total_size;
+                        }
+                    } else {
+                        // 对齐当前偏移
+                        current_offset = c_layout_align_up(current_offset, field_align);
+                        field_offsets[i] = current_offset;
+                        current_offset += field_total_size;
+                    }
                 }
 
                 // 应用显式对齐：最终对齐 = max(自然对齐, explicit_align)

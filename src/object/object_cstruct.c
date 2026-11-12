@@ -325,6 +325,30 @@ ObjCStruct* cstruct_from_ptr(ObjCStructDef* def, void* ptr) {
 }
 
 // 获取字段值的辅助函数
+// ----------------------------------------------------------------------------
+// ★ 2026-11-12：**位域**（`u32 a : 3`）统一在这里处理（读/写各一段，放在 switch 之前）：
+//   存储单元 = 声明类型的宽度（field->size），位偏移从 LSB 起 —— 与 C 的常见实现
+//   （x86/ARM 小端）一致。⚠ 只支持小端；大端平台会取反字节序（本仓目前只跑 LE）。
+static uint64_t cstruct_load_unit(const uint8_t* p, int size) {
+    uint64_t v = 0;
+    if (size > 0 && size <= 8) memcpy(&v, p, (size_t)size);
+    return v;
+}
+
+static void cstruct_store_unit(uint8_t* p, int size, uint64_t v) {
+    if (size > 0 && size <= 8) memcpy(p, &v, (size_t)size);
+}
+
+static int cstruct_type_is_signed_bits(TypeKind k) {
+    switch (k) {
+        case TYPE_I8: case TYPE_I16: case TYPE_I32: case TYPE_I64:
+        case TYPE_C_INT: case TYPE_C_LONG: case TYPE_C_LONGLONG: case TYPE_C_SSIZE:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 Value cstruct_get_field_value(ObjCStruct* obj, int field_index) {
     if (field_index < 0 || field_index >= obj->def->field_count) {
         return val_null();
@@ -332,6 +356,18 @@ Value cstruct_get_field_value(ObjCStruct* obj, int field_index) {
 
     CStructFieldInfo* field = &obj->def->fields[field_index];
     uint8_t* field_addr = obj->data + field->offset;
+
+    if (field->bit_width > 0) {
+        uint64_t unit = cstruct_load_unit(field_addr, field->size);
+        int w = field->bit_width;
+        uint64_t mask = (w >= 64) ? ~0ULL : ((1ULL << w) - 1ULL);
+        uint64_t v = (unit >> field->bit_offset) & mask;
+        if (cstruct_type_is_signed_bits(field->type) && w < 64 &&
+            (v & (1ULL << (w - 1)))) {
+            v |= ~mask;                    // 符号扩展（C 的有符号位域就是有符号的）
+        }
+        return val_num((double)(int64_t)v);
+    }
 
     switch (field->type) {
         // ⚠ packed cstruct 的字段地址**不保证自然对齐**（结构体本身就是紧凑排布）。
@@ -479,6 +515,20 @@ void cstruct_set_field_value(ObjCStruct* obj, int field_index, Value value) {
 
     CStructFieldInfo* field = &obj->def->fields[field_index];
     uint8_t* field_addr = obj->data + field->offset;
+
+    if (field->bit_width > 0) {
+        int w = field->bit_width;
+        uint64_t mask = (w >= 64) ? ~0ULL : ((1ULL << w) - 1ULL);
+        // bool 是 tagged value（val_as_num 得到 0）⇒ 单独判一下，其余按数值
+        uint64_t nv = val_is_bool(value)
+                          ? (uint64_t)(val_is_truthy(value) ? 1 : 0)
+                          : (uint64_t)(int64_t)val_as_num(value);
+        nv &= mask;
+        uint64_t unit = cstruct_load_unit(field_addr, field->size);
+        unit = (unit & ~(mask << field->bit_offset)) | (nv << field->bit_offset);
+        cstruct_store_unit(field_addr, field->size, unit);
+        return;
+    }
 
     switch (field->type) {
         // 同 cstruct_get_field_value：packed 字段地址可能未对齐，统一走 memcpy

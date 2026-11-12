@@ -367,16 +367,23 @@ extern Object* gc_alloc(size_t size, ObjType type);
         } \
     } while(0)
 
-/* 边界检查宏（对 owned 指针有效）
+/* 边界检查宏（**只要 size 已知就查**，不再要求 owned）
  * ★ 2026-11-11（P1 附带发现）：**必须先判 offset < 0**。
  *   原实现只判 `(size_t)offset + access_size > size` —— 而负偏移转 size_t 会变成
  *   巨大的数，再 + access_size 就**回绕**：`q[-1] = v`（offset = -4, size = 16）
  *   得到 (size_t)(-4)+4 == 0，`0 > 16` 为假 ⇒ **检查静默放行**，于是往 ptr-4 写。
  *   实测：`Ptr[f32] q = ffi.malloc(16); q[-1] = 1.0` 直接 0xC0000005 崩溃。
- *   负下标现在与正向越界走同一条报错（"内存访问越界"）。 */
+ *   负下标现在与正向越界走同一条报错（"内存访问越界"）。
+ *
+ * ★ 2026-11-12（待办 ①）：条件从 `owned && size > 0` 改成 **`size > 0`**。
+ *   为什么：`cstruct.to_ptr()` 已经把 size 填成"实例大小 / 数组总字节数"，
+ *   但 owned=0 ⇒ 原来的判据把这份**已知的大小完全忽略**，
+ *   `Ptr[V3] p = arr.to_ptr(); p[999].x` 照样越界读（实测）。
+ *   现在：size 已知（含非拥有指针）就查；size == 0（C 侧返回的裸指针）**无从可查**，
+ *   维持裸指针语义 —— 需要保护时用 `ffi.bind_size(p, n)` 显式挂上大小。 */
 #define CHECK_BOUNDS(ptr, offset, access_size) \
     do { \
-        if ((ptr)->owned && (ptr)->size > 0) { \
+        if ((ptr)->size > 0) { \
             if ((offset) < 0 || (size_t)(offset) + (access_size) > (ptr)->size) { \
                 native_throw_error("内存访问越界"); \
                 return val_null(); \
@@ -1244,8 +1251,11 @@ static Value ffi_free_func(int argc, Value* args) {
         if (ptr->freed) return val_null();
         if (ptr->owned && ptr->ptr) {
             // 检查尾部哨兵，检测堆溢出
-            if (ptr->size > 0) {
-                uint64_t sentinel = ffi_sentinel_read(ptr->ptr, ptr->size);
+            //   ⚠ 用 **alloc_size**（真实分配大小）而不是 size —— `ffi.bind_size` 会把
+            //   size 改成用户声明的大小，按它定位哨兵会读到缓冲区中间（误报溢出）。
+            size_t ssz = ptr->alloc_size ? ptr->alloc_size : ptr->size;
+            if (ssz > 0) {
+                uint64_t sentinel = ffi_sentinel_read(ptr->ptr, ssz);
                 if (sentinel != 0xDEADBEEFDEADBEEFULL) {
                     native_throw_error("堆缓冲区溢出！尾部哨兵被破坏。请用 ffi.assert_size() 检查缓冲区大小");
                     ptr->freed = 1;  // 标记已释放，避免重复检测
@@ -3729,6 +3739,41 @@ Value ffi_clib_call(int argc, Value* args, int ret_type_kind, const int* arg_typ
     return ffi_call_impl(argc, args, ret_type_kind, arg_types);
 }
 
+/* ffi.bind_size(ptr, n) —— 给指针挂上"已知字节数"，之后下标访问就有越界检查
+ * ----------------------------------------------------------------------------
+ * 为什么需要：C 侧返回的指针（`size == 0`）无从判断边界，越界只能是未定义行为。
+ *   调用方通常知道大小（C 同时给了 count/size），挂上之后 `Ptr[T]` 的 `p[i]`、
+ *   `ffi.read_at` / `write_at` 就都走 `CHECK_BOUNDS`（见那里的说明：现在是
+ *   **size > 0 就查**，不再要求 owned）。
+ *   `cstruct.to_ptr()` 已经自动带上大小（实例大小 / 数组总字节数），不用手动挂。
+ * 返回：**同一个指针对象**（可以链式写 `ffi.bind_size(p, 64)` 后继续用 p）。
+ */
+static Value ffi_bind_size_func(int argc, Value* args) {
+    (void)argc;
+    if (!val_is_ffi_ptr(args[0])) {
+        native_throw_error("ffi.bind_size: 第一个参数必须是 Ptr");
+        return val_null();
+    }
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    CHECK_NULL_PTR(ptr);
+    if (!val_is_int(args[1])) {
+        native_throw_error("ffi.bind_size: 第二个参数是字节数（整数）");
+        return val_null();
+    }
+    int64_t n = val_as_int(args[1]);
+    if (n < 0) {
+        native_throw_error("ffi.bind_size: 大小不能为负");
+        return val_null();
+    }
+    // ⚠ 先把"真实分配大小"记下来：`ffi.free` 的尾部哨兵必须按它定位，
+    //   否则收紧 size 之后哨兵会读到缓冲区中间 ⇒ 误报「堆缓冲区溢出」。
+    if (ptr->alloc_size == 0 && ptr->size > 0) {
+        ptr->alloc_size = ptr->size;
+    }
+    ptr->size = (size_t)n;
+    return args[0];
+}
+
 /* ==================== 模块初始化 ==================== */
 
 void ffi_init_module(void) {
@@ -3760,6 +3805,12 @@ void ffi_init_module(void) {
     /* ===== 内存操作函数 ===== */
     TypeKind malloc_params[] = {TYPE_INT};
     native_register_module_method("ffi", "malloc", ffi_malloc_func, &NATIVE_T_PTR, NATIVE_FIXED(malloc_params));
+
+    /* ffi.bind_size(ptr, n)：给指针挂上已知大小 ⇒ 之后下标/读写都查越界。
+     *   C 侧返回的裸指针（size == 0）本来无从判断边界，调用方知道大小时用它补上。 */
+    TypeKind bind_size_params[] = {TYPE_PTR_GENERIC, TYPE_INT};
+    native_register_module_method("ffi", "bind_size", ffi_bind_size_func, &NATIVE_T_PTR,
+                                  NATIVE_FIXED(bind_size_params));
 
     // `ffi.alloc("int", 42)`：第一位是**类型名字符串**（"int"/"double"/"ptr"…）⇒ `{string, any}` 正确 ✓
     TypeKind new_params[] = {TYPE_STRING, TYPE_ANY};

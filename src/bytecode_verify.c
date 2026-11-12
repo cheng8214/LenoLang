@@ -189,6 +189,8 @@ static int scan_cstruct_def(const Chunk* c, int base, int checks, Cur* k) {
         int ftype = cur_u8(k);
         cur_u16(k);                                   // offset
         cur_u16(k);                                   // array_dim
+        cur_u8(k);                                    // 位域：单元内位偏移（2026-11-12）
+        cur_u8(k);                                    // 位域：位宽（0 = 普通字段）
         int sname_idx = cur_u16(k);                   // 0xFFFF = 无嵌套 cstruct
         if (sname_idx != 0xFFFF && checks) ck_const(k, sname_idx);
         if (ftype == TYPE_PTR_GENERIC) cur_u8(k);     // 元素类型

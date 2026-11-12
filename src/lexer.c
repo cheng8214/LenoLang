@@ -146,6 +146,7 @@ static void init_keyword_table(void) {
         {"c_size", TOK_C_SIZE},
         {"c_ssize", TOK_C_SSIZE},
         {"cstruct", TOK_CSTRUCT},
+        {"union", TOK_UNION},   // C 布局联合体（字段共享同一块内存）
         {"clib", TOK_CLIB},
         {"cfunc", TOK_CFUNC},
         {"str8", TOK_STR8},

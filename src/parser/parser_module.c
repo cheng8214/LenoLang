@@ -443,6 +443,7 @@ Ast* parse_export_stmt(Parser* p) {
         ast->u.export.decl = decl;
         return ast;
     } else if (p->lex.current.type == TOK_CSTRUCT ||
+               p->lex.current.type == TOK_UNION ||
                is_cstruct_layout_attr(p)) {
         Ast* decl = parse_cstruct_stmt(p);
         if (!decl) return NULL;

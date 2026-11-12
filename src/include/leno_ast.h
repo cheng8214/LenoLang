@@ -394,7 +394,10 @@ struct Ast {
             int alignment;      // 对齐要求（编译期计算）
             int* field_offsets; // 字段偏移量数组（编译期计算）
             int* field_array_dims; // 字段数组维度（0 表示非数组，>0 表示数组大小）
+            int* field_bit_widths;  // 位域宽度（0 = 普通字段；2026-11-12）
+            int* field_bit_offsets; // 位域在**存储单元内**的位偏移（语义分析时计算）
             bool is_packed;     // 是否 packed（取消所有字段间 padding）
+            bool is_union;      // 是否 union（所有字段偏移 0，总大小 = 最大字段，2026-11-12）
             int  explicit_align; // 显式对齐要求（0 表示未指定，否则必须是 2 的幂）
             SymRef ref;        // 符号引用信息
         } cstruct_def;

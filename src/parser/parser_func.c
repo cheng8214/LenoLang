@@ -1817,7 +1817,14 @@ Ast* parse_func_stmt(Parser* p) {
     lexer_next(&p->lex); // func
 
     if (p->lex.current.type != TOK_IDENT) {
-        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望函数名");
+        // ★ 2026-11-12：`union` 现在是保留字（C 布局联合体）⇒ 点明"换个名字"，
+        //   别留一句"期望函数名"让人以为是语法写错了（实测 examples 里就有 `func union`）。
+        if (p->lex.current.type == TOK_UNION) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "`union` 现在是**保留字**（C 布局联合体）⇒ 函数名请换一个（如 setUnion）");
+        } else {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望函数名");
+        }
         return NULL;
     }
 
@@ -3174,16 +3181,21 @@ Ast* parse_cstruct_stmt(Parser* p) {
         }
     }
 
-    // 现在必须遇到 'cstruct' 关键字
-    if (p->lex.current.type != TOK_CSTRUCT) {
-        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 'cstruct' 关键字");
+    // 现在必须遇到 'cstruct' 或 'union' 关键字
+    //   ★ 2026-11-12：union 与 cstruct 共用同一套解析/字段表，只有**布局算法**不同
+    //   （所有字段偏移 0、总大小取最大字段），见 semantic 的布局段。
+    bool is_union = (p->lex.current.type == TOK_UNION);
+    if (p->lex.current.type != TOK_CSTRUCT && !is_union) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         "期望 'cstruct' 或 'union' 关键字");
         return NULL;
     }
-    lexer_next(&p->lex); // 消费 'cstruct'
+    lexer_next(&p->lex); // 消费 'cstruct' / 'union'
 
-    // 期望 cstruct 名称
+    // 期望名称
     if (p->lex.current.type != TOK_IDENT) {
-        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望 cstruct 名称");
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                         is_union ? "期望 union 名称" : "期望 cstruct 名称");
         return NULL;
     }
 
@@ -3200,12 +3212,14 @@ Ast* parse_cstruct_stmt(Parser* p) {
     char** field_names = NULL;
     TypeInfo** field_types = NULL;
     int* field_array_dims = NULL;
+    int* field_bit_widths = NULL;   // ★ 2026-11-12：位域宽度（0 = 普通字段）
     int field_count = 0;
     int field_capacity = 8;
 
     field_names = (char**)malloc(sizeof(char*) * field_capacity);
     field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * field_capacity);
     field_array_dims = (int*)malloc(sizeof(int) * field_capacity);
+    field_bit_widths = (int*)calloc((size_t)field_capacity, sizeof(int));
 
     // 解析字段列表（cstruct 不支持方法）
     while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
@@ -3325,17 +3339,36 @@ Ast* parse_cstruct_stmt(Parser* p) {
             }
         }
 
+        // 可选的位域宽度：`u32 flags : 3`
+        //   ★ 2026-11-12：只支持**整数类型**、宽度 1..sizeof(type)*8；数组不行。
+        //   语义层再做一次校验（这里只负责取出数值，语法错误的恢复放到语义报）。
+        int bit_width = 0;
+        if (p->lex.current.type == TOK_COLON) {
+            lexer_next(&p->lex);   // 消费 ':'
+            if (p->lex.current.type != TOK_NUM || p->lex.current.is_float) {
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                                 "位域宽度必须是整数字面量（如 `u32 flags : 3`）");
+                free(field_name);
+                type_free(field_type);
+                break;
+            }
+            bit_width = (int)p->lex.current.num_val;
+            lexer_next(&p->lex);   // 消费数字
+        }
+
         // 扩容检查
         if (field_count >= field_capacity) {
             field_capacity *= 2;
             field_names = (char**)realloc(field_names, sizeof(char*) * field_capacity);
             field_types = (TypeInfo**)realloc(field_types, sizeof(TypeInfo*) * field_capacity);
             field_array_dims = (int*)realloc(field_array_dims, sizeof(int) * field_capacity);
+            field_bit_widths = (int*)realloc(field_bit_widths, sizeof(int) * field_capacity);
         }
 
         field_names[field_count] = field_name;
         field_types[field_count] = field_type;
         field_array_dims[field_count] = array_dim;
+        field_bit_widths[field_count] = bit_width;
         field_count++;
 
         // 可选的分号
@@ -3354,6 +3387,7 @@ Ast* parse_cstruct_stmt(Parser* p) {
         free(field_names);
         free(field_types);
         free(field_array_dims);
+        free(field_bit_widths);
         free(cstruct_name);
         return NULL;
     }
@@ -3364,11 +3398,14 @@ Ast* parse_cstruct_stmt(Parser* p) {
     ast->u.cstruct_def.field_names = field_names;
     ast->u.cstruct_def.field_types = field_types;
     ast->u.cstruct_def.field_array_dims = field_array_dims;
+    ast->u.cstruct_def.field_bit_widths = field_bit_widths;
+    ast->u.cstruct_def.field_bit_offsets = NULL;   // 语义分析时分配和计算
     ast->u.cstruct_def.field_count = field_count;
     ast->u.cstruct_def.total_size = 0;      // 语义分析时计算
     ast->u.cstruct_def.alignment = 0;       // 语义分析时计算
     ast->u.cstruct_def.field_offsets = NULL; // 语义分析时分配和计算
     ast->u.cstruct_def.is_packed = is_packed;
+    ast->u.cstruct_def.is_union = is_union;
     ast->u.cstruct_def.explicit_align = explicit_align;
     ast->u.cstruct_def.ref.kind = SYM_CSTRUCT;
     ast->u.cstruct_def.ref.index = -1;

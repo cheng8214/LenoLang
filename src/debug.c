@@ -301,6 +301,8 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
                 int ftype = dbg_take_u8(chunk, base, &p, &over);
                 dbg_take_u16(chunk, base, &p, &over);                 // 偏移
                 dbg_take_u16(chunk, base, &p, &over);                 // 数组维度
+                dbg_take_u8(chunk, base, &p, &over);                  // 位域：单元内位偏移
+                dbg_take_u8(chunk, base, &p, &over);                  // 位域：位宽（0=普通字段）
                 dbg_take_u16(chunk, base, &p, &over);                 // 嵌套 cstruct 名
                 if (ftype == TYPE_PTR_GENERIC) dbg_take_u8(chunk, base, &p, &over);
             }

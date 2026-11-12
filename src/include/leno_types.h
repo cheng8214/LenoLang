@@ -308,6 +308,7 @@ TOK_EXTEND,        // extend 关键字（顶层：把 target struct 的方法写
     TOK_C_SIZE, TOK_C_SSIZE,  // c_size, c_ssize
     // C struct 关键字
     TOK_CSTRUCT,         // cstruct
+    TOK_UNION,           // union（C 布局联合体，2026-11-12 加）
     TOK_CLIB,            // clib - C 库函数签名声明
     TOK_CFUNC,           // cfunc - C 回调函数签名声明
     // 字符串类型关键字

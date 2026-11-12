@@ -2927,8 +2927,9 @@ static void gen_face_def(CodeGen* gen, Ast* ast) {
 
 // cstruct 定义：iABx(op, A=目标寄存器, Bx=名字常量) + 紧随元数据
 //   field_count(1) total_size(2) alignment(1) is_packed(1) explicit_align(1)
-//   每字段：name_const(2) type(1) offset(2) array_dim(2) struct_name_const(2, 0xFFFF=无)
-//           + TYPE_PTR_GENERIC 时再 1 字节元素类型
+//   每字段：name_const(2) type(1) offset(2) array_dim(2) bit_offset(1) bit_width(1)
+//           struct_name_const(2, 0xFFFF=无) + TYPE_PTR_GENERIC 时再 1 字节元素类型
+//   （bit_offset/bit_width 是 2026-11-12 加的位域支持，宽 0 = 普通字段）
 // VM 侧 OP_CSTRUCT_DEF 按同样顺序读（与栈式 op_cstruct.inc 的布局一致）
 static void gen_cstruct_def(CodeGen* gen, Ast* ast) {
     int r = reg_alloc(gen);
@@ -2953,6 +2954,11 @@ static void gen_cstruct_def(CodeGen* gen, Ast* ast) {
         cw_u8(gen, fk, ast->line);
         cw_u16(gen, ast->u.cstruct_def.field_offsets ? ast->u.cstruct_def.field_offsets[i] : 0, ast->line);
         cw_u16(gen, ast->u.cstruct_def.field_array_dims ? ast->u.cstruct_def.field_array_dims[i] : 0, ast->line);
+        // ★ 2026-11-12：位域（`u32 a : 3`）—— 单元内位偏移 + 位宽（0 = 普通字段）
+        cw_u8(gen, (uint8_t)(ast->u.cstruct_def.field_bit_offsets
+                                 ? ast->u.cstruct_def.field_bit_offsets[i] : 0), ast->line);
+        cw_u8(gen, (uint8_t)(ast->u.cstruct_def.field_bit_widths
+                                 ? ast->u.cstruct_def.field_bit_widths[i] : 0), ast->line);
 
         if (fk == TYPE_CSTRUCT && ft && ft->struct_name) {
             cw_u16(gen, make_constant(gen, val_obj((Object*)str_copy(

@@ -151,7 +151,8 @@ static int is_statement_start(LenoTokenType type) {
            type == TOK_WHILE || type == TOK_FOR || type == TOK_SWITCH ||
            type == TOK_FUNC || type == TOK_ASYNC ||
            type == TOK_STRUCT || type == TOK_FACE || type == TOK_ALIAS ||
-           type == TOK_CSTRUCT || type == TOK_CLIB || type == TOK_CFUNC ||
+           type == TOK_CSTRUCT || type == TOK_UNION ||
+           type == TOK_CLIB || type == TOK_CFUNC ||
            type == TOK_ENUM ||
            type == TOK_VAR || type == TOK_RETURN ||
            type == TOK_BREAK || type == TOK_CONTINUE ||

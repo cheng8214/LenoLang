@@ -1,0 +1,66 @@
+// `Ptr[T]` 的越界检查边界策略（2026-11-12）
+//
+// 规则：**只要 size 已知就查**（不再要求 owned）。
+//   · `ffi.malloc` / `cstruct.to_ptr()` 都带 size ⇒ `p[i]`、`ffi.read_at/write_at` 都查边界；
+//   · C 侧返回的裸指针 size == 0 ⇒ **无从可查**，维持裸指针语义；
+//     需要保护时用 `ffi.bind_size(p, n)` 显式挂上大小（之后同样查）。
+//
+// 为什么改：`to_ptr()` 早就把 size 填成"实例大小 / 数组总字节数"，但旧判据要求 owned
+//   ⇒ 这份**已知的大小被完全忽略**，`Ptr[V3] p = arr.to_ptr(); p[999].x` 照样越界读。
+import ffi
+
+cstruct V3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+main() {
+    // ---- to_ptr() 的大小现在参与检查 ----
+    var arr = V3.malloc_array(4)              // 4 * 12 = 48 字节
+    var p = arr.to_ptr()
+    Ptr[V3] q = p
+    q[0].x = 1.0
+    assert_eq(q[0].x, 1.0, "范围内的下标正常")
+
+    bool caught = false
+    try { q[4].x = 2.0 } catch e1 { caught = true }
+    assert_eq(caught, true, "to_ptr() 之后 p[4] 必须报越界")
+
+    caught = false
+    try { var _x = q[-1].x } catch e2 { caught = true }
+    assert_eq(caught, true, "负下标必须报越界")
+
+    // 最后一个合法元素仍然可以访问
+    q[3].z = 9.0
+    assert_eq(q[3].z, 9.0, "最后一个元素可写")
+
+    // ---- size == 0 ⇒ 裸指针语义（不查）----
+    // ⚠ 用足够大的真实缓冲区，写 offset 100 仍在合法内存内，不会自伤堆。
+    Ptr[u8] bare = ffi.malloc(4096)
+    ffi.bind_size(bare, 0)
+    bool no_check = true
+    try { bare[100] = 1 } catch e3 { no_check = false }
+    assert_eq(no_check, true, "size == 0 时不查边界（裸指针语义）")
+
+    // ---- bind_size 之后恢复检查 ----
+    ffi.bind_size(bare, 4096)
+    caught = false
+    try { bare[5000] = 1 } catch e4 { caught = true }
+    assert_eq(caught, true, "bind_size(4096) 之后越界必须报")
+
+    // 反向：bind_size 也能用在 malloc 出来的指针上
+    ffi.bind_size(bare, 8)
+    caught = false
+    try { bare[10] = 1 } catch e5 { caught = true }
+    assert_eq(caught, true, "bind_size 可以收紧大小")
+
+    // 负数大小被拒
+    caught = false
+    try { ffi.bind_size(bare, -1) } catch e6 { caught = true }
+    assert_eq(caught, true, "bind_size 负数必须报错")
+
+    ffi.free(bare)
+    arr.free_all()
+    print("test_ptr_bounds_policy passed")
+}

@@ -5,7 +5,8 @@
 // ---------- 单类型集合运算（同类型 T）----------
 
 // 并集（去重合并）
-func union[T](Array[T] a, Array[T] b): Array[T] {
+func setUnion[T](Array[T] a, Array[T] b): Array[T] {
+    // ⚠ 函数名不能叫 `union` —— 它是保留字（C 布局联合体），编译器会明确提示换名
     Array[T] res = []
     for a to x {
         if not res.has(x) { res.add(x) }
@@ -36,7 +37,7 @@ func difference[T](Array[T] a, Array[T] b): Array[T] {
 
 // 对称差 = (a-b) ∪ (b-a)
 func symdiff[T](Array[T] a, Array[T] b): Array[T] {
-    return union(difference(a, b), difference(b, a))
+    return setUnion(difference(a, b), difference(b, a))
 }
 
 // ---------- 笛卡尔积（不同类型 T x U）----------
@@ -69,7 +70,7 @@ main() {
     Array[int] B = [4, 5, 6, 7]
     print("A = " + A)
     print("B = " + B)
-    show("union(A,B)     ", union(A, B))
+    show("union(A,B)     ", setUnion(A, B))
     show("intersect(A,B) ", intersect(A, B))
     show("difference(A,B)", difference(A, B))
     show("symdiff(A,B)   ", symdiff(A, B))
@@ -78,7 +79,7 @@ main() {
     // --- string 集合 ---
     Array[string] S1 = ["a", "b", "c"]
     Array[string] S2 = ["b", "c", "d"]
-    show("union(S1,S2)     ", union(S1, S2))
+    show("union(S1,S2)     ", setUnion(S1, S2))
     show("intersect(S1,S2) ", intersect(S1, S2))
     show("difference(S1,S2)", difference(S1, S2))
     print("")

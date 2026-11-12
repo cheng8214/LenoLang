@@ -1,0 +1,71 @@
+// `union` —— C 布局联合体（2026-11-12）
+//
+// 语义：所有字段**共享起始地址**（偏移全 0），总大小 = 最大字段（再按最终对齐取整）。
+// 其余能力（字段读写、数组字段、嵌套、to_ptr/size/offset_of、malloc_array）全部复用
+// cstruct 的实现 —— 只有布局算法不同。
+//
+// 用途：C 头文件里的 union（类型双关、变体记录、网络协议头）现在可以直译。
+import ffi
+
+union U {
+    i32 i
+    f32 f
+    u8 bytes[4]
+}
+
+union Big {
+    i64 big
+    i32 parts
+    u8 data[16]
+}
+
+cstruct Holder {
+    U u
+    i32 flag
+}
+
+main() {
+    // ---- 布局 ----
+    assert_eq(U.size(), 4, "U.size()")
+    assert_eq(U.offset_of("i"), 0, "U.i 偏移 0")
+    assert_eq(U.offset_of("f"), 0, "U.f 偏移 0")
+    assert_eq(U.offset_of("bytes"), 0, "U.bytes 偏移 0")
+    assert_eq(Big.size(), 16, "Big.size() = 最大字段（u8[16]）")
+    assert_eq(Holder.size(), 8, "嵌套 union 的 cstruct 大小")
+
+    // ---- 类型双关：i32 ↔ f32 ----
+    var u = U.malloc()
+    u.i = 1065353216                       // 0x3F800000 == 1.0f
+    assert_eq(u.f, 1.0, "i32 写后按 f32 读 = 1.0")
+    u.f = 2.0
+    assert_eq(u.i, 1073741824, "f32 写后按 i32 读")
+
+    // ---- 数组字段共享同一块内存 ----
+    u.i = 0
+    u.bytes[0] = 255
+    assert_eq(u.i & 255, 255, "bytes[0] 是 i32 的最低字节")
+    u.bytes[1] = 1
+    assert_eq(u.i, 511, "两个字节拼起来 = 511")
+
+    // ---- 与 ffi 视角一致 ----
+    assert_eq(ffi.read_int(u.to_ptr(), 0), 511, "ffi.read_int 看到同一块内存")
+
+    // ---- union 数组：元素各自独立 ----
+    var arr = U.malloc_array(2)
+    arr[0].i = 7
+    arr[1].i = 9
+    assert_eq(arr[0].i, 7, "数组元素 0")
+    assert_eq(arr[1].i, 9, "数组元素 1（互不覆盖）")
+    arr.free_all()
+
+    // ---- 嵌在 cstruct 里 ----
+    var h = Holder.malloc()
+    h.u.f = 3.5
+    h.flag = 42
+    assert_eq(h.u.f, 3.5, "嵌套 union 读回")
+    assert_eq(h.flag, 42, "union 之后的普通字段不受影响")
+    h.free()
+
+    u.free()
+    print("test_cstruct_union passed")
+}

@@ -89,6 +89,11 @@ typedef struct ObjFFIPointer {
     Object header;
     void* ptr;                         // 原始指针
     size_t size;                       // 指向的内存大小（字节），0 表示未知
+    // ★ 2026-11-12：**实际分配大小**（仅 owned 指针有意义）。
+    //   为什么和 size 分开：`ffi.bind_size(p, n)` 会把 size 改成用户声明的大小
+    //   （用于越界检查），而 `ffi.free` 的**尾部哨兵**必须按真实分配大小定位 ——
+    //   否则收紧 size 后哨兵检查会读到缓冲区中间，误报「堆缓冲区溢出」。
+    size_t alloc_size;
     int owned;                         // 是否由我们分配（1=是，0=否）
     int freed;                         // 是否已释放（防止 double-free 和 use-after-free）
     TypeKind element_type;             // Ptr[T] 中 T 的类型，TYPE_PTR 表示未指定（通用 Ptr）
@@ -621,6 +626,10 @@ typedef struct {
     int array_dim;      // 数组维度（0 表示非数组，>0 表示数组大小）
     char* struct_name;  // 嵌套结构体类型名称（仅当 type == TYPE_CSTRUCT 时有效）
     TypeKind element_type;  // Ptr[T] 中 T 的类型（仅当 type == TYPE_PTR_GENERIC 时有效）
+    // ★ 2026-11-12：位域（`u32 a : 3`）—— 位宽 0 表示普通字段；
+    //   位域时 offset = 存储单元起始字节，bit_offset = 单元内位偏移（LSB 起）。
+    int bit_offset;
+    int bit_width;
 } CStructFieldInfo;
 
 // C 布局结构体字段哈希表条目

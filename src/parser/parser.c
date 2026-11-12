@@ -606,6 +606,7 @@ Ast* parse_statement(Parser* p) {
         // packed cstruct / align(N) cstruct 也路由到这里
         // 注意：packed 和 align 是上下文关键字，在 default 分支中通过文本匹配识别
         case TOK_CSTRUCT:
+        case TOK_UNION:      // union 与 cstruct 共用同一套解析/布局，只是偏移算法不同
             stmt = parse_cstruct_stmt(p);
             break;
 

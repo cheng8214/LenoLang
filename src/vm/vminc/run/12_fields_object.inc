@@ -869,17 +869,21 @@
         //   转换口径与原实现逐条一致（val_as_num 对 int/float 的语义相同）。
         //   ⚠ bigint 不走快路径（原实现用 bigint_to_double，语义不同）；其余类型回落。
         uint8_t* faddr = ca->data + (size_t)ci * (size_t)ca->element_size + (size_t)f->offset;
-        if (likely(ft == TYPE_F32 && (val_is_int(nv) || val_is_float(nv)))) {
+        // ★ 2026-11-12：**位域必须绕开这些快路径** —— 它们直接按整个字段宽度 memcpy，
+        //   会把同一存储单元里的相邻位域一起冲掉（`u32 a:1, b:2` 写 a 会毁掉 b）。
+        int f_is_bitfield = (f->bit_width > 0);
+        if (likely(!f_is_bitfield && ft == TYPE_F32 && (val_is_int(nv) || val_is_float(nv)))) {
             float fv = (float)val_as_num(nv);
             memcpy(faddr, &fv, sizeof(fv));
             DISPATCH();
         }
-        if (likely(ft == TYPE_I32 && val_is_int(nv))) {
+        if (likely(!f_is_bitfield && ft == TYPE_I32 && val_is_int(nv))) {
             int32_t iv = (int32_t)val_as_int(nv);
             memcpy(faddr, &iv, sizeof(iv));
             DISPATCH();
         }
-        if (likely((ft == TYPE_F64 || ft == TYPE_FLOAT) && (val_is_int(nv) || val_is_float(nv)))) {
+        if (likely(!f_is_bitfield && (ft == TYPE_F64 || ft == TYPE_FLOAT) &&
+                   (val_is_int(nv) || val_is_float(nv)))) {
             double dv = val_as_num(nv);
             memcpy(faddr, &dv, sizeof(dv));
             DISPATCH();
@@ -1035,6 +1039,9 @@
             TypeKind ftype = (TypeKind)ip[0]; ip += 1;
             int foffset = (ip[0] << 8) | ip[1]; ip += 2;
             int fdim = (ip[0] << 8) | ip[1]; ip += 2;
+            // ★ 2026-11-12：位域（单元内位偏移 + 位宽；宽度 0 = 普通字段）
+            int fbitoff = ip[0]; ip += 1;
+            int fbitw = ip[0]; ip += 1;
             int sname_idx = (ip[0] << 8) | ip[1]; ip += 2;
 
             const char* fname = "";
@@ -1061,6 +1068,8 @@
             if (ftype == TYPE_PTR_GENERIC) { elem = (TypeKind)ip[0]; ip += 1; }
 
             cstruct_def_set_field(def, i, fname, ftype, foffset, fsize, fdim, sname, elem);
+            def->fields[i].bit_offset = fbitoff;
+            def->fields[i].bit_width = fbitw;
         }
         // 元数据是变长的，ip 必须由我们自己推进
         frame->ip = ip;
