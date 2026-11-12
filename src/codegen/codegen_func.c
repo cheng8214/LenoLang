@@ -214,6 +214,23 @@ void gen_func_closure(CodeGen* gen, Ast* ast, ObjFunction* func) {
     gen->freetop = 0;
     gen->scope_base = base_reg;
 
+    // ★ 2026-11-12（回调压测）：`Ptr[T]` / `Ptr[cstruct]` 形参在**函数入口自标注**。
+    //   为什么不能只靠调用点：C 回调（`ffi.callback(fn, Cfunc)`）的实参是 **trampoline
+    //   在 C 侧调用时填的**，没有 codegen 调用点 ⇒
+    //     `cfunc Cmp(Ptr[V3] a, Ptr[V3] b)` + `cmp_v3` 里 `a[0].v`
+    //   实测报「read_at 需要 Ptr[T] 类型指针（如 Ptr[u32]）」—— 形参是裸 Ptr。
+    //   入口标注对普通调用是**幂等重复**（同一元素类型，后写覆盖前写），无副作用；
+    //   顺带也覆盖了"跨模块调用 / 方法引用"等所有拿不到调用点标注的路径。
+    //   形参槽位就是 0..pcnt-1（`base_reg = func->arity` 从 arity 起分配临时寄存器）。
+    if (ast->u.func.param_types) {
+        for (int i = 0; i < ast->u.func.pcnt; i++) {
+            TypeInfo* pt = ast->u.func.param_types[i];
+            if (pt && pt->kind == TYPE_PTR_GENERIC && pt->element_type) {
+                emit_ptr_elem_annotation(gen, i, pt->element_type, ast->line);
+            }
+        }
+    }
+
     // 生成函数体
     if (ast->u.func.body) {
         gen_stmt(gen, ast->u.func.body);

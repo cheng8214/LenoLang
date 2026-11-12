@@ -1,0 +1,60 @@
+// C 回调里的 `Ptr[cstruct]` 形参可以直接解引用（2026-11-12）
+//
+// 背景：`ffi.callback(fn, Cfunc)` 的实参是 **trampoline 在 C 侧调用时填的**，
+//   没有 codegen 调用点 ⇒ 形参拿到的是**裸 Ptr**（不带元素类型）：
+//     cfunc Cmp(Ptr[V3] a, Ptr[V3] b)
+//     func cmp(Ptr[V3] a, Ptr[V3] b): int { return a[0].v - b[0].v }   // a[0] 报「需要 Ptr[T]」
+//
+// 修法：`Ptr[T]` / `Ptr[cstruct]` 形参在**函数入口自标注**（对普通调用是幂等重复），
+//   顺带覆盖"跨模块调用 / 方法引用"等所有拿不到调用点标注的路径。
+//
+// 本用例用 libc 的 qsort 做真实回调：比较器形参是 `Ptr[V3]`，在回调里按字段比较。
+import ffi
+
+cstruct V3 {
+    i32 v
+    f32 f
+}
+
+cfunc CompareV3(Ptr[V3] a, Ptr[V3] b): i32
+
+func cmp_v3(Ptr[V3] a, Ptr[V3] b): int {
+    int va = a[0].v
+    int vb = b[0].v
+    if va < vb { return -1 }
+    if va > vb { return 1 }
+    return 0
+}
+
+// 同一个函数也能被普通调用（入口自标注同样生效）
+func readFirst(Ptr[V3] p): int {
+    return p[0].v
+}
+
+clib msvcrt {
+    void qsort(Ptr base, i32 nmemb, i32 size, Ptr compar)
+}
+
+main() {
+    msvcrt lib = ffi.load(if _os() == "windows" then "msvcrt.dll" else "libc.so.6")
+    int n = 4
+    Ptr[V3] arr = ffi.malloc(V3.size() * n)
+    arr[0].v = 40
+    arr[1].v = 10
+    arr[2].v = 30
+    arr[3].v = 20
+
+    assert_eq(readFirst(arr), 40, "普通调用：形参 Ptr[cstruct] 可解引用")
+
+    var cb = ffi.callback(cmp_v3, CompareV3)
+    lib.qsort(arr, n, V3.size(), cb)
+
+    assert_eq(arr[0].v, 10, "回调排序第 1 个")
+    assert_eq(arr[1].v, 20, "回调排序第 2 个")
+    assert_eq(arr[2].v, 30, "回调排序第 3 个")
+    assert_eq(arr[3].v, 40, "回调排序第 4 个")
+
+    ffi.free_callback(cb)
+    ffi.free(arr)
+    print("test_callback_ptr_cstruct passed")
+}
