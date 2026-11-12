@@ -913,7 +913,11 @@
         Value v = R(a);
         if (val_is_obj(v) && val_as_obj(v)->type == OBJ_FFI_POINTER) {
             ObjFFIPointer* p = (ObjFFIPointer*)val_as_obj(v);
-            if (!p->freed) p->element_type = (TypeKind)b;
+            if (!p->freed) {
+                p->element_type = (TypeKind)b;
+                // 预计算元素宽度（供 `p[i]` 内联快路径用）
+                p->elem_size = c_layout_type_size((TypeKind)b);
+            }
         }
         DISPATCH();
     }
@@ -951,6 +955,7 @@
                 if (!fp->freed && cdef) {
                     fp->element_type = TYPE_PTR_GENERIC;
                     fp->inner_cdef = cdef;
+                    fp->elem_size = (int)sizeof(void*);   // 元素本身是个指针
                 }
             }
         }
@@ -974,6 +979,7 @@
                 if (!fp->freed && cdef) {
                     fp->element_type = TYPE_CSTRUCT;
                     fp->elem_cdef = cdef;
+                    fp->elem_size = cdef->total_size;
                 }
                 // 找不到定义（类型来自别的模块且尚未注册）⇒ 不标，read_at 会给出明确报错
             }

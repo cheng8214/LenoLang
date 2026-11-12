@@ -608,12 +608,18 @@ static void ptr_annotate_elem(Value value, const uint8_t* elem_spec) {
     if (!composite) {
         if (ffi_ptr->element_type == TYPE_ANY || ffi_ptr->element_type == TYPE_PTR) {
             ffi_ptr->element_type = ek;
+            // 元素宽度预计算（供 `p[i]` 的内联快路径，见 07_collections.inc）
+            ffi_ptr->elem_size = c_layout_type_size(ek);
         }
         return;
     }
 
     // 复合元素：一层 kind + 完整规格（规格是自定界的，长度用唯一实现算）
     ffi_ptr->element_type = ek;
+    // 元素是指针/数组/字典时宽度就是指针宽度（cstruct 定义这里拿不到，留 0 走原路径）
+    if (ek == TYPE_PTR_GENERIC || ek == TYPE_ARRAY || ek == TYPE_DICT) {
+        ffi_ptr->elem_size = (int)sizeof(void*);
+    }
     int sz = type_spec_size(elem_spec);
     if (sz > 0) {
         uint8_t* copy = (uint8_t*)malloc((size_t)sz);

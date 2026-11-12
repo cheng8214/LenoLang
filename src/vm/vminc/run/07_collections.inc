@@ -527,6 +527,32 @@
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
                 }
+                // ★ 2026-11-12（内联下标）：**快路径** —— 元素宽度在标注时已预计算
+                //   （ObjFFIPointer.elem_size），这里只判「活着 + 区间在 size 内 + 标量」
+                //   就直接读内存，省掉一次跨 TU 的 ffi_read_at（它内部还要再 switch 一遍
+                //   算元素宽度）。任何一条不满足 ⇒ 落到下面的原路径：越界/释放/复合元素
+                //   的**判定与文案仍然只有那一份**，不会出现"同一个下标两套语义"。
+                ObjFFIPointer* ip = (ObjFFIPointer*)val_as_obj(obj);
+                if (likely(ip->elem_size > 0 && !ip->freed && ip->ptr != NULL)) {
+                    int64_t ix = val_as_int(idx);
+                    int64_t off = ix * (int64_t)ip->elem_size;
+                    if (likely(ip->size == 0 ||
+                               (off >= 0 && (size_t)off + (size_t)ip->elem_size <= ip->size))) {
+                        unsigned char* ad = (unsigned char*)ip->ptr + off;
+                        switch ((int)ip->element_type) {
+                            case TYPE_F32: { float t; memcpy(&t, ad, 4); R(a) = val_float((double)t); DISPATCH(); }
+                            case TYPE_F64: case TYPE_FLOAT: { double t; memcpy(&t, ad, 8); R(a) = val_float(t); DISPATCH(); }
+                            case TYPE_U8:  { uint8_t  t; memcpy(&t, ad, 1); R(a) = val_int((int)t); DISPATCH(); }
+                            case TYPE_I8:  { int8_t   t; memcpy(&t, ad, 1); R(a) = val_int((int)t); DISPATCH(); }
+                            case TYPE_U16: { uint16_t t; memcpy(&t, ad, 2); R(a) = val_int((int)t); DISPATCH(); }
+                            case TYPE_I16: { int16_t  t; memcpy(&t, ad, 2); R(a) = val_int((int)t); DISPATCH(); }
+                            case TYPE_U32: { uint32_t t; memcpy(&t, ad, 4); R(a) = val_int_safe((int64_t)t); DISPATCH(); }
+                            case TYPE_I32: case TYPE_INT: { int32_t t; memcpy(&t, ad, 4); R(a) = val_int((int)t); DISPATCH(); }
+                            case TYPE_I64: { int64_t t; memcpy(&t, ad, 8); R(a) = val_int_safe(t); DISPATCH(); }
+                            default: break;   // cstruct / U64（可能 bigint）/ Ptr 等走原路径
+                        }
+                    }
+                }
                 Value out = ffi_vm_index_read(obj, idx);
                 if (unlikely(vm.has_exception)) {
                     // 与 OP_CALL_NATIVE 同口径：原生只登记了裸消息 ⇒ 统一转成 VM 异常
@@ -913,6 +939,36 @@
                     if (!throw_runtime_error("指针下标必须是整数（Ptr[T] 按元素索引，不是字节偏移）", line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
+                }
+                // ★ 2026-11-12（内联下标）：写路径的快路径，口径与上面读路径逐条相同
+                //   （能内联才内联，其余一律回落 ffi_vm_index_write）。
+                ObjFFIPointer* ip = (ObjFFIPointer*)val_as_obj(obj);
+                Value nv = R(a);
+                if (likely(ip->elem_size > 0 && !ip->freed && ip->ptr != NULL)) {
+                    int64_t ix = val_as_int(idx);
+                    int64_t off = ix * (int64_t)ip->elem_size;
+                    if (likely(ip->size == 0 ||
+                               (off >= 0 && (size_t)off + (size_t)ip->elem_size <= ip->size))) {
+                        unsigned char* ad = (unsigned char*)ip->ptr + off;
+                        int is_num = val_is_int(nv) || val_is_float(nv);
+                        switch ((int)ip->element_type) {
+                            case TYPE_F32:
+                                if (likely(is_num)) { float t = (float)val_as_num(nv); memcpy(ad, &t, 4); DISPATCH(); }
+                                break;
+                            case TYPE_F64: case TYPE_FLOAT:
+                                if (likely(is_num)) { double t = val_as_num(nv); memcpy(ad, &t, 8); DISPATCH(); }
+                                break;
+                            case TYPE_U8:  if (likely(val_is_int(nv))) { uint8_t  t = (uint8_t)val_as_int(nv);  memcpy(ad, &t, 1); DISPATCH(); } break;
+                            case TYPE_I8:  if (likely(val_is_int(nv))) { int8_t   t = (int8_t)val_as_int(nv);   memcpy(ad, &t, 1); DISPATCH(); } break;
+                            case TYPE_U16: if (likely(val_is_int(nv))) { uint16_t t = (uint16_t)val_as_int(nv); memcpy(ad, &t, 2); DISPATCH(); } break;
+                            case TYPE_I16: if (likely(val_is_int(nv))) { int16_t  t = (int16_t)val_as_int(nv);  memcpy(ad, &t, 2); DISPATCH(); } break;
+                            case TYPE_U32: if (likely(val_is_int(nv))) { uint32_t t = (uint32_t)val_as_int(nv); memcpy(ad, &t, 4); DISPATCH(); } break;
+                            case TYPE_I32: case TYPE_INT:
+                                if (likely(val_is_int(nv))) { int32_t t = (int32_t)val_as_int(nv); memcpy(ad, &t, 4); DISPATCH(); } break;
+                            case TYPE_I64: if (likely(val_is_int(nv))) { int64_t  t = (int64_t)val_as_int(nv);  memcpy(ad, &t, 8); DISPATCH(); } break;
+                            default: break;
+                        }
+                    }
                 }
                 ffi_vm_index_write(obj, idx, R(a));
                 if (unlikely(vm.has_exception)) {

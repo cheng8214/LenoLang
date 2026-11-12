@@ -233,12 +233,20 @@ const BX_TEX    = 4   // 批处理文字纹理
             _gOutSubmits = 0;  _gOutBatched = 0
             _gLineSubmits = 0; _gLineBatched = 0
             // 预分配批处理缓冲（ffi 连续内存）：fill/out 各 2048 个矩形，line 8192 个点
-            bxFillCap = 2048; bxFill = ffi.malloc(bxFillCap * 16)
-            bxOutCap  = 2048; bxOut  = ffi.malloc(bxOutCap * 16)
-            _bxLineCap = 4096; bxLine = ffi.malloc(_bxLineCap * 16)
+            //   ⚠ 先落到**带类型的局部量**再赋给字段：`self.字段 = ffi.malloc(...)` 这条
+            //   路径目前不会给指针补 `Ptr[f32]` 的元素类型标注（裸 Ptr ⇒ `bxFill[i]` 会报
+            //   「无类型 Ptr」）。局部量有标注，赋给字段后同一个对象继续带着标注 ✓。
+            bxFillCap = 2048
+            Ptr[f32] fillBuf = ffi.malloc(bxFillCap * 16); bxFill = fillBuf
+            bxOutCap  = 2048
+            Ptr[f32] outBuf = ffi.malloc(bxOutCap * 16); bxOut = outBuf
+            _bxLineCap = 4096
+            Ptr[f32] lineBuf = ffi.malloc(_bxLineCap * 16); bxLine = lineBuf
             bxFillN = 0; bxOutN = 0; _bxLineN = 0
             // 文字纹理批处理：每条目 5 floats (dstX, dstY, dstW, dstH, alpha)
-            bxTexCap = 1024; bxTexCoords = ffi.malloc(bxTexCap * 20); bxTexN = 0; bxTexPtrs = []
+            bxTexCap = 1024
+            Ptr[f32] texBuf = ffi.malloc(bxTexCap * 20); bxTexCoords = texBuf
+            bxTexN = 0; bxTexPtrs = []
         }
         return ok
     }
@@ -454,11 +462,13 @@ const BX_TEX    = 4   // 批处理文字纹理
         if bxFill == null { return emitFill(x, y, w, h) }
         if bxCur != BX_EMPTY and bxCur != BX_FILL { flushBatches() }
         if bxFillN >= bxFillCap { flushBatches() }
-        int off = bxFillN * 16
-        ffi.write_float(bxFill, off,      x)
-        ffi.write_float(bxFill, off + 4,  y)
-        ffi.write_float(bxFill, off + 8,  w)
-        ffi.write_float(bxFill, off + 12, h)
+        // ★ 2026-11-12：改用 `Ptr[f32]` 下标写（VM 内联快路径，见 07_collections.inc）
+        //   —— 比 `ffi.write_float(缓冲, 字节偏移, …)` 少一次跨 TU 调用。
+        int o = bxFillN * 4
+        bxFill[o]      = x
+        bxFill[o + 1]  = y
+        bxFill[o + 2]  = w
+        bxFill[o + 3]  = h
         bxFillN = bxFillN + 1
         bxCur = BX_FILL
         return true
@@ -481,11 +491,11 @@ const BX_TEX    = 4   // 批处理文字纹理
         if bxOut == null { return emitRect(x, y, w, h) }
         if bxCur != BX_EMPTY and bxCur != BX_STROKE { flushBatches() }
         if bxOutN >= bxOutCap { flushBatches() }
-        int off = bxOutN * 16
-        ffi.write_float(bxOut, off,      x)
-        ffi.write_float(bxOut, off + 4,  y)
-        ffi.write_float(bxOut, off + 8,  w)
-        ffi.write_float(bxOut, off + 12, h)
+        int o = bxOutN * 4
+        bxOut[o]      = x
+        bxOut[o + 1]  = y
+        bxOut[o + 2]  = w
+        bxOut[o + 3]  = h
         bxOutN = bxOutN + 1
         bxCur = BX_STROKE
         return true
@@ -497,11 +507,11 @@ const BX_TEX    = 4   // 批处理文字纹理
         if bxLine == null { return emitLine(x1, y1, x2, y2) }
         if bxCur != BX_EMPTY and bxCur != BX_LINE { flushBatches() }
         if _bxLineN >= _bxLineCap { flushBatches() }
-        int off = _bxLineN * 16
-        ffi.write_float(bxLine, off,      x1)
-        ffi.write_float(bxLine, off + 4,  y1)
-        ffi.write_float(bxLine, off + 8,  x2)
-        ffi.write_float(bxLine, off + 12, y2)
+        int o = _bxLineN * 4
+        bxLine[o]      = x1
+        bxLine[o + 1]  = y1
+        bxLine[o + 2]  = x2
+        bxLine[o + 3]  = y2
         _bxLineN = _bxLineN + 1
         bxCur = BX_LINE
         return true
@@ -871,12 +881,12 @@ const BX_TEX    = 4   // 批处理文字纹理
         if bxCur != BX_EMPTY and bxCur != BX_TEX { flushBatches() }
         // 缓冲满则先提交
         if bxTexN >= bxTexCap { flushBatches() }
-        int off = bxTexN * 20
-        ffi.write_float(bxTexCoords, off, x)
-        ffi.write_float(bxTexCoords, off + 4, y)
-        ffi.write_float(bxTexCoords, off + 8, w)
-        ffi.write_float(bxTexCoords, off + 12, h)
-        ffi.write_float(bxTexCoords, off + 16, alpha)
+        int o = bxTexN * 5
+        bxTexCoords[o]      = x
+        bxTexCoords[o + 1]  = y
+        bxTexCoords[o + 2]  = w
+        bxTexCoords[o + 3]  = h
+        bxTexCoords[o + 4]  = alpha
         bxTexPtrs.add(texture)
         bxTexN = bxTexN + 1
         bxCur = BX_TEX
@@ -971,11 +981,11 @@ const BX_TEX    = 4   // 批处理文字纹理
             Ptr[u8] ltex = null
             int i = 0
             while i < _bxLineN {
-                int o1 = i * 16
-                float l1x = ffi.read_float(bxLine, o1)
-                float l1y = ffi.read_float(bxLine, o1 + 4)
-                float l2x = ffi.read_float(bxLine, o1 + 8)
-                float l2y = ffi.read_float(bxLine, o1 + 12)
+                int o1 = i * 4
+                float l1x = bxLine[o1]
+                float l1y = bxLine[o1 + 1]
+                float l2x = bxLine[o1 + 2]
+                float l2y = bxLine[o1 + 3]
                 if not lineAA(l1x, l1y, l2x, l2y) {
                     if not emitLine(l1x, l1y, l2x, l2y) { ok = false }
                     i = i + 1
@@ -992,11 +1002,11 @@ const BX_TEX    = 4   // 批处理文字纹理
                 int avn = 0
                 var[float, float, float, float](acr, acg, acb, aca) = getColorFloat()
                 while i < _bxLineN {
-                    int o2 = i * 16
-                    float ax1 = ffi.read_float(bxLine, o2)
-                    float ay1 = ffi.read_float(bxLine, o2 + 4)
-                    float ax2 = ffi.read_float(bxLine, o2 + 8)
-                    float ay2 = ffi.read_float(bxLine, o2 + 12)
+                    int o2 = i * 4
+                    float ax1 = bxLine[o2]
+                    float ay1 = bxLine[o2 + 1]
+                    float ax2 = bxLine[o2 + 2]
+                    float ay2 = bxLine[o2 + 3]
                     if not lineAA(ax1, ay1, ax2, ay2) { break }
                     avn = pushAALine(av.to_ptr(), avn, ax1, ay1, ax2, ay2, acr, acg, acb, aca)
                     i = i + 1
@@ -1047,12 +1057,12 @@ const BX_TEX    = 4   // 批处理文字纹理
             // 填充顶点
             for count to k {
                 int entryIdx = i + k
-                int off = entryIdx * 20
-                float dx = ffi.read_float(bxTexCoords, off)
-                float dy = ffi.read_float(bxTexCoords, off + 4)
-                float dw = ffi.read_float(bxTexCoords, off + 8)
-                float dh = ffi.read_float(bxTexCoords, off + 12)
-                float alpha = ffi.read_float(bxTexCoords, off + 16)
+                int off = entryIdx * 5
+                float dx = bxTexCoords[off]
+                float dy = bxTexCoords[off + 1]
+                float dw = bxTexCoords[off + 2]
+                float dh = bxTexCoords[off + 3]
+                float alpha = bxTexCoords[off + 4]
                 // 4 顶点：左上、右上、右下、左下
                 // 顶点颜色全白，alpha 由顶点控制（与纹理相乘），无需 SDL_SetTextureAlphaMod
                 int vi = k * 4

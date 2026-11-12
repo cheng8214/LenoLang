@@ -97,6 +97,12 @@ typedef struct ObjFFIPointer {
     int owned;                         // 是否由我们分配（1=是，0=否）
     int freed;                         // 是否已释放（防止 double-free 和 use-after-free）
     TypeKind element_type;             // Ptr[T] 中 T 的类型，TYPE_PTR 表示未指定（通用 Ptr）
+    // ★ 2026-11-12（内联下标）：元素宽度**预计算**（0 = 未知）。
+    //   为什么：`p[i]` 原来每次都跨 TU 调 `ffi_read_at/write_at`，那边要重新 switch
+    //   element_type 算 sizeof(T)。把宽度在**标注时**算好存这里，VM 就能对常见标量
+    //   做内联 load/store（见 07_collections.inc 的 PTR_INLINE 宏），省一次函数调用
+    //   + 一次 switch。0 表示未知 ⇒ 一律回落原路径，语义不受影响。
+    int elem_size;
     // ★ 2026-11-11：元素是 **cstruct** 时解析出的定义（`Ptr[V3]`）。
     //   为什么单独存：read_at 要按它算元素大小并造视图，而规格里的 struct 名字是
     //   **chunk 常量索引**，ffi 层没有 chunk 上下文 ⇒ 在标注时（VM 有 chunk）就解析好。

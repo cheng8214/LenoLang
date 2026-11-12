@@ -2217,6 +2217,18 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                 else { obj_reg = gen_expr(gen, fo); obj_is_temp = 1; }
                 if (val_slot >= 0) { val_reg = val_slot; }
                 else { val_reg = ASSIGN_VAL(); val_is_temp = 1; }
+                // ★ 2026-11-12：`obj.ptr字段 = ffi.malloc(...)` 的 Ptr 元素类型补发。
+                //   字段的静态类型编译期就知道（如 `Ptr[f32] bxFill`），但赋过去的指针对象
+                //   是**裸 Ptr** ⇒ `obj.field[i]` 会报「需要 Ptr[T] 类型指针（不支持无类型 Ptr）」，
+                //   模块只能退而用 `ffi.write_float(buf, 字节偏移, …)`（LenoSDL3 的批处理缓冲
+                //   一直这么写，就因为这里没标注）。口径与局部量/全局量那两处完全一致。
+                {
+                    TypeInfo* ft = infer_expr_type(gen->sem, target);
+                    if (ft && ft->kind == TYPE_PTR_GENERIC && ft->element_type) {
+                        emit_ptr_elem_annotation(gen, val_reg, ft->element_type, ast->line);
+                    }
+                    if (ft) type_free(ft);
+                }
                 // SET_FIELD: R[B].field(C) = R[A]（字段索引 >255 时由 emit_field_op 改发宽索引版）
                 emit_field_op(gen, OP_SET_FIELD, val_reg, obj_reg,
                               target->u.field_access.field_index, ast->line);
