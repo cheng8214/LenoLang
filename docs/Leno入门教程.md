@@ -42,10 +42,15 @@
 15. [异常处理（try-catch-finally）](#异常处理try-catch-finally)
 16. [线程与并发](#线程与并发)
 17. [异步编程](#异步编程)
-18. [FFI 外部函数接口](#ffi-外部函数接口)
+18. [cstruct、union 与 Ptr（原生内存）](#cstructunion-与-ptr原生内存)
+    - [`Ptr[T]`：带元素类型的 C 指针](#ptrt带元素类型的-c-指针)
+    - [越界检查与 `ffi.bind_size`](#越界检查与-ffibind_size)
+    - [union（联合体）](#union联合体)
+    - [位域（bitfield）](#位域bitfield)
+19. [FFI 外部函数接口](#ffi-外部函数接口)
     - [cstruct 线程支持](#cstruct-线程支持)
-19. [高级特性](#高级特性)
-20. [语法速查表](#语法速查表)
+20. [高级特性](#高级特性)
+21. [语法速查表](#语法速查表)
 
 ***
 
@@ -11122,6 +11127,306 @@ main() {
 
 ***
 
+## cstruct、union 与 Ptr（原生内存）
+
+Leno 有两套“结构体”，用途不同：
+
+| | `struct`（第 7 章）| `cstruct` / `union`（本章）|
+|---|---|---|
+| 内存 | GC 管理，字段是 Leno 值 | **裸 C 内存**，按 C 布局逐字节排布 |
+| 用途 | 应用数据建模 | 和 C 交换数据（结构体指针、顶点缓冲、API 输出参数）|
+| 能否跨线程 | 可以（深克隆）| **不可以**（见文末）|
+| 释放 | 自动 | **手动** `free()` / `free_all()` |
+
+判断标准很简单：**要传指针给 C，就用 cstruct；纯 Leno 逻辑一律用 struct。**
+
+### 定义与分配
+
+```leno
+cstruct V3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+main() {
+    var v = V3.malloc()        // 拥有这块内存（calloc 零初始化）
+    v.x = 1.0
+    v.y = 2.0
+    v.z = 3.0
+
+    print(V3.size())           // 12   —— 编译期常量
+    print(V3.offset_of("y"))   // 4
+    print(v.x)                 // 1.0
+
+    v.free()                   // 必须手动释放
+}
+```
+
+批量分配用 `malloc_array(n)`，它返回一个**数组对象**（不是单个实例）：
+
+```leno
+main() {
+    var vs = V3.malloc_array(3)
+    vs[0].x = 1.0
+    vs[1].x = 2.0
+    vs[2].x = 3.0
+    print(vs.len())            // 3
+    print(vs[1].x)             // 2.0
+    vs.free_all()              // 一次释放整块
+}
+```
+
+### 字段类型
+
+| 类别 | 写法 |
+|---|---|
+| 整数 | `i8` `u8` `i16` `u16` `i32` `u32` `i64` `u64`（`c_int`/`c_long`/`c_size` 等 C 别名也可用）|
+| 浮点 | `f32` `f64` |
+| 指针 | `Ptr`（`void*`）、`Ptr[V3]`、`Ptr[Ptr[u8]]`（`char**`）|
+| 嵌套 | 另一个 `cstruct` / `union` |
+| 数组字段 | `u8 data[16]`、`V3 cols[4]` |
+
+⚠ 字段**必须是 C 布局类型** —— 写 `int x` / `float y` 会报错（那是 Leno 类型），要用 `i32` / `f32`。
+
+### 数组字段与嵌套
+
+```leno
+cstruct Line {
+    V3 a
+    V3 b
+    u8 color[4]
+}
+
+main() {
+    var ln = Line.malloc()
+    ln.a.x = 1.0
+    ln.b.y = 2.0
+    ln.color[0] = 255
+
+    print(ln.color.len())      // 4 —— 数组字段的长度是**编译期常量**
+    var i = 2
+    ln.color[i] = 128          // 动态下标也可以
+    ln.free()
+}
+```
+
+数组字段还可以整块取出来用：`var c = ln.color; c[1]`（视图，直接指向原内存）。
+
+### packed / align(N)
+
+```leno
+packed cstruct Packed { u8 a  i32 b }   // 无 padding：size = 5
+cstruct Normal { u8 a  i32 b }          // 有 padding：size = 8
+align(16) cstruct Aligned { i32 v }     // 强制 16 字节对齐：size = 16
+```
+
+对齐/打包影响 `size()` 与 `offset_of()`，也影响能否和 C 的头文件对上 —— **按 C 端的定义抄**。
+
+### 自省：size / offset_of / alignment / to_ptr
+
+| 写法 | 含义 |
+|---|---|
+| `V3.size()` | 结构体大小（字节）|
+| `V3.alignment()` | 对齐要求 |
+| `V3.offset_of("y")` | 字段偏移（字段名是字符串）|
+| `v.to_ptr()` | 拿到指向这块内存的 `Ptr`（**带大小**，见下文越界检查）|
+
+### `Ptr[T]`：带元素类型的 C 指针
+
+`Ptr` 就是 C 的 `void*`；`Ptr[T]` 额外记了“元素类型”，于是 `p[i]` 能按下标走：
+
+| C | Leno |
+|---|---|
+| `char` | `u8` |
+| `char*` | `Ptr[u8]` |
+| `char**` / `char* argv[]` | `Ptr[Ptr[u8]]` |
+| `struct V3*` | `Ptr[V3]` |
+| `struct V3**` | `Ptr[Ptr[V3]]` |
+| `void*` | `Ptr` |
+
+`Ptr[cstruct]` **可以直接解引用**成实例视图（等价于 C 的 `p->x` 写成 `p[0].x`）：
+
+```leno
+main() {
+    Ptr[V3] p = ffi.malloc(V3.size() * 2)
+
+    p[0].x = 7.0               // 写第一个元素
+    p[1].y = 8.0               // 写第二个元素（偏移按 V3 大小自动算）
+    print(p[0].x)              // 7.0
+
+    p[2].x = 1.0               // ✗ 越界 —— 抛异常（不是静默写坏内存）
+    ffi.free(p)
+}
+```
+
+`char**`（argv、`getline(char**, size_t*)` 这类出参）用 `Ptr[Ptr[u8]]`：
+
+```leno
+main() {
+    Ptr[Ptr[u8]] argv = ffi.malloc(8 * 2)
+    Ptr[u8] s0 = ffi.malloc(4)
+    ffi.write_string(s0, 0, "hi")     // 连 '\0' 一起写
+    argv[0] = s0
+
+    print(ffi.read_string(argv[0], 0))   // hi
+    var auto = argv[0]                   // 元素类型会自动往下传
+    print(auto[0])                       // 104（'h'）
+
+    ffi.free(s0)
+    ffi.free(argv)
+}
+```
+
+### 越界检查与 `ffi.bind_size`
+
+规则一句话：**只要指针知道自己的大小，就越界报错；不知道就当裸指针。**
+
+| 指针来源 | size | `p[i]` 越界 |
+|---|---|---|
+| `ffi.malloc(n)` | n | 抛异常 |
+| `cstruct.to_ptr()` / `malloc_array().to_ptr()` | 实例大小 / 数组总字节 | 抛异常 |
+| C 函数返回的指针 | 0（未知）| **不检查**（裸指针语义）|
+| `ffi.bind_size(p, n)` 之后 | n | 抛异常 |
+
+C 侧返回的指针如果调用方知道大小，用 `ffi.bind_size` 挂上去：
+
+```leno
+main() {
+    Ptr[u8] raw = ffi.malloc(64)
+    ffi.bind_size(raw, 16)         // 只允许前 16 字节
+    raw[15] = 1                    // ✅
+    raw[20] = 1                    // ✗ 抛「内存访问越界」
+    ffi.free(raw)
+}
+```
+
+### clib 传结构体：裸 cstruct 名 = **指针**
+
+`clib` 里写 cstruct 名，语义是**传指针**（不是 C 的按值传结构体）：
+
+```leno
+cstruct POINT { i32 x  i32 y }
+
+// ⚠ 这种写法会被当作 Ptr[POINT]（编译器给一条警告，提示你确认语义）
+clib user32_a {
+    i32 GetCursorPos(POINT lpPoint)
+}
+
+// ✅ 推荐：显式写清楚"传指针"
+clib user32_b {
+    i32 GetCursorPos(Ptr[POINT] lpPoint)
+}
+```
+
+这个偏差在照抄 C 头文件时很危险（`void f(SDL_Rect r)` 在 C 里是**按值**，
+而这里会被当成传指针、C 侧收到的就是垃圾）—— 所以编译器对裸写法给**警告**。
+
+调用时 cstruct 实例会自动取地址：
+
+```leno
+main() {
+    user32_b lib = ffi.load("user32.dll")
+    var pt = POINT.malloc()
+    lib.GetCursorPos(pt)           // 实例 → 指针，自动转换
+    print(pt.x)
+    pt.free()
+    ffi.free(lib)
+}
+```
+
+### `union`（联合体）
+
+所有字段**共享同一块内存**（偏移都是 0），总大小 = 最大字段。最典型的用法是类型双关：
+
+```leno
+union Num {
+    i32 i
+    f32 f
+    u8 bytes[4]
+}
+
+main() {
+    var n = Num.malloc()
+    print(Num.size())        // 4
+    print(Num.offset_of("f"))// 0（三个字段偏移都是 0）
+
+    n.i = 1065353216         // 0x3F800000
+    print(n.f)               // 1.0  ← 同一块内存，按 float 读
+
+    n.bytes[0] = 65
+    print(n.bytes[0])        // 65（与 i 的低字节是同一个字节）
+    n.free()
+}
+```
+
+`union` 和 cstruct 用法完全一致（`malloc` / `malloc_array` / 嵌套进 cstruct / `to_ptr`），
+限制：**不能含位域**（各编译器对 union 位域布局不一致，编译器会直接报错）。
+
+### 位域（bitfield）
+
+```leno
+cstruct Flags {
+    u32 visible  : 1
+    u32 selected : 2
+    u32 depth    : 5
+}
+
+main() {
+    var f = Flags.malloc()
+    f.visible = 1            // 1 位：0/1
+    f.selected = 3           // 2 位：0..3
+    f.depth = 17             // 5 位：0..31
+    print(f.depth)           // 17
+    print(Flags.size())      // 4（三个位域挤在一个 u32 里）
+    f.free()
+}
+```
+
+规则：
+- 宽度必须 ≤ 声明类型的位数；写超宽按位截断（`f.selected = 7` 读回 3）；
+- 同类型、能塞进当前存储单元 ⇒ 从低位往高位接着排；类型变了/塞不下 ⇒ 开新单元；
+- 有符号类型会做符号扩展（`i32 s : 4` 写 -8 读回 -8）；
+- 布局按**小端**实现，大端平台上编译期直接报错（不会给你一个静默读反的程序）。
+
+### 常见坑
+
+| 坑 | 现象 | 正确做法 |
+|---|---|---|
+| free 后继续用 | 抛「cstruct 数据已释放」 | 释放后置 `null`，视图也一并作废 |
+| 视图逃逸 | `var e = a[0]` 之后 `a.free_all()` ⇒ `e.x` 抛异常 | 别在 free 后还持有视图 |
+| `a[i] = 另一个实例` | 抛「不能整体赋值元素」 | 写字段：`a[i].x = ...` |
+| 空数组 | `malloc_array(0)` 得到 0 元素（`len() == 0`）| 循环上界用 `len()` |
+| 跨线程传实例 | 编译期/运行期报「不能跨线程传递此类型」| 见下节 |
+
+### 跨线程
+
+**cstruct / Ptr 不能跨线程传递** —— 它们是裸内存，没有安全的深克隆语义：
+
+| 通道 | 行为 |
+|---|---|
+| `threads.start(f, cstruct实例)` | **编译期**报错 |
+| `ch.send(cstruct / Ptr)` | **运行期**抛异常（且不会留下脏数据）|
+| 嵌在 `struct` / `Array` 里传 | 运行期抛异常（会指出是哪个字段/元素）|
+
+正确做法：线程各自 `malloc` 自己的缓冲，**传数据不传实例**：
+
+```leno
+func worker(any ch) {
+    var v = V3.malloc()
+    v.x = 1.0
+    if ch is Channel {
+        ch.send(v.x)          // ✅ 传标量
+    }
+    v.free()
+}
+```
+
+⚠ 一个例外要注意：**全局变量里的 `Ptr` / cstruct 是共享的**（同一进程地址空间，线程写、
+主线程立刻可见）—— 多线程写同一块内存就是数据竞争，需要自己保证“一块内存只有一个线程写”。
+
+***
+
 ## FFI 外部函数接口
 
 FFI（Foreign Function Interface）允许 Leno 直接调用 C 语言库函数，实现底层操作。
@@ -11494,8 +11799,13 @@ main() {
 **注意事项：**
 
 1. **不要在线程间传递 cstruct 实例**：实例不能跨线程共享，每个线程应独立 `malloc()`
+   —— 现在编译器/运行期会**主动拦住**：`threads.start(f, 实例)` 是**编译期**报错，
+   `ch.send(实例)` 是**运行期**抛异常（嵌在 struct / Array 里传也会被拦，并指出是哪个字段/元素）
 2. **FFI 资源独立管理**：每个线程加载的 DLL、分配的内存都是独立的
 3. **通过 Channel 传递数据**：使用基本类型（int、float、string 等）或 Dict/Array 在线程间传递数据
+4. **全局变量里的 `Ptr` / cstruct 是共享的例外**：同一进程地址空间，线程写、主线程立刻可见
+   ⇒ 多线程写同一块内存就是数据竞争，必须自己保证“一块内存只有一个线程写”
+   （或只读共享、结果走 Channel 传纯数据）
 
 ```leno
 // ✅ 正确：每个线程独立使用 cstruct
@@ -11791,6 +12101,22 @@ leno -p program.leno
 | 主动让出 | `await asyncs.yield()` |
 | 异常捕获 | `try { await f } catch e { }` |
 
+### cstruct / union / Ptr
+
+| 功能 | 语法 |
+|---|---|
+| 定义 C 结构体 | `cstruct V3 { f32 x  f32 y  f32 z }` |
+| 定义联合体 | `union Num { i32 i  f32 f }` |
+| 位域 | `cstruct F { u32 visible : 1 }` |
+| 分配 / 批量分配 | `V3.malloc()` / `V3.malloc_array(n)` |
+| 释放 | `v.free()` / `vs.free_all()` |
+| 大小 / 对齐 / 字段偏移 | `V3.size()` / `V3.alignment()` / `V3.offset_of("y")` |
+| 取指针 | `v.to_ptr()`（带大小）|
+| 指针下标 | `Ptr[V3] p` → `p[i].x` |
+| 二级指针（`char**`）| `Ptr[Ptr[u8]]` → `ffi.read_string(p[i], 0)` |
+| 挂上已知大小 | `ffi.bind_size(p, n)` |
+| 打包 / 对齐 | `packed cstruct` / `align(16) cstruct` |
+
 ### FFI 外部函数接口
 
 | 功能             | 语法                                  |
@@ -11802,6 +12128,7 @@ leno -p program.leno
 | 判断指针           | `ffi.is_ptr(val)`                   |
 | 指针大小           | `ffi.sizeof(ptr)`                   |
 | 缓冲区断言         | `ffi.assert_size(ptr, min)`          |
+| 挂上已知大小（越界检查）| `ffi.bind_size(ptr, n)`             |
 | 指针偏移           | `ffi.offset(ptr, n)`                |
 | 读取 int         | `ffi.read_int(ptr, offset)`         |
 | 读取 int64       | `ffi.read_int64(ptr, offset)`       |
