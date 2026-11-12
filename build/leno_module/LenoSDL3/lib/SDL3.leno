@@ -561,6 +561,9 @@ export func getBatchLineBatched(): int { return r.getBatchLineBatched() }
 // 调试：暴露行批处理缓冲（供坐标级回归测试读回 float 比对，验证后可删除）
 export func _dbgLinePtr(Renderer r): Ptr[f32] { return r._dbgLinePtr(r) }
 export func _dbgLineCount(Renderer r): int { return r._dbgLineCount(r) }
+// 调试：文字批处理的索引缓冲（回归"每矩形 4k,4k+1,4k+2,4k,4k+2,4k+3"这个模式）
+export func _dbgTexIdxPtr(): Ptr[u8] { return r._dbgTexIdxPtr() }
+export func _dbgTexIdxCount(): int { return r._dbgTexIdxCount() }
 export func createEvent(): Event                { return evt.createEvent() }
 export func createFont(string p, float s): Font { return fnt.createFont(p, s) }
 export func createFontAuto(float s): Font    { return fnt.createFontAuto(s) }

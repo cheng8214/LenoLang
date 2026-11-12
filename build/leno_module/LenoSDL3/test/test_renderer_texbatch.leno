@@ -1,0 +1,62 @@
+// test_renderer_texbatch.leno —— 文字批处理（flushTexBatch）的**索引模式**回归
+//
+// 背景（2026-11-12 性能优化）：原来每次 flush 都
+//     `Array[int] idxArr = []` → 6×count 次 add → `ffi.malloc(idxPtr)` → 再逐条拷进去，
+//   = 1 个中间数组 + 1 次分配 + 1 趟全量拷贝。现在索引模式固定，直接在填顶点的同一个
+//   循环里写进**复用缓冲**。这段逻辑重写后，"索引对不对"必须能回归 —— 但像素级验证在
+//   无头环境不可行（dummy/offscreen 驱动的 SDL_RenderReadPixels 读不回来），
+//   所以改成直接读回索引缓冲、断言模式。
+//
+// 每矩形 4 个顶点 ⇒ 索引 = base+0,1,2, base+0,2,3（两个三角形）
+//
+// 用法（需要窗口/渲染器；无显示环境请设 SDL_VIDEODRIVER=dummy）：
+//     $env:SDL_VIDEODRIVER="dummy"; ./build/leno.exe build/leno_module/LenoSDL3/test/test_renderer_texbatch.leno
+import ffi
+import "SDL3" as SDL3
+use SDL3.(Window, Renderer)
+
+main() {
+    if not SDL3.initVideo() {
+        print("initVideo failed: " + SDL3.getError())
+        return
+    }
+    var w = SDL3.createWindow({ title: "texbatch", w: 64, h: 64 })
+    var r = w.createRenderer()
+    Ptr[u8] tex = r.createTexture(SDL3.PIXELFORMAT_RGBA8888, 0, 8, 8)
+
+    // 3 条同纹理条目 ⇒ 一次 flush 处理 3 个矩形（12 顶点 / 18 索引）
+    r._dbgPushTex(tex, 0.0, 0.0, 8.0, 8.0, 1.0)
+    r._dbgPushTex(tex, 8.0, 0.0, 8.0, 8.0, 1.0)
+    r._dbgPushTex(tex, 16.0, 0.0, 8.0, 8.0, 1.0)
+    r._dbgFlushBatches()
+
+    int n = SDL3._dbgTexIdxCount()
+    assert_eq(n, 18, "3 个矩形应有 18 个索引")
+
+    Ptr[u8] idx = SDL3._dbgTexIdxPtr()
+    assert_true(idx != null, "索引缓冲应为复用缓冲（非 null）")
+
+    // 逐矩形核对模式：(4k, 4k+1, 4k+2, 4k, 4k+2, 4k+3)
+    for 0 : n / 6 - 1 to q {
+        int base = q * 4
+        int off = q * 24                 // 每矩形 6 个 int = 24 字节
+        assert_eq(ffi.read_int(idx, off),      base,     "矩形 " + _str(q) + " 索引 0")
+        assert_eq(ffi.read_int(idx, off + 4),  base + 1, "矩形 " + _str(q) + " 索引 1")
+        assert_eq(ffi.read_int(idx, off + 8),  base + 2, "矩形 " + _str(q) + " 索引 2")
+        assert_eq(ffi.read_int(idx, off + 12), base,     "矩形 " + _str(q) + " 索引 3")
+        assert_eq(ffi.read_int(idx, off + 16), base + 2, "矩形 " + _str(q) + " 索引 4")
+        assert_eq(ffi.read_int(idx, off + 20), base + 3, "矩形 " + _str(q) + " 索引 5")
+    }
+
+    // 再推一轮，确认复用缓冲能继续正确工作（不清零、按新 count 覆盖）
+    r._dbgPushTex(tex, 0.0, 0.0, 8.0, 8.0, 1.0)
+    r._dbgFlushBatches()
+    assert_eq(SDL3._dbgTexIdxCount(), 6, "单矩形应有 6 个索引")
+    assert_eq(ffi.read_int(idx, 0), 0, "复用后第一索引仍从 0 开始")
+    assert_eq(ffi.read_int(idx, 20), 3, "复用后最后一个索引应为 3")
+
+    r.destroy()
+    w.destroy()
+    SDL3.quit()
+    print("test_renderer_texbatch passed")
+}

@@ -25,8 +25,16 @@
 //     真实 GPU 上 `SDL_RenderTexture` 只是入队、blit 近乎免费 ⇒ 我们这层的占比更高，
 //     帧级收益会接近上面的"单次调用"数字。留这份软件基准是为了**可重复、无显卡依赖**。
 //
+//   文字批处理（512 条 1×1 条目 + 一次 flush，量的是"我们这层"）：
+//     424.6 → 394.2 us/批  (-7.2%)
+//     （原来每 flush 都：`Array[int] idxArr = []` + 6×count 次 add + `ffi.malloc(idxPtr)`
+//       + 一趟全量拷贝；现在索引模式固定，直接在填顶点的同一个循环里写进**复用缓冲**。）
+//
 //   优化手段：把每次绘制都 `SDL_FRect.malloc() + to_ptr() + free()` 换成
 //   **模块级复用的临时 cstruct**（渲染是单线程的，用完即弃，见 sdl_renderer.leno 顶部）。
+//
+//   文字批处理的**索引模式**有独立回归：`build/leno_module/LenoSDL3/test/test_renderer_texbatch.leno`
+//   （无头也能跑：读回索引缓冲断言 4k,4k+1,4k+2,4k,4k+2,4k+3）。
 import ffi
 import times
 import "../build/leno_module/LenoSDL3/lib/sdl_core.leno" as core
@@ -84,7 +92,7 @@ func bench(string name, int iters, func():void body) {
 main() {
     if not core.initVideo() { print("initVideo failed: " + core.getError()); return }
 
-    var w = win.createWindow({ title: "bench", width: 640, height: 480, hidden: true })
+    var w = win.createWindow({ title: "bench", w: 640, h: 480 })
     R = w.createRenderer()
 
     Ptr[u8] tex = R.createTexture(core.PIXELFORMAT_RGBA8888, 0, 64, 64)
@@ -95,6 +103,19 @@ main() {
     benchFrames("轻量界面（50 纹理 + 50 矩形）", 200, 50, 50)
     benchFrames("中等界面（200 纹理 + 200 矩形）", 150, 200, 200)
     benchFrames("密集场景（1000 纹理 + 500 矩形）", 60, 1000, 500)
+
+    print("=== 文字批处理（flushTexBatch，无 TTF 也能测）===")
+    // ⚠ 用 **1×1 像素** 的条目：把 SDL 的光栅化成本压到接近 0 ⇒ 量到的基本是
+    //   "我们这层"（pushTexBatch 写缓冲 + flush 建顶点/索引 + SDL 调用）。
+    //   用 18×22 的条目时 SDL 软件光栅占 90%+，看不出我们改了什么。
+    bench("pushTexBatch 512 条(1×1) + flush", 2000, func() {
+        for 0 : 1999 to _r {
+            for 0 : 511 to i {
+                R._dbgPushTex(tex, _float(i % 20) * 2.0, _float(i / 20) * 2.0, 1.0, 1.0, 1.0)
+            }
+            R._dbgFlushBatches()
+        }
+    })
 
     print("=== 绘制热路径（单次调用）===")
 

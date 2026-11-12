@@ -30,6 +30,12 @@ export func getBatchLineBatched(): int { return _gLineBatched }
 export func _dbgLinePtr(Renderer r): Ptr[f32] { return r.bxLine }
 export func _dbgLineCount(Renderer r): int { return r._bxLineN }
 
+// 调试：暴露文字批处理的**索引缓冲**（模块级复用）与最近一次 flush 的索引个数。
+//   用途：无 TTF / 无窗口的情况下也能回归"索引模式"（每矩形 4k,4k+1,4k+2,4k,4k+2,4k+3）——
+//   这正是 2026-11-12 把 `Array[int] idxArr` 换成复用缓冲时重写的那段逻辑。
+export func _dbgTexIdxPtr(): Ptr[u8] { return _texIdx }
+export func _dbgTexIdxCount(): int { return _texIdxLastCount }
+
 // ==================== 复用的临时 cstruct（省掉每次绘制的 malloc / free / to_ptr）====================
 //   渲染是**单线程**的：这些缓冲区只在一次调用里被写入、随即交给 SDL，用完即弃 ⇒ 可安全复用。
 //   `to_ptr()` 也一起缓存 —— 它每次都会新建一个 Ptr 对象（纯 GC 压力，不带任何信息）。
@@ -42,6 +48,10 @@ Ptr[u8]    _tmpR1P = null
 SDL_FPoint _tmpP0  = null
 Ptr[u8]    _tmpP0P = null
 SDL_Color  _tmpC0  = null
+// 文字批处理用的索引缓冲（模块级复用；flushTexBatch 里按需增长）
+Ptr[u8] _texIdx = null
+int     _texIdxCap = 0
+int     _texIdxLastCount = 0
 
 func _tmpRect0(): SDL_FRect {
     if _tmpR0 == null { _tmpR0 = SDL_FRect.malloc(); _tmpR0P = _tmpR0.to_ptr() }
@@ -872,6 +882,13 @@ const BX_TEX    = 4   // 批处理文字纹理
         bxCur = BX_TEX
     }
 
+    // 调试/基准用（`_dbg` 前缀，与模块级 `_dbgLinePtr` 同一约定）：把一条纹理条目
+    //   推进批处理 —— 等价 drawText 内部做的事 ⇒ 无 TTF 环境也能测/回归 flushTexBatch。
+    func _dbgPushTex(Ptr[u8] texture, float x, float y, float w, float h, float alpha) {
+        pushTexBatch(texture, x, y, w, h, alpha)
+    }
+    func _dbgFlushBatches(): bool { return flushBatches() }
+
     // 居中绘制文字（在 [x, x+w] 范围内水平居中）
     func drawTextCentered(Font f, string text, float x, float w, float y, Color color) {
         var[float, float](msw, msh) = f.measureString(text)
@@ -1016,13 +1033,17 @@ const BX_TEX    = 4   // 批处理文字纹理
             // 构建顶点数组：每矩形 4 顶点，每顶点 8 floats (x,y,r,g,b,a,u,v) = 32 bytes
             int vcnt = count * 4
             var verts = SDL_Vertex.malloc_array(vcnt)
-            // 索引数组：每矩形 6 个索引（2 三角形）
-            Array[int] idxArr = []
-            for count to k {
-                int base = k * 4
-                idxArr.add(base); idxArr.add(base + 1); idxArr.add(base + 2)
-                idxArr.add(base); idxArr.add(base + 2); idxArr.add(base + 3)
+            // 索引缓冲：**模块级复用**（按需增长）—— 原来每次 flush 都要
+            //   `Array[int] idxArr = []` + 6×count 次 add + `ffi.malloc` + 再逐条拷进指针，
+            //   等于一个中间数组 + 一次分配 + 一次全量拷贝。索引模式是固定的，
+            //   直接在下面填顶点的同一个循环里写进复用缓冲即可。
+            int idxCount = count * 6
+            if idxCount > _texIdxCap {
+                if _texIdx != null { ffi.free(_texIdx); _texIdx = null }
+                _texIdxCap = idxCount * 2
+                _texIdx = ffi.malloc(_texIdxCap * 4)
             }
+            Ptr[u8] idxPtr = _texIdx
             // 填充顶点
             for count to k {
                 int entryIdx = i + k
@@ -1051,20 +1072,23 @@ const BX_TEX    = 4   // 批处理文字纹理
                 verts[vi + 3].x = dx;       verts[vi + 3].y = dy + dh
                 verts[vi + 3].r = 1.0; verts[vi + 3].g = 1.0; verts[vi + 3].b = 1.0; verts[vi + 3].a = alpha
                 verts[vi + 3].u = 0.0; verts[vi + 3].v = 1.0
+                // 索引（与顶点同一个循环里写，省掉一趟遍历）
+                int io = k * 24
+                ffi.write_int(idxPtr, io,      vi)
+                ffi.write_int(idxPtr, io + 4,  vi + 1)
+                ffi.write_int(idxPtr, io + 8,  vi + 2)
+                ffi.write_int(idxPtr, io + 12, vi)
+                ffi.write_int(idxPtr, io + 16, vi + 2)
+                ffi.write_int(idxPtr, io + 20, vi + 3)
             }
             // 构建索引指针
-            Ptr[u8] idxPtr = ffi.malloc(vcnt * 6 / 4 * 4)   // 每矩形 6 索引 × 4 bytes
-            for idxArr.len() to k {
-                ffi.write_int(idxPtr, k * 4, idxArr[k])
-            }
-            int idxCount = idxArr.len()
+            _texIdxLastCount = idxCount          // 供 _dbgTexIdxCount 回归用
             _lib.SDL_RenderGeometry(handle, curTex, verts.to_ptr(), vcnt, idxPtr, idxCount)
             verts.free()
-            ffi.free(idxPtr)
             i = j
         }
         bxTexN = 0
-        bxTexPtrs = []
+        bxTexPtrs.clear()      // 复用数组：原来 `= []` 每次 flush 都新建一个 Array 对象
     }
 
 
