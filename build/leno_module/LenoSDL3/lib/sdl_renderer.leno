@@ -17,6 +17,10 @@ bool _rrTgtWarned = false   // "圆角纹理合成不可用"只提示一次（�
 int _gFillSubmits = 0, _gFillBatched = 0
 int _gOutSubmits = 0, _gOutBatched = 0
 int _gLineSubmits = 0, _gLineBatched = 0
+// 文字/纹理批的提交次数（每次 = 一次 SDL_RenderGeometry，**按纹理分组的**）
+//   用途：表格/列表那种"一格一个不同纹理"的场景，提交次数 ≈ 可见单元格数
+//   ⇒ 这是判断"要不要上静态层缓存"的关键指标。
+int _gTexSubmits = 0, _gTexBatched = 0
 
 // 批处理统计对外接口（模块级全局函数，避免依赖 struct 方法跨模块可见性）
 export func getBatchFillSubmits(): int { return _gFillSubmits }
@@ -25,6 +29,8 @@ export func getBatchOutSubmits(): int { return _gOutSubmits }
 export func getBatchOutBatched(): int { return _gOutBatched }
 export func getBatchLineSubmits(): int { return _gLineSubmits }
 export func getBatchLineBatched(): int { return _gLineBatched }
+export func getBatchTexSubmits(): int { return _gTexSubmits }
+export func getBatchTexBatched(): int { return _gTexBatched }
 
 // 调试：暴露行批处理缓冲，供坐标级回归测试直接读回 float 比对（前缀 _dbg，验证后可删除）
 export func _dbgLinePtr(Renderer r): Ptr[f32] { return r.bxLine }
@@ -1176,6 +1182,8 @@ const BX_TEX    = 4   // 批处理文字纹理
             }
             // 构建索引指针
             _texIdxLastCount = idxCount          // 供 _dbgTexIdxCount 回归用
+            _gTexSubmits = _gTexSubmits + 1
+            _gTexBatched = _gTexBatched + count
             _lib.SDL_RenderGeometry(handle, curTex, verts.to_ptr(), vcnt, idxPtr, idxCount)
             verts.free()
             i = j
