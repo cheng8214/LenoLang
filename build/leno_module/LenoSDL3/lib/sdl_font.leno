@@ -275,6 +275,19 @@ export struct Font {
     //   单字符字符串 + 一个缓存 key，实测 1 万字符的全量重排 15.3 ms（≈1.5 µs/字符）。
     //   同一字体 + 同一倍率下**同一码点的宽度是不变的** ⇒ 按码点缓存后，
     //   只有"首次见到这个字"才真正测量。文本类场景的"不同字符"通常只有几十到几百个。
+    // ASCII 宽度表（0..127，-1 = 未测）。
+    //   ⚠ 给 `sdl_edit.wrap_line` 这类**逐字符**循环直接下标用：比自己每次调
+    //   `charWidth` 少一次方法调用（1 万字符实测省 ~0.8 ms）。返回的是**同一个数组**
+    //   （引用语义），调用方写回也等于写进缓存。
+    func asciiWidths(): Array[float] {
+        if chWAscii.len() == 0 {
+            var a = []
+            for 0 : 127 to k { a.add(-1.0) }
+            chWAscii = a
+        }
+        return chWAscii
+    }
+
     func charWidth(int cp): float {
         if not ok { return 0.0 }
         // ASCII 快路径：直接下标，不碰哈希

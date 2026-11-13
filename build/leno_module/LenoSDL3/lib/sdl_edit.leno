@@ -1955,10 +1955,19 @@ _drawBorder = opts.get("border", true)
         //   语义与最早的逐字符实现完全一致（都是"累加到超宽就切"），只是不再每字符
         //   造字符串 + 走 measureString 的 key 拼接。实测 1 万字符全量重排 15.3 ms → 0.6 ms。
         Array[int] cps = strings.to_codepoints(ln)
+        // ASCII 直接查字体给的宽度表（少一次方法调用/字符；非 ASCII 仍走 charWidth）
+        Array[float] aw = _font.asciiWidths()
         var curW = 0.0
         var segStart = 0
         for :n - 1 to i {
-            float cw = _font.charWidth(cps[i])
+            int cp = cps[i]
+            float cw = 0.0
+            if cp >= 0 and cp < 128 {
+                cw = aw[cp]
+                if cw < 0.0 { cw = _font.charWidth(cp); aw[cp] = cw }
+            } else {
+                cw = _font.charWidth(cp)
+            }
             if curW + cw > maxW and i > segStart {
                 result.add(ln.slice(segStart, i - 1))
                 segStart = i
