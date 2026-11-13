@@ -58,6 +58,12 @@ SDL_Color  _tmpC0  = null
 Ptr[u8] _texIdx = null
 int     _texIdxCap = 0
 int     _texIdxLastCount = 0
+// 文字批处理用的**顶点缓冲**（模块级复用，同 `_texIdx` 的理由）：
+//   原来每次提交都 `SDL_Vertex.malloc_array(vcnt)` + `free()` —— 表格那种"一格一个纹理"
+//   的界面一帧有上百次提交，光分配就上百次（还各带一个 GC 对象）。
+//   用 `Ptr[SDL_Vertex]` 之后 `verts[i].x = …` 走的是 **Ptr[cstruct] 融合写**（一条指令）。
+Ptr[SDL_Vertex] _texVerts = null
+int             _texVertsCap = 0
 
 // ==================== 圆角 9 宫格的**固定索引表**（2026-11-13）====================
 //   为什么：`emitMask9` 原来每块用 6 顶点拼两个三角形 ⇒ 9 块 = **54 个顶点**
@@ -1131,7 +1137,14 @@ const BX_TEX    = 4   // 批处理文字纹理
             int count = j - i   // 同纹理条目数
             // 构建顶点数组：每矩形 4 顶点，每顶点 8 floats (x,y,r,g,b,a,u,v) = 32 bytes
             int vcnt = count * 4
-            var verts = SDL_Vertex.malloc_array(vcnt)
+            // 顶点缓冲模块级复用（按需增长）；`verts[i].x` 走 Ptr[cstruct] 融合写
+            if vcnt > _texVertsCap {
+                if _texVerts != null { ffi.free(_texVerts); _texVerts = null }
+                _texVertsCap = vcnt * 2
+                Ptr[SDL_Vertex] fresh = ffi.malloc(_texVertsCap * SDL_Vertex.size())
+                _texVerts = fresh
+            }
+            Ptr[SDL_Vertex] verts = _texVerts
             // 索引缓冲：**模块级复用**（按需增长）—— 原来每次 flush 都要
             //   `Array[int] idxArr = []` + 6×count 次 add + `ffi.malloc` + 再逐条拷进指针，
             //   等于一个中间数组 + 一次分配 + 一次全量拷贝。索引模式是固定的，
@@ -1184,8 +1197,7 @@ const BX_TEX    = 4   // 批处理文字纹理
             _texIdxLastCount = idxCount          // 供 _dbgTexIdxCount 回归用
             _gTexSubmits = _gTexSubmits + 1
             _gTexBatched = _gTexBatched + count
-            _lib.SDL_RenderGeometry(handle, curTex, verts.to_ptr(), vcnt, idxPtr, idxCount)
-            verts.free()
+            _lib.SDL_RenderGeometry(handle, curTex, verts, vcnt, idxPtr, idxCount)
             i = j
         }
         bxTexN = 0
