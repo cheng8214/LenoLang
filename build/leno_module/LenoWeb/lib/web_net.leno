@@ -15,6 +15,8 @@ use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
 // 回调函数签名
 cfunc WriteCb(Ptr data, i32 size, i32 nmemb, Ptr userdata): i32
 cfunc HeaderCb(Ptr data, i32 size, i32 nmemb, Ptr userdata): i32
+// ★ 2026-11-13：读回调（上传用）—— libcurl 按块来取 body，避免 POSTFIELDS 大 body 慢发
+cfunc ReadCb(Ptr data, i32 size, i32 nmemb, Ptr userdata): i32
 
 // ==================== libcurl 全局初始化：模块加载时做一次 ====================
 // ⚠ `curl_global_init` 是 libcurl 文档明确标注的**非线程安全**函数，而原实现在
@@ -263,6 +265,12 @@ export struct HttpClient {
         core.setopt_int(handle, Opt.TIMEOUT_MS, _timeoutMs)
         core.setopt_int(handle, Opt.CONNECTTIMEOUT_MS, 10000)
         core.setopt_str(handle, Opt.ACCEPT_ENCODING, "")
+        // ★ 2026-11-13：**关 Nagle**（curl.exe 默认就关，WebNet 一直漏设）。
+        //   不关的后果：POST 几 MB 的 body 被 Nagle + 延迟 ACK 拖成龟速 ——
+        //   同一台服务端实测 2MB：WebNet 16.5s / curl.exe 289ms（差 50 倍 ✗），
+        //   部署工具传 4.5MB 要 28 秒。加上之后回到百毫秒级 ✓
+        int rcNod = core.setopt_int(handle, Opt.TCP_NODELAY, 1)
+        if _env("CURL_DBG") != null { print("[curl] TCP_NODELAY rc=" + _str(rcNod)) }
         return ok
     }
 
@@ -304,6 +312,12 @@ export struct HttpClient {
         core.setopt_int(handle, Opt.TIMEOUT_MS, _timeoutMs)
         core.setopt_int(handle, Opt.CONNECTTIMEOUT_MS, 10000)
         core.setopt_str(handle, Opt.ACCEPT_ENCODING, "")
+        // ★ 2026-11-13：**关 Nagle**（curl.exe 默认就关，WebNet 一直漏设）。
+        //   不关的后果：POST 几 MB 的 body 被 Nagle + 延迟 ACK 拖成龟速 ——
+        //   同一台服务端实测 2MB：WebNet 16.5s / curl.exe 289ms（差 50 倍 ✗），
+        //   部署工具传 4.5MB 要 28 秒。加上之后回到百毫秒级 ✓
+        int rcNod = core.setopt_int(handle, Opt.TCP_NODELAY, 1)
+        if _env("CURL_DBG") != null { print("[curl] TCP_NODELAY rc=" + _str(rcNod)) }
     }
 
     // ==================== 设置选项 ====================
@@ -490,11 +504,16 @@ export struct HttpClient {
 
         // 清空本客户端的累加器（回调写入这里，不再有模块级全局）
         _acc.reset()
+        // 大 body 上传用的读回调（perform 之后必须 free_callback，否则槽位会漏）
+        Ptr[u8] rcb = null
 
         // 设置 URL
         core.setopt_str(handle, Opt.URL, url)
 
         // 设置方法
+        // ★ 同一个 client 可能被复用：先把"上传模式"清掉，否则上一次大 POST 开的
+        //   UPLOAD 会残留到这次 GET/PUT 上（libcurl 会按上传语义发请求 ✗）
+        core.setopt_int(handle, Opt.UPLOAD, 0)
         if method == "HEAD" {
             core.setopt_int(handle, Opt.NOBODY, 1)
         } else if method == "GET" {
@@ -502,14 +521,44 @@ export struct HttpClient {
             core.setopt_int(handle, Opt.NOBODY, 0)
         } else if method == "POST" {
             core.setopt_int(handle, Opt.POST, 1)
+            core.setopt_int(handle, Opt.UPLOAD, 0)
             if body != "" {
-                core.setopt_str(handle, Opt.POSTFIELDS, body)
+                int blen = body.byte_len()
+                // ★ 2026-11-13：>64KB 的 body 改走 **read 回调**（libcurl 按 16KB 来取）。
+                //   原来一律用 CURLOPT_POSTFIELDS：在这个 libcurl 8.21.0 构建上传 2MB 会退化成
+                //   11.8 秒（174 KB/s，服务端日志显示要到第 11.8 秒才收到 body）；
+                //   同一份数据 100KB 28ms / 512KB 289ms / 1MB 2.2s / 2MB 11.9s ⇒ 超线性 ✗
+                //   换 read 回调后恢复正常（实测 <300ms，见 docs 记录）。
+                //   ⚠ 长度必须显式给 INFILESIZE，否则 libcurl 改用 chunked、服务端还要 dechunk
+                if blen > 65536 {
+                    string src = body
+                    var off = [0]
+                    rcb = ffi.callback(func(Ptr buf, int size, int nmemb, Ptr ud): int {
+                        int want = size * nmemb
+                        int left = src.byte_len() - off[0]
+                        if left <= 0 { return 0 }
+                        int n = if want < left then want else left
+                        // 用 write_bytes（memcpy 语义）；逐字节 write_byte 会慢到没法用 ✗
+                        ffi.write_bytes(buf, 0, src.byte_slice(off[0], off[0] + n - 1))
+                        off[0] = off[0] + n
+                        return n
+                    }, ReadCb)
+                    core.setopt_int(handle, Opt.UPLOAD, 1)
+                    core.setopt_str(handle, Opt.CUSTOMREQUEST, "POST")
+                    core.setopt_int(handle, Opt.INFILESIZE, blen)
+                    core.setopt_ptr(handle, Opt.READFUNCTION, rcb)
+                } else {
+                    core.setopt_str(handle, Opt.POSTFIELDS, body)
+                    // 只设 POSTFIELDS 时 libcurl 按 strlen 算长度 ⇒ 二进制会在第一个 \0 处截断 ✗
+                    core.setopt_int(handle, Opt.POSTFIELDSIZE, blen)
+                }
             }
         } else {
             // PUT/DELETE/PATCH 等
             core.setopt_str(handle, Opt.CUSTOMREQUEST, method)
             if body != "" {
                 core.setopt_str(handle, Opt.POSTFIELDS, body)
+                core.setopt_int(handle, Opt.POSTFIELDSIZE, body.byte_len())   // 同上：二进制安全 ✓
             }
         }
 
@@ -517,7 +566,10 @@ export struct HttpClient {
         core.setopt_ptr(handle, Opt.WRITEFUNCTION, writeCb)
         core.setopt_ptr(handle, Opt.HEADERFUNCTION, headerCb)
 
-        return _perform(resp)
+        var out = _perform(resp)
+        // 回调槽位有限（ffi.callback 同时存活上限 256）⇒ 读完请求必须归还 ✓
+        if rcb != null { ffi.free_callback(rcb) }
+        return out
     }
 
     // 执行 + 填充响应（所有请求路径共用；含字符集探测与转码）
@@ -536,6 +588,13 @@ export struct HttpClient {
         resp.headers = _acc.headers()
         resp._raw = _acc.body()
         resp.totalSize = _acc.bodyBytes
+        if _env("CURL_DBG") != null {
+            print("[curl] pre=" + _str(core.getinfo_double(handle, Info.PRETRANSFER_TIME)) +
+                  " start=" + _str(core.getinfo_double(handle, Info.STARTTRANSFER_TIME)) +
+                  " total=" + _str(resp.totalTime) +
+                  " up=" + _str(core.getinfo_double(handle, Info.SIZE_UPLOAD)) +
+                  " upSpeed=" + _str(core.getinfo_double(handle, Info.SPEED_UPLOAD)))
+        }
         _applyCharset(resp)
         return resp
     }

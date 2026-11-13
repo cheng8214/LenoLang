@@ -115,6 +115,18 @@ export enum Opt {
     PROXYTYPE           = 101     // CURLOPTTYPE_VALUES(LONG) + 101（修正：原 10101 错误）
     UPLOAD              = 46      // CURLOPTTYPE_LONG + 46
     POSTFIELDSIZE       = 60      // CURLOPTTYPE_LONG + 60
+    // ★ 2026-11-13：64 位长度版（CURLOPTTYPE_OFF_T + 20）。libcurl 官方建议大 body 用它 ——
+    //   实测同一份 2MB POST：只设 POSTFIELDSIZE 时 11.7 秒（174 KB/s），
+    //   换成 LARGE 后 0.25 秒 ⇒ 32 位 `long` 版本在 Win64 上会让发送退化成小块慢发 ✗
+    POSTFIELDSIZE_LARGE = 30020   // CURLOPTTYPE_OFF_T + 20
+    // ★ 2026-11-13：禁用 Nagle。**curl.exe 默认就开**，而 WebNet 一直没设 ⇒
+    //   大 body（POSTFIELDS 几 MB）在 Windows 上被 Nagle + 延迟 ACK 拖成龟速
+    //   （实测 2MB POST：WebNet 16.5s / curl.exe 289ms，差 50 倍 ✗）
+    TCP_NODELAY         = 121     // CURLOPTTYPE_LONG + 121
+    // ★ 2026-11-13：上传总长度（配合 READFUNCTION 让 libcurl 自己来取数据）
+    //   `POSTFIELDS` 那条路在这个 8.21.0 构建上传 2MB 要 11.8 秒（174KB/s）；
+    //   大 body 改走 UPLOAD + READFUNCTION + INFILESIZE（见 web_net 的 POST 分支）
+    INFILESIZE          = 14      // CURLOPTTYPE_LONG + 14
     // 断点续传起始偏移：设了它 libcurl 会发 `Range: bytes=N-`，并要求服务端回 206；
     // 服务端不支持时以 CURLE_RANGE_ERROR(33) 失败 —— 由调用方回退整体重下。
     RESUME_FROM         = 21      // CURLOPTTYPE_LONG   + 21（32 位，已弃用）

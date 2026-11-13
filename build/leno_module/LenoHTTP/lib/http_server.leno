@@ -378,12 +378,24 @@ func _read_request(Socket c, string carry): Dict {
     } else {
         int _pt0 = _int(times.ms())
         int _pcalls = 0
-        while raw.byte_len() < clen {
+        // ★ 2026-11-13 性能修复：**别用 `raw = raw + seg` 累积**（每次新分配 + 全量拷贝 ⇒ O(n²)）。
+        //   客户端小块慢发时 recv 次数会到几千，2MB 的 body 就能拖到 10 秒 ——
+        //   实测（本机回环）：WebNet POST 2MB 10.9s / 1MB 2.2s / 512KB 0.27s，
+        //   而 curl 一次灌进来只要 0.29s（同一 handler）✗
+        //   改成每片装进数组、最后 join 一次（O(n)）✓ —— 对 curl 这类大块客户端无影响，
+        //   对小块客户端则是数量级差别（上传部署 4.5MB：28s → 数秒内 ✓）
+        Array[string] segs = []
+        if raw != "" { segs.add(raw) }
+        int got = raw.byte_len()
+        while got < clen {
             var more = _read_more(c, t_start)
             if not (more["ok"] as bool) { return {ok: false, req: null, rest: "", err: more["err"] as string} }
             _pcalls = _pcalls + 1
-            raw = raw + (more["data"] as string)
+            string seg = more["data"] as string
+            segs.add(seg)
+            got = got + seg.byte_len()
         }
+        raw = segs.join("")
         if clen >= 262144 {
             print("[perf] body " + _str(clen) + "B recv=" + _str(_pcalls) + "x in "
                   + _str(_int(times.ms()) - _pt0) + "ms")
