@@ -128,13 +128,11 @@ main() {
     })
 
     // 涂鸦：画布局部坐标 → 像素层坐标（520x380 → 260x190，缩放 0.5），落 5x5 色块
+    //   ★ 2026-11-13：原来是 5x5 双层循环逐点 setPixel（25 次方法调用 + 100 次边界判断）；
+    //     改成一条 fillRect —— 同色块一次调完，越界裁剪也由 fillRect 内部做
     cv1.on_click(func(float lx, float ly) {
         int px = _int(lx * 0.5); int py = _int(ly * 0.5)
-        for -2 : 2 to i {
-            for -2 : 2 to j {
-                _cvBuf.setPixel(px + i, py + j, 255, 170, 80, 255)
-            }
-        }
+        _cvBuf.fillRect(px - 2, py - 2, 5, 5, 255, 170, 80, 255)
         SDL3.markFrameRedraw()
         status.set_text("状态：页1 涂鸦 @ (" + (px as string) + ", " + (py as string) + ")")
         print("页1 持久画布涂鸦: (" + (px as string) + ", " + (py as string) + ")")

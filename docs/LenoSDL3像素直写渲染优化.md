@@ -49,9 +49,11 @@ SDL3 的 `SDL_PIXELFORMAT_RGBA8888` 在 **little-endian（x86）上内存字节�
 
 ```
 export struct PixelBuffer {
-    Ptr[u8] pixels; int w, h, pitch; bool ok
+    Ptr[i32] pixels; int w, h, pitch; bool ok   // 一个像素 = 一个 u32（可 p[i] = color 直写）
     init(w, h)          // 分配像素内存
     setPixel(x,y,r,g,b,a) // 单点写入（越界安全，自动字节序）
+    fillSpan(x,y,len,r,g,b,a)   // 横向填一段（越界自动裁剪）
+    fillRect(x,y,bw,bh,r,g,b,a) // 填矩形块（画布笔刷/背景块/掩码块）
     getR(x,y)           // 读回 R 通道（常用于读亮度掩码）
     fill(r,g,b,a)       // 整块填充（全 0 走 memset 快路径）
     clear()             // 整块清零（memset，极快）
@@ -59,6 +61,19 @@ export struct PixelBuffer {
     free()              // 释放内存
 }
 ```
+
+> **批量写别逐点调 `setPixel`**（2026-11-13 实测，512×512 = 26.2 万像素，连跑 3 次）：
+>
+> | 写法 | 总耗时 | 每像素 |
+> |---|---|---|
+> | `setPixel` ×262144 | 18.2 ms | ~70 ns |
+> | `fillSpan` ×512 行 | 1.44 ms | 5.50 ns |
+> | `fillRect` 整屏 | 1.40 ms | 5.36 ns |
+> | `fill` | 1.36 ms | 5.19 ns |
+>
+> `setPixel` 的 70 ns 里九成是**方法调用 + 4 个边界比较**（裸 `p[i] = color` 只要 5 ns）⇒
+> 只要是「连续一片同色」（笔刷 / 扫描线圆 / 渐变 / 掩码块）就走 `fillSpan` / `fillRect`，**约快 13 倍**。
+> 越界语义与 `setPixel` 一致（自动裁剪、不抛）。
 
 `Renderer` 新增方法 `blitBuffer(PixelBuffer buf, dx, dy, dw, dh)`：
 - 内部懒创建/复用流式纹理（尺寸匹配时零分配）

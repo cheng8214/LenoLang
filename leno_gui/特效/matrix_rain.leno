@@ -200,8 +200,9 @@ main() {
         if copyW <= 0 { return }
 
         PixelBuffer g = glyphs[shade * glyphsCap + ci]
-        Ptr[u8] src = g.pixels
-        Ptr[u8] dst = buf.pixels
+        // PixelBuffer.pixels 现在是 `Ptr[i32]`（一像素一 u32）⇒ 这里只做地址运算，用裸 Ptr
+        Ptr src = g.pixels
+        Ptr dst = buf.pixels
         int dstPitch = buf.pitch
         for 0 : glyphH - 1 to row {
             var sy = gy0 + row
