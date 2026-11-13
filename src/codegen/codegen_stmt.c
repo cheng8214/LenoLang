@@ -1870,7 +1870,12 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
         obj_ast->u.index.index->kind != AST_STRING) {
         TypeInfo* et = infer_expr_type(gen->sem, obj_ast);
         TypeInfo* rt = infer_expr_type(gen->sem, obj_ast->u.index.obj);
-        int is_cs_arr = (et && et->kind == TYPE_CSTRUCT && rt && rt->kind == TYPE_CSTRUCT);
+        // ★ 2026-11-13：`Ptr[cstruct]` 也走这条融合指令（`p[i].x = v`）—— 明细见 VM 的
+                    //   OP_CSTRUCT_ARR_SETF 里那段说明；判据只是"接收者静态类型是 cstruct 或 Ptr[cstruct]"。
+                    int is_cs_arr = (et && et->kind == TYPE_CSTRUCT && rt &&
+                                     (rt->kind == TYPE_CSTRUCT ||
+                                      (rt->kind == TYPE_PTR_GENERIC && rt->element_type &&
+                                       rt->element_type->kind == TYPE_CSTRUCT)));
         int cs_fi = -1;
         if (is_cs_arr) {
             TypeInfo* ft = infer_field_type(gen->sem, et, idx_ast->u.string.value, &cs_fi);
@@ -2151,7 +2156,12 @@ void gen_assign(CodeGen* gen, Ast* ast) {
                     obj_ast->u.index.index->kind != AST_STRING) {
                     TypeInfo* et = infer_expr_type(gen->sem, obj_ast);
                     TypeInfo* rt = infer_expr_type(gen->sem, obj_ast->u.index.obj);
-                    int is_cs_arr = (et && et->kind == TYPE_CSTRUCT && rt && rt->kind == TYPE_CSTRUCT);
+                    // ★ 2026-11-13：`Ptr[cstruct]` 也走这条融合指令（`p[i].x = v`）—— 明细见 VM 的
+                    //   OP_CSTRUCT_ARR_SETF 里那段说明；判据只是"接收者静态类型是 cstruct 或 Ptr[cstruct]"。
+                    int is_cs_arr = (et && et->kind == TYPE_CSTRUCT && rt &&
+                                     (rt->kind == TYPE_CSTRUCT ||
+                                      (rt->kind == TYPE_PTR_GENERIC && rt->element_type &&
+                                       rt->element_type->kind == TYPE_CSTRUCT)));
                     int cs_fi = -1;
                     if (is_cs_arr) {
                         TypeInfo* ft = infer_field_type(gen->sem, et, idx_ast->u.string.value, &cs_fi);

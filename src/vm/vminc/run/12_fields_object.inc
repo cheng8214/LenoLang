@@ -739,6 +739,66 @@
             R(a) = vm_cstruct_field_read(&vtmp, fi);
             DISPATCH();
         }
+        // ★ 2026-11-13（Ptr[cstruct] 融合读）：`p[i].字段` 也走这条融合指令。
+        //   此前 codegen 只给 cstruct 数组发它 ⇒ `Ptr[cstruct]` 退化成
+        //   「OP_INDEX 造一个视图对象 + 再读字段」，实测写满 54 个顶点慢 8.4 倍
+        //   （3300 ns → 27667 ns）；而 module 级复用的缓冲区只能用 `Ptr[T]` 表达
+        //   （cstruct 数组类型写不成注解）⇒ 这条快路径正是"可复用缓冲"的前提。
+        //   地址口径：`ptr + i*元素大小 + 字段偏移`，元素大小取 elem_cdef->total_size。
+        if (likely(val_is_obj(ov)) && val_as_obj(ov)->type == OBJ_FFI_POINTER) {
+            ObjFFIPointer* pp = (ObjFFIPointer*)val_as_obj(ov);
+            if (unlikely(!pp->ptr || pp->freed)) {
+                if (!throw_runtime_error("Ptr[cstruct] 下标访问：指针为空或已释放", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            // 文案与 ffi.c 的 read_at 那条**逐字对齐**：深度 ≥3 时要告诉用户"显式标注一次就行"
+            if (unlikely(pp->element_type != TYPE_CSTRUCT || !pp->elem_cdef)) {
+                if (!throw_runtime_error(
+                        "Ptr[cstruct] 缺少元素类型信息：这一级指针不知道自己指向哪个 cstruct"
+                        "（常见于**深度 ≥3 的指针**，如 `ppp[0]` 的结果）—— "
+                        "请显式标注一次元素类型：`Ptr[V3] x = ppp[0]`", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            Value ivp = R(c);
+            if (unlikely(!val_is_int(ivp))) {
+                if (!throw_runtime_error("cstruct 数组索引必须是数字", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            ObjCStructDef* pdef = pp->elem_cdef;
+            size_t psz = (size_t)pdef->total_size;
+            int64_t pci = val_as_int(ivp);
+            if (unlikely(pci < 0 ||
+                         (pp->size > 0 && (size_t)pci * psz + psz > pp->size))) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "cstruct 数组索引越界: 索引 %d", (int)pci);
+                if (!throw_runtime_error(msg, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            if (unlikely(fi < 0 || fi >= pdef->field_count)) {
+                if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            CStructFieldInfo* pf = &pdef->fields[fi];
+            if (unlikely(pf->type == TYPE_CSTRUCT ||
+                         (pf->array_dim > 0 && pf->type != TYPE_STR16))) {
+                // 元素/字段本身是 cstruct 或数组字段 ⇒ 必须给视图（与原实现同口径）
+                ObjCStruct* elem = cstruct_from_ptr(pdef, (uint8_t*)pp->ptr + (size_t)pci * psz);
+                R(a) = vm_cstruct_field_read(elem, fi);
+                DISPATCH();
+            }
+            ObjCStruct ptmp;
+            memset(&ptmp, 0, sizeof(ptmp));
+            ptmp.def = pdef;
+            ptmp.data = (uint8_t*)pp->ptr + (size_t)pci * psz;
+            ptmp.owns_memory = 0;
+            R(a) = vm_cstruct_field_read(&ptmp, fi);
+            DISPATCH();
+        }
         if (unlikely(!val_is_obj(ov) || val_as_obj(ov)->type != OBJ_CSTRUCT_ARRAY)) {
             if (!throw_runtime_error("下标读取: 对象不支持索引", line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
@@ -833,6 +893,84 @@
             vtmp.data = parent->data + (size_t)vf->offset + (size_t)vci * (size_t)view->element_size;
             vtmp.owns_memory = 0;
             cstruct_set_field_value(&vtmp, fi, R(a));
+            DISPATCH();
+        }
+        // ★ 2026-11-13（Ptr[cstruct] 融合写）：与上面读路径同一口径，地址 = ptr + i*元素大小
+        //   + 字段偏移；f32 / i32 / f64 标量走与 cstruct 数组**同一条**快路径
+        //   （位域绕开，理由见下面那段注释）。
+        if (likely(val_is_obj(ov)) && val_as_obj(ov)->type == OBJ_FFI_POINTER) {
+            ObjFFIPointer* pp = (ObjFFIPointer*)val_as_obj(ov);
+            if (unlikely(!pp->ptr || pp->freed)) {
+                if (!throw_runtime_error("Ptr[cstruct] 下标赋值：指针为空或已释放", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            if (unlikely(pp->element_type != TYPE_CSTRUCT || !pp->elem_cdef)) {
+                if (!throw_runtime_error(
+                        "Ptr[cstruct] 缺少元素类型信息：这一级指针不知道自己指向哪个 cstruct"
+                        "（常见于**深度 ≥3 的指针**，如 `ppp[0]` 的结果）—— "
+                        "请显式标注一次元素类型：`Ptr[V3] x = ppp[0]`", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            Value ivp = R(c);
+            if (unlikely(!val_is_int(ivp))) {
+                if (!throw_runtime_error("cstruct 数组索引必须是数字", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            ObjCStructDef* pdef = pp->elem_cdef;
+            size_t psz = (size_t)pdef->total_size;
+            int64_t pci = val_as_int(ivp);
+            if (unlikely(pci < 0 ||
+                         (pp->size > 0 && (size_t)pci * psz + psz > pp->size))) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "cstruct 数组索引越界: 索引 %d", (int)pci);
+                if (!throw_runtime_error(msg, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            if (unlikely(fi < 0 || fi >= pdef->field_count)) {
+                if (!throw_runtime_error("cstruct 字段索引越界", line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+            Value pnv = R(a);
+            CStructFieldInfo* pf = &pdef->fields[fi];
+            TypeKind pft = pf->type;
+            uint8_t* pfaddr = (uint8_t*)pp->ptr + (size_t)pci * psz + (size_t)pf->offset;
+            int pf_bitfield = (pf->bit_width > 0);
+            if (likely(!pf_bitfield && pft == TYPE_F32 &&
+                       (val_is_int(pnv) || val_is_float(pnv)))) {
+                float fv = (float)val_as_num(pnv);
+                memcpy(pfaddr, &fv, sizeof(fv));
+                DISPATCH();
+            }
+            if (likely(!pf_bitfield && pft == TYPE_I32 && val_is_int(pnv))) {
+                int32_t iv32 = (int32_t)val_as_int(pnv);
+                memcpy(pfaddr, &iv32, sizeof(iv32));
+                DISPATCH();
+            }
+            if (likely(!pf_bitfield && (pft == TYPE_F64 || pft == TYPE_FLOAT) &&
+                       (val_is_int(pnv) || val_is_float(pnv)))) {
+                double dv = val_as_num(pnv);
+                memcpy(pfaddr, &dv, sizeof(dv));
+                DISPATCH();
+            }
+            // 慢路径：其余类型/值形态，转换口径与 cstruct 数组那条逐条一致
+            if (val_is_int(pnv) && (pft == TYPE_F32 || pft == TYPE_F64)) {
+                pnv = val_float((double)val_as_int(pnv));
+            } else if (val_is_bigint(pnv) && (pft == TYPE_F32 || pft == TYPE_F64)) {
+                pnv = val_float(bigint_to_double(val_as_bigint(pnv)));
+            } else if (val_is_float(pnv) && (pft >= TYPE_I8 && pft <= TYPE_U64)) {
+                pnv = val_num(val_as_num(pnv));
+            }
+            ObjCStruct ptmp;
+            memset(&ptmp, 0, sizeof(ptmp));
+            ptmp.def = pdef;
+            ptmp.data = (uint8_t*)pp->ptr + (size_t)pci * psz;
+            ptmp.owns_memory = 0;
+            cstruct_set_field_value(&ptmp, fi, pnv);
             DISPATCH();
         }
         if (unlikely(!val_is_obj(ov) || val_as_obj(ov)->type != OBJ_CSTRUCT_ARRAY)) {

@@ -656,7 +656,12 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
                 iobj->u.index.index->kind != AST_STRING) {
                 TypeInfo* et = infer_expr_type(gen->sem, iobj);
                 TypeInfo* rt = infer_expr_type(gen->sem, iobj->u.index.obj);
-                int is_cs_arr = (et && et->kind == TYPE_CSTRUCT && rt && rt->kind == TYPE_CSTRUCT);
+                // ★ 2026-11-13：`Ptr[cstruct]` 也走这条融合指令（`p[i].x`）—— 明细见 VM 的
+            //   OP_CSTRUCT_ARR_GETF 里那段说明；判据只是"接收者静态类型是 cstruct 或 Ptr[cstruct]"。
+            int is_cs_arr = (et && et->kind == TYPE_CSTRUCT && rt &&
+                             (rt->kind == TYPE_CSTRUCT ||
+                              (rt->kind == TYPE_PTR_GENERIC && rt->element_type &&
+                               rt->element_type->kind == TYPE_CSTRUCT)));
                 int cs_fi = -1;
                 if (is_cs_arr) {
                     TypeInfo* ft = infer_field_type(gen->sem, et, iidx->u.string.value, &cs_fi);

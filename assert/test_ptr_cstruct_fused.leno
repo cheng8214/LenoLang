@@ -1,0 +1,71 @@
+// test_ptr_cstruct_fused.leno —— `Ptr[cstruct]` 的 `p[i].字段` 融合指令（2026-11-13）
+//
+// 背景：`p[i].字段` 原先编译成「OP_INDEX 造一个视图对象 + 再读写字段」，实测写满
+//   54 个顶点慢 8.4 倍（27667 ns vs 3300 ns）；而 module 级可复用的缓冲区只能用
+//   `Ptr[T]` 表达（cstruct 数组类型写不成注解）⇒ 这条快路径是可复用缓冲的前提。
+//
+// 这里钉住三件事：
+//   ① 读写值正确（与 cstruct 数组逐字段对齐）
+//   ② 越界仍然报错（不是静默写坏内存）
+//   ③ 嵌套 cstruct 字段（需要视图的那条分支）照常可用
+import ffi
+import strings
+
+cstruct V3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+cstruct Line {
+    V3 a
+    V3 b
+}
+
+main() {
+    // ① 基本读写：同一块内存，两种写法互读
+    Ptr[V3] p = ffi.malloc(2 * V3.size())
+    p[0].x = 1.5
+    p[0].y = 2.5
+    p[0].z = 3.5
+    p[1].x = -1.0
+
+    assert_eq(p[0].x, 1.5, "Ptr[cstruct] 写 x 后读回")
+    assert_eq(p[0].y, 2.5, "Ptr[cstruct] 写 y 后读回")
+    assert_eq(p[0].z, 3.5, "Ptr[cstruct] 写 z 后读回")
+    assert_eq(p[1].x, -1.0, "第二个元素独立")
+
+    // 与 cstruct 数组写法等价性
+    var arr = V3.malloc_array(2)
+    arr[0].x = 1.5
+    arr[0].y = 2.5
+    arr[0].z = 3.5
+    assert_eq(p[0].x, arr[0].x, "与 cstruct 数组结果一致（x）")
+    assert_eq(p[0].z, arr[0].z, "与 cstruct 数组结果一致（z）")
+    arr.free_all()
+
+    // 整数写进 f32 字段（转换口径与 cstruct 数组一致）
+    p[0].x = 7
+    assert_eq(p[0].x, 7.0, "整数写入 f32 字段自动转换")
+
+    // ② 越界必须报错
+    bool caught = false
+    try { p[5].x = 1.0 } catch e { caught = true }
+    assert_eq(caught, true, "Ptr[cstruct] 越界写要报错")
+    caught = false
+    try { var _v = p[9].x } catch e2 { caught = true }
+    assert_eq(caught, true, "Ptr[cstruct] 越界读要报错")
+
+    // ③ 嵌套 cstruct 字段（走"需要视图"分支）
+    Ptr[Line] ln = ffi.malloc(Line.size())
+    ln[0].a.x = 4.0
+    ln[0].a.y = 5.0
+    ln[0].b.z = 6.0
+    assert_eq(ln[0].a.x, 4.0, "嵌套字段写 a.x")
+    assert_eq(ln[0].a.y, 5.0, "嵌套字段写 a.y")
+    assert_eq(ln[0].b.z, 6.0, "嵌套字段写 b.z")
+
+    ffi.free(ln)
+    ffi.free(p)
+    print("test_ptr_cstruct_fused passed")
+}
