@@ -121,6 +121,13 @@ export struct Font {
     // （如 _fit_cell_text 先 measure 再 draw），单槽快路径将 O(1024) 线性扫描降为 O(1)。
     pri string texLastKey = ""
     pri int texLastIdx = -1
+    // ★ 2026-11-13：纹理缓存的 MRU 改成"直接比参数"，**不再每次拼 key**
+    //   （key = `$"{_pt}\x01{r}\x01{g}\x01{b}\x01{text}"`，一次拼接 + 分配）；
+    //   非 MRU 命中走 `texIdx` 字典（key → 槽位），替代 1024 槽线性扫描。
+    pri string texLastText = ""
+    pri int texLastR = -1, texLastG = -1, texLastB = -1
+    pri float texLastPt = -1.0
+    pri Dict texIdx = null
     // 码点 → 宽度（`charWidth` 用；SSAA 倍率变化时清空，见 setSSAA）
     //   ASCII 走**数组**快路径（O(1) 索引，比 Dict 哈希快 ~5 倍），其余码点走 Dict。
     //   文本类内容 90%+ 是 ASCII ⇒ 这一层把"逐字符查宽度"从 ~100 ns 压到 ~20 ns。
@@ -168,6 +175,9 @@ export struct Font {
                 }
             }
             texCache = []
+            texIdx = null; texLastIdx = -1; texLastKey = ""
+            texLastText = ""; texLastPt = -1.0
+            chWCache = null; chWAscii = []
             ttfLib().TTF_CloseFont(handle); handle = null; ok = false
         }
     }
@@ -295,27 +305,33 @@ export struct Font {
     // 并以当前 _pt 作为缓存 key 维度，与 drawText 的 2x 渲染天然对应。
     func _getCachedTex(Ptr[u8] renderer, string text, int r, int g, int b): TextTexture {
         if not ok { return new TextTexture() }
-        string key = $"{_pt}\x01{r}\x01{g}\x01{b}\x01{text}"
-        // MRU 快路径：同一文字连续调用时直接命中，跳过 1024 槽线性扫描
-        if texLastIdx >= 0 and texLastIdx < texCache.len() and texLastKey == key {
-            CachedTex c = texCache[texLastIdx]
-            if c.ok and c.ren == renderer and c.texture != null {
-                TextTexture t = new TextTexture()
-                t.texture = c.texture; t.ok = true; t.width = c.w; t.height = c.h
-                return t
+        // MRU 快路径：同一文字 + 同色 + 同字号连续调用（渲染循环里极常见）
+        //   ⇒ 直接比参数，**命中时连 key 都不用拼**
+        if texLastIdx >= 0 and texLastIdx < texCache.len() and _pt == texLastPt and
+           texLastR == r and texLastG == g and texLastB == b and texLastText == text {
+            CachedTex c0 = texCache[texLastIdx]
+            if c0.ok and c0.ren == renderer and c0.texture != null {
+                TextTexture t0 = new TextTexture()
+                t0.texture = c0.texture; t0.ok = true; t0.width = c0.w; t0.height = c0.h
+                return t0
             }
         }
-        for texCache.len() to i {
-            CachedTex c = texCache[i]
-            // 必须校验 ren 匹配且纹理仍有效：避免命中「属于已销毁渲染器、且 SDL 复用了同一指针」的失效纹理
-            if c.ok and c.ren == renderer and c.texture != null and c.key == key {
-                texLastKey = key; texLastIdx = i
-                TextTexture t = new TextTexture()
-                t.texture = c.texture
-                t.ok = true
-                t.width = c.w
-                t.height = c.h
-                return t
+        string key = $"{_pt}\x01{r}\x01{g}\x01{b}\x01{text}"
+        // 非 MRU：O(1) 字典定位（原来是 1024 槽线性扫描 + 逐条字符串比较）
+        Dict tidx = texIdx
+        if tidx == null { tidx = {}; texIdx = tidx }
+        if tidx.has(key) {
+            int ti2 = _int(tidx[key])
+            if ti2 >= 0 and ti2 < texCache.len() {
+                CachedTex c2 = texCache[ti2]
+                // 必须校验 ren 匹配且纹理仍有效：避免命中「属于已销毁渲染器、且 SDL 复用了同一指针」的失效纹理
+                if c2.ok and c2.ren == renderer and c2.texture != null {
+                    texLastKey = key; texLastIdx = ti2; texLastText = text
+                    texLastR = r; texLastG = g; texLastB = b; texLastPt = _pt
+                    TextTexture t2 = new TextTexture()
+                    t2.texture = c2.texture; t2.ok = true; t2.width = c2.w; t2.height = c2.h
+                    return t2
+                }
             }
         }
         Ptr[u8] surface = ttfLib().TTF_RenderText_Blended(handle, text, 0, packColor(r, g, b))
@@ -333,15 +349,19 @@ export struct Font {
                 CachedTex e = new CachedTex()
                 e.key = key; e.texture = texPtr; e.w = tw; e.h = th; e.ok = true; e.ren = renderer
                 if texCache.len() < texCap {
+                    tidx[key] = texCache.len()
                     texCache.add(e)
                     texLastKey = key; texLastIdx = texCache.len() - 1
                 } else {
                     CachedTex old = texCache[texHead]
                     if old.ok and old.texture != null { _lib.SDL_DestroyTexture(old.texture) }
+                    tidx.remove(old.key)          // 字典里先摘掉被覆盖的旧 key
                     texCache[texHead] = e
+                    tidx[key] = texHead
                     texLastKey = key; texLastIdx = texHead
                     texHead = (texHead + 1) % texCap
                 }
+                texLastText = text; texLastR = r; texLastG = g; texLastB = b; texLastPt = _pt
             }
         }
         return tex
