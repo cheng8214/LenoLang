@@ -58,39 +58,6 @@ SDL_Color  _tmpC0  = null
 Ptr[u8] _texIdx = null
 int     _texIdxCap = 0
 int     _texIdxLastCount = 0
-// ==================== 文字图集（2026-11-13）====================
-//   动机（实测）：`flushTexBatch` 按**纹理**分组，而每个不同字符串各是一张纹理 ⇒
-//   表格一帧 "可见 15 行 × 6 列" 产生 **138 次提交、每次只画 1 条**，单次固定 ~6 µs
-//   ≈ 整帧耗时。把**整串文字的位图**铺进一张大图集后，所有文字共用一张纹理 ⇒
-//   整帧文字合并成 **1 次提交**。
-//   ⚠ 只做"整串装箱"，不逐字形排布 ⇒ 字距/换行/截断的语义完全不变。
-//   ⚠ 图集满 ⇒ 该条**回落到旧的独立纹理路径**（行为不变，绝不画不出来）。
-// 图集里的一段（UV + 像素尺寸）。用 struct 而不是 Array[float]：Dict 取值是 any，
-//   返回类型写明后调用方才能直接读字段（数组要逐元素转换，反而更绕）。
-struct AtlasReg {
-    float u0 = 0.0
-    float v0 = 0.0
-    float u1 = 0.0
-    float v1 = 0.0
-    float w = 0.0
-    float h = 0.0
-}
-Ptr[u8] _atlasTex = null
-int _atlasW = 1024
-int _atlasH = 1024
-int _atlasX = 0
-int _atlasY = 0
-int _atlasRowH = 0
-Dict _atlasMap = null          // key(字号/颜色/文本) → 下标（指向 _atlasRegs）
-// Dict 的取值是 any，不能直接赋给 struct ⇒ 用「字典存下标 + 数组存结构」这一对。
-Array[AtlasReg] _atlasRegs = []
-// MRU：同一段文字连续绘制（表格每格一调，且相邻帧顺序相同）⇒ 直接比参数，
-//   省掉每格一次的 `$"{pt}\x01{r}\x01{g}\x01{b}\x01{text}"` key 构造 + 字典哈希。
-string _atlasLastText = ""
-int    _atlasLastR = -1, _atlasLastG = -1, _atlasLastB = -1
-float  _atlasLastPt = -1.0
-int    _atlasLastIdx = -1
-
 // 文字批处理用的**顶点缓冲**（模块级复用，同 `_texIdx` 的理由）：
 //   原来每次提交都 `SDL_Vertex.malloc_array(vcnt)` + `free()` —— 表格那种"一格一个纹理"
 //   的界面一帧有上百次提交，光分配就上百次（还各带一个 GC 对象）。
@@ -373,8 +340,7 @@ const BX_TEX    = 4   // 批处理文字纹理
             bxFillN = 0; bxOutN = 0; _bxLineN = 0
             // 文字纹理批处理：每条目 5 floats (dstX, dstY, dstW, dstH, alpha)
             bxTexCap = 1024
-            // 每条目 9 个 float（x,y,w,h,alpha,u0,v0,u1,v1）—— 图集需要按子矩形 UV 采样
-            Ptr[f32] texBuf = ffi.malloc(bxTexCap * 36); bxTexCoords = texBuf
+            Ptr[f32] texBuf = ffi.malloc(bxTexCap * 20); bxTexCoords = texBuf
             bxTexN = 0; bxTexPtrs = []
         }
         return ok
@@ -981,15 +947,7 @@ const BX_TEX    = 4   // 批处理文字纹理
             // ★ 2026-11-13：不再"每个标签两次 setFontSize"（setFontSize = SetFontSize + 三个
             //   getter，8 次 SDL 调用/标签/帧）—— 目标字号作为参数传下去，**只在真正
             //   创建纹理时**临时切一次（见 Font._getCachedTex 的 pt 参数）。
-            float rpt = f._pt * ssaaScale
-            // ★ 文字图集优先：命中就是"同一张纹理 + 一段 UV" ⇒ 整帧文字只 1 次提交
-            var rg = _atlasRegion(f, text, r, g, b, rpt)
-            if rg.w > 0.0 {
-                pushTexBatch(_atlasTex, x, y, rg.w / ssaaScale, rg.h / ssaaScale, alphaMod,
-                             rg.u0, rg.v0, rg.u1, rg.v1)
-                return
-            }
-            TextTexture tex = f._getCachedTex(handle, text, r, g, b, rpt)
+            TextTexture tex = f._getCachedTex(handle, text, r, g, b, f._pt * ssaaScale)
             if tex.ok {
                 float dw = tex.width  / ssaaScale
                 float dh = tex.height / ssaaScale
@@ -1001,90 +959,15 @@ const BX_TEX    = 4   // 批处理文字纹理
         // 避免纹理在亚像素位置被双线性重采样而发虚（SSAA 模式由调用方 snapX/snapY 已处理）。
         x = maths.roundi(x)
         y = maths.roundi(y)
-        var rg1 = _atlasRegion(f, text, r, g, b, f._pt)
-        if rg1.w > 0.0 {
-            pushTexBatch(_atlasTex, x, y, rg1.w, rg1.h, alphaMod, rg1.u0, rg1.v0, rg1.u1, rg1.v1)
-            return
-        }
         TextTexture tex = f._getCachedTex(handle, text, r, g, b)
         if tex.ok {
             pushTexBatch(tex.texture, x, y, tex.width, tex.height, alphaMod)
         }
     }
 
-    // 当前渲染目标（图集插入时用来保存/恢复）
-    func getRenderTarget(): Ptr[u8] { return bxTarget }
-
-    // 懒创建图集纹理（TARGET 模式：要把整串文字画进去）
-    pri func _atlasEnsure(): bool {
-        if _atlasTex != null { return true }
-        Ptr[u8] t = createTexture(core.PIXELFORMAT_RGBA8888, 2, _atlasW, _atlasH)
-        if t == null { return false }
-        _atlasTex = t
-        if _atlasMap == null { _atlasMap = {} }
-        _atlasX = 0; _atlasY = 0; _atlasRowH = 0
-        return true
-    }
-
-    // 取（或新建）一段文字的图集区域：返回 [u0, v0, u1, v1, w, h]；空数组表示"没位置/失败"⇒ 调用方回落
-    pri func _atlasRegion(Font f, string text, int r, int g, int b, float pt): AtlasReg {
-        AtlasReg none = new AtlasReg()
-        if text == "" { return none }
-        if not _atlasEnsure() { return none }
-        // MRU 快路径（不拼 key）
-        if _atlasLastIdx >= 0 and pt == _atlasLastPt and r == _atlasLastR and
-           g == _atlasLastG and b == _atlasLastB and text == _atlasLastText {
-            if _atlasLastIdx < _atlasRegs.len() { return _atlasRegs[_atlasLastIdx] }
-        }
-        string key = $"{pt}\x01{r}\x01{g}\x01{b}\x01{text}"
-        Dict map = _atlasMap
-        if map.has(key) {
-            int hi = _int(map[key])
-            if hi >= 0 and hi < _atlasRegs.len() {
-                _atlasLastText = text; _atlasLastR = r; _atlasLastG = g; _atlasLastB = b
-                _atlasLastPt = pt; _atlasLastIdx = hi
-                return _atlasRegs[hi]
-            }
-        }
-        // 先拿"文字对应的独立纹理"（沿用既有缓存，零新逻辑），再把它拷进图集
-        TextTexture tt = f._getCachedTex(handle, text, r, g, b, pt)
-        if not tt.ok { return none }
-        int w = tt.width
-        int h = tt.height
-        if w <= 0 or h <= 0 or w > _atlasW or h > _atlasH { return none }
-        // 货架式装箱：一行放不下就换行
-        if _atlasX + w > _atlasW { _atlasX = 0; _atlasY = _atlasY + _atlasRowH; _atlasRowH = 0 }
-        if _atlasY + h > _atlasH { return none }        // 图集满 ⇒ 回落旧路径
-        // ⚠ 切目标**之前**必须先 flush：否则之前排队的图元会被画进图集里
-        flushBatches()
-        Ptr[u8] prev = bxTarget
-        setRenderTarget(_atlasTex)
-        drawTextureAt(tt.texture, _float(_atlasX), _float(_atlasY), _float(w), _float(h))
-        setRenderTarget(prev)
-        float ax = _float(_atlasX); float ay = _float(_atlasY)
-        _atlasX = _atlasX + w
-        if h > _atlasRowH { _atlasRowH = h }
-        AtlasReg reg = new AtlasReg()
-        reg.u0 = ax / _float(_atlasW)
-        reg.v0 = ay / _float(_atlasH)
-        reg.u1 = (ax + _float(w)) / _float(_atlasW)
-        reg.v1 = (ay + _float(h)) / _float(_atlasH)
-        reg.w = _float(w)
-        reg.h = _float(h)
-        _atlasRegs.add(reg)
-        map[key] = _atlasRegs.len() - 1
-        _atlasLastText = text; _atlasLastR = r; _atlasLastG = g; _atlasLastB = b
-        _atlasLastPt = pt; _atlasLastIdx = _atlasRegs.len() - 1
-        return reg
-    }
-
     // 文字纹理批处理：收集到缓冲，不打断 fillRect/drawRect/drawLine 的批处理
     // 当缓冲满或纹理切换（由 _flushBatches 统一处理）时批量提交
-    // ★ 2026-11-13（文字图集）：多带一组 UV 参数（默认整张纹理 0..1）。
-    //   为什么：图集方案里所有文字共用**同一张纹理**，每段文字只占其中一个子矩形
-    //   ⇒ 顶点必须按子矩形的 UV 采样。默认值让老调用方（图标/整张纹理）完全不用改。
-    pri func pushTexBatch(Ptr[u8] texture, float x, float y, float w, float h, float alpha,
-                          float u0 = 0.0, float v0 = 0.0, float u1 = 1.0, float v1 = 1.0) {
+    pri func pushTexBatch(Ptr[u8] texture, float x, float y, float w, float h, float alpha) {
         // ★ 2026-10-13：这里是**纹理批的唯一收口** ⇒ 全局 alpha 缩放放这一处最省 ✓
         //   ⚠ 文字也走这里（drawText 的两个分支都调它 ✓）⇒ **不要在 drawText 里再乘一次** ✗
         //     否则会"平方淡化"（0.5 × 0.5 = 0.25 ✗）
@@ -1093,16 +976,12 @@ const BX_TEX    = 4   // 批处理文字纹理
         if bxCur != BX_EMPTY and bxCur != BX_TEX { flushBatches() }
         // 缓冲满则先提交
         if bxTexN >= bxTexCap { flushBatches() }
-        int o = bxTexN * 9
+        int o = bxTexN * 5
         bxTexCoords[o]      = x
         bxTexCoords[o + 1]  = y
         bxTexCoords[o + 2]  = w
         bxTexCoords[o + 3]  = h
         bxTexCoords[o + 4]  = alpha
-        bxTexCoords[o + 5]  = u0
-        bxTexCoords[o + 6]  = v0
-        bxTexCoords[o + 7]  = u1
-        bxTexCoords[o + 8]  = v1
         bxTexPtrs.add(texture)
         bxTexN = bxTexN + 1
         bxCur = BX_TEX
@@ -1280,35 +1159,31 @@ const BX_TEX    = 4   // 批处理文字纹理
             // 填充顶点
             for count to k {
                 int entryIdx = i + k
-                int off = entryIdx * 9
+                int off = entryIdx * 5
                 float dx = bxTexCoords[off]
                 float dy = bxTexCoords[off + 1]
                 float dw = bxTexCoords[off + 2]
                 float dh = bxTexCoords[off + 3]
                 float alpha = bxTexCoords[off + 4]
-                float eu0 = bxTexCoords[off + 5]
-                float ev0 = bxTexCoords[off + 6]
-                float eu1 = bxTexCoords[off + 7]
-                float ev1 = bxTexCoords[off + 8]
                 // 4 顶点：左上、右上、右下、左下
                 // 顶点颜色全白，alpha 由顶点控制（与纹理相乘），无需 SDL_SetTextureAlphaMod
                 int vi = k * 4
                 // 左上 (0,0)
                 verts[vi].x = dx;           verts[vi].y = dy
                 verts[vi].r = 1.0; verts[vi].g = 1.0; verts[vi].b = 1.0; verts[vi].a = alpha
-                verts[vi].u = eu0; verts[vi].v = ev0
+                verts[vi].u = 0.0; verts[vi].v = 0.0
                 // 右上 (1,0)
                 verts[vi + 1].x = dx + dw;  verts[vi + 1].y = dy
                 verts[vi + 1].r = 1.0; verts[vi + 1].g = 1.0; verts[vi + 1].b = 1.0; verts[vi + 1].a = alpha
-                verts[vi + 1].u = eu1; verts[vi + 1].v = ev0
+                verts[vi + 1].u = 1.0; verts[vi + 1].v = 0.0
                 // 右下 (1,1)
                 verts[vi + 2].x = dx + dw;  verts[vi + 2].y = dy + dh
                 verts[vi + 2].r = 1.0; verts[vi + 2].g = 1.0; verts[vi + 2].b = 1.0; verts[vi + 2].a = alpha
-                verts[vi + 2].u = eu1; verts[vi + 2].v = ev1
+                verts[vi + 2].u = 1.0; verts[vi + 2].v = 1.0
                 // 左下 (0,1)
                 verts[vi + 3].x = dx;       verts[vi + 3].y = dy + dh
                 verts[vi + 3].r = 1.0; verts[vi + 3].g = 1.0; verts[vi + 3].b = 1.0; verts[vi + 3].a = alpha
-                verts[vi + 3].u = eu0; verts[vi + 3].v = ev1
+                verts[vi + 3].u = 0.0; verts[vi + 3].v = 1.0
                 // 索引（与顶点同一个循环里写，省掉一趟遍历）
                 int io = k * 24
                 ffi.write_int(idxPtr, io,      vi)
