@@ -1,0 +1,60 @@
+// bench_sdl3_button.leno —— `sdl_button` 渲染基准（Aria 里用得最多的控件：117 处）
+//   用法：$env:SDL_VIDEODRIVER="dummy"; ./build/leno.exe tools/bench_sdl3_button.leno
+//   去掉 dummy 就是真实 d3d11；两种都跑一遍能区分"我们的 CPU"与"光栅化/提交"。
+import ffi
+import times
+import "../build/leno_module/LenoSDL3/lib/sdl_core.leno" as core
+import "../build/leno_module/LenoSDL3/lib/sdl_window.leno" as win
+import "../build/leno_module/LenoSDL3/lib/sdl_renderer.leno" as rend
+import "../build/leno_module/LenoSDL3/lib/sdl_button.leno" as btn
+use win.(Window, Renderer)
+
+Renderer R = null
+
+func benchFrames(string name, int frames, func():void body) {
+    for 0 : 2 to _w { body() }
+    var best = -1.0
+    for 0 : 2 to _rep {
+        var t0 = times.us()
+        for 0 : frames - 1 to _f { body() }
+        var t1 = times.us()
+        var per = (t1 - t0) / _float(frames)
+        if best < 0.0 or per < best { best = per }
+    }
+    print("  " + name + " ⇒ " + _str(best) + " us/帧")
+}
+
+main() {
+    if not core.initVideo() { print("initVideo failed: " + core.getError()); return }
+    var w = win.createWindow({ title: "btnbench", w: 900, h: 620 })
+    R = w.createRenderer()
+    print("渲染驱动 = " + R.driver_name())
+
+    // 60 个按钮（8 列 × 8 行里取 60 个），文字互不相同 ⇒ 覆盖图集/纹理缓存真实情况
+    var btns = []
+    for 0 : 59 to i {
+        var b = btn.createButton({ text: "按钮 " + _str(i), w: 100.0, h: 36.0 })
+        b.set_pos(10.0 + _float(i % 8) * 110.0, 10.0 + _float(i / 8) * 44.0)
+        btns.add(b)
+    }
+    benchFrames("60 个按钮（含底/边框/文字）", 60, func() {
+        for 0 : 59 to i { btns[i].render(R) }
+    })
+
+    // 对照：只画同样数量的圆角底（不含文字/边框）
+    benchFrames("60 个圆角矩形（对照）", 60, func() {
+        for 0 : 59 to i {
+            R.fillRoundedRect(10.0 + _float(i % 8) * 110.0, 10.0 + _float(i / 8) * 44.0, 100.0, 36.0, 6.0)
+        }
+    })
+    benchFrames("60 个普通矩形（对照）", 60, func() {
+        for 0 : 59 to i {
+            R.fillRect(10.0 + _float(i % 8) * 110.0, 10.0 + _float(i / 8) * 44.0, 100.0, 36.0)
+        }
+    })
+
+    R.destroy()
+    w.destroy()
+    core.quit()
+    print("done")
+}

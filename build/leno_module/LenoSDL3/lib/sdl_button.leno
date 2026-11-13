@@ -303,7 +303,11 @@ export struct Button impl Widget, Themeable {
             ensure_text_size()
             r.drawText(font, text, tx + tw - cachedTextW, ty, col)
         } else {
-            r.drawTextCentered(font, text, tx, tw, ty, col)
+            // ★ 2026-11-13：居中也**复用缓存**。原先这里走 `drawTextCentered`，而它内部
+            //   又调了一次 `measureString(text)` —— 与右对齐分支同一个坑（上面注释说的
+            //   "J 项漏点"其实漏了两处）。按钮默认就是居中 ⇒ 这是每帧每按钮一次的浪费。
+            ensure_text_size()
+            r.drawText(font, text, tx + (tw - cachedTextW) / 2.0, ty, col)
         }
     }
     func set_enabled(bool e)   { enabled = e }
