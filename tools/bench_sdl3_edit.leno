@@ -20,7 +20,19 @@
 //     空文本 + 默认圆角  17.7 µs/帧
 //     空文本 + radius=0   2.99 µs/帧   ⇒ 每次 fillRoundedRect/drawRoundedRect ≈ 7~8 µs
 //   即一个输入框每帧要把 2/3 的时间花在"画自己的圆角底/边框"上。
-//   下一步该查 `rrGet`（蒙版纹理缓存）为什么每次都像缓存未命中。
+//
+// 2026-11-13 继续排查（单独微基准），结论：**不是我们这层的逻辑**，是
+//   `SDL_RenderGeometry` 在这个（software）后端上的**固定单次开销**：
+//     fillRoundedRect 60×30 / 600×30 / 600×300   ⇒ 8.49 / 8.14 / 8.36 µs  ← 与**面积无关**
+//     drawRoundedRect（边框，同路径）            ⇒ 8.30 µs
+//     fillGradientRect（RenderGeometry，无纹理） ⇒ 3.54 µs  ← 几何本身 ~3.5 µs
+//     fillRectPtr（SDL_RenderFillRect，同面积）  ⇒ 0.27 µs
+//     fillRoundedRect 半径 0.4（几何回退路径）   ⇒ 26.2 µs  ← 另一个悬崖（非默认路径）
+//   ⇒ 单次 RenderGeometry ≈ 3.5 µs，**带纹理**再 +5 µs；`rrGet` 的蒙版缓存是命中的
+//     （否则耗时会随 M/面积变化）。
+//   真正的解法是**把多个圆角矩形攒进一次 RenderGeometry**（同蒙版+同色时），
+//   20 个圆角控件的界面可望从 ~164 µs 降到 ~20 µs；但要做对绘制顺序
+//   （圆角批必须在任何其它图元之前 flush），属渲染器级改动。
 import ffi
 import times
 import "../build/leno_module/LenoSDL3/lib/sdl_core.leno" as core
