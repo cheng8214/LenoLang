@@ -551,6 +551,27 @@ export func setTextInputArea(Ptr[u8] window, Ptr[u8] rect, int cursor): bool {
 
 export func getMouseState(): int { return lib().SDL_GetMouseState(null, null) }
 export func getGlobalMouseState(): int { return lib().SDL_GetGlobalMouseState(null, null) }
+
+// ★ 2026-11-14（Aria 实测反哺）：**当前**鼠标位置（焦点窗口客户区，帧内缓存一次）
+//   用途：`Event.mousePos()` 遇到**没有鼠标坐标字段**的事件（键盘 / 文本 / 窗口 / 拖放…）
+//   时回退到它 —— 那些事件里 `motion.x/motion.y` 那个偏移是别的字段（KEY 事件是 scancode 区），
+//   拿它判"鼠标在不在这个控件里"必然得到垃圾值。
+//   实测症状（同类 bug 的另一处）：ScrollView 的 PageUp/PageDown/Home/End 靠
+//   `ev.mousePos()` 判"悬停视口内才翻页"⇒ 键盘翻页时好时坏 ✗。
+//   为什么缓存：一次事件会派发给整棵控件树，每个控件都问一次 ⇒ 一帧内只查一次足够 ✓
+var _curMouseX = 0.0
+var _curMouseY = 0.0
+var _curMouseFrame = -1
+
+export func currentMousePos(): [float, float] {
+    if _curMouseFrame == _frameId { return _curMouseX, _curMouseY }
+    var pt = SDL_FPoint.malloc()
+    lib().SDL_GetMouseState(&pt.x, &pt.y)     // 相对焦点窗口（无焦点窗口时为 0,0 ✓）
+    _curMouseX = pt.x; _curMouseY = pt.y
+    pt.free()
+    _curMouseFrame = _frameId
+    return _curMouseX, _curMouseY
+}
 // 注意：SDL_GetGlobalMouseState 写入 float*，必须用 SDL_FPoint (f32 字段)，
 // 不能用 SDL_Point (i32 字段) — 详见 BUG_FFI_Ptr类型擦除导致隐式错传.md
 // 一次 FFI 调用获取全局鼠标 x, y（省一半 malloc/free 开销）

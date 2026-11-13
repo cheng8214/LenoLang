@@ -128,9 +128,22 @@ export struct Event {
     //   滚轮事件自带真实位置（wheel.mouse_x / mouse_y）⇒ 这里按事件类型分流，语义正确 ✓
     func mousePos(): [float, float] {
         var e = ev()
-        if sdl3_type() == core.EventType.MOUSE_WHEEL {
+        int t = sdl3_type()
+        if t == core.EventType.MOUSE_WHEEL {
             return e.wheel.mouse_x, e.wheel.mouse_y
         }
+        // ★ 2026-11-14：**没有鼠标坐标字段的事件**（键盘 / 文本 / 窗口 / 拖放…）
+        //   `motion.x/y` 那个偏移是别的字段（KEY 事件是 scancode 区）⇒ 回退到"当前真实鼠标位置"。
+        //   受影响的实际用法：ScrollView 用本函数判"悬停视口才响应 PageUp/Home/End"、
+        //   TitleBar / Scrim / Panel 这类"任何事件都判一次命中"的地方 ✓
+        if t != core.EventType.MOUSE_MOTION
+            and t != core.EventType.MOUSE_BUTTON_DOWN
+            and t != core.EventType.MOUSE_BUTTON_UP {
+            // 解包再拼回去：跨模块直接 `return 别处的 [float,float]` 会被判"返回类型不匹配"（实测 ✓）
+            var[float, float](cx, cy) = core.currentMousePos()
+            return cx, cy
+        }
+        // motion 与 button 的 x/y 偏移一致（button 靠 padding 顶到同一位置）⇒ 共用 ✓
         return e.motion.x, e.motion.y
     }
 
