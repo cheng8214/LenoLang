@@ -120,8 +120,17 @@ export struct Event {
     func isMouseWheel(): bool      { return sdl3_type() == core.EventType.MOUSE_WHEEL }
 
     // 鼠标位置（相对于窗口，浮点精度）
+    // ★ 2026-11-14 修（Aria 实测反哺）：**滚轮事件的结构与鼠标移动不同** ——
+    //   SDL_MouseWheelEvent 里 `motion.x` 那个偏移实际是 `direction`、`motion.y` 是 `mouse_x`
+    //   （见下面 wheelMouseX 的注释，早就写着"不能用 mouseX/mouseY"✗）。
+    //   原来本函数对滚轮也读 motion.x/y ⇒ 拿到错位数据 ⇒ 调用方（如 TitleBar 的窗口边缘
+    //   判定）把它当鼠标坐标用 ⇒ **一滚滚轮，光标就变成左右/斜向的缩放箭头**（用户实测 ✓）。
+    //   滚轮事件自带真实位置（wheel.mouse_x / mouse_y）⇒ 这里按事件类型分流，语义正确 ✓
     func mousePos(): [float, float] {
         var e = ev()
+        if sdl3_type() == core.EventType.MOUSE_WHEEL {
+            return e.wheel.mouse_x, e.wheel.mouse_y
+        }
         return e.motion.x, e.motion.y
     }
 

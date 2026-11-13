@@ -551,7 +551,13 @@ if ev.isWindowRestored() { maximized = false; btnHover = BTN_NONE; motionSkipCou
         }
 
         // 边缘检测（仅在非最大化、且**允许缩放**时 —— 不可缩放的窗口连光标都不该变 ✓）
-        if allowResize and not maximized and not _dragging {
+        // ★ 2026-11-14（Aria 实测反哺）：**只在带鼠标位置语义的事件上做**（motion / 按下 / 抬起）。
+        //   原来每个事件都跑一遍（含 MOUSE_WHEEL）⇒ 用户一滚列表，光标就被改成窗口边缘的
+        //   缩放箭头（滚轮位置读错时必然落在"左/右边缘"分支，实测 ✗）。
+        //   即便 `mousePos()` 已按事件类型修正过，滚轮时也不该重设光标：
+        //   标题栏本身不滚动，滚轮不该被当成"想拉边缩放" ✓
+        if allowResize and not maximized and not _dragging
+            and (ev.isMouseMotion() or ev.isMouseButtonDown() or ev.isMouseButtonUp()) {
             // ★ 复用缓存，避免每帧 getWindowSize
             if winSizeDirty and winHandle != null {
                 var[int, int](_ww, _wh) = core.getWindowSize(winHandle)
