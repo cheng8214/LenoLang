@@ -905,10 +905,10 @@ const BX_TEX    = 4   // 批处理文字纹理
         float alphaMod = 1.0
         if ((color >> 24) & 0xFF) < 255 { alphaMod = ((color >> 24) & 0xFF) / 255.0 }
         if ssaa and ssaaScale > 0.0 {
-            float origPt = f._pt
-            f.setFontSize(origPt * ssaaScale)   // _pt 临时变 2x，作为缓存 key 维度
-            TextTexture tex = f._getCachedTex(handle, text, r, g, b)
-            f.setFontSize(origPt)                // 还原，避免影响后续 measureString/其它绘制
+            // ★ 2026-11-13：不再"每个标签两次 setFontSize"（setFontSize = SetFontSize + 三个
+            //   getter，8 次 SDL 调用/标签/帧）—— 目标字号作为参数传下去，**只在真正
+            //   创建纹理时**临时切一次（见 Font._getCachedTex 的 pt 参数）。
+            TextTexture tex = f._getCachedTex(handle, text, r, g, b, f._pt * ssaaScale)
             if tex.ok {
                 float dw = tex.width  / ssaaScale
                 float dh = tex.height / ssaaScale

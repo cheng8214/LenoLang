@@ -303,11 +303,19 @@ export struct Font {
     // 文字纹理缓存查询/创建：命中返回缓存纹理（调用方不得 destroy），未命中创建并写入 ring 缓存。
     // 调用前由 Renderer.drawText 负责把字号临时设为 2x（SSAA）或保持 1x；本方法直接用当前字号渲染，
     // 并以当前 _pt 作为缓存 key 维度，与 drawText 的 2x 渲染天然对应。
-    func _getCachedTex(Ptr[u8] renderer, string text, int r, int g, int b): TextTexture {
+    // ★ 2026-11-13：新增 `pt` 参数（默认 -1 = 用本字体的 `_pt`）。
+    //   为什么：SSAA 下 `drawText` 原先**每画一个标签**都要 `setFontSize(2x)` +
+    //   `setFontSize(原)`，而 setFontSize 内部是 4 次 SDL 调用（SetFontSize + 三个 getter）
+    //   ⇒ 每个标签每帧 8 次 SDL 调用，纯浪费。字号只影响**创建纹理**那一刻，
+    //   缓存命中根本不需要碰字号 ⇒ 改成按需在 miss 路径里临时设一次。
+    func _getCachedTex(Ptr[u8] renderer, string text, int r, int g, int b,
+                       float pt = -1.0): TextTexture {
         if not ok { return new TextTexture() }
+        float usePt = _pt
+        if pt > 0.0 { usePt = pt }
         // MRU 快路径：同一文字 + 同色 + 同字号连续调用（渲染循环里极常见）
         //   ⇒ 直接比参数，**命中时连 key 都不用拼**
-        if texLastIdx >= 0 and texLastIdx < texCache.len() and _pt == texLastPt and
+        if texLastIdx >= 0 and texLastIdx < texCache.len() and usePt == texLastPt and
            texLastR == r and texLastG == g and texLastB == b and texLastText == text {
             CachedTex c0 = texCache[texLastIdx]
             if c0.ok and c0.ren == renderer and c0.texture != null {
@@ -316,7 +324,7 @@ export struct Font {
                 return t0
             }
         }
-        string key = $"{_pt}\x01{r}\x01{g}\x01{b}\x01{text}"
+        string key = $"{usePt}\x01{r}\x01{g}\x01{b}\x01{text}"
         // 非 MRU：O(1) 字典定位（原来是 1024 槽线性扫描 + 逐条字符串比较）
         Dict tidx = texIdx
         if tidx == null { tidx = {}; texIdx = tidx }
@@ -334,7 +342,11 @@ export struct Font {
                 }
             }
         }
+        // 只在**真正渲染**时临时切到目标字号（缓存命中完全不碰字号）
+        bool resized = (usePt != _pt)
+        if resized { ttfLib().TTF_SetFontSize(handle, usePt) }
         Ptr[u8] surface = ttfLib().TTF_RenderText_Blended(handle, text, 0, packColor(r, g, b))
+        if resized { ttfLib().TTF_SetFontSize(handle, _pt) }
         TextTexture tex = new TextTexture()
         if surface != null {
             // 内联创建纹理（等价 TextTexture.createFromSurface），避免前向引用 TextTexture 方法
