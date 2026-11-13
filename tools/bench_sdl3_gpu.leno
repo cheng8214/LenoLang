@@ -1,0 +1,69 @@
+// bench_sdl3_gpu.leno —— **真实窗口/真实驱动**下的 per-draw-call 成本（不是 dummy！）
+//
+// 用法（仓库根目录，**不要**设 SDL_VIDEODRIVER）：
+//     ./build/leno.exe tools/bench_sdl3_gpu.leno
+//
+// 为什么单独一个脚本：无头 `software` 后端是 **CPU 光栅化**，测得的是像素填充成本；
+//   真实 GPU 上像素几乎免费，成本在**每次 draw call / 状态切换**上。
+//   圆角合批、纹理切换合并这类优化只在前者之外的后端才有意义 —— 必须先在这个脚本里
+//   看到"调用次数线性"的证据，才值得改代码。
+//
+// 输出会先打印 `driver_name()`：
+//   - `d3d11` / `opengl` / `vulkan` ⇒ 硬件后端，下面的数字可用于决策合批
+//   - `software` ⇒ 说明这台机器上 SDL 只拿到软件渲染器，结论不适用于 GPU
+import ffi
+import times
+import "../build/leno_module/LenoSDL3/lib/sdl_core.leno" as core
+import "../build/leno_module/LenoSDL3/lib/sdl_window.leno" as win
+import "../build/leno_module/LenoSDL3/lib/sdl_renderer.leno" as rend
+use win.(Window, Renderer)
+
+Renderer R = null
+
+func bench(string name, int frames, func():void body) {
+    for 0 : 4 to _w { body() }                 // warmup
+    var best = 1.0e18
+    for 0 : 2 to _rep {
+        var t0 = times.us()
+        for 0 : frames - 1 to _f { body() }
+        var t1 = times.us()
+        var per = (t1 - t0) / _float(frames)
+        if per < best { best = per }
+    }
+    print("  " + name + " ⇒ " + _str(best) + " us/帧")
+}
+
+func drawRounded(int n, float rad) {
+    for 0 : n - 1 to i {
+        R.fillRoundedRect(10.0, _float(i) * 5.0, 400.0, 4.0, rad)
+    }
+}
+
+main() {
+    if not core.initVideo() { print("initVideo failed: " + core.getError()); return }
+    var w = win.createWindow({ title: "gpu-bench", w: 800, h: 600 })
+    R = w.createRenderer()
+    if R == null { print("createRenderer failed: " + core.getError()); return }
+    print("渲染驱动 = " + R.driver_name() + "（software = CPU 光栅化，数字不适用 GPU）")
+    R.setColorFloat(0.4, 0.6, 0.9, 1.0)
+
+    print("=== 同一批绘制，只变**调用次数**（面积合计相同：400×4 ×N 塞在 600 高里）===")
+    bench("present 单独", 200, func() { R.present() })
+    bench("1 个圆角 + present", 200, func() { drawRounded(1, 2.0); R.present() })
+    bench("20 个圆角 + present", 200, func() { drawRounded(20, 2.0); R.present() })
+    bench("100 个圆角 + present", 100, func() { drawRounded(100, 2.0); R.present() })
+
+    print("=== 对照：同样调用次数，用普通矩形（走 fillRects 批处理）===")
+    bench("100 个矩形 + present", 100, func() {
+        for 0 : 99 to i { R.fillRect(10.0, _float(i) * 5.0, 400.0, 4.0) }
+        R.present()
+    })
+
+    print("=== 圆角半径 0（走 fillRect 路径的圆角 API）===")
+    bench("100 个圆角 r=0 + present", 100, func() { drawRounded(100, 0.0); R.present() })
+
+    R.destroy()
+    w.destroy()
+    core.quit()
+    print("done")
+}
