@@ -109,6 +109,9 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     pri Array[float] lineW = []         // 每行像素宽度缓存（增量更新）
     pri float maxLineW = 0.0             // 当前最大行宽
     pri bool lwDirty = true               // 行宽缓存需全量重算
+    // 行内容 → 像素宽度（跨重排复用）。结构级变更时只有**新内容**需要重新测量，
+    //   否则 5000 行文档每次回车都要重测全文（实测 ~0.7 ms）。字体变化时清空。
+    pri Dict lineWCache = null
 
     // ★ 2026-11-13（性能）：`sync_line_col()` 是 O(行数)（从第 0 行累到光标行），
     //   原先**每帧**都全表扫一遍 —— 实测 5000 行文档 ≈ 250 µs/帧（占整帧 72%）。
@@ -160,6 +163,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
             }
             if _font.ok and fontStyle != 0 { _font.setStyle(fontStyle) }
             cachedMaxW = -1.0       // 字体变了，行宽缓存失效
+            lineWCache = null       // 行内容→宽度 的字典也作废（换字号/换字体后宽度全变）
             invalidate_sb()           // 字体变化，行高/行宽变化，滚动条尺寸需重算
             // 缓存行高
             if _font.ok {
@@ -857,10 +861,25 @@ _drawBorder = opts.get("border", true)
         if not lwDirty and cachedMaxW >= 0.0 { return }
         if _font == null or not _font.ok { return }
         rebuild_lines()
+        // ★ 2026-11-13：**按行内容缓存宽度**。
+        //   原来每次结构级变更（回车 / 粘贴 / 撤销）都把**全文每一行**重新 measureString
+        //   一遍 —— 5000 行文档实测 ~0.7 ms，且量到的全是"同一批字符串的重复测量"。
+        //   行内容没变 ⇒ 宽度必然没变，用字典记下来即可；只有真正新出现的行才测。
+        //   失效点：字体/字号变化（见 invalidate_font_caches 里的 lineWCache = null）。
+        if lineWCache == null { lineWCache = {} }
+        Dict cache = lineWCache
         lineW = []
         maxLineW = 0.0
         for lines.len() to li {
-            var[float, float](w0, _h0) = _font.measureString(lines[li])
+            var ln = lines[li]
+            float w0 = 0.0
+            if cache.has(ln) {
+                w0 = _float(cache[ln])
+            } else {
+                var[float, float](mw, _h0) = _font.measureString(ln)
+                w0 = mw
+                cache[ln] = w0
+            }
             lineW.add(w0)
             if w0 > maxLineW { maxLineW = w0 }
         }

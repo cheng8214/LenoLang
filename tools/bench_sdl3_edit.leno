@@ -117,6 +117,17 @@ main() {
         e8.render(R)
     })
 
+    print("=== 结构级变更（回车/粘贴那种：全文重排 + 全行宽重测）===")
+    var e9 = edt.createEdit({ multiline: true, font_size: 14.0, w: 600.0, h: 380.0 })
+    e9.set_pos(0.0, 0.0)
+    var s5000 = bigText(5000, 20)
+    e9.set_text(s5000)
+    e9.focus()
+    benchFrames("5000 行 + 每帧 set_text（模拟结构性变更）", 5, func() {
+        e9.set_text(s5000)          // 置 dirty ⇒ 拆行 + 重排行表 + 全行宽重测
+        e9.render(R)
+    })
+
     print("=== 诊断：空输入框的成本在哪 ===")
     var e5 = edt.createEdit({ multiline: false, font_size: 14.0, w: 600.0, h: 30.0 })
     e5.set_pos(0.0, 0.0)
