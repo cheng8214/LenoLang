@@ -1,0 +1,52 @@
+// test_threads_globals_clone.leno —— 回归：spawn 时克隆 globals（大数组）+ 大数组过 channel
+//
+// 背景（2026-11-14 多线程压测）：
+//   ① `g_channel_clone_ctx` 原来是**进程级 static**，而克隆路径本来就跑在多个线程上
+//      （每个子线程启动时克隆 globals、收消息时克隆值）⇒ 并发 snprintf/strlen 同一个
+//      192 字节缓冲 ⇒ strlen 可能越界 ⇒ `sizeof - cl` 下溢成巨大值 ⇒ snprintf **无界写**，
+//      把后面的 .bss（正是全局 `vm`）整段刷成 "[340][341]..." ⇒ 主线程 0xC0000005
+//      （崩在 vm_ffi_end / thread_reap，完全看不出和 clone 有关）。
+//      症状：globals 里有个几千元素的 Array 时，spawn 约 1/4 概率崩。
+//   ② 同一个循环原本对**每个元素**都构造诊断上下文（2×192B memcpy + strlen + snprintf）
+//      ⇒ Array[int] 克隆 67 ns/元素（10 万元素 7 ms，而元素拷贝本身只要 0.2 ms）。
+//      现在只对「可能被拒」的容器元素构造 ✓（标量 / string 永远克隆成功）。
+//
+// 本用例覆盖：
+//   ① 大 globals + 多轮**并发** spawn（复现上面那条竞争路径，修好后必须稳定通过）
+//   ② 子线程克隆到的 globals 内容/长度正确
+//   ③ 大数组过 channel：内容完整 + 接收侧是独立副本（深拷贝语义）
+import threads
+
+Array[int] gBig = []
+Array[string] gNames = []
+
+func seenLen(): int { return gBig.len() + gNames.len() }
+
+func echoArr(Channel ch, Array[int] a) { ch.send(a) }
+
+main() {
+    for 0 : 4999 to i { gBig.add(i * 2) }
+    for 0 : 99 to i { gNames.add("name-" + _str(i)) }
+
+    // ① 多轮并发 spawn：每轮 24 条线程同时克隆同一份 5000 元素 globals
+    for 0 : 2 to round {
+        var ts = []
+        for 0 : 23 to k { ts.add(threads.start(seenLen)) }
+        var total = 0
+        for ts to t { total = total + _int(t.join()) }
+        assert_eq(total, 24 * 5100, "②子线程克隆到的 globals 长度应一致（轮 " + _str(round) + "）")
+    }
+
+    // ③ 大数组过 channel
+    Channel[Array[int]] ch = threads.channel(1)
+    var t = threads.start(echoArr, ch, gBig)
+    Array[int] got = ch.receive()
+    t.join()
+    assert_eq(got.len(), 5000, "③大数组应完整送达")
+    assert_eq(got[0], 0, "③首元素应正确")
+    assert_eq(got[4999], 9998, "③末元素应正确")
+    got[0] = 12345
+    assert_eq(gBig[0], 0, "③接收侧的改动不应影响发送方（深拷贝）")
+
+    print("test_threads_globals_clone passed")
+}

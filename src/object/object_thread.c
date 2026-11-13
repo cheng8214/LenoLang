@@ -5,6 +5,34 @@
 #include "include/method_table.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+
+// ==================== spawn 耗时探针（LENO_THREAD_DEBUG=1 时打印）====================
+// 用途：`threads.start` 单个约 190us，需要知道钱花在哪一段（VM/GC 初始化 / 模块注册 /
+//   struct 定义导入 / globals 克隆）。默认关闭，零开销（一次 getenv）。
+static uint64_t thr_dbg_now_us(void) {
+#ifdef _WIN32
+    static LARGE_INTEGER freq;
+    static int inited = 0;
+    if (!inited) { QueryPerformanceFrequency(&freq); inited = 1; }
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return (uint64_t)((double)c.QuadPart * 1000000.0 / (double)freq.QuadPart);
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)(ts.tv_nsec / 1000);
+#endif
+}
+
+static int thr_dbg_on(void) {
+    static int on = -1;
+    if (on < 0) {
+        const char* e = getenv("LENO_THREAD_DEBUG");
+        on = (e && e[0] && e[0] != '0') ? 1 : 0;
+    }
+    return on;
+}
 
 // 子线程使用独立的 VM 数组（多线程模式下）
 // 主程序直接使用全局 vm，保持效率第一
@@ -87,8 +115,17 @@ void channel_unref(ObjChannel* channel);
 #define CHANNEL_CLONE_MAX_DEPTH 64
 
 // 诊断用：正在克隆的字段（形如 "Point.x"），只在"不可跨线程类型"的报错文案里带上。
-//   ⚠ 纯诊断、**不参与语义** ✓：写成静态是因为克隆全程在**同一个线程**内跑完（无 yield ✓）。
-static char g_channel_clone_ctx[192] = "";
+//   ⚠ 纯诊断、**不参与语义** ✓。
+//   ★★ 2026-11-14（并发压测）：必须是 **THREAD_LOCAL** ★★
+//     克隆路径本来就**跑在多个线程上**（每个子线程启动时克隆 globals、收消息时克隆值），
+//     原来写成进程级 static ⇒ 并发 snprintf/strlen 同一个 192 字节缓冲。
+//     实测症状（`spawn 时 globals 里有个 4000 元素 Array`，18 次里崩 4 次）：
+//       strlen 可能读到**没被 NUL 终止**的中间态 ⇒ 返回 >192 ⇒
+//       `sizeof - cl` 下溢成巨大值 ⇒ snprintf **无界写**，把后面的 .bss（正是全局 `vm`）
+//       整段刷成 "[340][341]..." 这样的 ctx 文本 ⇒ 主线程 vm_run 访问野指针
+//       0xC0000005（崩在 vm_ffi_end / thread_reap，完全看不出和 clone 有关）。
+//     改 TLS 后同一压测 0 崩溃 ✓；下面再补一道 `cl` 上界钳位（防御性，杜绝再次下溢）✓。
+static THREAD_LOCAL char g_channel_clone_ctx[192] = "";
 
 static Value channel_clone_value(Value val, int depth);
 
@@ -226,16 +263,34 @@ static Value channel_clone_value(Value val, int depth) {
                         copy->elements = (Value*)malloc(copy->capacity * sizeof(Value));
                         if (!copy->elements) return val_null();
                         for (int i = 0; i < arr->count; i++) {
-                            // 诊断上下文：`数组[3]`（与 struct 字段同一套机制）——
-                            // 否则"Array 里混进一个 cstruct"只能报到数组本身，用户不知道是第几个
-                            char saved_ctx[sizeof(g_channel_clone_ctx)];
-                            memcpy(saved_ctx, g_channel_clone_ctx, sizeof(saved_ctx));
-                            size_t cl = strlen(g_channel_clone_ctx);
-                            snprintf(g_channel_clone_ctx + cl,
-                                     sizeof(g_channel_clone_ctx) - cl,
-                                     "%s[%d]", cl > 0 ? "" : "数组", i);
-                            copy->elements[i] = channel_clone_value(arr->elements[i], depth + 1);
-                            memcpy(g_channel_clone_ctx, saved_ctx, sizeof(g_channel_clone_ctx));
+                            // ★ 2026-11-14（压测）：**只有可能被拒的元素**才构造诊断上下文 ✗→✓
+                            //   下面这段 `数组[3]` 上下文是给「Array 里混进一个 cstruct / Ptr」
+                            //   报错用的，可它原本对**每个元素**都做 2×192B memcpy + strlen
+                            //   + snprintf("%d") —— 实测 Array[int] 克隆 67 ns/元素（10 万元素 7 ms），
+                            //   元素拷贝本身只要 ~2 ns。而标量 / string 根本不可能被拒
+                            //   （`channel_clone_value` 对它们永远成功）⇒ 直接跳过，报错文案一字不变 ✓
+                            Value elem = arr->elements[i];
+                            bool need_ctx = false;
+                            if (val_is_obj(elem)) {
+                                int et = val_as_obj(elem)->type;
+                                need_ctx = (et == OBJ_ARRAY || et == OBJ_DICT ||
+                                            et == OBJ_STRUCT || et == OBJ_CLOSURE);
+                            }
+                            if (need_ctx) {
+                                char saved_ctx[sizeof(g_channel_clone_ctx)];
+                                memcpy(saved_ctx, g_channel_clone_ctx, sizeof(saved_ctx));
+                                size_t cl = strlen(g_channel_clone_ctx);
+                                // 上界钳位：`cl` 若超过缓冲（并发写曾把 NUL 冲掉），
+                                //   `sizeof - cl` 会下溢成巨大值 ⇒ snprintf 无界写 ⇒ 刷坏全局数据 ✗
+                                if (cl > sizeof(g_channel_clone_ctx) - 1) cl = sizeof(g_channel_clone_ctx) - 1;
+                                snprintf(g_channel_clone_ctx + cl,
+                                         sizeof(g_channel_clone_ctx) - cl,
+                                         "%s[%d]", cl > 0 ? "" : "数组", i);
+                                copy->elements[i] = channel_clone_value(elem, depth + 1);
+                                memcpy(g_channel_clone_ctx, saved_ctx, sizeof(g_channel_clone_ctx));
+                            } else {
+                                copy->elements[i] = channel_clone_value(elem, depth + 1);
+                            }
                         }
                     }
                     return val_obj((Object*)copy);
@@ -383,6 +438,9 @@ static void* thread_entry_point(void* arg) {
     VM child_vm;
     memset(&child_vm, 0, sizeof(VM));
 
+    int dbg = thr_dbg_on();
+    uint64_t dt0 = dbg ? thr_dbg_now_us() : 0;
+
     // 初始化子线程 VM
     child_vm.chunk = NULL;
     child_vm.ip = NULL;
@@ -470,6 +528,7 @@ static void* thread_entry_point(void* arg) {
     // 初始化子线程的字符串表（线程局部）
     extern void intern_table_init(void);
     intern_table_init();
+    uint64_t dt1 = dbg ? thr_dbg_now_us() : 0;
 
     // 注册内置 Native 全局函数（与主 VM 一致）
     extern void native_register_globals(void);
@@ -506,6 +565,7 @@ static void* thread_entry_point(void* arg) {
     cstructs_init_methods();
     extern void threads_init_instance_methods(void);
     threads_init_instance_methods();
+    uint64_t dt2 = dbg ? thr_dbg_now_us() : 0;   // 模块/实例方法注册结束
 
     // ★ 将主线程已定义的 struct 类型导入子线程的定义表。
     // 普通 struct 定义表是线程局部，子线程默认为空；
@@ -514,6 +574,7 @@ static void* thread_entry_point(void* arg) {
     if (saved_struct_defs && saved_struct_def_count > 0) {
         struct_def_import_from_thread(saved_struct_defs, saved_struct_def_count);
     }
+    uint64_t dt3 = dbg ? thr_dbg_now_us() : 0;   // struct 定义导入结束
 
     // ==================== 全局变量：数据对象深拷贝（TH8，2026-10-20）====================
     // 旧行为：只把 Value 指针抄过去 ⇒ 主线程与子线程**共用同一个** Array / Dict / struct
@@ -561,6 +622,15 @@ static void* thread_entry_point(void* arg) {
         }
         gc_set_enabled(saved_gc_enabled);
         current_exec_vm = saved_exec_vm;
+    }
+    if (dbg) {
+        uint64_t dt4 = thr_dbg_now_us();
+        fprintf(stderr, "[THR] vm/GC=%llu  模块注册=%llu  struct导入=%llu  globals克隆=%llu  合计=%llu us\n",
+                (unsigned long long)(dt1 - dt0),
+                (unsigned long long)(dt2 - dt1),
+                (unsigned long long)(dt3 - dt2),
+                (unsigned long long)(dt4 - dt3),
+                (unsigned long long)(dt4 - dt0));
     }
 
     // ★ 始终在子线程 GC 堆上创建新的闭包副本。
