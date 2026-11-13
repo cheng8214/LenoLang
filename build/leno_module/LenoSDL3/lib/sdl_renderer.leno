@@ -53,6 +53,33 @@ Ptr[u8] _texIdx = null
 int     _texIdxCap = 0
 int     _texIdxLastCount = 0
 
+// ==================== 圆角 9 宫格的**固定索引表**（2026-11-13）====================
+//   为什么：`emitMask9` 原来每块用 6 顶点拼两个三角形 ⇒ 9 块 = **54 个顶点**
+//   （每顶点 8 个字段 ⇒ 432 次写，实测占掉单次圆角矩形 ~5 µs 的绝大部分）。
+//   改用「4 顶点 + 索引」⇒ 36 个顶点（-33% 写入），索引模式对 9 块是**固定**的
+//   （第 q 块 = q*4 + {0,1,2, 0,2,3}）⇒ 一次性预生成，之后每次提交直接复用，
+//   每帧零成本。
+//   ⚠ 只影响 `emitMask9` 内部，不涉及绘制顺序（所以不需要像合批那样做 flush 协调）。
+Ptr[u8] _mask9Idx = null
+
+func _mask9IndexPtr(): Ptr[u8] {
+    if _mask9Idx != null { return _mask9Idx }
+    Ptr[u8] p = ffi.malloc(9 * 6 * 4)
+    if p == null { return null }
+    for 0 : 8 to q {
+        int b = q * 4
+        int o = q * 24
+        ffi.write_int(p, o,      b)
+        ffi.write_int(p, o + 4,  b + 1)
+        ffi.write_int(p, o + 8,  b + 2)
+        ffi.write_int(p, o + 12, b)
+        ffi.write_int(p, o + 16, b + 2)
+        ffi.write_int(p, o + 20, b + 3)
+    }
+    _mask9Idx = p
+    return p
+}
+
 func _tmpRect0(): SDL_FRect {
     if _tmpR0 == null { _tmpR0 = SDL_FRect.malloc(); _tmpR0P = _tmpR0.to_ptr() }
     return _tmpR0
@@ -1665,7 +1692,8 @@ const BX_TEX    = 4   // 批处理文字纹理
         float oy = y + r - corner
         float midW = w - 2.0 * r
         float midH = h - 2.0 * r
-        var verts = SDL_Vertex.malloc_array(54)     // 9 块 × 2 三角形 × 3 顶点 ✓
+        // 9 块 × **4 顶点**（索引进固定表 `_mask9Idx`）⇒ 36 个顶点，比原来的 54 少 33% 写入
+        var verts = SDL_Vertex.malloc_array(36)
         int vn = 0
         // ⚠ `for A : B to v` 是**闭区间**（含 B ✓）
         for 0 : 2 to cc {
@@ -1688,34 +1716,36 @@ const BX_TEX    = 4   // 批处理文字纹理
                 float dh2 = corner
                 if rr == 1 { dy = y + r; dh2 = midH }
                 if rr == 2 { dy = y + h - r }
-                // 目标尺寸 ≤ 0 ⇒ 该块不存在（例：正圆时中段 = 0 ✓）
-                if dw2 <= 0.0 or dh2 <= 0.0 { continue }
+                // 目标尺寸 ≤ 0 ⇒ 该块不存在（例：正圆时中段 = 0）
+                //   ⚠ **不能 continue**：索引表是"第 q 块 → 顶点 4q..4q+3"的固定映射，
+                //   跳过一块会让后面所有顶点前移 ⇒ 索引错位（画错东西）。
+                //   这里把尺寸压成 0（退化三角形 = 什么也不画），顶点数保持 4 对齐。
+                if dw2 <= 0.0 { dw2 = 0.0 }
+                if dh2 <= 0.0 { dh2 = 0.0 }
                 float u0 = sx * inv
                 float u1 = (sx + sw2) * inv
                 float v0 = sy * inv
                 float v1 = (sy + sh2) * inv
-                // 两个三角形 = 6 顶点（不用索引缓冲 ✓）
-                verts[vn].x = dx;         verts[vn].y = dy
-                verts[vn].u = u0;         verts[vn].v = v0
+                // 4 顶点（TL/TR/BR/BL）+ 索引表拼两个三角形：比 6 顶点少写 1/3
+                verts[vn].x = dx;           verts[vn].y = dy
+                verts[vn].u = u0;           verts[vn].v = v0
                 verts[vn + 1].x = dx + dw2; verts[vn + 1].y = dy
                 verts[vn + 1].u = u1;       verts[vn + 1].v = v0
                 verts[vn + 2].x = dx + dw2; verts[vn + 2].y = dy + dh2
                 verts[vn + 2].u = u1;       verts[vn + 2].v = v1
-                verts[vn + 3].x = dx;       verts[vn + 3].y = dy
-                verts[vn + 3].u = u0;       verts[vn + 3].v = v0
-                verts[vn + 4].x = dx + dw2; verts[vn + 4].y = dy + dh2
-                verts[vn + 4].u = u1;       verts[vn + 4].v = v1
-                verts[vn + 5].x = dx;       verts[vn + 5].y = dy + dh2
-                verts[vn + 5].u = u0;       verts[vn + 5].v = v1
-                for 0 : 5 to k {
+                verts[vn + 3].x = dx;       verts[vn + 3].y = dy + dh2
+                verts[vn + 3].u = u0;       verts[vn + 3].v = v1
+                for 0 : 3 to k {
                     verts[vn + k].r = cr; verts[vn + k].g = cg
                     verts[vn + k].b = cb; verts[vn + k].a = ca
                 }
-                vn = vn + 6
+                vn = vn + 4
             }
         }
         if vn == 0 { verts.free(); return true }
-        var ok = _lib.SDL_RenderGeometry(handle, tex, verts.to_ptr(), vn, null, 0)
+        // 索引进固定表：第 q 块 = 顶点 4q..4q+3（预生成一次，之后每次零成本）
+        Ptr[u8] idx = _mask9IndexPtr()
+        var ok = _lib.SDL_RenderGeometry(handle, tex, verts.to_ptr(), vn, idx, (vn / 4) * 6)
         verts.free()
         return ok
     }
