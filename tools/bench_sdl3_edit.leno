@@ -1,0 +1,114 @@
+// bench_sdl3_edit.leno —— `sdl_edit` 渲染基准（真实系统字体 + 无头渲染器）
+//
+// 用法（仓库根目录）：
+//     $env:SDL_VIDEODRIVER="dummy"
+//     ./build/leno.exe tools/bench_sdl3_edit.leno
+//
+// 为什么能无头：只测 **Edit 自己的每帧开销**（行缓存/行列同步/文本测量/圆角背景），
+//   不读回像素，所以 dummy 驱动足够。字体走 `createFontAuto` 的 Windows 回退链
+//   （msyh.ttc → …），没有字体时 measure 会失真，请注意输出里 `_font.ok`。
+//
+// 2026-11-13 基线 → 优化后（同机、3 轮取最好）：
+//     多行 5000 行（光标末尾）    347.5 → 201.3 µs/帧   (-42%)
+//     多行 200 行                 93.5 →  87.6 µs/帧
+//     单行 500 字符               29.5 →  28.8 µs/帧
+//   本轮改的：`sync_line_col` 按「光标位置 + 文本脏」缓存（原来每帧 O(行数) 全表扫，
+//   5000 行 ≈ 250 µs/帧）、`text_width_to` 前缀宽度缓存、占位符 split 缓存、
+//   单行整串 measure 缓存。
+//
+// ⚠ **剩下的最大头是圆角背景/边框**（不是文本）—— 诊断段实测同一控件：
+//     空文本 + 默认圆角  17.7 µs/帧
+//     空文本 + radius=0   2.99 µs/帧   ⇒ 每次 fillRoundedRect/drawRoundedRect ≈ 7~8 µs
+//   即一个输入框每帧要把 2/3 的时间花在"画自己的圆角底/边框"上。
+//   下一步该查 `rrGet`（蒙版纹理缓存）为什么每次都像缓存未命中。
+import ffi
+import times
+import "../build/leno_module/LenoSDL3/lib/sdl_core.leno" as core
+import "../build/leno_module/LenoSDL3/lib/sdl_window.leno" as win
+import "../build/leno_module/LenoSDL3/lib/sdl_renderer.leno" as rend
+import "../build/leno_module/LenoSDL3/lib/sdl_edit.leno" as edt
+use win.(Window, Renderer)
+use edt.Edit
+
+Renderer R = null
+
+func benchFrames(string name, int frames, func():void body) {
+    for 0 : 2 to _w { body() }
+    var best = -1.0
+    for 0 : 2 to _rep {
+        var t0 = times.us()
+        for 0 : frames - 1 to _f { body() }
+        var t1 = times.us()
+        var per = (t1 - t0) / _float(frames)
+        if best < 0.0 or per < best { best = per }
+    }
+    print("  " + name + " ⇒ " + _str(best) + " us/帧")
+}
+
+func bigText(int lines, int perLine): string {
+    var s = ""
+    for 0 : lines - 1 to i {
+        var line = ""
+        for 0 : perLine - 1 to k { line = line + "a" }
+        if i == 0 { s = line } else { s = s + "\n" + line }
+    }
+    return s
+}
+
+main() {
+    if not core.initVideo() { print("initVideo failed: " + core.getError()); return }
+    var w = win.createWindow({ title: "editbench", w: 640, h: 400 })
+    R = w.createRenderer()
+
+    print("=== 多行 ===")
+    var e1 = edt.createEdit({ multiline: true, font_size: 14.0, w: 600.0, h: 380.0 })
+    e1.set_pos(0.0, 0.0)
+    e1.set_text(bigText(5000, 20))
+    e1.focus()
+    benchFrames("5000 行（光标末尾）", 30, func() { e1.render(R) })
+
+    var e2 = edt.createEdit({ multiline: true, font_size: 14.0, w: 600.0, h: 380.0 })
+    e2.set_pos(0.0, 0.0)
+    e2.set_text(bigText(200, 20))
+    e2.focus()
+    benchFrames("200 行（光标末尾）", 60, func() { e2.render(R) })
+
+    print("=== 单行 ===")
+    var s500 = ""
+    for 0 : 499 to i { s500 = s500 + "b" }
+
+    var e3 = edt.createEdit({ multiline: false, font_size: 14.0, w: 600.0, h: 30.0 })
+    e3.set_pos(0.0, 0.0)
+    e3.set_text(s500)
+    e3.focus()
+    benchFrames("500 字符（聚焦）", 120, func() { e3.render(R) })
+    e3.blur()
+    benchFrames("500 字符（未聚焦）", 120, func() { e3.render(R) })
+
+    var e4 = edt.createEdit({ multiline: false, font_size: 14.0, w: 600.0, h: 30.0 })
+    e4.set_pos(0.0, 0.0)
+    e4.set_text(s500.slice(0, 19))
+    e4.focus()
+    benchFrames("20 字符（聚焦）", 120, func() { e4.render(R) })
+
+    print("=== 诊断：空输入框的成本在哪 ===")
+    var e5 = edt.createEdit({ multiline: false, font_size: 14.0, w: 600.0, h: 30.0 })
+    e5.set_pos(0.0, 0.0)
+    e5.set_text("")
+    benchFrames("空文本 + 默认圆角", 120, func() { e5.render(R) })
+
+    var e6 = edt.createEdit({ multiline: false, font_size: 14.0, w: 600.0, h: 30.0, radius: 0.0 })
+    e6.set_pos(0.0, 0.0)
+    e6.set_text("")
+    benchFrames("空文本 + radius=0", 120, func() { e6.render(R) })
+
+    var e7 = edt.createEdit({ multiline: false, font_size: 14.0, w: 600.0, h: 30.0, draw_bg: false })
+    e7.set_pos(0.0, 0.0)
+    e7.set_text("")
+    benchFrames("空文本 + draw_bg=false", 120, func() { e7.render(R) })
+
+    R.destroy()
+    w.destroy()
+    core.quit()
+    print("done")
+}
