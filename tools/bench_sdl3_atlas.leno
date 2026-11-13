@@ -1,0 +1,56 @@
+// bench_sdl3_atlas.leno —— 文字图集自检（**真实窗口**，SSAA 开，模拟 Aria 的用法）
+//
+// 用法（仓库根目录，**不要**设 SDL_VIDEODRIVER）：
+//     ./build/leno.exe tools/bench_sdl3_atlas.leno
+//
+// 它做的事：开一个真实窗口 → 每帧画 20 行 × 6 列**互不相同**的标签 → present。
+// 打印每帧的 `tex` 提交次数：
+//     第 1 帧：全部未命中 ⇒ 每条一次提交（几十次）
+//     第 2/3 帧：命中图集 ⇒ 应该只剩 1~2 次
+// 同时用于肉眼确认：文字位置有没有偏移、有没有糊/重影（图集 v1 就栽在这里）。
+import ffi
+import times
+import "../build/leno_module/LenoSDL3/lib/sdl_core.leno" as core
+import "../build/leno_module/LenoSDL3/lib/sdl_window.leno" as win
+import "../build/leno_module/LenoSDL3/lib/sdl_renderer.leno" as rend
+import "../build/leno_module/LenoSDL3/lib/sdl_font.leno" as fnt
+use win.(Window, Renderer)
+use fnt.Font
+
+main() {
+    if not core.initVideo() { print("initVideo failed: " + core.getError()); return }
+    var w = win.createWindow({ title: "atlas check", w: 900, h: 600 })
+    var R = w.createRenderer()
+    if R == null { print("createRenderer failed"); return }
+    print("渲染驱动 = " + R.driver_name())
+    R.enableSSAA(900, 600, 2.0)
+    print("SSAA = " + _str(R.getSSAA()))
+
+    Font F = fnt.createFontAuto(14.0)
+    if not F.ok { print("字体打不开"); return }
+
+    for 0 : 3 to fr {
+        R.setColorFloat(0.12, 0.13, 0.16, 1.0)
+        R.clear()
+        // 参考框：确认坐标系没被图集插入改动
+        R.setColorFloat(0.3, 0.6, 0.9, 1.0)
+        R.fillRect(20.0, 20.0, 860.0, 24.0)
+        R.drawRect(20.0, 20.0, 860.0, 560.0)
+
+        var s0 = rend.getBatchTexSubmits()
+        for 0 : 19 to r {
+            for 0 : 5 to c {
+                string s = "第" + _str(r) + "行第" + _str(c) + "列"
+                R.drawText(F, s, 30.0 + _float(c) * 140.0, 60.0 + _float(r) * 26.0, 0xFFFFFFF0)
+            }
+        }
+        R.present()
+        print("第 " + _str(fr + 1) + " 帧：tex 提交 = " + _str(rend.getBatchTexSubmits() - s0))
+    }
+
+    core.delay(600)        // 让窗口停一下，便于肉眼确认
+    R.destroy()
+    w.destroy()
+    core.quit()
+    print("done")
+}

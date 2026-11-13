@@ -58,6 +58,43 @@ SDL_Color  _tmpC0  = null
 Ptr[u8] _texIdx = null
 int     _texIdxCap = 0
 int     _texIdxLastCount = 0
+// ==================== 文字图集 v2（2026-11-13）====================
+//   动机：`flushTexBatch` 按**纹理**分组，而每个不同字符串各是一张纹理 ⇒
+//   表格一帧 138 次 `RenderGeometry`（每次 ~6 µs，只画 1 条）≈ 整帧耗时。
+//   做法：整串文字位图铺进一张大图集 ⇒ 所有文字共用一张纹理 ⇒ 整帧 1 次提交。
+//
+//   ⚠ v1 的教训（真实窗口错位，已回退）：**不能在绘制中途切渲染目标** ——
+//     `SDL_SetRenderTarget` 会重置 viewport，SSAA 下切回来不恢复 scale/clip
+//     就会整片错位。v2 改成：
+//       ① 新文字只**入队**，本帧仍走旧的独立纹理路径（画面永不受影响）；
+//       ② 只在 `present()` 开头批量插入一次（此时批已提交完）；
+//       ③ 插入前后显式保存/恢复 target、scale、clip（scale 用原始 SDL 调用恢复，
+//          绕开 `setScale` 的"值没变就 return"）；
+//       ④ 插入后自检 target 是否恢复，不一致就打印告警。
+struct AtlasReg {
+    float u0 = 0.0
+    float v0 = 0.0
+    float u1 = 0.0
+    float v1 = 0.0
+    float w = 0.0
+    float h = 0.0
+}
+Ptr[u8] _atlasTex = null
+int _atlasW = 1024
+int _atlasH = 1024
+int _atlasX = 0
+int _atlasY = 0
+int _atlasRowH = 0
+Dict _atlasMap = null
+Array[AtlasReg] _atlasRegs = []
+// 待插入队列（本帧首次出现的文字）——由 present() 统一插入
+Array[Font]   _atlasPendFont = []
+Array[string] _atlasPendText = []
+Array[int]    _atlasPendR = []
+Array[int]    _atlasPendG = []
+Array[int]    _atlasPendB = []
+Array[float]  _atlasPendPt = []
+
 // 文字批处理用的**顶点缓冲**（模块级复用，同 `_texIdx` 的理由）：
 //   原来每次提交都 `SDL_Vertex.malloc_array(vcnt)` + `free()` —— 表格那种"一格一个纹理"
 //   的界面一帧有上百次提交，光分配就上百次（还各带一个 GC 对象）。
@@ -340,7 +377,8 @@ const BX_TEX    = 4   // 批处理文字纹理
             bxFillN = 0; bxOutN = 0; _bxLineN = 0
             // 文字纹理批处理：每条目 5 floats (dstX, dstY, dstW, dstH, alpha)
             bxTexCap = 1024
-            Ptr[f32] texBuf = ffi.malloc(bxTexCap * 20); bxTexCoords = texBuf
+            // 每条目 9 个 float（x,y,w,h,alpha,u0,v0,u1,v1）—— 图集要按子矩形 UV 采样
+            Ptr[f32] texBuf = ffi.malloc(bxTexCap * 36); bxTexCoords = texBuf
             bxTexN = 0; bxTexPtrs = []
         }
         return ok
@@ -395,6 +433,9 @@ const BX_TEX    = 4   // 批处理文字纹理
     // SSAA 开启时：把高分辨率离屏纹理以 1x 缩放贴回窗口，GPU 双线性降采样 -> 平滑边缘
     func present(): bool {
         flushBatches()
+        // ★ 图集插入只在这里做（批已提交、画面已画完）⇒ 不会把排队图元画进图集，
+        //   也不会在绘制中途改变 scale/clip 影响本帧的其它图元。
+        _atlasFlushPending()
         if ssaa {
             setRenderTarget(null)
             setScale(1.0, 1.0)
@@ -947,7 +988,15 @@ const BX_TEX    = 4   // 批处理文字纹理
             // ★ 2026-11-13：不再"每个标签两次 setFontSize"（setFontSize = SetFontSize + 三个
             //   getter，8 次 SDL 调用/标签/帧）—— 目标字号作为参数传下去，**只在真正
             //   创建纹理时**临时切一次（见 Font._getCachedTex 的 pt 参数）。
-            TextTexture tex = f._getCachedTex(handle, text, r, g, b, f._pt * ssaaScale)
+            float rpt = f._pt * ssaaScale
+            // 图集命中 ⇒ 同一张纹理 + 一段 UV（整帧文字合成一次提交）；未命中走旧路径
+            AtlasReg rg = _atlasLookup(f, text, r, g, b, rpt)
+            if rg.w > 0.0 {
+                pushTexBatch(_atlasTex, x, y, rg.w / ssaaScale, rg.h / ssaaScale, alphaMod,
+                             rg.u0, rg.v0, rg.u1, rg.v1)
+                return
+            }
+            TextTexture tex = f._getCachedTex(handle, text, r, g, b, rpt)
             if tex.ok {
                 float dw = tex.width  / ssaaScale
                 float dh = tex.height / ssaaScale
@@ -965,9 +1014,99 @@ const BX_TEX    = 4   // 批处理文字纹理
         }
     }
 
+    // 懒创建图集（TARGET 模式：要把整串文字画进去）
+    pri func _atlasEnsure(): bool {
+        if _atlasTex != null { return true }
+        Ptr[u8] t = createTexture(core.PIXELFORMAT_RGBA8888, 2, _atlasW, _atlasH)
+        if t == null { return false }
+        _atlasTex = t
+        if _atlasMap == null { _atlasMap = {} }
+        _atlasX = 0; _atlasY = 0; _atlasRowH = 0
+        return true
+    }
+
+    // 查图集；未命中则**入队**（本帧仍由调用方走旧纹理路径），返回 w<=0 表示"这次没有"
+    pri func _atlasLookup(Font f, string text, int r, int g, int b, float pt): AtlasReg {
+        AtlasReg none = new AtlasReg()
+        if text == "" { return none }
+        // ⚠ 不能在这里 `if _atlasMap == null { return none }` —— 图集是**懒创建**的
+        //   （第一次 flush 时才建），那样会"永远不排队 ⇒ 永远不创建"死锁，
+        //   实测表现为 tex 提交次数一直不降（120 次/帧）。
+        string key = $"{pt}\x01{r}\x01{g}\x01{b}\x01{text}"
+        if _atlasMap != null and _atlasMap.has(key) {
+            int hi = _int(_atlasMap[key])
+            if hi >= 0 and hi < _atlasRegs.len() { return _atlasRegs[hi] }
+        }
+        // 未命中：入队（去重靠"下一帧会命中图集"，重复入队最多浪费一次插入）
+        _atlasPendFont.add(f)
+        _atlasPendText.add(text)
+        _atlasPendR.add(r); _atlasPendG.add(g); _atlasPendB.add(b)
+        _atlasPendPt.add(pt)
+        return none
+    }
+
+    // 在 present() 开头统一插入待排队的文字（**绝不在绘制中途切目标**）
+    pri func _atlasFlushPending() {
+        if _atlasPendText.len() == 0 { return }
+        if not _atlasEnsure() {
+            _atlasPendFont.clear(); _atlasPendText.clear()
+            _atlasPendR.clear(); _atlasPendG.clear(); _atlasPendB.clear(); _atlasPendPt.clear()
+            return
+        }
+        Ptr[u8] prevT = bxTarget
+        float sx = bxSx
+        float sy = bxSy
+        Ptr[u8] prevClip = bxClipPtr
+        bool hadClip = bxClip
+        setRenderTarget(_atlasTex)
+        _lib.SDL_SetRenderScale(handle, 1.0, 1.0)
+        _lib.SDL_SetRenderClipRect(handle, null)
+        for _atlasPendText.len() to pi {
+            Font pf = _atlasPendFont[pi]
+            string s = _atlasPendText[pi]
+            int pr = _atlasPendR[pi]
+            int pg = _atlasPendG[pi]
+            int pb = _atlasPendB[pi]
+            float ppt = _atlasPendPt[pi]
+            TextTexture tt = pf._getCachedTex(handle, s, pr, pg, pb, ppt)
+            if not tt.ok { continue }
+            int w = tt.width
+            int h = tt.height
+            if w <= 0 or h <= 0 or w > _atlasW or h > _atlasH { continue }
+            if _atlasX + w > _atlasW { _atlasX = 0; _atlasY = _atlasY + _atlasRowH; _atlasRowH = 0 }
+            if _atlasY + h > _atlasH { break }          // 满了 ⇒ 剩下的不再尝试（下次也装不下）
+            SDL_FRect dr = _tmpRect0()
+            dr.x = _float(_atlasX); dr.y = _float(_atlasY)
+            dr.w = _float(w); dr.h = _float(h)
+            _lib.SDL_RenderTexture(handle, tt.texture, null, _tmpR0P)
+            AtlasReg reg = new AtlasReg()
+            reg.u0 = _float(_atlasX) / _float(_atlasW)
+            reg.v0 = _float(_atlasY) / _float(_atlasH)
+            reg.u1 = _float(_atlasX + w) / _float(_atlasW)
+            reg.v1 = _float(_atlasY + h) / _float(_atlasH)
+            reg.w = _float(w); reg.h = _float(h)
+            _atlasRegs.add(reg)
+            string k2 = $"{ppt}\x01{pr}\x01{pg}\x01{pb}\x01{s}"
+            _atlasMap[k2] = _atlasRegs.len() - 1
+            _atlasX = _atlasX + w
+            if h > _atlasRowH { _atlasRowH = h }
+        }
+        // 恢复：目标 → scale（原始调用，绕开 setScale 的"没变就 return"）→ clip
+        setRenderTarget(prevT)
+        _lib.SDL_SetRenderScale(handle, sx, sy)
+        if hadClip and prevClip != null { _lib.SDL_SetRenderClipRect(handle, prevClip) }
+        else { _lib.SDL_SetRenderClipRect(handle, null) }
+        if bxTarget != prevT { print("[LenoSDL3] 图集插入后渲染目标未恢复（请报告）") }
+        _atlasPendFont.clear(); _atlasPendText.clear()
+        _atlasPendR.clear(); _atlasPendG.clear(); _atlasPendB.clear(); _atlasPendPt.clear()
+    }
+
     // 文字纹理批处理：收集到缓冲，不打断 fillRect/drawRect/drawLine 的批处理
     // 当缓冲满或纹理切换（由 _flushBatches 统一处理）时批量提交
-    pri func pushTexBatch(Ptr[u8] texture, float x, float y, float w, float h, float alpha) {
+    // ★ 2026-11-13（文字图集 v2）：多带一组 UV（默认整张纹理）。
+    //   图集方案里所有文字共用同一张纹理，每段只占一个子矩形 ⇒ 顶点按子矩形 UV 采样。
+    pri func pushTexBatch(Ptr[u8] texture, float x, float y, float w, float h, float alpha,
+                          float u0 = 0.0, float v0 = 0.0, float u1 = 1.0, float v1 = 1.0) {
         // ★ 2026-10-13：这里是**纹理批的唯一收口** ⇒ 全局 alpha 缩放放这一处最省 ✓
         //   ⚠ 文字也走这里（drawText 的两个分支都调它 ✓）⇒ **不要在 drawText 里再乘一次** ✗
         //     否则会"平方淡化"（0.5 × 0.5 = 0.25 ✗）
@@ -976,12 +1115,16 @@ const BX_TEX    = 4   // 批处理文字纹理
         if bxCur != BX_EMPTY and bxCur != BX_TEX { flushBatches() }
         // 缓冲满则先提交
         if bxTexN >= bxTexCap { flushBatches() }
-        int o = bxTexN * 5
+        int o = bxTexN * 9
         bxTexCoords[o]      = x
         bxTexCoords[o + 1]  = y
         bxTexCoords[o + 2]  = w
         bxTexCoords[o + 3]  = h
         bxTexCoords[o + 4]  = alpha
+        bxTexCoords[o + 5]  = u0
+        bxTexCoords[o + 6]  = v0
+        bxTexCoords[o + 7]  = u1
+        bxTexCoords[o + 8]  = v1
         bxTexPtrs.add(texture)
         bxTexN = bxTexN + 1
         bxCur = BX_TEX
@@ -1159,31 +1302,35 @@ const BX_TEX    = 4   // 批处理文字纹理
             // 填充顶点
             for count to k {
                 int entryIdx = i + k
-                int off = entryIdx * 5
+                int off = entryIdx * 9
                 float dx = bxTexCoords[off]
                 float dy = bxTexCoords[off + 1]
                 float dw = bxTexCoords[off + 2]
                 float dh = bxTexCoords[off + 3]
                 float alpha = bxTexCoords[off + 4]
+                float eu0 = bxTexCoords[off + 5]
+                float ev0 = bxTexCoords[off + 6]
+                float eu1 = bxTexCoords[off + 7]
+                float ev1 = bxTexCoords[off + 8]
                 // 4 顶点：左上、右上、右下、左下
                 // 顶点颜色全白，alpha 由顶点控制（与纹理相乘），无需 SDL_SetTextureAlphaMod
                 int vi = k * 4
                 // 左上 (0,0)
                 verts[vi].x = dx;           verts[vi].y = dy
                 verts[vi].r = 1.0; verts[vi].g = 1.0; verts[vi].b = 1.0; verts[vi].a = alpha
-                verts[vi].u = 0.0; verts[vi].v = 0.0
+                verts[vi].u = eu0; verts[vi].v = ev0
                 // 右上 (1,0)
                 verts[vi + 1].x = dx + dw;  verts[vi + 1].y = dy
                 verts[vi + 1].r = 1.0; verts[vi + 1].g = 1.0; verts[vi + 1].b = 1.0; verts[vi + 1].a = alpha
-                verts[vi + 1].u = 1.0; verts[vi + 1].v = 0.0
+                verts[vi + 1].u = eu1; verts[vi + 1].v = ev0
                 // 右下 (1,1)
                 verts[vi + 2].x = dx + dw;  verts[vi + 2].y = dy + dh
                 verts[vi + 2].r = 1.0; verts[vi + 2].g = 1.0; verts[vi + 2].b = 1.0; verts[vi + 2].a = alpha
-                verts[vi + 2].u = 1.0; verts[vi + 2].v = 1.0
+                verts[vi + 2].u = eu1; verts[vi + 2].v = ev1
                 // 左下 (0,1)
                 verts[vi + 3].x = dx;       verts[vi + 3].y = dy + dh
                 verts[vi + 3].r = 1.0; verts[vi + 3].g = 1.0; verts[vi + 3].b = 1.0; verts[vi + 3].a = alpha
-                verts[vi + 3].u = 0.0; verts[vi + 3].v = 1.0
+                verts[vi + 3].u = eu0; verts[vi + 3].v = ev1
                 // 索引（与顶点同一个循环里写，省掉一趟遍历）
                 int io = k * 24
                 ffi.write_int(idxPtr, io,      vi)
