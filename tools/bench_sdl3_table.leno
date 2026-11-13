@@ -1,0 +1,76 @@
+// bench_sdl3_table.leno —— `sdl_table` 渲染基准（无头 software 渲染器）
+//
+// 用法（仓库根目录）：
+//     $env:SDL_VIDEODRIVER="dummy"; ./build/leno.exe tools/bench_sdl3_table.leno
+//
+// 目的：找出「每帧成本是否随**总行数**增长」。表格只画可视区那十几行，
+//   如果 5000 行比 200 行慢很多，就说明每帧有 O(总行数) 的工作（重排/重测/重建）。
+import ffi
+import times
+import "../build/leno_module/LenoSDL3/lib/sdl_core.leno" as core
+import "../build/leno_module/LenoSDL3/lib/sdl_window.leno" as win
+import "../build/leno_module/LenoSDL3/lib/sdl_renderer.leno" as rend
+import "../build/leno_module/LenoSDL3/lib/sdl_table.leno" as tbl
+use win.(Window, Renderer)
+use tbl.Table
+
+Renderer R = null
+
+func benchFrames(string name, int frames, func():void body) {
+    for 0 : 2 to _w { body() }
+    var best = -1.0
+    for 0 : 2 to _rep {
+        var t0 = times.us()
+        for 0 : frames - 1 to _f { body() }
+        var t1 = times.us()
+        var per = (t1 - t0) / _float(frames)
+        if best < 0.0 or per < best { best = per }
+    }
+    print("  " + name + " ⇒ " + _str(best) + " us/帧（理论 " + _str(1000000.0 / best) + " FPS）")
+}
+
+func makeRows(int n, int cols): Array[Array[string]] {
+    var rows = []
+    for 0 : n - 1 to r {
+        var row = []
+        for 0 : cols - 1 to c { row.add("r" + _str(r) + "c" + _str(c)) }
+        rows.add(row)
+    }
+    return rows
+}
+
+main() {
+    if not core.initVideo() { print("initVideo failed: " + core.getError()); return }
+    var w = win.createWindow({ title: "tablebench", w: 960, h: 560 })
+    R = w.createRenderer()
+    if R == null { print("createRenderer failed"); return }
+    print("渲染驱动 = " + R.driver_name())
+
+    var hdr = ["A", "B", "C", "D", "E", "F"]
+    var big = makeRows(5000, 6)
+    var small = makeRows(200, 6)
+
+    var t1 = tbl.createTable({ w: 940.0, h: 540.0, font_size: 13.0 })
+    t1.set_headers(hdr)
+    t1.set_rows(big)
+    t1.set_pos(0.0, 0.0)
+    benchFrames("5000 行 × 6 列（只画可视区）", 30, func() { t1.render(R) })
+    print("    行数=" + _str(big.len()))
+
+    var t2 = tbl.createTable({ w: 940.0, h: 540.0, font_size: 13.0 })
+    t2.set_headers(hdr)
+    t2.set_rows(small)
+    t2.set_pos(0.0, 0.0)
+    benchFrames("200 行 × 6 列", 30, func() { t2.render(R) })
+
+    // 结构性变更：set_rows 一次（模拟"刷新数据/过滤"）
+    benchFrames("5000 行 + 每帧 set_rows（结构性变更）", 5, func() {
+        t1.set_rows(big)
+        t1.render(R)
+    })
+
+    R.destroy()
+    w.destroy()
+    core.quit()
+    print("done")
+}
