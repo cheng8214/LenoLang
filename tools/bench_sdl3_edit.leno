@@ -105,6 +105,17 @@ main() {
     e4.focus()
     benchFrames("20 字符（聚焦）", 120, func() { e4.render(R) })
 
+    print("=== 自动换行（wrap_line 逐字符测量）===")
+    // `set_word_wrap` 会置 drDirty ⇒ 每轮都**全量重排**，正好量到逐字符测量那条路
+    var e8 = edt.createEdit({ multiline: true, font_size: 14.0, w: 400.0, h: 380.0, word_wrap: true })
+    e8.set_pos(0.0, 0.0)
+    e8.set_text(bigText(50, 200))          // 50 行 × 200 字符 = 1 万字符
+    e8.focus()
+    benchFrames("50 行 × 200 字符，每轮全量重排（wordWrap）", 10, func() {
+        e8.set_word_wrap(true)             // 强制 drDirty
+        e8.render(R)
+    })
+
     print("=== 诊断：空输入框的成本在哪 ===")
     var e5 = edt.createEdit({ multiline: false, font_size: 14.0, w: 600.0, h: 30.0 })
     e5.set_pos(0.0, 0.0)
