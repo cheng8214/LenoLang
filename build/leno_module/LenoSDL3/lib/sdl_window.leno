@@ -223,6 +223,38 @@ Array[Array[Shortcut]]  _runShortcuts = []    // 各窗口快捷键列表
 Array[func():bool]       _runShortcutGuards = [] // 各窗口快捷键守卫回调
 var _runLoopActive = false    // 主循环是否已在运行
 
+// ==================== 控件级「模态浮层」/「点外部」状态（**按窗口 ID 归属**）====================
+// ★ 2026-11-13（Aria 实测反哺，重要）：
+//   这两组状态原来是 **Window 的实例字段**（`pri Widget? _modalW` / `pri bool _outArmed` …），
+//   可是**事件派发的循环只有一个**（`run()` 是方法，`_runLoopActive` 保证同一进程只有一个循环在跑）
+//   ⇒ 循环体里读到的 `_modalW` / `_outX`… 永远是「**开循环的那个窗口**」的字段，
+//     而不是「**事件所属窗口**」的字段 ✗
+//   ⇒ 症状：主窗口设过 `set_click_outside(播放列表矩形)` 之后，用户去点**对话框窗口**（另一个
+//     OS 窗口）的按钮 —— 那个按钮的**客户区局部坐标**被拿去和**主窗口**的矩形比 ⇒ 判成"点了外面"
+//     ⇒ ① 回调把播放列表收了 ② 这一下还被 `swallowed` 吞掉 ⇒ 对话框的按钮**根本没收到点击**
+//     （Aria 实测：弹出播放列表后再弹 msgBox，点「清空」第一下只关掉了播放列表，第二下才关对话框 ✗）
+//   修法：状态改成**模块级 + 记下所属窗口 ID**，派发时只对 `wid` 相同的窗口生效 ✓
+//   （单窗口应用行为完全不变 ✓）
+var _moWid = -1                  // 归属窗口 ID（-1 = 无）
+Widget? _moWidget = null         // 模态浮层持有者（见派发处的 modalHit ✓）
+var _moX = 0.0
+var _moY = 0.0
+var _moW = 0.0
+var _moH = 0.0
+var _outWid = -1                 // 归属窗口 ID（-1 = 无）
+func():void _outCb = null       // 点外部回调（见 set_click_outside）
+var _outArmed = false
+var _outX = 0.0
+var _outY = 0.0
+var _outW = 0.0
+var _outH = 0.0
+
+// 窗口销毁时把它的浮层状态一并摘掉（否则宽高/回调残留到下次同 ID 窗口 ✓）
+func _dropOverlayState(int wid) {
+    if _moWid == wid { _moWid = -1; _moWidget = null; _moW = 0.0; _moH = 0.0 }
+    if _outWid == wid { _outWid = -1; _outCb = null; _outArmed = false; _outW = 0.0; _outH = 0.0 }
+}
+
 // ★ 2026-11-08 诊断：累计渲染帧数。配合 timer.debugDump() 可以判断
 //   空闲时的高 CPU 是「定时器驱动的频繁重绘」还是别的原因。
 var _frameTotal = 0
@@ -846,19 +878,9 @@ export struct Window {
 
     // 通用控件注册：任何 impl Widget 的控件（含第三方自定义控件）都能被 run() 自动管理
     // z 值默认 0.0；如需自定义层级用 addZ(w, z) 或 setWidgetZ(w, z)
-    // 模态浮层持有者（见 process 里的 modalHit ✓）
-    pri Widget? _modalW
-    pri float _modX = 0.0
-    pri float _modY = 0.0
-    pri float _modW = 0.0
-    pri float _modH = 0.0
-    // 点外部回调（见 set_click_outside）
-    pri func():void _outCb = null
-    pri bool _outArmed = false
-    pri float _outX = 0.0
-    pri float _outY = 0.0
-    pri float _outW = 0.0
-    pri float _outH = 0.0
+    // ⚠ 控件级「模态浮层」/「点外部回调」的状态**不放在 Window 上**（放这里会让多窗口互相串：
+    //   主窗口的矩形被拿去量对话框窗口的坐标 ⇒ 点按钮变成"点了外面"✗）
+    //   ⇒ 现为模块级 + 按窗口 ID 归属，见文件顶部 `_moWid` / `_outWid` 那段的 2026-11-13 注释 ✓
 
     func add(Widget w): Widget {
         widgets.add(w)
@@ -889,9 +911,14 @@ export struct Window {
     // 模态浮层：设了它以后，落在该矩形内的鼠标事件**只**派发给它（弹层防穿透 ✓）
     //   矩形要显式给：接口类型（Widget）上不能调 get_x/get_y（框架只支持 `?.process` 这种动态派发 ✓）
     func set_modal(Widget w, float x, float y, float ww, float hh) {
-        _modalW = w; _modX = x; _modY = y; _modW = ww; _modH = hh
+        // 记下**自己**的 wid：矩形是本窗口客户区坐标，派发时必须按窗口配对 ✓
+        _moWid = getID()
+        _moWidget = w; _moX = x; _moY = y; _moW = ww; _moH = hh
     }
-    func clear_modal() { _modalW = null; _modW = 0.0; _modH = 0.0 }
+    // 只清自己的（另一个窗口的浮层状态不能被误清 ✓）
+    func clear_modal() {
+        if _moWid == getID() { _moWid = -1; _moWidget = null; _moW = 0.0; _moH = 0.0 }
+    }
 
     // 点外部回调（2026-10-29 反哺）：设了它以后，**左键按下且落在矩形外** ⇒ 调一次 cb，
     //   并且**这一下不再派发给任何控件**（否则"点列表按钮收起浮层"会变成收起后按钮又把它打开 ✗）。
@@ -899,11 +926,14 @@ export struct Window {
     //   矩形与 set_modal 同理，必须显式传（接口上调不了 get_x/get_y ✓）。
     //   ⚠ 只在**左键按下**那一刻判一次；`cb` 里只该做"收起/关闭"，别做 toggle（会把自己关回去）
     func set_click_outside(float x, float y, float ww, float hh, func():void cb) {
+        _outWid = getID()
         _outX = x; _outY = y; _outW = ww; _outH = hh
         _outCb = cb
         _outArmed = true
     }
-    func clear_click_outside() { _outCb = null; _outArmed = false; _outW = 0.0; _outH = 0.0 }
+    func clear_click_outside() {
+        if _outWid == getID() { _outWid = -1; _outCb = null; _outArmed = false; _outW = 0.0; _outH = 0.0 }
+    }
 
     func addZ(Widget w, float z): Widget {
         widgets.add(w)
@@ -1819,6 +1849,7 @@ export struct Window {
                             _lib.SDL_DestroyWindow(_runHnds[i])
                             _windowCount -= 1
                             core.dropPopupCaptures(_runWids[i])   // 窗口没了 ⇒ 它那块弹层捕获区也清掉 ✓
+                            _dropOverlayState(_runWids[i])        // 浮层/点外部状态同样是按窗口的 ✓
                             // ★ 2026-11-08：窗口自己的定时器一并注销（必须在 remove 之前取 wid）
                             //   不注销会一直跑 ⇒ 每拍 requestRedraw ⇒ 空闲 CPU 白烧
                             timer.unregisterByWindow(_runWids[i])
@@ -1865,22 +1896,29 @@ export struct Window {
                         //   底下的 Table/Button 也会同时收到（穿透 ✗）；`inPopupCapture` 那套是
                         //   "控件各自忽略"，会把**浮层自己内部**的控件也一起挡掉 ✗ ⇒ 只能在派发处拦。
                         bool modalHit = false
-                        if _modalW != null and (ev.isMouseMotion() or ev.isMouseButtonDown()
-                                                or ev.isMouseButtonUp() or ev.isMouseWheel()) {
+                        // ⚠ 必须同时满足 `_moWid == wid`：矩形是**设它的那个窗口**的客户区坐标，
+                        //   拿它去量别的窗口的事件就是"点哪儿都在外面"（2026-11-13 修 ✓ 见顶部注释）
+                        if _moWidget != null and _moWid == wid
+                            and (ev.isMouseMotion() or ev.isMouseButtonDown()
+                                 or ev.isMouseButtonUp() or ev.isMouseWheel()) {
                             var[float, float](mmx, mmy) = ev.mousePos()
                             if ev.isMouseWheel() { mmx = ev.wheelMouseX(); mmy = ev.wheelMouseY() }
                             // 矩形用 float 判（接口上调不了 get_x）；派发走 `?.process` 动态派发 ✓
-                            if mmx >= _modX and mmx <= _modX + _modW
-                                and mmy >= _modY and mmy <= _modY + _modH {
+                            if mmx >= _moX and mmx <= _moX + _moW
+                                and mmy >= _moY and mmy <= _moY + _moH {
                                 modalHit = true
-                                _modalW?.process(ev)
+                                _moWidget?.process(ev)
                             }
                         }
                         // ★ 点外部（2026-10-29）：左键按下且落在矩形外 ⇒ 回调一次，并**吞掉这一下**
                         //   为什么吞：否则"点列表按钮收起浮层"会变成「先收起、按钮再 toggle 打开」
                         //   ⇒ 看起来点了没反应（关了又开 ✗）
+                        //   ⚠ 同样必须 `_outWid == wid`（2026-11-13 修）：否则在**另一个窗口**
+                        //     （如 msgBox 对话框）上点按钮，会被主窗口的矩形判成"点了外面" ⇒
+                        //     先关掉浮层、这一下还被吞掉，按钮收不到点击（Aria 实测 ✗）
                         bool swallowed = false
-                        if _outArmed and ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+                        if _outArmed and _outWid == wid
+                            and ev.isMouseButtonDown() and ev.mouseButton() == 1 {
                             var[float, float](ox, oy) = ev.mousePos()
                             if ox < _outX or ox > _outX + _outW
                                 or oy < _outY or oy > _outY + _outH {
@@ -1999,6 +2037,9 @@ export struct Window {
                 _runRoots = []; _runRootX = []; _runRootY = []; _runW = []; _runH = []
                 _runDialogHidden = []; _runTransparent = []; _runOverlays = []
                 _runShortcuts = []; _runShortcutGuards = []
+                // 浮层/点外部状态也归零（否则下次 run() 会带着上一次窗口的矩形 ✓）
+                _moWid = -1; _moWidget = null; _moW = 0.0; _moH = 0.0
+                _outWid = -1; _outCb = null; _outArmed = false; _outW = 0.0; _outH = 0.0
                 ev.uninit()
                 if _windowCount <= 0 { core.quit() }
                 _runLoopActive = false
