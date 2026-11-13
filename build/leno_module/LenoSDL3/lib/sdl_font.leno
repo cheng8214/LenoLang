@@ -331,7 +331,12 @@ export struct Font {
         if texLastIdx >= 0 and texLastIdx < texCache.len() and usePt == texLastPt and
            texLastR == r and texLastG == g and texLastB == b and texLastText == text {
             CachedTex c0 = texCache[texLastIdx]
-            if c0.ok and c0.ren == renderer and c0.texture != null {
+            // ★ 2026-11-13 修「文字发虚 / 接不上 / 看不清」：
+            //   槽位会被**环形缓冲覆盖**（容量满后 `texCache[texHead] = e`）—— 那时
+            //   `texLastIdx` 指向的已经是**另一个字符串**的纹理，而 MRU 只比了参数
+            //   ⇒ 直接把别人的纹理画了出来（错字/糊字）。
+            //   这里补一次 key 核对（只比字符串，不重新拼 key）。
+            if c0.ok and c0.ren == renderer and c0.texture != null and c0.key == texLastKey {
                 TextTexture t0 = new TextTexture()
                 t0.texture = c0.texture; t0.ok = true; t0.width = c0.w; t0.height = c0.h
                 return t0
