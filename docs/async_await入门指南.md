@@ -471,8 +471,9 @@ A: 确保使用 `await` 等待 async 函数，并用 `try-catch` 捕获异常。
 
 ## 更多示例
 
-查看 `test/` 目录下的示例文件：
-- `test/async await/test_async.leno` - 综合测试
+查看 `examples/async await/` 目录下的示例文件：
+- `async_fetch.leno` - **实战：150 个并发连接（aconnect / arecv / aaccept），1 个线程**
+- `test_async.leno` - 综合测试
 - `test_async_yield.leno` - yield 测试
 - `test_async_all.leno` - all 测试
 - `test_async_timeout.leno` - timeout 测试
@@ -485,52 +486,72 @@ A: 确保使用 `await` 等待 async 函数，并用 `try-catch` 捕获异常。
 
 ## 异步网络 IO
 
-`sockets` 模块提供了异步方法 `sock.arecv()` 和 `sock.aaccept()`，配合 `await` 使用时让出执行权给事件循环，实现真正的并发网络服务器。
+`sockets` 提供了四个配合事件循环的方法：
+
+| 方法 | 用途 |
+|---|---|
+| `sockets.aconnect(host, port)` | **非阻塞** connect（返回 Future，`await` 出 `Socket?`） |
+| `sock.arecv(max)` | 异步收（一次 recv 的数据，返回 `string?`） |
+| `sock.aaccept()` | 异步接受连接（返回 `Socket?`） |
+| `sock.send(data)` | 发送（阻塞；小请求够用，**没有 `asend`**） |
+
+> ⚠ 别在协程里用阻塞的 `sockets.connect()` / `sock.recv()`：它们会把整条事件循环卡住，
+> 高并发会被串行化，backlog 满时甚至死锁。客户端一律用 `aconnect` + `arecv`。
 
 ### 基本模式
 
 ```leno
 import sockets
 import asyncs
-import io
 
-async func echo_server(int port) {
-    var server = sockets.listen("127.0.0.1", port)
-    if server == null { return }
-
-    while true {
+// 1 个 accept 协程：每来一个连接就派生一个处理协程（不 await ⇒ 并发处理）
+// 注意收尾条件：`while true { aaccept() }` 会让 asyncs.run() 永远不返回（还有挂起的 IO）
+//   ⇒ 按已知连接数收尾，或改用 asyncs.run_for(ms) 控制
+async func echo_server(Socket server, int n) {
+    for 0 : n - 1 to i {
         var client = await server.aaccept()
-        if client == null { break }
-        handle_client(client)
+        if client is Socket => c { handle_client(c) } else { break }
     }
-    server.close()
 }
 
 async func handle_client(Socket client) {
     while true {
         var data = await client.arecv(1024)
-        if data == null { break }
-        client.send("Echo: " + data)
+        if data is string => s { client.send("Echo: " + s) } else { break }
     }
     client.close()
 }
 
+// 客户端也一个请求一个协程
 async func connect_client(int port) {
-    var conn = sockets.connect("127.0.0.1", port)
-    conn.send("Hello")
-    var reply = await conn.arecv(1024)
-    io.print("收到: " + reply)
-    conn.close()
+    var conn = await sockets.aconnect("127.0.0.1", port)   // 非阻塞 connect
+    if conn is Socket => c {
+        c.send("Hello")
+        var reply = await c.arecv(1024)
+        if reply is string => s { print("收到: " + s) }
+        c.close()
+    }
 }
 
 main() {
-    echo_server(8080)
-    connect_client(8080)
-    connect_client(8080)
-    // 无需保活协程 — 事件循环会自动等待所有异步 I/O 完成
+    // 监听器必须在事件循环启动**之前**（同步地）建好
+    var server = sockets.listen("127.0.0.1", 0)      // 端口 0 = 系统分配
+    if server == null { print("监听失败"); _exit(1) }
+    int port = server.local_port()
+
+    echo_server(server, 2)              // 只需处理这 2 个连接
+    connect_client(port)
+    connect_client(port)
+    // 无需保活协程 —— 事件循环会自动等待挂起的异步 I/O
     asyncs.run()
+    server.close()
 }
 ```
+
+完整实战（150 个并发连接、含耗时对比）见
+[`examples/async await/async_fetch.leno`](../examples/async%20await/async_fetch.leno)；
+三个真实上限（select 1024 / 无 `asend` / 本机回环背压 ~200）见
+[module_asyncs.md](module_asyncs.md#实战并发网络客户端2026-11-14)。
 
 ### 关于保活协程
 

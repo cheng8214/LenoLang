@@ -1,0 +1,144 @@
+// async_fetch.leno —— async 的正经用法：**1 个线程撑起上百个并发连接**
+//
+// 场景：一个进程、一个线程、一个事件循环里，同时扮演
+//   · 服务端：1 个 accept 协程 + 每个连接 1 个处理协程（每个连接"处理"30ms，模拟查库 / 下游 RPC）
+//   · 客户端：N 个请求协程（aconnect + arecv，全部挂起在同一个事件循环上）
+//
+// 实测（Windows 10，本机回环）：150 个连接 × 每个 30ms ⇒ **65ms**；逐个等要 4500ms。
+//
+// 为什么这是 async 的主场：
+//   每个连接 99% 的时间在"等"（等 accept、等数据、等那 30ms 的模拟下游）。
+//   用线程做要 N 个线程（每个 MB 级栈 + OS 调度）；用 async 只要 N 个小协程，
+//   全部挂在同一个 select 上 ⇒ 1 个线程就够。
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe "examples\async await\async_fetch.leno"
+//   带硬超时（网络/线程/async 测试建议总是这样跑）：
+//   build\leno.exe tools\run_timeout.leno 30000 build\leno.exe "examples\async await\async_fetch.leno"
+//
+// 边界（别拿它当万能钥匙）：
+//   · 协程里做 CPU 密集计算会**卡住整个事件循环** ⇒ 重活交给 threads，结果经 Channel 交回
+//   · 事件循环是**每进程一个**（主线程）⇒ 子线程里不能 asyncs.run()
+//   · 公网 HTTPS 还需要 TLS；这里只演示"连接 + 收发"这一层
+//   · 没有 `asend`：发送走阻塞的 `sock.send`（小请求够用）。大 body 上传请放到线程里做
+//
+// 为什么默认 150 而不是 1000：
+//   本机回环上，Windows 的 listen 背压上限实测是 **200**。同一瞬间打超过 200 个 SYN，
+//   多出来的握手会被内核丢掉、等 TCP 超时重传（每次都多出 ~500ms）——那是 TCP 的行为，
+//   与 async 无关（实测 n=200 → 19ms；n=205 → 519ms，其中 5 个连接的 connect 用了 508ms）。
+//   所以这里留了余量取 150。**协程侧的容量**不在这个数上：assert/test_async_fanout.leno
+//   用 1500 个协程 / 定时器验证过。真实公网客户端也不会在同一微秒发起上千次握手。
+//   另一个已知上限：单次 select 最多带 FD_SETSIZE=1024 个 socket（超过靠游标轮转，
+//   能跑但延迟上升）⇒ 单循环挂起上千 socket 时要注意。
+import asyncs
+import sockets
+import strings
+import times
+import maths
+
+var N = 150          // 并发连接数（本机回环超过 ~200 会遇到 listen 背压，见上）
+var DELAY_MS = 30    // 服务端每个请求的"处理"耗时
+
+// ==================== 服务端 ====================
+
+// 每个连接一个协程：读请求 → 等 30ms（模拟下游）→ 回响应 → 关闭
+async func handle(Socket conn, int id) {
+    var req = await conn.arecv(4096)
+    if req is string {
+        await asyncs.sleep(DELAY_MS)          // 关键：挂起自己，不占线程
+        var body = "pong #" + _str(id)
+        conn.send("HTTP/1.1 200 OK\r\nContent-Length: " + _str(body.byte_len())
+                  + "\r\nConnection: close\r\n\r\n" + body)
+    }
+    conn.close()
+}
+
+// 1 个 accept 协程：每接受一个连接就**派生**一个处理协程（不 await ⇒ 各跑各的）
+async func serve(Socket listener, int n) {
+    for 0 : n - 1 to i {
+        var c = await listener.aaccept()
+        if c is Socket => conn {
+            handle(conn, i)                   // 故意不 await：并发处理
+        }
+    }
+}
+
+// ==================== 客户端 ====================
+
+// 一个请求 = 一个协程：连上 → 发请求 → 循环收到对端关闭 → 关闭
+async func fetch_one(int port, int id): string {
+    var c = await sockets.aconnect("127.0.0.1", port)   // 非阻塞 connect
+    if c is Socket => conn {
+        conn.send("GET /ping?id=" + _str(id)
+                  + " HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+        var buf = ""
+        // arecv 只返回**一次** recv 的数据（不是读完整个响应）⇒ 循环读到 null（对端关闭）
+        while true {
+            var d = await conn.arecv(65536)
+            if d is string => s { buf = buf + s } else { break }
+        }
+        conn.close()
+        return buf
+    }
+    return ""
+}
+
+// 扇出 N 个请求协程，再逐个 await（事件循环会把它们交错推进）
+async func fan_out(int port, int n): Dict {
+    Array[Future] fs = []
+    for 0 : n - 1 to i { fs.add(fetch_one(port, i)) }
+
+    var ok = 0
+    var bad = 0
+    for fs to f {
+        var r = await f
+        if r is string => s {
+            if strings.has(s, "200 OK") and strings.has(s, "pong #") {
+                ok = ok + 1
+            } else {
+                bad = bad + 1
+            }
+        } else {
+            bad = bad + 1
+        }
+    }
+    return {ok: ok, bad: bad}
+}
+
+// ==================== 入口 ====================
+
+main() {
+    Socket listener = sockets.listen("127.0.0.1", 0)   // 端口 0 = 系统分配
+    if listener == null {
+        print("监听失败：端口被占用 / 无权限")
+        _exit(1)
+    }
+    int port = listener.local_port()
+
+    serve(listener, N)          // 服务端协程先入队
+    var t0 = times.ms()
+    var f = fan_out(port, N)    // 客户端 N 个协程入队
+    asyncs.run()                // 单线程驱动全部协程
+    var cost = times.ms() - t0
+
+    var res = asyncs.all([f])   // run 之后结果都已就绪，可以安全收集
+    listener.close()
+
+    var ok = 0
+    var bad = 0
+    if res[0] is Dict => d {
+        ok = _int(d.get("ok", 0))
+        bad = _int(d.get("bad", 0))
+    }
+
+    print("并发连接: " + _str(N) + "，每个请求处理 " + _str(DELAY_MS) + "ms")
+    print("实际耗时: " + _str(maths.roundi(cost)) + "ms（1 个线程 / 1 个事件循环）")
+    print("串行等价: " + _str(N * DELAY_MS) + "ms（逐个等）")
+    print("成功: " + _str(ok) + "，失败: " + _str(bad))
+
+    if ok != N {
+        print("FAIL：有请求没拿到正确响应")
+        _exit(1)
+    }
+    print("PASS：async 在 1 个线程上跑完了 " + _str(N) + " 个并发连接")
+}

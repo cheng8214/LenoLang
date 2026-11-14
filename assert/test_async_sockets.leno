@@ -1,0 +1,96 @@
+// test_async_sockets.leno —— 回归：async + sockets 全链路（aaccept / aconnect / arecv）
+//
+// 已有覆盖（别重复造）：`test_sockets_io.leno` 覆盖 arecv/aaccept 的单连接往返；
+//   `test_sockets_aconnect.leno` 覆盖 4 路 aconnect + 拒绝端口；`test_async_io_limit.leno`
+//   覆盖 70 个并发 arecv（客户端走阻塞 connect）。它们都只断言**正确性**。
+//
+// 本用例补的是另外两条：
+//   ① **N 路 aconnect 扇出**（40 个请求协程全部走非阻塞 connect）
+//   ② **耗时断言**：总耗时必须远小于「逐个等」⇒ 若哪天事件循环被串行化，
+//      前三条用例仍然全绿，只有这条会响。这是"async 别退化"的哨兵。
+//
+// ⚠ 本机回环上 Windows 的 listen 背压约 200：**同一瞬间**打超过 200 个 SYN 会触发
+//   TCP 重传（多出 ~500ms，与 async 无关）⇒ 这里 N=40，远低于该阈值。
+import asyncs
+import sockets
+import strings
+import times
+
+var N = 40
+var DELAY_MS = 10
+
+// 每个连接一个协程：收请求 → 等 DELAY_MS（模拟下游）→ 回响应 → 关闭
+async func handle(Socket conn) {
+    var req = await conn.arecv(1024)
+    if req is string {
+        await asyncs.sleep(DELAY_MS)
+        conn.send("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+    }
+    conn.close()
+}
+
+// 1 个 accept 协程，每接受一个连接就派生一个处理协程（不 await ⇒ 并发处理）
+async func serve(Socket listener, int n) {
+    for 0 : n - 1 to i {
+        var c = await listener.aaccept()
+        if c is Socket => conn { handle(conn) }
+    }
+}
+
+async func fetch_one(int port): string {
+    var c = await sockets.aconnect("127.0.0.1", port)
+    if c is Socket => conn {
+        conn.send("GET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+        var buf = ""
+        // arecv 只返回一次 recv 的数据 ⇒ 循环读到对端关闭（null）
+        while true {
+            var d = await conn.arecv(4096)
+            if d is string => s { buf = buf + s } else { break }
+        }
+        conn.close()
+        return buf
+    }
+    return ""
+}
+
+async func fan_out(int port, int n) {
+    Array[Future] fs = []
+    for 0 : n - 1 to i { fs.add(fetch_one(port)) }
+    var out = []
+    for fs to f { out.add(await f) }
+    return out
+}
+
+main() {
+    Socket listener = sockets.listen("127.0.0.1", 0)
+    if listener == null {
+        print("E 监听 127.0.0.1:0 失败")
+        _exit(1)
+    }
+    int port = listener.local_port()
+
+    serve(listener, N)
+    var t0 = times.ms()
+    var f = fan_out(port, N)
+    asyncs.run()
+    var cost = times.ms() - t0
+    listener.close()
+
+    var got = asyncs.all([f])
+    var ok = 0
+    if got[0] is Array => a {
+        for a to v {
+            if v is string => s {
+                if strings.has(s, "200 OK") and strings.has(s, "ok") { ok = ok + 1 }
+            }
+        }
+    }
+    assert_eq(ok, N, "①N 个并发 aconnect/arecv 都应拿到 200 OK")
+
+    // ②真并发：串行下界是 N*DELAY_MS；给 2 倍余量避免慢机器误报
+    assert_eq(cost < N * DELAY_MS / 2, true,
+              "②总耗时应远小于串行耗时（实际 " + _str(cost) + "ms，串行下界 "
+              + _str(N * DELAY_MS) + "ms）")
+
+    print("test_async_sockets passed")
+}

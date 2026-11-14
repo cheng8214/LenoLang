@@ -11,6 +11,8 @@
 - [并发工具](#并发工具)
 - [示例代码](#示例代码)
 - [注意事项](#注意事项)
+- [性能提示](#性能提示)
+- [实战：并发网络客户端](#实战并发网络客户端2026-11-14)
 
 ---
 
@@ -769,7 +771,8 @@ main() {
 
 ### async 与 threads 的交互
 
-`async` 和 `threads` 是两套独立的并发模型，**不应混用**：
+`async` 和 `threads` 是两套**各自独立的调度器**，但可以**分工协作**：协程负责"等"，
+线程负责"算"，中间用 `Channel` 交接。
 
 | 特性 | async 协程 | threads 线程 |
 |------|-----------|-------------|
@@ -777,11 +780,41 @@ main() {
 | 内存模型 | 共享 VM 内存 | 隔离 VM，Channel 通信 |
 | 适用场景 | I/O 并发、异步等待 | CPU 并行、真正多线程 |
 
-- **不要在 `async` 函数中调用 `threads.start()`**：协程是协作式调度，启动 OS 线程会打破执行假设
-- **不要在子线程中使用 `async`/`await`**：子线程有独立 VM，`asyncs.run()` 不会跨线程调度
-- 需要 CPU 并行 → 用 `threads.start()` + Channel
-- 网络 I/O → 使用 `socket.arecv()`/`socket.aaccept()` 配合 await，见 [sockets 模块文档](module_sockets.md#异步-io-arecv--aaccept)
-需要 I/O 并发 → 用 `async func` + `await` + `asyncs.run()`
+- **子线程里不能用 `async`/`await`**：`current_exec_vm` 为空，`asyncs.run()` 会直接报错
+  （「事件循环是每进程一个」）——这是硬约束。
+- **协程里可以 `threads.start()`**（实测可用），但线程的**阻塞操作**（`join()` / 空的
+  `receive()`）会卡住整条事件循环 ⇒ 用 `try_receive()` + `await asyncs.sleep(1)` 轮询，
+  拿到结果再 `join()`：
+
+```leno
+func worker(any ch, int n) {
+    threads.sleep(30)                       // 模拟 CPU 活
+    if ch is Channel { ch.send(n * 2) }
+}
+
+async func await_channel(Channel ch) {
+    var got = null
+    while got == null {
+        got = ch.try_receive()              // 不阻塞
+        if got == null { await asyncs.sleep(1) }
+    }
+    return got
+}
+
+async func task(int n): int {
+    var ch = threads.channel(1)
+    var t = threads.start(worker, ch, n)
+    var v = await await_channel(ch)
+    t.join()                                 // 结果已到 ⇒ 立即返回
+    return _int(v)
+}
+```
+
+实测：10 个协程各开一个 30ms 的线程，总耗时 37ms（真并行）。轮询粒度 1ms，
+不适合微秒级同步。
+- 网络 I/O → 用 `socket.aconnect()` / `socket.arecv()` / `socket.aaccept()` 配合 await，
+  见 [sockets 模块文档](module_sockets.md#异步-io-arecv--aaccept) 与
+  [`examples/async await/async_fetch.leno`](../examples/async%20await/async_fetch.leno)。
 
 ---
 
@@ -821,6 +854,31 @@ main() {
 
 ---
 
+## 实战：并发网络客户端（2026-11-14）
+
+[`examples/async await/async_fetch.leno`](../examples/async%20await/async_fetch.leno) 演示了
+async 最有价值的用法：**一个线程、一个事件循环**里同时跑「1 个 `aaccept` 协程 + N 个
+连接处理协程 + N 个 `aconnect` 请求协程」。每个连接 99% 的时间在等，所以不需要 N 个线程。
+
+实测（Windows 10，本机回环）：
+
+| 并发连接 | 每个请求"处理" | 实际耗时 | 逐个等 |
+|---|---|---|---|
+| 150 | 30ms | **65ms** | 4500ms |
+
+哨兵用例：`assert/test_async_sockets.leno` —— 40 路 `aconnect` 扇出，并断言"总耗时远小于
+串行下界"（正确性用例全绿时，只有它能发现"被悄悄串行化"的退化）。
+
+**三个真实上限**（是边界，不是 bug —— 文档别再按"上千长连接"宣传）：
+
+| 上限 | 数值 / 原因 |
+|---|---|
+| 单轮 `select` 的 socket 数 | `FD_SETSIZE = 1024`；更多靠 `g_async_scan_start` 游标轮转，正确但延迟上升。换 IOCP/epoll 见 `待办与路线图.md`（触发条件：常驻 >2000 连接 / 挂起 IO 经常 >1024） |
+| 发送 | 只有阻塞的 `sock.send`（无 `asend`）：非阻塞 socket 上会自旋重试（上限 10 万次）⇒ 大 body 上传放线程，别放协程 |
+| 本机回环握手 | Windows 的 listen 背压约 200：同一瞬间 >200 个 SYN 会触发 TCP 重传（+~500ms）。实测 n=200 → 19ms、n=205 → 519ms（其中 5 个 connect 用了 508ms）——这是 TCP 行为，与 async 无关 |
+
+---
+
 ## 完整 API 速查表
 
 | 函数 | 参数 | 返回 | 说明 |
@@ -837,5 +895,5 @@ main() {
 
 ---
 
-*文档版本: 1.1*  
-*最后更新: 2026-08-01*
+*文档版本: 1.2*  
+*最后更新: 2026-11-14*
