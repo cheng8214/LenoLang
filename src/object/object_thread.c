@@ -533,6 +533,7 @@ static void* thread_entry_point(void* arg) {
     // 注册内置 Native 全局函数（与主 VM 一致）
     extern void native_register_globals(void);
     native_register_globals();
+    uint64_t dt1a = dbg ? thr_dbg_now_us() : 0;   // native globals 注册结束
 
     // 初始化所有模块方法（与主 VM 一致）
     extern int native_init_module(const char* module_name);
@@ -550,6 +551,7 @@ static void* thread_entry_point(void* arg) {
     native_init_module("ffi");
     native_init_module("threads");
     native_init_module("regexs");
+    uint64_t dt1b = dbg ? thr_dbg_now_us() : 0;   // 13 个模块方法注册结束
     // 初始化所有实例方法（与主 VM 一致）
     extern void arrays_init_instance_methods(void);
     arrays_init_instance_methods();
@@ -625,9 +627,11 @@ static void* thread_entry_point(void* arg) {
     }
     if (dbg) {
         uint64_t dt4 = thr_dbg_now_us();
-        fprintf(stderr, "[THR] vm/GC=%llu  模块注册=%llu  struct导入=%llu  globals克隆=%llu  合计=%llu us\n",
+        fprintf(stderr, "[THR] vm/GC=%llu  native全局=%llu  模块注册=%llu  实例方法=%llu  struct导入=%llu  globals克隆=%llu  合计=%llu us\n",
                 (unsigned long long)(dt1 - dt0),
-                (unsigned long long)(dt2 - dt1),
+                (unsigned long long)(dt1a - dt1),
+                (unsigned long long)(dt1b - dt1a),
+                (unsigned long long)(dt2 - dt1b),
                 (unsigned long long)(dt3 - dt2),
                 (unsigned long long)(dt4 - dt3),
                 (unsigned long long)(dt4 - dt0));
