@@ -1,0 +1,80 @@
+// test_async_fanout.leno —— 回归：大量协程扇出（就绪队列环形缓冲 + 定时器堆扩容）
+//
+// 背景（2026-11-14）：事件循环原来两处 O(N)：
+//   · 就绪队列：入队线性扫去重 + 出队 memmove 全表 ⇒ 2000 协程 ×100 次让出每次 4.3us（O(N²)）
+//   · 定时器：有序数组插入 + 到期全表前移 ⇒ 2000 个 sleep(1) 要 13.5ms
+//   改成「环形缓冲 + in_ready 标志」与「二叉最小堆（同到期时间按 seq 保 FIFO）」后：
+//   同样负载 854ms → 45ms、13.5ms → 2.0ms。
+//
+// 本用例钉住**超过初始容量（MAX_COROUTINES/MAX_TIMERS = 1024）之后**的行为：
+//   ① 1500 个协程各让出 3 次 ⇒ 全部完成、结果正确（覆盖环形缓冲扩容时的「拉直」）
+//   ② 1500 个协程各 sleep(1) ⇒ 全部完成（覆盖定时器堆从 1024 扩容）
+//   ③ 混合：让出与定时器交替，且同到期时间（FIFO 顺序不影响正确性，但不许丢）
+import asyncs
+
+var gDone = 0
+var gSum = 0
+
+async func yielder(int n): int {
+    for 0 : 2 to _ { await asyncs.yield() }
+    return n
+}
+
+async func napper(int n): int {
+    await asyncs.sleep(1)
+    return n
+}
+
+async func mixed(int n): int {
+    for 0 : 4 to k {
+        if k % 2 == 0 { await asyncs.yield() } else { await asyncs.sleep(1) }
+    }
+    return n
+}
+
+main() {
+    // ① 1500 个协程 × 3 次让出（> MAX_COROUTINES=1024）
+    var N1 = 1500
+    var fs = []
+    for 0 : N1 - 1 to i { fs.add(yielder(i)) }
+    asyncs.run()
+    var sum1 = 0
+    var ok1 = true
+    for 0 : N1 - 1 to i {
+        var f = fs[i]
+        if not asyncs.is_done(f) { ok1 = false }
+        var v = _int(asyncs.get_result(f))
+        if v != i { ok1 = false }
+        sum1 = sum1 + v
+    }
+    assert_eq(ok1, true, "①1500 个让出协程应全部完成且结果按序正确")
+    assert_eq(sum1, N1 * (N1 - 1) / 2, "①结果之和应匹配")
+
+    // ② 1500 个 sleep(1)（> MAX_TIMERS=1024）
+    var N2 = 1500
+    var fs2 = []
+    for 0 : N2 - 1 to i { fs2.add(napper(i)) }
+    asyncs.run()
+    var sum2 = 0
+    var ok2 = true
+    for 0 : N2 - 1 to i {
+        var v = _int(asyncs.get_result(fs2[i]))
+        if v != i { ok2 = false }
+        sum2 = sum2 + v
+    }
+    assert_eq(ok2, true, "②1500 个定时器协程应全部完成")
+    assert_eq(sum2, N2 * (N2 - 1) / 2, "②结果之和应匹配")
+
+    // ③ 混合（让出 / 定时器交替）
+    var N3 = 300
+    var fs3 = []
+    for 0 : N3 - 1 to i { fs3.add(mixed(i)) }
+    asyncs.run()
+    var ok3 = true
+    for 0 : N3 - 1 to i {
+        if _int(asyncs.get_result(fs3[i])) != i { ok3 = false }
+    }
+    assert_eq(ok3, true, "③混合等待（yield + sleep 交替）应全部完成")
+
+    print("test_async_fanout passed")
+}

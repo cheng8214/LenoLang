@@ -1,0 +1,115 @@
+// tools/async_bench.leno —— async/await 运行时压测（常驻，随时复测）
+//
+// 用法（仓库根目录）：
+//   build\leno.exe tools\async_bench.leno            # 全部段
+//   build\leno.exe tools\async_bench.leno yield      # 只跑一段
+//   段名：await / yield / sleep / all
+//   ⚠ 可能挂死 ⇒ 建议套超时壳：
+//     build\leno.exe tools\run_timeout.leno 120000 build\leno.exe tools\async_bench.leno
+//
+// 历史基线（2026-11-14，改前后同机）：
+//   · 串行 await（含协程/future 创建 + 调度 + 恢复）  ~350~420 ns/次
+//   · yield 扇出 500 协程 ×100 次     1162 ns/次 → 210 ns/次
+//   · yield 扇出 2000 协程 ×100 次    4269 ns/次 → 226 ns/次（原来的 O(N²) 没了）
+//   · sleep(1) 扇出 2000 协程          13.5 ms → 2.0 ms
+//   · all() 收集 2000 个 Future        3.56 ms → 0.13 ms
+//   机理：就绪队列改环形缓冲 + in_ready 标志、定时器改二叉最小堆（见 docs\module_asyncs.md 性能提示）
+//
+// 读法：同机、同时段比趋势，别抠单次小数（±10% 属正常波动）。
+
+import asyncs
+import times
+
+Array[string] gOnly = []
+
+func want(string sec): bool {
+    if gOnly.len() == 0 { return true }
+    for gOnly to s {
+        if s == sec { return true }
+    }
+    return false
+}
+
+// ==================== 协程体 ====================
+async func addOne(int x): int { return x + 1 }
+
+func addOneSync(int x): int { return x + 1 }
+
+async func serialAwaits(int n): int {
+    var sum = 0
+    for 0 : n - 1 to i { sum = sum + (await addOne(i)) }
+    return sum
+}
+
+async func yieldN(int n): int {
+    for 0 : n - 1 to i { await asyncs.yield() }
+    return n
+}
+
+async func napOne(): int {
+    await asyncs.sleep(1)
+    return 1
+}
+
+main() {
+    for _args() to a { gOnly.add(_str(a)) }
+    print("=== Leno async/await 压测（os=" + _os() + "）===")
+
+    // ---------------- await：同步调用基线 + 串行 await ----------------
+    if want("await") {
+        var N0 = 200000
+        var s0 = times.us()
+        var acc = 0
+        for 0 : N0 - 1 to i { acc = acc + addOneSync(i) }
+        var s1 = times.us()
+        print("[await] 同步调用 ×" + _str(N0) + " ⇒ " + _str(s1 - s0) + " us，"
+              + _str((s1 - s0) * 1000.0 / _float(N0)) + " ns/次（" + _str(acc) + "）")
+
+        var N1 = 50000
+        var t0 = times.us()
+        var f = serialAwaits(N1)
+        asyncs.run()
+        var t1 = times.us()
+        var sum = _int(asyncs.get_result(f))
+        print("[await] 串行 await ×" + _str(N1) + " ⇒ " + _str(t1 - t0) + " us，"
+              + _str((t1 - t0) * 1000.0 / _float(N1)) + " ns/次（" + _str(sum) + "）")
+    }
+
+    // ---------------- yield：扇出让出（就绪队列）----------------
+    if want("yield") {
+        for [500, 2000] to n {
+            var y = 100
+            var u0 = times.us()
+            for 0 : n - 1 to i { yieldN(y) }
+            asyncs.run()
+            var u1 = times.us()
+            print("[yield] " + _str(n) + " 协程 ×" + _str(y) + " 次 ⇒ " + _str(u1 - u0)
+                  + " us，每次让出 " + _str((u1 - u0) * 1000.0 / _float(n * y)) + " ns")
+        }
+    }
+
+    // ---------------- sleep：扇出定时器（最小堆）----------------
+    if want("sleep") {
+        for [500, 2000] to n {
+            var v0 = times.us()
+            for 0 : n - 1 to i { napOne() }
+            asyncs.run()
+            var v1 = times.us()
+            print("[sleep] sleep(1) 扇出 " + _str(n) + " 协程 ⇒ " + _str(v1 - v0) + " us")
+        }
+    }
+
+    // ---------------- all：收集（run 完再取值）----------------
+    if want("all") {
+        var N4 = 2000
+        var fs = []
+        for 0 : N4 - 1 to i { fs.add(addOne(i)) }
+        var w0 = times.us()
+        asyncs.run()
+        var rs = asyncs.all(fs)
+        var w1 = times.us()
+        print("[all] ×" + _str(N4) + " ⇒ " + _str(w1 - w0) + " us（" + _str(rs.len()) + " 个结果）")
+    }
+
+    print("=== 完成 ===")
+}

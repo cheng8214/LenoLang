@@ -1325,11 +1325,13 @@ static void mark_roots(void) {
 
     // 16. 标记事件循环中的就绪队列、定时器协程和失败协程的错误值
     if (gc.vm->event_loop) {
-        for (int i = 0; i < gc.vm->event_loop->ready_count; i++) {
-            gc_mark_object((Object*)gc.vm->event_loop->ready_queue[i]);
+        // ★ 2026-11-14：就绪队列是**环形缓冲** ⇒ 有效区间是 [head, head+count) 取模
+        EventLoop* el = gc.vm->event_loop;
+        for (int i = 0; i < el->ready_count; i++) {
+            gc_mark_object((Object*)el->ready_queue[(el->ready_head + i) % el->ready_capacity]);
         }
-        for (int i = 0; i < gc.vm->event_loop->timer_count; i++) {
-            gc_mark_object((Object*)gc.vm->event_loop->timers[i].coroutine);
+        for (int i = 0; i < el->timer_count; i++) {
+            gc_mark_object((Object*)el->timers[i].coroutine);
         }
         // 失败协程的错误值：事件循环运行期间 GC 触发时，
         // errors[] 中的值尚未转移到 vm->exception，必须作为根标记，
