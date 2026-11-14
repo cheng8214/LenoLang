@@ -1,0 +1,172 @@
+// test_diag_silent_fixes.leno —— 回归：把"静默通过"改成「报错 / 警告」的八类缺口（2026-11-14）
+//
+// 背景：本轮逐条压测语言 + async/sockets/threads + 标准库时，发现下面这些**编译成功、
+//   零诊断、运行期给错值或什么都不做**的路径。按仓库口径（静默错值 > 编译期报错 > 性能）
+//   全部改成"必须看得见"：
+//   ① `Channel[int].send("s")`：发送侧参数规格是 any ⇒ 静默塞错类型（接收侧按 int 用）
+//   ② `enum E { A = 1, B = 1 }`：值重复 ⇒ A == B 恒真、switch 只命中一个
+//   ③ 调了 async 函数却**从不 asyncs.run()**：协程体不执行，exit=0、零输出
+//   ④ `sockets.listen(host, 99999)`：端口被 `htons((short)port)` 静默截断成 34463
+//   ⑤ `sockets.listen("拼错/主机名", 0)`：inet_pton 失败被忽略 ⇒ 静默 bind 到 0.0.0.0
+//   ⑥ 非 async 里 `arecv` / 监听 socket 上 `recv`：静默返回 null（与"对端关闭"分不开）
+//   ⑦ `jsons.encode(socket)`：不支持的类型静默输出字符串 "null"
+//   ⑧ `dirs.walk("拼错的路径")`：静默返回一条 root=路径、dirs/files 全空的条目
+//
+// 每条都配"不该报"的对照（Channel[float] 收 int、裸 Channel、正常 enum、正常 async），
+// 防止把合法写法误判成错 —— 新检查最容易死在误报上。
+import dirs
+import files
+import strings
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_silent_fixes")
+    dirs.delete(work)          // 清旧缓存：万一上次留下 .lenocache，"应当失败"会被缓存骗过
+    dirs.mkdir_p(work)
+
+    // ==================== ① Channel[T].send 类型 ====================
+    var p1 = dirs.join(work, "ch_send_stmt.leno")
+    files.write(p1,
+        "import threads\n"
+        + "main() {\n"
+        + "    Channel[int] ch = threads.channel(1)\n"
+        + "    ch.send(\"s\")\n"
+        + "}\n")
+    ce.expect_error(p1, "①语句位置 ch.send(\"s\") 必须报", "Channel 的元素类型是 int", 4)
+
+    var p2 = dirs.join(work, "ch_send_expr.leno")
+    files.write(p2,
+        "import threads\n"
+        + "main() {\n"
+        + "    Channel[int] ch = threads.channel(1)\n"
+        + "    var r = ch.try_send(\"s\")\n"
+        + "}\n")
+    ce.expect_error(p2, "①表达式位置 ch.try_send(\"s\") 必须报", "Channel 的元素类型是 int", 4)
+
+    // 对照：int → float 合法；裸 Channel（元素类型未知）允许任何值
+    var p3 = dirs.join(work, "ch_ok.leno")
+    files.write(p3,
+        "import threads\n"
+        + "main() {\n"
+        + "    Channel[float] cf = threads.channel(1)\n"
+        + "    cf.send(1)\n"
+        + "    Channel raw = threads.channel(1)\n"
+        + "    raw.send(\"s\")\n"
+        + "    print(\"CH_OK\\n\")\n"
+        + "}\n")
+    ce.expect_ok(p3, "①对照：int→float / 裸 Channel 不该报", "CH_OK")
+
+    // ==================== ② enum 成员值重复 ====================
+    var p4 = dirs.join(work, "enum_dup.leno")
+    files.write(p4,
+        "enum E { A = 1, B = 1 }\n"
+        + "main() { print(_str(E.A) + \"\\n\") }\n")
+    ce.expect_warning(p4, "②enum 值重复必须警告", "[enum值重复]", 1)
+
+    // 对照：值各不相同 ⇒ 不该报（防止"看到 enum 就警告"）
+    var p5 = dirs.join(work, "enum_unique.leno")
+    files.write(p5,
+        "enum E { A = 1, B = 2 }\n"
+        + "main() { print(_str(E.A) + \"\\n\") }\n")
+    var o5 = ce.expect_ok(p5, "②对照：enum 值唯一不该警告", "")
+    ce.expect_no_warning(o5, "②对照：enum 值唯一不该警告", "[enum值重复]")
+
+    // ==================== ③ 创建了协程却从不 run ====================
+    var p6 = dirs.join(work, "async_never_run.leno")
+    files.write(p6,
+        "import asyncs\n"
+        + "async func t() { print(\"RAN\\n\") }\n"
+        + "main() { t(); print(\"END\\n\") }\n")
+    var o6 = ce.expect_ok(p6, "③没 run 的协程：程序本身不失败", "END")
+    assert_true(strings.has(o6, "[警告] 程序结束时还有"),
+        "③没调 asyncs.run() 时必须给运行期警告；实际输出=" + o6)
+    assert_true(not strings.has(o6, "RAN"),
+        "③没 run 时协程体不该执行（这条只是钉住事实，不是期望）；实际输出=" + o6)
+
+    // 对照：调了 run ⇒ 协程执行，且**不能**有"还有协程未完成"的警告
+    var p7 = dirs.join(work, "async_run_ok.leno")
+    files.write(p7,
+        "import asyncs\n"
+        + "async func t() { print(\"RAN\\n\") }\n"
+        + "main() { t(); asyncs.run(); print(\"END\\n\") }\n")
+    var o7 = ce.expect_ok(p7, "③对照：调了 run 的协程应执行", "RAN")
+    ce.expect_no_warning(o7, "③对照：调了 run 不该有未完成警告", "[警告] 程序结束时还有")
+
+    // ==================== ④ 端口越界 ====================
+    var p8 = dirs.join(work, "bad_port.leno")
+    files.write(p8,
+        "import sockets\n"
+        + "main() { var s = sockets.listen(\"127.0.0.1\", 99999); print(_str(s) + \"\\n\") }\n")
+    ce.expect_error(p8, "④listen 端口 99999 必须报，不能截断", "端口 99999 超出范围", 0)
+
+    // ==================== ⑤ 地址解析失败 ====================
+    var p9 = dirs.join(work, "bad_host.leno")
+    files.write(p9,
+        "import sockets\n"
+        + "main() { var s = sockets.listen(\"999.999.999.999\", 0); print(_str(s) + \"\\n\") }\n")
+    ce.expect_error(p9, "⑤listen 地址解析失败必须报，不能静默 bind 0.0.0.0",
+                    "无法解析", 0)
+
+    // ==================== ⑥ 误用 arecv / recv ====================
+    var p10 = dirs.join(work, "arecv_outside.leno")
+    files.write(p10,
+        "import sockets\n"
+        + "main() {\n"
+        + "    var s = sockets.listen(\"127.0.0.1\", 0)\n"
+        + "    var f = s.arecv(16)\n"
+        + "}\n")
+    ce.expect_error(p10, "⑥非 async 里 arecv 必须报", "arecv 只能在 async 函数中使用", 0)
+
+    var p11 = dirs.join(work, "recv_on_listener.leno")
+    files.write(p11,
+        "import sockets\n"
+        + "main() {\n"
+        + "    var s = sockets.listen(\"127.0.0.1\", 0)\n"
+        + "    var d = s.recv(16)\n"
+        + "}\n")
+    ce.expect_error(p11, "⑥监听 socket 上 recv 必须报", "监听 socket", 0)
+
+    // 对照：连上之后 recv 照常工作（不能因为上面两条把正常路径也拦了）
+    var p12 = dirs.join(work, "recv_ok.leno")
+    files.write(p12,
+        "import sockets\n"
+        + "import threads\n"
+        + "func srv(any ch) {\n"
+        + "    if ch is Channel {\n"
+        + "        var s = sockets.listen(\"127.0.0.1\", 39841)\n"
+        + "        ch.send(1)\n"
+        + "        var c = s.accept()\n"
+        + "        if c != null { c.send(\"PONG\"); c.close() }\n"
+        + "        s.close()\n"
+        + "    }\n"
+        + "}\n"
+        + "main() {\n"
+        + "    var ch = threads.channel(1)\n"
+        + "    var t = threads.start(srv, ch)\n"
+        + "    var c = sockets.connect(\"127.0.0.1\", 39841)\n"
+        + "    var d = c.recv(16)\n"
+        + "    t.join()\n"
+        + "    print(\"GOT=\" + _str(d) + \"\\n\")\n"
+        + "}\n")
+    ce.expect_ok(p12, "⑥对照：已连接 socket 的 recv 照常工作", "GOT=PONG")
+
+    // ==================== ⑦ jsons.encode 不支持的运行期类型 ====================
+    var p13 = dirs.join(work, "json_encode_socket.leno")
+    files.write(p13,
+        "import jsons\n"
+        + "import sockets\n"
+        + "main() {\n"
+        + "    var s = sockets.listen(\"127.0.0.1\", 0)\n"
+        + "    print(jsons.encode(s) + \"\\n\")\n"
+        + "}\n")
+    ce.expect_error(p13, "⑦encode(Socket) 必须报，不能静默给 \"null\"", "不能转成 JSON", 0)
+
+    // ==================== ⑧ dirs.walk 路径不存在 ====================
+    var p14 = dirs.join(work, "walk_missing.leno")
+    files.write(p14,
+        "import dirs\n"
+        + "main() { var w = dirs.walk(\"no_such_dir_12345\"); print(_str(w.len()) + \"\\n\") }\n")
+    ce.expect_error(p14, "⑧walk 不存在的目录必须报，不能给一条空条目", "目录不存在或不是目录", 0)
+
+    print("test_diag_silent_fixes passed")
+}

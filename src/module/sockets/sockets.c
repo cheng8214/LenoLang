@@ -393,6 +393,39 @@ static inline int socket_is_valid(ObjSocket* sock) {
     return sock && sock->fd != INVALID_SOCKET_FD;
 }
 
+// ★ 2026-11-14：**参数合法性检查**（此前都是静默截断 / 静默成功）
+//
+//   ① 端口：原来直接 `htons((short)port)` ⇒ 99999 被截成 34463，bind/connect "成功"，
+//      但目标端口根本不是用户写的那个 ✗。合法范围 0..65535（listen 的 0 = 系统分配）。
+//   ② 地址：listen/udp_bind 原来**忽略 inet_pton 返回值** ⇒ "localhost" 或拼错的地址
+//      会被当成 0.0.0.0（INADDR_ANY）并 bind 成功 —— 用户以为只监听某地址，
+//      实际监听所有网卡 ✗。解析不出来就报错（DNS 能查到就照常放行）。
+static int socket_check_port(int port, const char* api) {
+    if (port >= 0 && port <= 65535) return 1;
+    char msg[192];
+    snprintf(msg, sizeof(msg), "%s: 端口 %d 超出范围（合法 0..65535）", api, port);
+    native_throw_error(msg);
+    return 0;
+}
+
+static int socket_resolve_host(const char* host, struct sockaddr_in* addr, const char* api) {
+    if (strcmp(host, "0.0.0.0") == 0) {
+        addr->sin_addr.s_addr = INADDR_ANY;
+        return 1;
+    }
+    if (inet_pton(AF_INET, host, &addr->sin_addr) > 0) return 1;
+    struct hostent* he = gethostbyname(host);
+    if (he && he->h_addr_list[0]) {
+        memcpy(&addr->sin_addr, he->h_addr_list[0], he->h_length);
+        return 1;
+    }
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "%s: 地址 '%s' 无法解析（既不是 IPv4 字面量，DNS 也查不到）", api, host);
+    native_throw_error(msg);
+    return 0;
+}
+
 // ============================================================================
 // 实例方法实现（self 是第一个参数）
 // ============================================================================
@@ -404,15 +437,29 @@ static Value socket_arecv_func(int argc, Value* args) {
     int max_bytes = val_as_int(args[1]);
 
     if (!socket_is_valid(sock)) return val_null();
-    if (sock->type == SOCKET_TYPE_TCP && !sock->is_connected) return val_null();
-    if (max_bytes <= 0) max_bytes = 1024;
-    if (max_bytes > 65536) max_bytes = 65536;
 
+    // ★ 2026-11-14：**先判"在不在 async 里"**。原来 `is_connected` 的早退排在它前面
+    //   ⇒ 对监听 socket（is_connected 恒 false）调 arecv 时静默返回 null，
+    //   根本走不到"只能在 async 函数中使用"这条报错（实测 exit=0、打印 f=null）✗
     ObjCoroutine* co = vm_current_coroutine();
     if (!co) {
         native_throw_error("arecv 只能在 async 函数中使用");
         return val_null();
     }
+
+    if (sock->type == SOCKET_TYPE_TCP) {
+        if (sock->is_listening) {
+            native_throw_error("arecv: 这是监听 socket —— 请先用 aaccept() 拿到连接，再对连接收数据");
+            return val_null();
+        }
+        if (!sock->is_connected) {
+            native_throw_error("arecv: 这个 socket 还没连接（aconnect 失败 / 还没建立）—— 先 await sockets.aconnect(...) 成功再收");
+            return val_null();
+        }
+    }
+
+    if (max_bytes <= 0) max_bytes = 1024;
+    if (max_bytes > 65536) max_bytes = 65536;
 
     // 设置非阻塞
     if (!sock->is_nonblocking) {
@@ -451,11 +498,17 @@ static Value socket_aaccept_func(int argc, Value* args) {
     (void)argc;
     ObjSocket* sock = (ObjSocket*)val_as_obj(args[0]);
 
-    if (!socket_is_valid(sock) || !sock->is_listening) return val_null();
+    if (!socket_is_valid(sock)) return val_null();
 
+    // ★ 2026-11-14：与 arecv 同口径 —— 先判"在不在 async 里"，再判 socket 状态
+    //   （原来"不是监听 socket"的早退在协程检查前面 ⇒ 在 async 外误用会静默 null）
     ObjCoroutine* co = vm_current_coroutine();
     if (!co) {
         native_throw_error("aaccept 只能在 async 函数中使用");
+        return val_null();
+    }
+    if (!sock->is_listening) {
+        native_throw_error("aaccept: 这个 socket 不是监听 socket —— 请先 sockets.listen(host, port)");
         return val_null();
     }
 
@@ -504,6 +557,7 @@ static Value sockets_aconnect_func(int argc, Value* args) {
 
     ObjString* host = (ObjString*)val_as_obj(args[0]);
     int port = val_as_int(args[1]);
+    if (!socket_check_port(port, "sockets.aconnect")) return val_null();
 
     socket_fd_t fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd == INVALID_SOCKET_FD) return val_null();
@@ -646,8 +700,16 @@ static Value socket_recv_func(int argc, Value* args) {
 
     if (!socket_is_valid(sock)) return val_null();
 
-    if (sock->type == SOCKET_TYPE_TCP && !sock->is_connected) {
-        return val_null();
+    // ★ 2026-11-14：TCP 上 recv 的两种**必然误用**不再静默给 null（与"对端关闭"分不开）
+    if (sock->type == SOCKET_TYPE_TCP) {
+        if (sock->is_listening) {
+            native_throw_error("recv: 这是监听 socket —— 请先用 accept()/aaccept() 拿到连接再收数据");
+            return val_null();
+        }
+        if (!sock->is_connected) {
+            native_throw_error("recv: socket 未连接（connect 失败 / 还没建立）");
+            return val_null();
+        }
     }
 
     // 限制最大缓冲区大小
@@ -791,8 +853,9 @@ static Value socket_sendto_func(int argc, Value* args) {
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
+    if (!socket_check_port(port, "sock.sendto")) return val_bool(false);
     addr.sin_port = htons((short)port);
-    inet_pton(AF_INET, addr_str->chars, &addr.sin_addr);
+    if (!socket_resolve_host(addr_str->chars, &addr, "sock.sendto")) return val_bool(false);
 
     int sent = sendto(sock->fd, data->chars, (int)data->len, 0,
                       (struct sockaddr*)&addr, sizeof(addr));
@@ -1164,6 +1227,7 @@ static Value sockets_connect_func(int argc, Value* args) {
 
     ObjString* host = (ObjString*)val_as_obj(args[0]);
     int port = val_as_int(args[1]);
+    if (!socket_check_port(port, "sockets.connect")) return val_null();
 
     // 创建 socket
     socket_fd_t fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -1215,6 +1279,7 @@ static Value sockets_listen_func(int argc, Value* args) {
 
     ObjString* host = (ObjString*)val_as_obj(args[0]);
     int port = val_as_int(args[1]);
+    if (!socket_check_port(port, "sockets.listen")) return val_null();
 
     // 创建 socket
     socket_fd_t fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -1231,11 +1296,9 @@ static Value sockets_listen_func(int argc, Value* args) {
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons((short)port);
-
-    if (strcmp(host->chars, "0.0.0.0") == 0) {
-        addr.sin_addr.s_addr = INADDR_ANY;
-    } else {
-        inet_pton(AF_INET, host->chars, &addr.sin_addr);
+    if (!socket_resolve_host(host->chars, &addr, "sockets.listen")) {
+        CLOSE_SOCKET(fd);
+        return val_null();
     }
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR_VAL) {
@@ -1270,6 +1333,7 @@ static Value sockets_udp_bind_func(int argc, Value* args) {
 
     ObjString* host = (ObjString*)val_as_obj(args[0]);
     int port = val_as_int(args[1]);
+    if (!socket_check_port(port, "sockets.udp_bind")) return val_null();
 
     // 创建 UDP socket
     socket_fd_t fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -1282,11 +1346,9 @@ static Value sockets_udp_bind_func(int argc, Value* args) {
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons((short)port);
-
-    if (strcmp(host->chars, "0.0.0.0") == 0) {
-        addr.sin_addr.s_addr = INADDR_ANY;
-    } else {
-        inet_pton(AF_INET, host->chars, &addr.sin_addr);
+    if (!socket_resolve_host(host->chars, &addr, "sockets.udp_bind")) {
+        CLOSE_SOCKET(fd);
+        return val_null();
     }
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR_VAL) {

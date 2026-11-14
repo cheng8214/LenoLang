@@ -594,6 +594,14 @@ void warning_print_all(void) {
             case WARN_DIV_ZERO:              type_str = "字面量除零"; break;
             case WARN_NEG_SHIFT:             type_str = "负数移位"; break;
             case WARN_VOID_CALL_VALUE:       type_str = "void调用结果"; break;
+            // ★ 2026-11-14：补齐下面这批"有枚举、有调用点、却没有类别名"的警告 ——
+            //   原来它们打印成 `warning: [] ...`（类别名静默为空），排查时少一半信息。
+            case WARN_EMPTY_ENUM:            type_str = "空enum"; break;
+            case WARN_SWITCH_NOT_EXHAUSTIVE: type_str = "switch未盖全"; break;
+            case WARN_REG_PRESSURE:          type_str = "寄存器压力"; break;
+            case WARN_CLIB_CSTRUCT_AS_PTR:   type_str = "clib裸cstruct"; break;
+            case WARN_DEFER_LATE_WRITE:      type_str = "defer后改值"; break;
+            case WARN_DUP_ENUM_VALUE:        type_str = "enum值重复"; break;
             // （原 WARN_EMPTY_CATCH / WARN_IMPOSSIBLE_CAST 已升为错误 ⇒ 类别名移入消息前缀 ✓）
             default: break;
         }

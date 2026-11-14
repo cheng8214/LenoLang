@@ -95,12 +95,14 @@ Socket conn = sockets.connect("www.example.com", 443)  // 支持 DNS 解析
 创建 TCP 服务器并监听指定端口。
 
 **参数**:
-- `host` (string): 监听地址（"0.0.0.0" 表示所有接口）
-- `port` (int): 端口号
+- `host` (string): 监听地址（"0.0.0.0" 表示所有接口；主机名会走 DNS 解析）
+- `port` (int): 端口号（合法 0..65535；0 = 系统分配）
 
 **返回**: 
 - 成功: 服务器 Socket 对象
-- 失败: `null`
+- 参数错误: **抛错**（端口越界 / 地址解析不出来，2026-11-14 起；此前端口会被
+  `htons((short)port)` 静默截断、解析失败会静默 bind 到 0.0.0.0 ✗）
+- 失败（端口被占用等）: `null`
 
 ```leno
 Socket server = sockets.listen("0.0.0.0", 8080)
@@ -220,6 +222,8 @@ if conn != null {
 **返回**: 
 - 成功: 接收到的字符串数据
 - 失败/连接关闭: `null`
+- **误用 ⇒ 抛错（2026-11-14 起）**：在**监听 socket**（还没 `accept`）或**未连接的 TCP socket**
+  上调用时，直接报错。此前这两种情况静默返回 `null`，与"对端关闭"完全分不开 ✗
 
 ```leno
 var data = conn.recv(1024)
@@ -422,6 +426,10 @@ conn.close()
 - `max_bytes` (int): 最大接收字节数（最大 65536）
 
 **返回**: `Future` - 在 async 函数中 `await sock.arecv(1024)` 的结果为 `string|null`
+
+> ⚠ **误用会抛错（2026-11-14 起）**：不在 `async` 函数里调用、或对**监听 socket** /
+> **未连接 socket** 调用 `arecv`，都会直接报错。此前监听 socket 那条会静默返回 `null`
+> （`is_connected` 的早退排在协程检查前面），看起来像"没有数据"✗。
 
 ```leno
 async func receive_data(Socket conn) {

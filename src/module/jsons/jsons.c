@@ -1368,12 +1368,19 @@ static void json_encode_value(StringBuilder* sb, Value value, int indent, bool p
                     json_encode_struct(sb, (ObjStruct*)val_as_obj(value), indent, pretty, depth + 1, err);
                     break;
                 default:
-                    sb_append_cstr(sb, "null");
+                    // ★ 2026-11-14：不支持的**对象类型**（Socket / File / Thread / Channel /
+                    //   Future / 函数 / native 等）此前落到这里静默写 `"null"` ✗ ——
+                    //   实测 `jsons.encode(socket)` 返回字符串 "null"、exit=0，调用方以为
+                    //   编码成功，数据却无声丢失。与 struct / bigint 那两条同一类 bug：
+                    //   "不认识就变 null" 比报错更糟 ⇒ 置 3，顶层统一抛错。
+                    *err = 3;
+                    sb_append_cstr(sb, "null");   // 占位；顶层据此抛错，不会交出去
                     break;
             }
             break;
         default:
-            sb_append_cstr(sb, "null");
+            *err = 3;
+            sb_append_cstr(sb, "null");           // 占位；顶层据此抛错，不会交出去
             break;
     }
 }
@@ -1392,9 +1399,19 @@ static Value json_encode_nonfinite(void) {
     return val_null();
 }
 
-// 顶层统一收尾：err 为 1 / 2 时分别抛对应错误（由调用方先 sb_free）
+// 不支持编码的类型（Socket / File / Thread / Channel / Future / 函数 / native 等）
+static Value json_encode_unsupported(void) {
+    native_throw_error("编码失败：这个类型不能转成 JSON（支持 null/bool/int/float/string/"
+                       "bigint/Array/Dict/struct）。Socket/File/Thread/Channel/Future/函数"
+                       "都不可以 —— 要传就自己挑字段拼成 Dict 或 struct");
+    return val_null();
+}
+
+// 顶层统一收尾：err 为 1 / 2 / 3 时分别抛对应错误（由调用方先 sb_free）
 static Value json_encode_fail(int err) {
-    return err == 2 ? json_encode_nonfinite() : json_encode_overflow();
+    if (err == 2) return json_encode_nonfinite();
+    if (err == 3) return json_encode_unsupported();
+    return json_encode_overflow();
 }
 
 // jsons.encode
@@ -1502,7 +1519,7 @@ static Value jsons_write_file_func(int argc, Value* args) {
     sb_init(&sb);
     int enc_err = 0;
     json_encode_value(&sb, args[1], 0, true, 0, &enc_err);
-    if (enc_err) { sb_free(&sb); return json_encode_overflow(); }
+    if (enc_err) { sb_free(&sb); return json_encode_fail(enc_err); }
 
     // Use binary mode to write exact bytes
     FILE* file = fopen_utf8(path->chars, "wb");

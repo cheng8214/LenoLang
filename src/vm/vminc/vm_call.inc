@@ -292,6 +292,9 @@ static inline int vm_start_async_call(VM* vm_ptr, ObjClosure* closure, Value* re
     if (unlikely(!closure)) return -1;
     ObjCoroutine* co = coroutine_new(closure);
     if (unlikely(!co)) { runtime_error("内存不足，无法创建协程", line); return -1; }
+    // ★ 2026-11-14：记账 —— 程序退出时若这些协程没跑（忘了 asyncs.run）要打警告，
+    //   尤其"没有事件循环"时（没 import asyncs）协程根本不会入队，只能靠这个计数发现。
+    coroutine_note_async_call();
 
     int total = arg_count + (need_self ? 1 : 0);
     if (total > 0) {

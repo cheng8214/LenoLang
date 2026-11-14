@@ -1268,6 +1268,11 @@
 
                                 // 检查参数类型（可变参数方法的 arity 是 NATIVE_ARITY_VARARG，个数由 min/max 管）
                                 if (expected_arity == NATIVE_ARITY_VARARG || actual_arity == expected_arity) {
+                                    // ★ 2026-11-14：**Channel[T] 的发送值类型检查**
+                                    //   （唯一实现 + 语句位置的第二个入口见 visit_module.inc）
+                                    semantic_check_channel_send_type(s, receiver_type, method_name,
+                                                                     &ast->u.call.args,
+                                                                     ast->line, ast->column);
                                     // 处理数组方法
                                     if (receiver_type && receiver_type->kind == TYPE_ARRAY) {
                                         // 对于数组方法，从 receiver_type 获取元素类型（如果有的话）

@@ -38,6 +38,27 @@
                         ast->u.enum_def.name);
                 }
 
+                // ★ 2026-11-14：**成员值重复**（`enum E { A = 1, B = 1 }`）此前零诊断。
+                //   合法（可做别名）但极可能是复制粘贴写错：A == B 恒成立、switch 里
+                //   两个 case 会撞成同一个值（只命中一个）。只警告不拦编译。
+                for (int i = 1; i < ast->u.enum_def.member_count; i++) {
+                    for (int k = 0; k < i; k++) {
+                        if (ast->u.enum_def.member_values[i] == ast->u.enum_def.member_values[k]) {
+                            warning_add_at_fmt(WARN_DUP_ENUM_VALUE, ast->line, ast->column,
+                                "enum '%s' 的成员 '%s' 与 '%s' 值相同（都是 %lld）："
+                                "两者相等（`%s.%s == %s.%s` 为 true），switch 里也只会命中一个；"
+                                "若是别名请保留这条提示，否则检查是否写错",
+                                ast->u.enum_def.name,
+                                ast->u.enum_def.member_names[i],
+                                ast->u.enum_def.member_names[k],
+                                (long long)ast->u.enum_def.member_values[i],
+                                ast->u.enum_def.name, ast->u.enum_def.member_names[i],
+                                ast->u.enum_def.name, ast->u.enum_def.member_names[k]);
+                            break;
+                        }
+                    }
+                }
+
                 // ★ 2026-11-04：enum 的成员数在 `OP_ENUM_DEF` 里用 `cw_u8` 编码 ⇒ >255 会被
                 //   截断成 (n & 0xFF)，随后成员名/值元数据被当成字节码 ⇒ 模块反序列化失败
                 //   （实测 256 个成员：--check 全绿，运行报「内存反序列化失败(6)」✗）。

@@ -1559,6 +1559,13 @@
                                                            ast->line, ast->column);
                         }
 
+                        // ★ 2026-11-14：Channel[T] 的发送值类型（同一份实现的**语句位置**入口）。
+                        //   表达式位置在 visit_expr.inc；只接那一个的话 `ch.send("s")`
+                        //   作为语句仍然静默（实测）✗。
+                        semantic_check_channel_send_type(s, obj_sym->type, method_name,
+                                                         &ast->u.module_call.args,
+                                                         ast->line, ast->column);
+
                         // 检查参数类型（仅当参数数量匹配或可变参数时；可变参数的 arity 是 NATIVE_ARITY_VARARG）
                         if (obj_type_name && (expected_arity == NATIVE_ARITY_VARARG || actual_arity == expected_arity)) {
                             for (int i = 0; i < actual_arity; i++) {

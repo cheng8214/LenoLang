@@ -1291,6 +1291,31 @@ static Value native_dirs_walk(int argCount, Value* args) {
         return val_null();
     }
 
+    // ★ 2026-11-14：**目录不存在 / 不是目录 ⇒ 报错**（此前照样返回一条 root=path、
+    //   dirs/files 全空的 DirEntry ⇒ 拼错路径看起来像"空目录"，是典型的静默错值 ✗）。
+    //   递归里某个子目录打不开仍按"空条目"处理（那是真实存在的目录，只是没权限），
+    //   这里只校验**调用方传进来的根路径**。
+#ifdef _WIN32
+    int root_is_dir = 0;
+    wchar_t* wpath = utf8_to_utf16(path);
+    if (wpath) {
+        DWORD attr = GetFileAttributesW(wpath);
+        free(wpath);
+        root_is_dir = (attr != INVALID_FILE_ATTRIBUTES) && (attr & FILE_ATTRIBUTE_DIRECTORY);
+    }
+#else
+    struct stat root_st;
+    int root_is_dir = (stat(path, &root_st) == 0) && S_ISDIR(root_st.st_mode);
+#endif
+    if (!root_is_dir) {
+        char msg[512];
+        snprintf(msg, sizeof(msg),
+                 "dirs.walk: 目录不存在或不是目录：'%s' —— 拼错的路径不会给你一个空目录",
+                 path);
+        native_throw_error(msg);
+        return val_null();
+    }
+
     ObjArray* result = arr_new_with_capacity(16);
     if (!result) {
         return val_null();

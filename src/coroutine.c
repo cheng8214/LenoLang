@@ -3,6 +3,7 @@
 #include "include/leno_value.h"
 #include "include/leno_ast.h"
 #include "include/platform.h"
+#include <stdio.h>
 
 // 直接使用全局 VM（主程序效率第一）
 extern VM vm;
@@ -282,6 +283,41 @@ extern int sockets_poll_async_io(uint64_t timeout_ms);
 
 // 外部声明：查询是否有待处理的异步 I/O 请求
 extern int sockets_has_async_io(void);
+
+// ★ 2026-11-14：**程序结束时还有协程没跑/没跑完 ⇒ 运行期警告**（不静默）
+//
+// 由来：`async func` 被调用只是把协程塞进就绪队列，**不调 asyncs.run() 就永远不执行**
+//   （实测 `main(){ t(); print("END") }` 只打印 END、exit=0、零诊断 ✗）。
+//   编译期判"有没有 run"不稳（方法调用 / 跨模块 / 运行期才判定 async），
+//   但**所有**协程最终都挂在事件循环上 ⇒ 出口数一数就够。
+//
+// 为什么只警告不报错：先建协程、稍后再 run 是合法用法；`run_for(ms)` 超时留下
+//   没跑完的协程也是设计内行为 ⇒ 提醒即可。
+//
+// 计数口径：
+//   · 有事件循环（import 过 asyncs）⇒ ready + 定时器 + 挂起的 socket IO
+//   · 没有事件循环（压根没 import asyncs）⇒ 创建的协程一个都没排队，用创建计数
+static int g_async_created = 0;
+
+void coroutine_note_async_call(void) {
+    g_async_created++;
+}
+
+void vm_warn_pending_async(void) {
+    int pending;
+    if (g_event_loop) {
+        pending = g_event_loop->ready_count + g_event_loop->timer_count + sockets_has_async_io();
+    } else {
+        pending = g_async_created;
+    }
+    if (pending <= 0) return;
+
+    fprintf(stderr,
+        "[警告] 程序结束时还有 %d 个协程/异步 IO 未完成 —— 协程体没有执行（或没跑完）。\n"
+        "       创建协程本身不会执行它：需要调用 asyncs.run()（或 run_for(ms)）驱动事件循环。\n",
+        pending);
+    fflush(stderr);
+}
 
 // 运行事件循环直到所有协程完成；timeout_ms > 0 时**最多**跑这么久（TH17）
 //   返回 1 = 全部完成；0 = 超时停下（协程 / 定时器 / 未完成的 IO 状态**全部保留**，可再次 run）

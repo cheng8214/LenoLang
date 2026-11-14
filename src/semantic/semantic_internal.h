@@ -321,6 +321,11 @@ const char* format_detailed_type_error_ex_text(TypeInfo* expected, TypeInfo* act
 void semantic_check_dict_method_key(Semantic* s, TypeInfo* obj_type, const char* method_name,
                                     AstList* args, int line, int column);
 
+// ★ 2026-11-14：Channel[T] 发送值类型检查（send / try_send / send_for 的第 1 个实参）——
+//   唯一实现；同样是"表达式位置 + 语句位置"两个入口都要调（只接一个会有漏网）。
+void semantic_check_channel_send_type(Semantic* s, TypeInfo* obj_type, const char* method_name,
+                                      AstList* args, int line, int column);
+
 // 数组索引赋值类型检查工具函数
 int type_utils_check_array_index_assignment(TypeInfo* obj_type, TypeInfo* value_type, int line, int column);
 

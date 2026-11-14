@@ -1876,6 +1876,12 @@ int event_loop_run_for(EventLoop* loop, uint64_t timeout_ms);
 // 停止事件循环
 void event_loop_stop(EventLoop* loop);
 
+// ★ 2026-11-14：async 调用的"静默丢活"兜底
+//   · coroutine_note_async_call：每次创建 async 协程时记一笔（没有事件循环时用来计数）
+//   · vm_warn_pending_async：程序退出前检查"还有协程没跑/没跑完"并向 stderr 打警告
+void coroutine_note_async_call(void);
+void vm_warn_pending_async(void);
+
 // 添加定时器
 void event_loop_add_timer(EventLoop* loop, uint64_t wake_time, ObjCoroutine* coroutine);
 

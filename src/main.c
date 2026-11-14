@@ -829,6 +829,8 @@ int lenolang_run(const char* source) {
                 vm_init_with_scope(run_scope);
                 vm_load(&run_chunk);
                 int ret = vm_run();
+                // ★ 2026-11-14：出口兜底 —— 有协程没跑（忘了 asyncs.run）就打警告，不静默
+                vm_warn_pending_async();
 
                 chunk_free(&run_chunk);
                 // run_scope 已被 vm_init_with_scope 设为 vm.global_scope，由 gc_free_all 释放
@@ -857,6 +859,8 @@ int lenolang_run(const char* source) {
     vm_init_with_scope(sem.root_scope);  // 使用语义分析的 scope，确保索引一致
     vm_load(&chunk);
     int ret = vm_run();
+    // ★ 2026-11-14：出口兜底 —— 有协程没跑（忘了 asyncs.run）就打警告，不静默
+    vm_warn_pending_async();
 
     // 5. 释放
     codegen_cleanup(&gen);
@@ -934,6 +938,8 @@ int lenolang_run_binary(const char* path) {
     fix_module_function_ptrs(&chunk);
     vm_load(&chunk);
     int ret = vm_run();
+    // ★ 2026-11-14：出口兜底 —— 有协程没跑（忘了 asyncs.run）就打警告，不静默
+    vm_warn_pending_async();
 
     chunk_free(&chunk);
     gc_free_all();

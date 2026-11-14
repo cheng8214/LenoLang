@@ -1807,6 +1807,43 @@ void semantic_check_dict_method_key(Semantic* s, TypeInfo* obj_type, const char*
 }
 
 // ============================================================================
+// Channel[T] 发送值类型检查（2026-11-14）—— **唯一实现**
+// ----------------------------------------------------------------------------
+// 由来：`send / try_send / send_for` 的参数规格是 `any` ⇒
+//   `Channel[int] ch; ch.send("s")` **静默通过**（实测 exit=0、只打印 ok），
+//   接收侧按 int 用，最后在别处炸 —— 典型的"静默错值"✗。
+// 口径与 `Array[T].add` 一致：T 已知就按 T 判；裸 Channel / Channel[any] 不判
+//   （元素类型未知，本身就允许存任何值）。
+// ⚠ 两个调用点必须都接（与 semantic_check_dict_method_key 同款）：
+//   ① 表达式位置（visit_expr.inc 的 AST_INDEX → 方法调用）
+//   ② 语句位置（visit_module.inc 的 `ch.send(x)` ⇒ AST_MODULE_CALL → AST_CALL）
+//   —— 只接一个的话，`var r = ch.send(x)` 会报、而 `ch.send(x)` 作为语句仍然静默 ✗
+// ============================================================================
+void semantic_check_channel_send_type(Semantic* s, TypeInfo* obj_type, const char* method_name,
+                                      AstList* args, int line, int column) {
+    if (!s || !obj_type || obj_type->kind != TYPE_CHANNEL || !method_name || !args) return;
+    TypeInfo* elem = obj_type->element_type;
+    if (!elem || elem->kind == TYPE_ANY || elem->kind == TYPE_NULL) return;
+    if (!(strcmp(method_name, "send") == 0 || strcmp(method_name, "try_send") == 0 ||
+          strcmp(method_name, "send_for") == 0)) {
+        return;
+    }
+    if (args->count < 1 || !args->items[0]) return;
+
+    TypeInfo* at = infer_expr_type(s, args->items[0]);
+    if (at && at->kind != TYPE_ANY && at->kind != TYPE_INFER &&
+        !type_is_compatible(elem, at)) {
+        char context[192];
+        snprintf(context, sizeof(context),
+                 "Channel 的元素类型是 %s，方法 '%s' 的参数 1 类型不对",
+                 type_to_string(elem), method_name);
+        error_add_at_fmt(ERR_SEMANTIC, line, column, "%s",
+                         format_detailed_type_error_text(elem, at, context));
+    }
+    if (at) type_free(at);
+}
+
+// ============================================================================
 // 数组索引赋值类型检查工具函数
 // ============================================================================
 
