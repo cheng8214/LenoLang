@@ -3,6 +3,7 @@
 #include "include/platform_thread.h"
 #include "include/leno_vm.h"
 #include "include/method_table.h"
+#include "include/string_table.h"   // intern_should_intern（长串克隆的快路径判据）
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -129,6 +130,36 @@ static THREAD_LOCAL char g_channel_clone_ctx[192] = "";
 
 static Value channel_clone_value(Value val, int depth);
 
+// 跨线程克隆**长字符串**（> INTERN_MAX_SHORT_LEN，永远不进内化表）：直接沿用源串的
+// `char_len` / `hash`，省掉两遍整串扫描。
+//   为什么只在长串上用（2026-11-14 压测，HTTP/IO 管线场景）：
+//     `str_copy` = `str_new` 的完整流程 = gc_alloc → malloc → memcpy →
+//     `utf8_char_len`（扫一遍）→ `hash_string`（再扫一遍）→（短串才）intern_find/register
+//     ⇒ 一条消息要克隆两次（send 进发送堆、receive 进接收堆）⇒ 每字节实际过 6 遍。
+//     实测 string body 过 channel 只有 **208~247 MB/s**（同样数据的 `ffi.memcpy` 是 22 GB/s）：
+//     128KB 一条 514 µs，其中拷贝本身 <10%，剩下全是这两遍字节级扫描。
+//   长串复用后：每字节只剩 memcpy（+ 一次 malloc）⇒ 吞吐翻倍（见 docs 的复测数据）。
+//   ⚠ 短串（≤40）**不能**走这里：它们本来靠内化命中做到"重复串零分配"，
+//     改成不内化反而更慢（实测 357 → 456 ns/条），那条路径保持不变 ✓
+static ObjString* str_clone_long(ObjString* src) {
+    ObjString* copy = (ObjString*)gc_alloc(sizeof(ObjString), OBJ_STRING);
+    if (!copy) return NULL;
+    int len = src->len;
+    copy->chars = (char*)malloc((size_t)len + 1);
+    if (!copy->chars) {
+        native_throw_error("内存分配失败");
+        return NULL;
+    }
+    gc_track_memory((Object*)copy, sizeof(ObjString), sizeof(ObjString) + (size_t)len + 1);
+    memcpy(copy->chars, src->chars, (size_t)len);
+    copy->chars[len] = '\0';
+    copy->len = len;
+    copy->capacity = len + 1;      // 精确大小 ⇒ 不可原地追加（与 str_new 同口径）
+    copy->char_len = src->char_len;
+    copy->hash = src->hash;
+    return copy;
+}
+
 // 不可跨线程类型的**统一报错**（单一文案来源 ✓，下面两处 default 都调它 ✓）
 //   ⚠ 报错**不是**可选项：放行跨堆引用 ⇒ 收尾时同一块内存被两个堆各释放一次 ⇒ 0xC0000374 堆损坏。
 //   `type_tag` 是运行时类型标记（VAL_* 或 ObjectType），只用于诊断。
@@ -249,6 +280,10 @@ static Value channel_clone_value(Value val, int depth) {
             switch (obj->type) {
                 case OBJ_STRING: {
                     ObjString* str = (ObjString*)obj;
+                    // 长串（>40）永远不在内化表里 ⇒ 无"重复串零分配"快路径可丢，直接复用元数据 ✓
+                    if (!intern_should_intern(str->len)) {
+                        return val_obj((Object*)str_clone_long(str));
+                    }
                     return val_obj((Object*)str_copy(str->chars, str->len));
                 }
                 case OBJ_ARRAY: {

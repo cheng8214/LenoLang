@@ -1,0 +1,76 @@
+// test_channel_long_string.leno —— 回归：长字符串跨线程克隆（复用 char_len/hash 的快路径）
+//
+// 背景（2026-11-14 实测，HTTP/IO 管线场景）：
+//   跨线程传 string 走 `str_copy` = `str_new` 的完整流程：gc_alloc → malloc → memcpy →
+//   `utf8_char_len`（扫一遍）→ `hash_string`（再扫一遍）⇒ 每字节过 3 遍，而一条消息要克隆两次。
+//   实测 128KB body 过 channel 只有 243 MB/s（同样数据 `ffi.memcpy` 是 22 GB/s）。
+//   长串（> INTERN_MAX_SHORT_LEN = 40）本来就不进内化表 ⇒ 没有"重复串零分配"的快路径可丢，
+//   克隆时直接沿用源串的 `char_len` / `hash` 即可 ⇒ 实测 128KB 243 → 1842 MB/s（7.6×）。
+//
+// 本用例钉住：
+//   ① 长 ASCII / 长中文（多字节）克隆后**字符数**（char_len）与内容都对
+//   ② 40 / 41 字节这个内化阈值两侧都对（41 起走新路径）
+//   ③ 嵌套在 Array 里的长串同样正确（递归克隆路径）
+import threads
+import strings
+
+func echoOne(Channel ch, string s) { ch.send(s) }
+
+func echoArr(Channel ch, Array[string] a) { ch.send(a) }
+
+func makeCn(int n): string {
+    var s = ""
+    for 0 : n - 1 to i { s = s + "汉" }
+    return s
+}
+
+main() {
+    var ascii = strings.pad_end("", 1000, "x")
+    var cn = makeCn(100)                     // 100 个汉字 = 300 字节
+
+    // ① 长 ASCII
+    Channel[string] ch = threads.channel(1)
+    var t = threads.start(echoOne, ch, ascii)
+    string got = ch.receive()
+    t.join()
+    assert_eq(got.len(), 1000, "①长 ASCII 克隆后字符数应为 1000")
+    assert_eq(got == ascii, true, "①长 ASCII 内容应一致")
+
+    // ① 长中文（多字节：char_len 不能退化成字节数）
+    Channel[string] ch2 = threads.channel(1)
+    var t2 = threads.start(echoOne, ch2, cn)
+    string got2 = ch2.receive()
+    t2.join()
+    assert_eq(got2.len(), 100, "①长中文克隆后字符数应为 100（不是 300 字节）")
+    assert_eq(got2 == cn, true, "①长中文内容应一致")
+
+    // ② 内化阈值两侧（40 走内化快路径 / 41 走长串快路径）
+    var s40 = strings.pad_end("", 40, "y")
+    var s41 = strings.pad_end("", 41, "z")
+    Channel[string] ch3 = threads.channel(1)
+    var t3 = threads.start(echoOne, ch3, s40)
+    string g40 = ch3.receive()
+    ch3.send(s41)
+    string g41 = ch3.receive()
+    t3.join()
+    assert_eq(g40.len(), 40, "②40 字节串应完整")
+    assert_eq(g41.len(), 41, "②41 字节串应完整")
+    assert_eq(g40 == s40 and g41 == s41, true, "②阈值两侧内容都应一致")
+
+    // ③ 嵌套在 Array 里的长串（递归克隆）
+    var arr = []
+    for 0 : 4 to i { arr.add(strings.pad_end("", 100 + i, "q")) }
+    Channel[Array[string]] ch4 = threads.channel(1)
+    var t4 = threads.start(echoArr, ch4, arr)
+    Array[string] gotArr = ch4.receive()
+    t4.join()
+    assert_eq(gotArr.len(), 5, "③数组长度应一致")
+    var okAll = true
+    for 0 : 4 to i {
+        if gotArr[i] != arr[i] { okAll = false }
+        if gotArr[i].len() != 100 + i { okAll = false }
+    }
+    assert_eq(okAll, true, "③数组里每个长串的内容与字符数都应一致")
+
+    print("test_channel_long_string passed")
+}
