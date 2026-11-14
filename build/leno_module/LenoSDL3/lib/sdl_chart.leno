@@ -619,7 +619,10 @@ export struct LineChart impl Widget {
 
         if hiS >= 0 and hiI >= 0 and hiI < n and series[hiS].len() > hiI {
             string sname = if hiS < seriesNames.len() then seriesNames[hiS] else ""
-            string tip = format("{0}{1}: {2}", (if sname != "" then sname + " " else ""), xlabels[hiI], _fmtNum(series[hiS][hiI]))
+            // ★ 2026-11-15：原来是 Python 风格的 `{0}{1}: {2}` 占位符 —— 但 Leno 的 format 是
+            //   **printf 风格**（`%s`/`%d`）⇒ 提示框会原样显示 "{0}{1}: {2}"，数据一个都不填 ✗。
+            //   （被新加的 WARN_FORMAT_SPEC 扫出来的真实 bug）
+            string tip = format("%s%s: %s", (if sname != "" then sname + " " else ""), xlabels[hiI], _fmtNum(series[hiS][hiI]))
             _drawTip(r, f, _mx, _my, tip)
         }
     }

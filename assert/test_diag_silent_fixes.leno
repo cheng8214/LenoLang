@@ -1,4 +1,4 @@
-// test_diag_silent_fixes.leno —— 回归：把"静默通过"改成「报错 / 警告」的十类缺口（2026-11-15）
+// test_diag_silent_fixes.leno —— 回归：把"静默通过"改成「报错 / 警告」的十一类缺口（2026-11-15）
 //
 // 背景：逐条压测语言 + async/sockets/threads + 标准库 + defer 异常路径时，发现下面这些
 //   **编译成功、零诊断、运行期给错值或什么都不做**的路径。按仓库口径（静默错值 >
@@ -13,6 +13,7 @@
 //   ⑧ `dirs.walk("拼错的路径")`：静默返回一条 root=路径、dirs/files 全空的条目
 //   ⑨ `return` 换行后把**下一行**的表达式吞成返回值（`return` + `defer` 更报成「期望表达式」）
 //   ⑩ defer/finally 里抛错**替换**正在传播的异常，原异常一个字都不提
+//   ⑪ format 字面量：转换符多于实参（`<missing>`）/ 实参多于转换符（被忽略）/ 未知转换符（`%q` 原样输出）
 //
 // 每条都配"不该报"的对照（Channel[float] 收 int、裸 Channel、正常 enum、正常 async），
 // 防止把合法写法误判成错 —— 新检查最容易死在误报上。
@@ -225,6 +226,31 @@ main() {
     var o18 = ce.expect_ok(p18, "⑩对照：只有 defer 抛错不该报覆盖", "caught")
     ce.expect_no_warning(o18, "⑩对照：只有 defer 抛错不该报覆盖",
                          "finally/defer 里抛出的异常覆盖了")
+
+    // ==================== ⑪ format 字面量格式串的结构错误 ====================
+    // 此前只查"恰好 1 个转换符 + 1 个实参"的类型；下面三种结构错误全都静默：
+    //   转换符多于实参 ⇒ 输出 <missing>；实参多于转换符 ⇒ 被忽略；未知转换符 ⇒ 原样输出
+    var p19 = dirs.join(work, "fmt_missing_arg.leno")
+    files.write(p19, "main() { print(format(\"%d\") + \"\\n\") }\n")
+    ce.expect_warning(p19, "⑪转换符多于实参必须警告", "[格式串与实参不匹配]", 1)
+
+    var p20 = dirs.join(work, "fmt_unknown_spec.leno")
+    files.write(p20, "main() { print(format(\"%q\", 1) + \"\\n\") }\n")
+    ce.expect_warning(p20, "⑪未知转换符必须警告", "未知的格式转换符", 1)
+
+    var p21 = dirs.join(work, "fmt_extra_arg.leno")
+    files.write(p21, "main() { print(format(\"%s\", \"a\", \"b\") + \"\\n\") }\n")
+    ce.expect_warning(p21, "⑪实参多于转换符必须警告", "静默忽略", 1)
+
+    // 对照：数量/类型都对 ⇒ 一条都不该报（防止把正常 format 刷屏）
+    var p22 = dirs.join(work, "fmt_ok.leno")
+    files.write(p22,
+        "main() {\n"
+        + "    print(format(\"%s %d %.1f\", \"a\", 2, 3.5) + \"\\n\")\n"
+        + "    print(format(\"100%%\") + \"\\n\")\n"
+        + "}\n")
+    var o22 = ce.expect_ok(p22, "⑪对照：正常 format 不该警告", "a 2 3.5")
+    ce.expect_no_warning(o22, "⑪对照：正常 format 不该警告", "[格式串与实参不匹配]")
 
     print("test_diag_silent_fixes passed")
 }
