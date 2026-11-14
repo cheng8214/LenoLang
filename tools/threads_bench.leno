@@ -1,0 +1,283 @@
+// tools/threads_bench.leno —— 线程运行时压测（常驻，随时复测）
+//
+// 用法（仓库根目录）：
+//   build\leno.exe tools\threads_bench.leno              # 全部段
+//   build\leno.exe tools\threads_bench.leno channel      # 只跑一段
+//   段名：spawn / par / channel / blob / cpu / map / gc / globals
+//   ⚠ 线程类脚本可能挂死 ⇒ 建议套超时壳：
+//     build\leno.exe tools\run_timeout.leno 180000 build\leno.exe tools\threads_bench.leno
+//
+// 每段量什么、以及历史基线（2026-11-14 实测）见 `docs\线程并发能力修复追踪.md` 的 TH18：
+//   · spawn      —— 空线程 spawn+join（固定成本 ~190us，其中 145us 是方法表重注册）
+//   · par        —— parallel_for 固定开销
+//   · channel    —— 缓冲/无缓冲、int/短串/struct 的每条消息成本
+//   · blob       —— 大字符串（HTTP/IO body）过 channel 的吞吐（长串快路径）
+//   · cpu        —— 1/2/4/8 线程的加速比（用固定的算术循环，跨版本可比）
+//   · map        —— threads.map 的每元素成本（= 一份一个线程）
+//   · gc         —— 每线程分配压力
+//   · globals    —— 大全局数组对 spawn 的影响（每次 spawn 都会克隆 globals）
+//
+// 读数的正确姿势：数字随机器/后台负载波动（同机 ±10%），只比**同一台机、同一时段**的两次运行；
+//   关心回归时看趋势，不要抠单次小数。
+
+import threads
+import times
+import strings
+
+struct Msg {
+    int id = 0
+    int a = 0
+    string tag = ""
+}
+
+// 故意留一个可能很大的全局数组：globals 段会往里面塞 10 万元素
+Array[int] gBig = []
+
+Array[string] gOnly = []          // 命令行指定的段（空 = 全跑）
+
+func want(string sec): bool {
+    if gOnly.len() == 0 { return true }
+    for gOnly to s {
+        if s == sec { return true }
+    }
+    return false
+}
+
+// ==================== 线程入口 ====================
+func noop() { }
+
+func cpuChunk(int from, int count): int {
+    var s = 0
+    for from : from + count - 1 to i {
+        s = s + (i * 3) % 7
+    }
+    return s
+}
+
+func prodInt(Channel ch, int n) {
+    for 0 : n - 1 to i { ch.send(i) }
+    ch.close()
+}
+
+func prodShortStr(Channel ch, int n) {
+    for 0 : n - 1 to i { ch.send("message-" + _str(i)) }
+    ch.close()
+}
+
+func prodStruct(Channel ch, int n) {
+    for 0 : n - 1 to i { ch.send(new Msg(id = i, a = i * 2, tag = "tag")) }
+    ch.close()
+}
+
+// 大 body：payload 在**生产方**自己造（排除 spawn 时的实参克隆），返回 send 循环耗时
+func prodBlob(Channel ch, int n, int size): int {
+    var blob = strings.pad_end("", size, "x")
+    var t0 = times.us()
+    for 0 : n - 1 to i { ch.send(blob) }
+    ch.close()
+    var t1 = times.us()
+    return _int(t1 - t0)
+}
+
+func allocWork(Channel ch, int n) {
+    var acc = 0
+    for 0 : n - 1 to i {
+        var a = []
+        for 0 : 9 to k { a.add(i + k) }
+        acc = acc + _int(a[9]) + ("x" + _str(i)).len()
+    }
+    ch.send(acc)
+}
+
+// 收：返回 [条数, 字节数]
+func drain(Channel ch): [int, int] {
+    var cnt = 0
+    var bytes = 0
+    while true {
+        var v = ch.receive()
+        if v == null { break }
+        cnt = cnt + 1
+        if v is string => s { bytes = bytes + s.len() }
+        if v is Msg => m { bytes = bytes + m.tag.len() }
+    }
+    return cnt, bytes
+}
+
+func mark(bool ok): string {
+    if ok { return "  ✓" }
+    return "  ✗ 条数不符"
+}
+
+main() {
+    for _args() to a { gOnly.add(_str(a)) }
+    print("=== Leno 线程压测（os=" + _os() + "）===")
+
+    // ---------------- spawn：空线程 spawn+join ----------------
+    if want("spawn") {
+        print("[spawn] 空线程 spawn+join")
+        for [50, 200] to cnt {
+            var t0 = times.us()
+            var ts = []
+            for 0 : cnt - 1 to i { ts.add(threads.start(noop)) }
+            var joined = threads.join_all(ts)
+            var t1 = times.us()
+            print("  " + _str(cnt) + " 个 ⇒ " + _str(t1 - t0) + " us，单个 "
+                  + _str(_int((t1 - t0) / cnt)) + " us" + mark(joined == cnt))
+        }
+    }
+
+    // ---------------- par：parallel_for 固定开销 ----------------
+    if want("par") {
+        print("[par] parallel_for 固定开销")
+        for [1, 4, 16] to k {
+            var ch = threads.channel(k)
+            var t0 = times.us()
+            var started = threads.parallel_for(k, func(int idx) { ch.send(idx) })
+            var t1 = times.us()
+            var cnt = 0
+            for 0 : started - 1 to _ { var v = ch.receive(); if v != null { cnt = cnt + 1 } }
+            print("  parallel_for(" + _str(k) + ") ⇒ " + _str(t1 - t0) + " us，每个线程 "
+                  + _str(_int((t1 - t0) / k)) + " us" + mark(cnt == started))
+        }
+    }
+
+    // ---------------- channel：小消息（缓冲/无缓冲、各类型）----------------
+    if want("channel") {
+        print("[channel] 1 生产 + 1 消费")
+        var n = 20000
+        // 无缓冲（每条一次会合）
+        var c0 = threads.channel(0)
+        var t0 = times.us()
+        var p0 = threads.start(prodInt, c0, n)
+        var[int, int](g0c, _g0b) = drain(c0)
+        p0.join()
+        var t1 = times.us()
+        print("  无缓冲 int ×" + _str(n) + " ⇒ " + _str(t1 - t0) + " us，每消息 "
+              + _str((t1 - t0) * 1000.0 / _float(n)) + " ns" + mark(g0c == n))
+
+        // 有缓冲 int
+        var m = 200000
+        var c1 = threads.channel(1024)
+        var t2 = times.us()
+        var p1 = threads.start(prodInt, c1, m)
+        var[int, int](g1c, _g1b) = drain(c1)
+        p1.join()
+        var t3 = times.us()
+        print("  缓冲 int ×" + _str(m) + " ⇒ " + _str(t3 - t2) + " us，每消息 "
+              + _str((t3 - t2) * 1000.0 / _float(m)) + " ns" + mark(g1c == m))
+
+        // 短字符串（≤40 ⇒ 内化命中快路径）
+        //   ⚠ 这里每条都是**现拼**的（`"message-" + _str(i)`），读数含构造成本：
+        //     纯通道约 0.36 us/条，1.0 us 里多出来的是拼串（见 TH18 的归因）
+        var c2 = threads.channel(1024)
+        var t4 = times.us()
+        var p2 = threads.start(prodShortStr, c2, n)
+        var[int, int](g2c, _g2b) = drain(c2)
+        p2.join()
+        var t5 = times.us()
+        print("  缓冲短串 ×" + _str(n) + " ⇒ " + _str(t5 - t4) + " us，每消息 "
+              + _str((t5 - t4) * 1000.0 / _float(n)) + " ns" + mark(g2c == n))
+
+        // struct
+        var c3 = threads.channel(1024)
+        var t6 = times.us()
+        var p3 = threads.start(prodStruct, c3, n)
+        var[int, int](g3c, _g3b) = drain(c3)
+        p3.join()
+        var t7 = times.us()
+        print("  缓冲 struct ×" + _str(n) + " ⇒ " + _str(t7 - t6) + " us，每消息 "
+              + _str((t7 - t6) * 1000.0 / _float(n)) + " ns" + mark(g3c == n))
+    }
+
+    // ---------------- blob：大字符串吞吐（长串快路径）----------------
+    if want("blob") {
+        print("[blob] 大字符串过 channel（长串复用 char_len/hash）")
+        var sizes = [1024, 32768, 131072, 1048576, 4194304]
+        var counts = [20000, 2000, 500, 100, 25]
+        for 0 : sizes.len() - 1 to si {
+            var sz = sizes[si]
+            var n = counts[si]
+            var ch = threads.channel(8)
+            var t0 = times.us()
+            var tp = threads.start(prodBlob, ch, n, sz)
+            var[int, int](got, bytes) = drain(ch)
+            var sendUs = _int(tp.join())
+            var t1 = times.us()
+            var totalMB = _float(sz) * _float(n) / 1048576.0
+            var secs = _float(t1 - t0) / 1000000.0
+            print("  " + _str(sz) + "B ×" + _str(n) + " ⇒ 端到端 " + _str(t1 - t0)
+                  + " us（send " + _str(sendUs) + "），" + _str(totalMB / secs)
+                  + " MB/s，每消息 " + _str((t1 - t0) * 1000.0 / _float(n)) + " ns"
+                  + mark(got == n and bytes == sz * n))
+        }
+    }
+
+    // ---------------- cpu：1/2/4/8 线程加速比 ----------------
+    if want("cpu") {
+        print("[cpu] 固定算术循环的分块并行（TOTAL = 2000 万次迭代）")
+        var TOTAL = 20000000
+        var u0 = times.us()
+        var single = cpuChunk(0, TOTAL)
+        var u1 = times.us()
+        var baseUs = u1 - u0
+        print("  单线程 ⇒ " + _str(baseUs) + " us（和 " + _str(single) + "）")
+        for [2, 4, 8] to k {
+            var ck = threads.channel(k)
+            var per = TOTAL / k
+            var u2 = times.us()
+            threads.parallel_for(k, func(int idx) {
+                var from = idx * per
+                var cnt = per
+                if idx == k - 1 { cnt = TOTAL - from }
+                ck.send(cpuChunk(from, cnt))
+            })
+            var sum = 0
+            for 0 : k - 1 to i { sum = sum + _int(ck.receive()) }
+            var u3 = times.us()
+            var used = u3 - u2
+            var okSum = sum == single
+            print("  parallel_for(" + _str(k) + ") ⇒ " + _str(used) + " us，加速比 "
+                  + _str(baseUs * 1.0 / used) + "x" + mark(okSum))
+        }
+    }
+
+    // ---------------- map：threads.map 每元素成本 ----------------
+    if want("map") {
+        print("[map] threads.map（一份一个线程）")
+        var arr = []
+        for 0 : 199 to i { arr.add(i) }
+        var v0 = times.us()
+        var res = threads.map(arr, func(int x, int idx): int { return x + idx })
+        var v1 = times.us()
+        print("  200 元素 ⇒ " + _str(v1 - v0) + " us，每个 "
+              + _str(_int((v1 - v0) / 200)) + " us" + mark(res.len() == 200 and res[199] == 398))
+    }
+
+    // ---------------- gc：每线程分配压力 ----------------
+    if want("gc") {
+        print("[gc] 8 线程 × 2 万次小分配（每线程独立堆）")
+        var ch = threads.channel(8)
+        var w0 = times.us()
+        threads.parallel_for(8, func(int idx) { allocWork(ch, 20000) })
+        var w1 = times.us()
+        var acc = 0
+        for 0 : 7 to _ { acc = acc + _int(ch.receive()) }
+        print("  ⇒ " + _str(w1 - w0) + " us（校验和 " + _str(acc) + "）")
+    }
+
+    // ---------------- globals：大全局数组对 spawn 的影响 ----------------
+    if want("globals") {
+        print("[globals] 每次 spawn 都会克隆 globals")
+        for 0 : 99999 to i { gBig.add(i) }
+        var g0 = times.us()
+        var ts = []
+        for 0 : 19 to i { ts.add(threads.start(noop)) }
+        threads.join_all(ts)
+        var g1 = times.us()
+        print("  globals 含 10 万元素时 spawn 20 个 ⇒ " + _str(g1 - g0) + " us，单个 "
+              + _str(_int((g1 - g0) / 20)) + " us")
+        print("  （2026-11-14 修前：单次 1398 us 且约 1/4 概率崩；修后 ~230 us）")
+    }
+
+    print("=== 完成 ===")
+}
