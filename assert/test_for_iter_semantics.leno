@@ -8,7 +8,7 @@
 // 同时覆盖：空容器不进体、break/continue 绑定、带索引变量、字典/结构体/枚举迭代、
 //   嵌套（内层 continue 不得跳到外层）。
 
-enum Color { RED, GREEN, BLUE }
+enum Color { RED; GREEN; BLUE }
 
 // ① 迭代中追加：长度每轮重算 ⇒ 循环被"撑长"
 //    idx=0..5（每轮 n<5 时追加一个）：n=1 时 len 2→3、n=2 时 3→4、n=3 时 4→5、

@@ -12,7 +12,7 @@
 现在：
 
 ```leno
-enum State { idle, running, done }
+enum State { idle; running; done }
 ```
 
 - 成员是 **int 常量**（`State.running` 在语义阶段被改写成 `AST_NUM`，见 `visit_module.inc`）；
@@ -286,7 +286,7 @@ struct Msg {
 现在这些都能编译且零诊断：
 
 ``leno
-enum Res[T] { ok(T v), err(int code, string msg) }
+enum Res[T] { ok(T v); err(int code, string msg) }
 func sig(Res[int] r): string { return "x" }
 ``
 

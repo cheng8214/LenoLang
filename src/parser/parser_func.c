@@ -4096,11 +4096,20 @@ Ast* parse_enum_stmt(Parser* p) {
             next_auto_value = member_value + 1;
         }
 
-        // 可选的分隔符：分号或逗号。
-        // 扫描器（scan_enum.inc）一直支持逗号分隔，解析器此前只吃 ';'，
-        // 于是同一个 enum 在模块符号表里 vs 直接编译时表现不同（逗号版直接语法错误）。
+        // 可选的分隔符：分号。
+        // ★ 2026-11-15（用户确认口径）：enum **成员之间**只认 `;` 或换行。
+        //   逗号是"声明列表"的分隔符（`int a, b, c` / `struct S { int a, b }` ——
+        //   同一个类型、同一条声明），而 enum 每个成员是**独立声明** ⇒ 用 `;`。
+        //   此前为了与模块扫描器（scan_enum.inc 支持逗号）对齐而放行逗号，
+        //   但两套分隔符并存会让"是不是漏写了什么"看不出来；这里给出定向报错。
         int had_separator = 0;
-        if (p->lex.current.type == TOK_SEMI || p->lex.current.type == TOK_COMMA) {
+        if (p->lex.current.type == TOK_COMMA) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "enum 成员之间用 ';' 分隔（不是 ','）—— 逗号只用于 `int a, b, c` 这类"
+                "**同一类型的多名字声明**；也可以每个成员写一行");
+            lexer_next(&p->lex);      // 吃掉逗号，继续解析后面的成员（错误恢复）
+            had_separator = 1;
+        } else if (p->lex.current.type == TOK_SEMI) {
             lexer_next(&p->lex);
             had_separator = 1;
         }

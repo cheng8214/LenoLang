@@ -91,7 +91,7 @@ main() {
     //   现在：报错时直接去**已导入模块的符号表**里按名字找（struct/face/enum/别名/clib ✓）
     //   ⇒ 命中就点名模块 ✓（七处拷贝合并成一个共享实现 ✓ 见 semantic_undefined_type_hint ✓）
     var modx_src = "export struct Widget { int x = 1 }" + n
-        + "export enum Color { Red, Green }" + n
+        + "export enum Color { Red; Green }" + n
         + "export func hey(): int { return 1 }" + n
     files.write(dirs.join(work, "modx.leno"), modx_src)
 

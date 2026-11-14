@@ -819,7 +819,7 @@ main() {
 
     // ㊱b 防误报：常见合法默认值（0 / null / 浮点 / 空容器 / 枚举成员）都不得报
     var fieldDefaultOk = dirs.join(work, "field_default_ok.leno")
-    files.write(fieldDefaultOk, @"enum E { A = 1, B = 2 }
+    files.write(fieldDefaultOk, @"enum E { A = 1; B = 2 }
 struct P {
     int a = 0
     int? b = null

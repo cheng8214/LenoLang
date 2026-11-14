@@ -334,7 +334,7 @@ Array[User] out = rows.map(func(Dict r) {
 （`ObjStructDef.enum_sig`），所以 `encode → fill` 是对称的：
 
 ```leno
-enum Msg { a(int x)  b(string s, float f)  c() }
+enum Msg { a(int x); b(string s, float f); c() }
 
 Msg m = Msg.b("hi", 2.5)
 string js = jsons.encode(m)          // {"b":{"s":"hi","f":2.5}}

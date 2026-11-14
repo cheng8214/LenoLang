@@ -10,8 +10,8 @@
 //   ①③④ 任何一条被"检查"改坏（比如误判成编译错误），这个用例会立刻红。
 import strings
 
-enum Color { red, green, blue }
-enum Level { low = 1, mid = 2, high = 4 }
+enum Color { red; green; blue }
+enum Level { low = 1; mid = 2; high = 4 }
 
 // ① 盖全：应当是"零警告 + 结果正确"
 func nameOf(Color c): string {

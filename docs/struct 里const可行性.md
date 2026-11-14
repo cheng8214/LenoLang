@@ -487,7 +487,7 @@ if (sdef && sdef->const_count > 0) {
 Leno 的 enum 已提供 `TypeName.MEMBER` 风格的命名空间：
 
 ```leno
-enum LayoutAlign { START = 0, CENTER = 1, END = 2, STRETCH = 3 }
+enum LayoutAlign { START = 0; CENTER = 1; END = 2; STRETCH = 3 }
 // 访问: LayoutAlign.START
 ```
 

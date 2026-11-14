@@ -14,7 +14,7 @@
 //   ⑨ `return` 换行后把**下一行**的表达式吞成返回值（`return` + `defer` 更报成「期望表达式」）
 //   ⑩ defer/finally 里抛错**替换**正在传播的异常，原异常一个字都不提
 //   ⑪ format 字面量：转换符多于实参（`<missing>`）/ 实参多于转换符（被忽略）/ 未知转换符（`%q` 原样输出）
-//   ⑫ 花括号成员列表：同一行只写空格不算分隔（必须 ';' 或 ','，否则换行）
+//   ⑫ 花括号成员列表：同一行只写空格不算分隔（必须 ';'，否则换行）；enum 成员不接受逗号
 //
 // 每条都配"不该报"的对照（Channel[float] 收 int、裸 Channel、正常 enum、正常 async），
 // 防止把合法写法误判成错 —— 新检查最容易死在误报上。
@@ -63,14 +63,14 @@ main() {
     // ==================== ② enum 成员值重复 ====================
     var p4 = dirs.join(work, "enum_dup.leno")
     files.write(p4,
-        "enum E { A = 1, B = 1 }\n"
+        "enum E { A = 1; B = 1 }\n"
         + "main() { print(_str(E.A) + \"\\n\") }\n")
     ce.expect_warning(p4, "②enum 值重复必须警告", "[enum值重复]", 1)
 
     // 对照：值各不相同 ⇒ 不该报（防止"看到 enum 就警告"）
     var p5 = dirs.join(work, "enum_unique.leno")
     files.write(p5,
-        "enum E { A = 1, B = 2 }\n"
+        "enum E { A = 1; B = 2 }\n"
         + "main() { print(_str(E.A) + \"\\n\") }\n")
     var o5 = ce.expect_ok(p5, "②对照：enum 值唯一不该警告", "")
     ce.expect_no_warning(o5, "②对照：enum 值唯一不该警告", "[enum值重复]")
@@ -259,6 +259,12 @@ main() {
     var p23 = dirs.join(work, "enum_same_line.leno")
     files.write(p23, "enum E { A B }\nmain() { print(_str(E.A) + \"\\n\") }\n")
     ce.expect_error(p23, "⑫enum 同一行只写空格必须报", "同一行的 enum 成员之间必须用 ';'", 1)
+
+    // 逗号只属于"声明列表"（`int a, b, c`），不是 enum 成员分隔符（用户 2026-11-15 确认）
+    var p23b = dirs.join(work, "enum_comma.leno")
+    files.write(p23b, "enum E { A, B }\nmain() { print(_str(E.A) + \"\\n\") }\n")
+    ce.expect_error(p23b, "⑫enum 成员用逗号必须报（并指出逗号的用途）",
+                    "逗号只用于 `int a, b, c`", 1)
 
     var p24 = dirs.join(work, "enum_sep_ok.leno")
     files.write(p24, "enum E { A; B }\nmain() { print(_str(E.A) + _str(E.B) + \"\\n\") }\n")

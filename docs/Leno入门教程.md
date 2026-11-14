@@ -7342,11 +7342,11 @@ enum Http {
 >
 > 表达式在编译期求值，结果必须为整数。
 
-> **⚠️ 同一行写多个成员时必须用 `;`（或 `,`）分隔（2026-11-15 起编译期报错）**
+> **⚠️ 同一行写多个成员时必须用 `;` 分隔（2026-11-15 起编译期报错）**
 >
 > ```leno
 > enum E { A; B }     // ✓
-> enum E { A, B }     // ✓（逗号也接受）
+> enum E { A, B }     // ✗ 逗号不是 enum 成员的分隔符（它只用于 `int a, b, c` 这类声明列表）
 > enum E { A B }      // ✗ 同一行的 enum 成员之间必须用 ';'（或者换行）
 > ```
 >
@@ -12159,7 +12159,7 @@ leno -p program.leno
 | 方法写到别的文件 | `extend Player { func ... }`（跨模块：`extend pl.Player { }`） |
 | self 关键字 | `self.field`, `self.method()`     |
 | 方法链式调用   | `outer.get().get()`               |
-| 定义枚举     | `enum Color { red, green, blue }` |
+| 定义枚举     | `enum Color { red; green; blue }` |
 | 枚举值      | `Color.red`, `Color.green`, `use m.Color` 链式导入 |
 
 ### 闭包与函数式编程

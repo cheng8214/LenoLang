@@ -21,7 +21,7 @@ use evmod.Ev
 // ==================== ① 载荷类型全覆盖 ====================
 struct Pt { int x = 1, y = 2 }
 
-enum Ink { red, blue }
+enum Ink { red; blue }
 
 enum Payload {
     num(int v)
@@ -47,7 +47,7 @@ func render(Payload p): string {
 }
 
 // ==================== ② 零参数变体 ====================
-enum Cmd { add(int n), stop(), echo(string s) }
+enum Cmd { add(int n); stop(); echo(string s) }
 
 func apply(int acc, Cmd c): int {
     switch c {
