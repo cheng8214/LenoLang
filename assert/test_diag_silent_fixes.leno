@@ -1,4 +1,4 @@
-// test_diag_silent_fixes.leno —— 回归：把"静默通过"改成「报错 / 警告」的十一类缺口（2026-11-15）
+// test_diag_silent_fixes.leno —— 回归：把"静默通过"改成「报错 / 警告」的十二类缺口（2026-11-15）
 //
 // 背景：逐条压测语言 + async/sockets/threads + 标准库 + defer 异常路径时，发现下面这些
 //   **编译成功、零诊断、运行期给错值或什么都不做**的路径。按仓库口径（静默错值 >
@@ -14,6 +14,7 @@
 //   ⑨ `return` 换行后把**下一行**的表达式吞成返回值（`return` + `defer` 更报成「期望表达式」）
 //   ⑩ defer/finally 里抛错**替换**正在传播的异常，原异常一个字都不提
 //   ⑪ format 字面量：转换符多于实参（`<missing>`）/ 实参多于转换符（被忽略）/ 未知转换符（`%q` 原样输出）
+//   ⑫ 花括号成员列表：同一行只写空格不算分隔（必须 ';' 或 ','，否则换行）
 //
 // 每条都配"不该报"的对照（Channel[float] 收 int、裸 Channel、正常 enum、正常 async），
 // 防止把合法写法误判成错 —— 新检查最容易死在误报上。
@@ -251,6 +252,39 @@ main() {
         + "}\n")
     var o22 = ce.expect_ok(p22, "⑪对照：正常 format 不该警告", "a 2 3.5")
     ce.expect_no_warning(o22, "⑪对照：正常 format 不该警告", "[格式串与实参不匹配]")
+
+    // ==================== ⑫ 成员列表的同一行分隔规则 ====================
+    // 设计口径（用户 2026-11-15 确认）：换行 = 分隔；同一行必须写 ';'（或 ','），
+    // 只写空格不算分隔。enum / struct / cstruct / face 共用同一条规则。
+    var p23 = dirs.join(work, "enum_same_line.leno")
+    files.write(p23, "enum E { A B }\nmain() { print(_str(E.A) + \"\\n\") }\n")
+    ce.expect_error(p23, "⑫enum 同一行只写空格必须报", "同一行的 enum 成员之间必须用 ';'", 1)
+
+    var p24 = dirs.join(work, "enum_sep_ok.leno")
+    files.write(p24, "enum E { A; B }\nmain() { print(_str(E.A) + _str(E.B) + \"\\n\") }\n")
+    ce.expect_ok(p24, "⑫对照：enum 用 ';' 分隔照常编译", "01")
+
+    var p25 = dirs.join(work, "struct_same_line.leno")
+    files.write(p25, "struct S { int a = 0 int b = 1 }\nmain() { print(_str(new S().a) + \"\\n\") }\n")
+    ce.expect_error(p25, "⑫struct 同一行只写空格必须报", "同一行的 struct 成员之间必须用 ';'", 0)
+
+    var p26 = dirs.join(work, "struct_sep_ok.leno")
+    files.write(p26,
+        "struct S { int a = 0; int b = 1 }\n"
+        + "main() { var s = new S(); print(_str(s.a + s.b) + \"\\n\") }\n")
+    ce.expect_ok(p26, "⑫对照：struct 用 ';' 分隔照常编译", "1")
+
+    var p27 = dirs.join(work, "cstruct_same_line.leno")
+    files.write(p27,
+        "cstruct V { i32 x i32 y }\n"
+        + "main() { print(\"ok\\n\") }\n")
+    ce.expect_error(p27, "⑫cstruct 同一行只写空格必须报", "同一行的 cstruct 字段之间必须用 ';'", 0)
+
+    var p28 = dirs.join(work, "face_same_line.leno")
+    files.write(p28,
+        "face F { func a(): int func b(): int }\n"
+        + "main() { print(\"ok\\n\") }\n")
+    ce.expect_error(p28, "⑫face 同一行只写空格必须报", "同一行的 face 方法之间必须用 ';'", 0)
 
     print("test_diag_silent_fixes passed")
 }

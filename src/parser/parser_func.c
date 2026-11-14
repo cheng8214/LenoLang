@@ -967,6 +967,20 @@ static void check_var_decl_boundary(Parser* p, int decl_line) {
     }
 }
 
+// ★ 2026-11-15：花括号成员列表的**同一行分隔**规则（enum 成员 / struct 成员 / cstruct 字段共用）
+//   设计口径：换行 = 分隔；同一行 = 必须写 `;`（或 `,`）。**只写空格不算分隔**。
+//   由来：`enum Msg { a(int x) b(int y) }` 此前能编过，与"同一行用 ; 或换行"的设计不一致
+//   （用户 2026-11-15 指出）；struct / cstruct 是同一个口子，一并按这条规则拦。
+//   item_line = 该成员**起始**行；had_separator = 刚消费过 `;` / `,`。
+static void check_member_same_line_separator(Parser* p, int item_line, int had_separator,
+                                             const char* what) {
+    if (had_separator) return;
+    if (p->lex.current.type == TOK_RBRACE || p->lex.current.type == TOK_EOF) return;
+    if (p->lex.current.line != item_line) return;
+    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+        "同一行%s之间必须用 ';' 分隔（或者换行）—— 只写空格不算分隔", what);
+}
+
 // ============================================================================
 // 解构声明解析: var[T1, T2, ...](a, b, ...) = expr 或 var{"k": T, ...}(a, ...) = expr
 // ============================================================================
@@ -2433,6 +2447,8 @@ Ast* parse_struct_stmt(Parser* p) {
             lexer_next(&p->lex);
             continue;
         }
+        // ★ 2026-11-15：同一行多个成员必须显式分隔（见 check_member_same_line_separator）
+        int member_line = p->lex.current.line;
 
         // ★ pri：成员私有（默认全公有 ✓）—— 它只是**成员声明的前缀**：
         //     pri int _cache = 0        ← 私有字段
@@ -2553,9 +2569,12 @@ Ast* parse_struct_stmt(Parser* p) {
             type_free(const_type);
 
             // 可选的分号
+            int had_separator = 0;
             if (p->lex.current.type == TOK_SEMI) {
                 lexer_next(&p->lex);
+                had_separator = 1;
             }
+            check_member_same_line_separator(p, member_line, had_separator, "的 struct 成员");
             continue;
         }
 
@@ -2704,9 +2723,12 @@ Ast* parse_struct_stmt(Parser* p) {
             }
 
             // 可选的分号
+            int had_separator = 0;
             if (p->lex.current.type == TOK_SEMI) {
                 lexer_next(&p->lex);
+                had_separator = 1;
             }
+            check_member_same_line_separator(p, member_line, had_separator, "的 struct 成员");
             continue;
             } // end else (方法定义)
         } // end if TOK_FUNC
@@ -2817,9 +2839,12 @@ Ast* parse_struct_stmt(Parser* p) {
         type_free(field_type);
 
         // 可选的分号
+        int had_separator = 0;
         if (p->lex.current.type == TOK_SEMI) {
             lexer_next(&p->lex);
+            had_separator = 1;
         }
+        check_member_same_line_separator(p, member_line, had_separator, "的 struct 成员");
     }
 
     // 期望 '}'
@@ -3075,7 +3100,12 @@ Ast* parse_face_stmt(Parser* p) {
         method_param_counts[method_count] = param_count;
         method_count++;
 
-        if (p->lex.current.type == TOK_SEMI) lexer_next(&p->lex);
+        int had_separator = 0;
+        if (p->lex.current.type == TOK_SEMI) {
+            lexer_next(&p->lex);
+            had_separator = 1;
+        }
+        check_member_same_line_separator(p, method_line, had_separator, "的 face 方法");
     }
 
     if (!consume(p, TOK_RBRACE, "期望 '}' 结束 face 定义")) {
@@ -3228,6 +3258,8 @@ Ast* parse_cstruct_stmt(Parser* p) {
             lexer_next(&p->lex);
             continue;
         }
+        // ★ 2026-11-15：同一行多个字段必须显式分隔（与 struct / enum 同一条规则）
+        int member_line = p->lex.current.line;
 
         // cstruct 不支持方法
         if (p->lex.current.type == TOK_FUNC || p->lex.current.type == TOK_ASYNC) {
@@ -3372,9 +3404,12 @@ Ast* parse_cstruct_stmt(Parser* p) {
         field_count++;
 
         // 可选的分号
+        int had_separator = 0;
         if (p->lex.current.type == TOK_SEMI) {
             lexer_next(&p->lex);
+            had_separator = 1;
         }
+        check_member_same_line_separator(p, member_line, had_separator, "的 cstruct 字段");
     }
 
     // 期望 '}'
@@ -3919,6 +3954,12 @@ Ast* parse_enum_stmt(Parser* p) {
 
     // 解析成员列表
     while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
+        // ★ 2026-11-15：**同一行的成员之间必须有显式分隔符**（`;` 或 `,`），否则必须换行。
+        //   设计口径：换行 = 分隔；同一行 = 写 `;`（与 var 声明的"声明语句后期望换行或 ';'"同一条）。
+        //   此前成员之间**空白也算分隔** ⇒ `enum Msg { a(int x) b(int y) }` 能编过，
+        //   与设计不一致（用户 2026-11-15 指出）。这里记下成员起始行，收尾时比对。
+        int member_line = p->lex.current.line;
+
         // 检查是否是注释（跳过）
         if (p->lex.current.type == TOK_ERROR) {
             lexer_next(&p->lex);
@@ -4058,8 +4099,19 @@ Ast* parse_enum_stmt(Parser* p) {
         // 可选的分隔符：分号或逗号。
         // 扫描器（scan_enum.inc）一直支持逗号分隔，解析器此前只吃 ';'，
         // 于是同一个 enum 在模块符号表里 vs 直接编译时表现不同（逗号版直接语法错误）。
+        int had_separator = 0;
         if (p->lex.current.type == TOK_SEMI || p->lex.current.type == TOK_COMMA) {
             lexer_next(&p->lex);
+            had_separator = 1;
+        }
+
+        // ★ 2026-11-15：没有显式分隔符，且下一个成员还在**同一行** ⇒ 报错（不是静默接受）
+        if (!had_separator &&
+            p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF &&
+            p->lex.current.line == member_line) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "同一行的 enum 成员之间必须用 ';' 分隔（或者换行）—— "
+                "如 `enum E { A; B }`，或每行写一个成员；只写空格不算分隔");
         }
     }
 

@@ -21,8 +21,8 @@ cstruct Buf {
     f32 fs[3]
 }
 
-cstruct V3 { f32 x  f32 y  f32 z }
-cstruct Mat { V3 cols[2]  i32 id }
+cstruct V3 { f32 x; f32 y; f32 z }
+cstruct Mat { V3 cols[2]; i32 id }
 
 func dataLen(Buf b): int {
     return b.data.len()            // 形参（cstruct 实例）上的数组字段

@@ -1190,7 +1190,7 @@ main() { }
     // ⑨ extend 的目标不是 struct（2026-11-04）：enum/face/cstruct 都没有方法体。
     //    此前一律报"本文件里没有定义"（目标明明就在上一行）⇒ 现在点名它是 enum
     var ex2 = dirs.join(work, "extend_enum_target.leno")
-    files.write(ex2, @"enum Col { Red Green }
+    files.write(ex2, @"enum Col { Red; Green }
 
 extend Col {
     func f(): int { return 1 }

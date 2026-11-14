@@ -10,7 +10,7 @@
 //         ④ malloc_array(0) 是真空数组（任何下标越界）。
 import ffi
 
-cstruct V3 { f32 x  f32 y  f32 z }
+cstruct V3 { f32 x; f32 y; f32 z }
 
 main() {
     // ① 视图存起来 → free_all → 读 / 写都必须抛异常

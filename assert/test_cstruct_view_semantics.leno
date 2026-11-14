@@ -16,12 +16,12 @@
 // 本用例钉住：视图的 len / 下标读写 / 整元素赋值，以及上面四条"该报错就要报错"。
 import ffi
 
-cstruct V3 { f32 x  f32 y  f32 z }
-cstruct Mat { V3 cols[2]  i32 id }
-cstruct Inner { i32 v  f32 w }
-cstruct Outer { Inner inner  i32 id }
+cstruct V3 { f32 x; f32 y; f32 z }
+cstruct Mat { V3 cols[2]; i32 id }
+cstruct Inner { i32 v; f32 w }
+cstruct Outer { Inner inner; i32 id }
 
-struct Holder { V3 v = null  int n = 0 }
+struct Holder { V3 v = null; int n = 0 }
 
 main() {
     // ---- A) 数组字段视图：len / 下标读写（经变量，不是内联）----

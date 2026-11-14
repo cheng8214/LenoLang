@@ -14,7 +14,7 @@ import ffi
 import strings
 import threads
 
-cstruct V3 { f32 x  f32 y  f32 z }
+cstruct V3 { f32 x; f32 y; f32 z }
 
 // ---- ③ 的载体：全局 Ptr（线程能看见并写）----
 Ptr[V3] g_buf = null

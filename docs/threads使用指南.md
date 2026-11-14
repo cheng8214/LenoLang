@@ -943,7 +943,7 @@ print(threads.join_all(ts))   // 2
 ```leno
 import threads
 
-struct Pt { int x = 0  string tag = "" }
+struct Pt { int x = 0; string tag = "" }
 
 main() {
     Channel[int] ch = threads.channel(4)   // ← 工厂返回裸 Channel，靠标注拿到元素类型

@@ -216,7 +216,7 @@ var json = jsons.encode(nested)
 // json = "{\"user\":{\"id\":1,\"name\":\"李四\"},\"tags\":[\"a\",\"b\"]}"
 
 // ★ struct 实例（2026-11-09 起）：字段名 = 字段声明名，顺序 = 声明顺序
-struct Song { string name = "" int dur = 0 }
+struct Song { string name = ""; int dur = 0 }
 Song s = new Song()
 s.name = "晴天"
 s.dur = 269

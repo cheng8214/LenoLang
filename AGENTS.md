@@ -39,7 +39,7 @@ var n = _int(job[3])
 ### 1.0 造 struct：用**命名参数构造**，不要"先 new 再逐字段赋"
 
 ```leno
-struct Song { string name = "" int dur = 0 float score = 0.0 }
+struct Song { string name = ""; int dur = 0; float score = 0.0 }
 
 Song s = new Song(name = "晴天", dur = 269)   // 没列出的字段取声明时的默认值
 Song t = new Song()                            // 全默认
@@ -79,7 +79,7 @@ return r
 ### 1.1 struct ↔ JSON：**不要手写解析/拼接**（2026-11-09 起）
 
 ```leno
-struct Song { string name = "" int dur = 0 float score = 0.0 }
+struct Song { string name = ""; int dur = 0; float score = 0.0 }
 
 // 写：struct → JSON（字段名 = 声明名，顺序 = 声明顺序，转义正确）
 Song s = new Song(name = "晴天")

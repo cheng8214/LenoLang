@@ -323,10 +323,10 @@ main() {
     // P27 ★ cstruct 布局与 **C ABI 逐项一致** ✓（size / offset_of / alignment ✓）
     //   钉住它 = 钉住"能安全地和 C 共享内存布局"这件承诺 ✓（哪天布局算法被改坏会红 ✓）
     var p27 = dirs.join(work, "cstruct_layout.leno")
-    files.write(p27, "cstruct Normal { u8 a  i32 b  u8 c }" + n
-        + "packed cstruct PackedDemo { u8 a  i32 b  u8 c }" + n
+    files.write(p27, "cstruct Normal { u8 a; i32 b; u8 c }" + n
+        + "packed cstruct PackedDemo { u8 a; i32 b; u8 c }" + n
         + "align(16) cstruct A { i32 a }" + n
-        + "cstruct Ar { i32 n  i32 v[4] }" + n
+        + "cstruct Ar { i32 n; i32 v[4] }" + n
         + "main() {" + n
         + "    var nn = Normal.malloc()" + n
         + "    var qq = PackedDemo.malloc()" + n

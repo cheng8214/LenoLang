@@ -19,7 +19,7 @@
 import ffi
 import threads
 
-cstruct V3 { f32 x  f32 y  f32 z }
+cstruct V3 { f32 x; f32 y; f32 z }
 
 main() {
     var ch = threads.channel(8)
