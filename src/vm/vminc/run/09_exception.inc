@@ -233,7 +233,20 @@
             if (ms) exception = wrap_string_exception(val_obj((Object*)ms), line);
             free(m);
         }
-        if (vm.pending_exception) vm.pending_exception = 0;
+        if (vm.pending_exception) {
+            // ★ 2026-11-15：**finally / defer 里抛错会替换正在传播的异常**（与 Go 的 panic
+            //   替换同语义），原异常之后再也看不到 —— 这是信息丢失，不能一个字都不提 ✗。
+            //   实测：`try { throw "body" } finally { throw "defer" }` 只报 "defer"，
+            //   "body" 完全消失。这里补一条运行期警告（仍按原语义替换，不改控制流）。
+            char* prev = value_to_string(vm.exception);
+            fprintf(stderr,
+                    "[警告] finally/defer 里抛出的异常覆盖了正在传播的原异常（原异常：%s）；"
+                    "两者只会报后面这个 —— 别在清理代码里抛错。\n",
+                    prev ? prev : "?");
+            fflush(stderr);
+            if (prev) free(prev);
+            vm.pending_exception = 0;
+        }
         // 抛异常覆盖 break/continue 的续跳（JS/Python 同语义）
         frame->finally_goto_target = NULL;
         frame->finally_goto_owner = NULL;

@@ -1,8 +1,8 @@
-// test_diag_silent_fixes.leno —— 回归：把"静默通过"改成「报错 / 警告」的八类缺口（2026-11-14）
+// test_diag_silent_fixes.leno —— 回归：把"静默通过"改成「报错 / 警告」的十类缺口（2026-11-15）
 //
-// 背景：本轮逐条压测语言 + async/sockets/threads + 标准库时，发现下面这些**编译成功、
-//   零诊断、运行期给错值或什么都不做**的路径。按仓库口径（静默错值 > 编译期报错 > 性能）
-//   全部改成"必须看得见"：
+// 背景：逐条压测语言 + async/sockets/threads + 标准库 + defer 异常路径时，发现下面这些
+//   **编译成功、零诊断、运行期给错值或什么都不做**的路径。按仓库口径（静默错值 >
+//   编译期报错 > 性能）全部改成"必须看得见"：
 //   ① `Channel[int].send("s")`：发送侧参数规格是 any ⇒ 静默塞错类型（接收侧按 int 用）
 //   ② `enum E { A = 1, B = 1 }`：值重复 ⇒ A == B 恒真、switch 只命中一个
 //   ③ 调了 async 函数却**从不 asyncs.run()**：协程体不执行，exit=0、零输出
@@ -11,6 +11,8 @@
 //   ⑥ 非 async 里 `arecv` / 监听 socket 上 `recv`：静默返回 null（与"对端关闭"分不开）
 //   ⑦ `jsons.encode(socket)`：不支持的类型静默输出字符串 "null"
 //   ⑧ `dirs.walk("拼错的路径")`：静默返回一条 root=路径、dirs/files 全空的条目
+//   ⑨ `return` 换行后把**下一行**的表达式吞成返回值（`return` + `defer` 更报成「期望表达式」）
+//   ⑩ defer/finally 里抛错**替换**正在传播的异常，原异常一个字都不提
 //
 // 每条都配"不该报"的对照（Channel[float] 收 int、裸 Channel、正常 enum、正常 async），
 // 防止把合法写法误判成错 —— 新检查最容易死在误报上。
@@ -167,6 +169,62 @@ main() {
         "import dirs\n"
         + "main() { var w = dirs.walk(\"no_such_dir_12345\"); print(_str(w.len()) + \"\\n\") }\n")
     ce.expect_error(p14, "⑧walk 不存在的目录必须报，不能给一条空条目", "目录不存在或不是目录", 0)
+
+    // ==================== ⑨ return 换行后不再吞下一行 ====================
+    // 此前 `return` 的唯一判据是"不是 ; 或 }"（换行只是空白）⇒ 下一行开头的表达式
+    // 会被静默当成返回值；`return` + `defer` 更会报成「期望表达式」。
+    var p15 = dirs.join(work, "return_then_expr.leno")
+    files.write(p15,
+        "func f(): int {\n"
+        + "    return\n"
+        + "    5\n"
+        + "}\n"
+        + "main() { print(_str(f()) + \"\\n\") }\n")
+    ce.expect_error(p15, "⑨return 换行后不该把 5 吞成返回值", "return 没有返回值", 0)
+
+    var p16 = dirs.join(work, "return_then_call.leno")
+    files.write(p16,
+        "func h(): int { return 1 }\n"
+        + "func f() {\n"
+        + "    return\n"
+        + "    h()\n"
+        + "}\n"
+        + "main() { f(); print(\"END\\n\") }\n")
+    var o16 = ce.expect_ok(p16, "⑨return 换行后下一行照常是独立语句", "END")
+    assert_true(strings.has(o16, "[不可达代码]"),
+        "⑨return 换行后的那条语句应报不可达；实际输出=" + o16)
+
+    // ==================== ⑩ defer 抛错覆盖原异常要警告 ====================
+    var p17 = dirs.join(work, "defer_overrides_throw.leno")
+    files.write(p17,
+        "func f() {\n"
+        + "    defer { throw \"D\" }\n"
+        + "    throw \"B\"\n"
+        + "}\n"
+        + "main() {\n"
+        + "    try { f() } catch e { print(\"caught\\n\") }\n"
+        + "    print(\"END\\n\")\n"
+        + "}\n")
+    var o17 = ce.expect_ok(p17, "⑩defer 抛错覆盖原异常：程序本身正常", "END")
+    assert_true(strings.has(o17, "finally/defer 里抛出的异常覆盖了正在传播的原异常"),
+        "⑩覆盖原异常时必须给运行期警告；实际输出=" + o17)
+    assert_true(strings.has(o17, "原异常：B"),
+        "⑩警告里要带上被覆盖的原异常内容；实际输出=" + o17)
+
+    // 对照：没有"正在传播的异常"时，defer 抛错是普通异常 ⇒ 不该有覆盖警告
+    var p18 = dirs.join(work, "defer_throw_alone.leno")
+    files.write(p18,
+        "func f() {\n"
+        + "    defer { throw \"D\" }\n"
+        + "    print(\"body\\n\")\n"
+        + "}\n"
+        + "main() {\n"
+        + "    try { f() } catch e { print(\"caught\\n\") }\n"
+        + "    print(\"END\\n\")\n"
+        + "}\n")
+    var o18 = ce.expect_ok(p18, "⑩对照：只有 defer 抛错不该报覆盖", "caught")
+    ce.expect_no_warning(o18, "⑩对照：只有 defer 抛错不该报覆盖",
+                         "finally/defer 里抛出的异常覆盖了")
 
     print("test_diag_silent_fixes passed")
 }

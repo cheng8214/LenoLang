@@ -58,7 +58,14 @@ Ast* parse_return_stmt(Parser* p) {
 
     Ast* value = NULL;
     // 如果后面不是分号或右大括号，则解析返回值表达式
-    if (p->lex.current.type != TOK_SEMI && p->lex.current.type != TOK_RBRACE) {
+    //   ★ 2026-11-15：**换行 = 裸 return** —— 下一行开头的表达式不再被吞成返回值。
+    //     此前唯一判据是"不是 ; 或 }"（换行在词法里只是空白）⇒
+    //       · `return` 换行 + `h()` ⇒ 静默变成 `return h()`（后面的代码全成不可达，无提示）
+    //       · `return` 换行 + `x = 3` ⇒ 静默变成 `return (x = 3)`（还带了赋值副作用）
+    //       · `return` 换行 + `defer …` ⇒ 报「期望表达式」，落点/文案都指不到真因 ✗
+    //     返回到本行的表达式照常支持（`return a +` 换行继续），所以多行表达式不受影响。
+    if (p->lex.current.type != TOK_SEMI && p->lex.current.type != TOK_RBRACE &&
+        p->lex.current.line == line) {
         value = parse_expression(p);
     }
 

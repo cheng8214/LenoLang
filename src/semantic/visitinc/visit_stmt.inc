@@ -20,6 +20,22 @@
                 s->expected_type = saved_expected;
             }
 
+            // ★ 2026-11-15：**裸 return（不返回值）** 在声明了返回类型的函数里要定向报错。
+            //   此前走下面的 infer_expr_type(NULL) ⇒ 报「期望 int，实际 any」——
+            //   文案既没说"你没写返回值"，也看不出是 return 少写了值 ✗
+            //   （新解析规则下 `return` 换行不再吞下一行，这条路径会更常见）。
+            if (!ast->u.ret) {
+                TypeInfo* rt0 = s->current_func->u.func.return_type;
+                if (rt0 && rt0->kind != TYPE_INFER && rt0->kind != TYPE_ANY &&
+                    rt0->kind != TYPE_NULL) {   // TYPE_NULL = 声明成 void
+                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                        "return 没有返回值，但函数声明返回 %s —— 写 `return 值`，"
+                        "或把返回类型改成 void / 省略返回类型",
+                        type_to_string(rt0));
+                }
+                break;
+            }
+
             if (s->current_func) {
                 TypeInfo* return_type_info = infer_expr_type(s, ast->u.ret);
                 if (return_type_info) {

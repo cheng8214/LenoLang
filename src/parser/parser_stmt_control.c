@@ -232,7 +232,11 @@ Ast* parse_block_internal(Parser* p) {
             }
 
             // 开一层 try，finally = 这个 defer
-            Ast* t = ast_new(AST_TRY, line);
+            //   ★ 2026-11-15：合成节点的落点用 **defer 自己的行/列** —— 原来用块的
+            //     起始行（列 0）⇒ `return; defer …` 的"不可达代码"警告报在块的 `{` 行
+            //     （实测 (1,1)），看不出是哪条 defer ✗
+            Ast* t = ast_new(AST_TRY, defers[i]->line);
+            t->column = defers[i]->column;
             t->u.try_.catch_var = NULL;
             t->u.try_.catch_body = NULL;
 
