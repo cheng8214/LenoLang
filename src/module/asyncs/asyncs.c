@@ -95,7 +95,16 @@ static Value native_async_run(int arg_count, Value* args) {
 
     VM* target_vm = current_exec_vm;
     if (!target_vm->event_loop) {
-        native_throw_error("async.run 需要在初始化事件循环后调用");
+        // ★ 2026-11-14：子线程里调 run 时，`asyncs_init_globals` 是在 current_exec_vm 为 NULL
+        //   的时刻跑的（落到主 VM）⇒ 子线程的 event_loop 恒为 NULL。原来这里只报
+        //   「需要在初始化事件循环后调用」，会把人引向"是不是忘了 import" ✗
+        extern VM vm;
+        if (target_vm != &vm) {
+            native_throw_error("asyncs.run() 不能在子线程里跑：事件循环是**每进程一个**（在主线程）。"
+                               "子线程请用阻塞 IO，或把结果经 Channel 交回主线程再 await");
+        } else {
+            native_throw_error("async.run 需要在初始化事件循环后调用");
+        }
         return val_null();
     }
     
@@ -125,7 +134,13 @@ static Value native_async_run_for(int arg_count, Value* args) {
     }
     VM* target_vm = current_exec_vm;
     if (!target_vm->event_loop) {
-        native_throw_error("asyncs.run_for 需要在初始化事件循环后调用");
+        extern VM vm;   // 同上：子线程的 event_loop 恒为 NULL ⇒ 给出真正的原因
+        if (target_vm != &vm) {
+            native_throw_error("asyncs.run_for() 不能在子线程里跑：事件循环是**每进程一个**（在主线程）。"
+                               "子线程请用阻塞 IO，或把结果经 Channel 交回主线程再 await");
+        } else {
+            native_throw_error("asyncs.run_for 需要在初始化事件循环后调用");
+        }
         return val_bool(false);
     }
 
