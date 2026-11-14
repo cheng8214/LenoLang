@@ -155,8 +155,12 @@ static ObjString* str_clone_long(ObjString* src) {
     copy->chars[len] = '\0';
     copy->len = len;
     copy->capacity = len + 1;      // 精确大小 ⇒ 不可原地追加（与 str_new 同口径）
+    // 元数据沿用源串；**源串本身没算过时按老行为补算**（防御：`str_alloc` 系列的
+    //   调用方可能还没填 char_len/hash，那时老实现会在克隆时顺手算好 ⇒ 不能让它退化）
     copy->char_len = src->char_len;
+    if (copy->char_len == 0 && len > 0) copy->char_len = utf8_char_len(src->chars, len);
     copy->hash = src->hash;
+    if (copy->hash == 0 && len > 0) copy->hash = hash_string(src->chars, len);
     return copy;
 }
 
