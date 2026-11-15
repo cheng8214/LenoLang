@@ -130,6 +130,25 @@ main() {
     assert_eq(parts1[1], "b")
     assert_eq(parts1[2], "c")
 
+    // ---- 尾部空段必须保留（2026-11-15）----
+    //   旧实现把末尾的空段静默丢掉 ⇒ 同一份文本 `strings.split` 给 3 段、`regexs.split` 给 2 段；
+    //   而且与本模块文档的示例（`split("a1b2c3","[0-9]")` ⇒ `["a","b","c",""]`）自相矛盾 ✗
+    var parts2 = regexs.split("a,b,", ",")
+    assert_eq(parts2.len(), 3, "尾部空段要保留")
+    assert_eq(parts2[2], "", "尾部空段是空串")
+    var parts3 = regexs.split("a1b2c3", "[0-9]")
+    assert_eq(parts3.len(), 4, "文档示例：4 段（含末尾空段）")
+    assert_eq(parts3[3], "", "文档示例：末尾是空串")
+
+    // ---- 空输入 ⇒ 空数组（与 strings.split 同口径）----
+    assert_eq(regexs.split("", ",").len(), 0, "空串 split ⇒ 空数组")
+
+    // ---- 零宽模式（空模式）不能当分隔符：**不许死循环/崩溃** ----
+    //   实测旧实现 `regexs.split("ab", "")` 直接 0xC0000005（数组涨爆后写空指针）
+    var parts4 = regexs.split("ab", "")
+    assert_eq(parts4.len(), 1, "零宽模式 ⇒ 不分割（不崩、不丢字）")
+    assert_eq(parts4[0], "ab", "零宽模式：原串原样")
+
     print("split 测试通过!")
 
     // ========== 测试 escape ==========

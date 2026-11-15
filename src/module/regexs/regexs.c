@@ -243,6 +243,64 @@ static void re_report_invalid(const char* pattern) {
             return;
         }
     }
+    // ★ 2026-11-15：再补三条**具体**诊断 —— 此前它们一律落到最后那句笼统的
+    //   「无效的正则表达式」，用户看不出到底是哪个符号写错了（实测踩过：`(unclosed` 修好之后，
+    //   `[abc` / `a**` / 17 个括号都只得到同一句"无效的正则表达式"✗）。
+    {
+        int in_class = 0;
+        for (const char* q = pattern; *q; q++) {
+            if (*q == '\\' && *(q + 1)) { q++; continue; }
+            if (!in_class && *q == '[') in_class = 1;
+            else if (in_class && *q == ']') in_class = 0;
+        }
+        if (in_class) {
+            native_throw_error("无效的正则表达式：字符类没有闭合（缺 ']'；要匹配字面 '[' 请写 \\[）");
+            return;
+        }
+    }
+    {
+        int groups = 0;
+        int in_class = 0;
+        for (const char* q = pattern; *q; q++) {
+            if (*q == '\\' && *(q + 1)) { q++; continue; }
+            if (in_class) { if (*q == ']') in_class = 0; continue; }
+            if (*q == '[') { in_class = 1; continue; }
+            if (*q == '(') groups++;
+        }
+        if (groups > RE_MAX_GROUPS) {
+            char msg[160];
+            snprintf(msg, sizeof(msg),
+                     "无效的正则表达式：捕获组太多（%d 个，本引擎上限 %d 个）—— 请合并或去掉括号",
+                     groups, RE_MAX_GROUPS);
+            native_throw_error(msg);
+            return;
+        }
+    }
+    {
+        char prev = 0;                       // 上一个"有效"字符（跳过转义；字符类内不计）
+        int in_class = 0;
+        for (const char* q = pattern; *q; q++) {
+            if (*q == '\\' && *(q + 1)) { prev = 'x'; q++; continue; }
+            if (in_class) {
+                if (*q == ']') { in_class = 0; prev = 'x'; }
+                continue;
+            }
+            if (*q == '[') { in_class = 1; continue; }
+            if (*q == '*' || *q == '+' || *q == '?') {
+                if (prev == 0 || prev == '(' || prev == '|' ||
+                    prev == '*' || prev == '+' || prev == '?') {
+                    char msg[160];
+                    snprintf(msg, sizeof(msg),
+                             "无效的正则表达式：量词 '%c' 前面没有可重复的元素"
+                             "（`a**` / `*a` / `(|*)` 这类写法都非法；要匹配字面量词请写 \\%c）",
+                             *q, *q);
+                    native_throw_error(msg);
+                    return;
+                }
+            }
+            prev = *q;
+        }
+    }
     native_throw_error("无效的正则表达式");
 }
 
@@ -1180,7 +1238,20 @@ static Value regex_split(int argc, Value* args) {
         const char* end = NULL;
         find_match(pattern, str->chars, pos, ngroup, &ctx, &start, &end);
         if (!start) break;
-        
+
+        // ★ 2026-11-15：**零宽匹配**（空模式 / `\b` 这类）不能当分隔符。
+        //   原来 `pos = end` 原地不动 ⇒ 无限追空串，数组涨到内存耗尽后写空指针
+        //   —— 实测 `regexs.split("ab", "")` 直接 **0xC0000005 崩溃**（不是慢，是崩）✗
+        //   这里跳过**一个字符**（连 UTF-8 续字节一起跳），`last_pos` 不动
+        //   （被跳过的内容仍属于下一段，输出里不会丢字）。
+        if (end == start) {
+            if (!*pos) break;
+            const char* adv = pos + 1;
+            while ((*adv & 0xC0) == 0x80) adv++;      // UTF-8 续字节（10xxxxxx）
+            pos = adv;
+            continue;
+        }
+
         int part_len = (int)(start - last_pos);
         ObjString* part = str_copy(last_pos, part_len);
         arr_push_custom(result, val_obj((Object*)part));
@@ -1191,8 +1262,13 @@ static Value regex_split(int argc, Value* args) {
     }
     
     // 添加最后一部分
-    if (*last_pos || result->count == 0) {
-        ObjString* part = str_copy(last_pos, strlen(last_pos));
+    // ★ 2026-11-15：**保留尾部空段** —— 与 `strings.split` 以及本模块文档的示例一致
+    //   （doc：`split("a1b2c3","[0-9]")` ⇒ `["a","b","c",""]`）。旧判据
+    //   `*last_pos || result->count == 0` 会把 "a,b," 末尾那个空段**静默丢掉** ✗
+    //   （同一份文本 `strings.split` 给 3 段、`regexs.split` 给 2 段 —— 两种 split 打架）。
+    //   空输入仍给空数组（与 `strings.split("", ",")` ⇒ `[]` 同口径）。
+    if (str->len > 0) {
+        ObjString* part = str_copy(last_pos, (int)strlen(last_pos));
         arr_push_custom(result, val_obj((Object*)part));
     }
     

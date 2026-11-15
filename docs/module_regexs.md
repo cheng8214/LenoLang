@@ -207,15 +207,22 @@ regexs.replace_all("hello world hello", "hello", "hi")  // "hi world hi"
 **参数**:
 - `str` (string): 要分割的字符串
 - `pattern` (string): 正则表达式模式（作为分隔符）
-- `limit` (int, 可选): 最大分割次数
+- `limit` (int, 可选): 最多切成 `limit` **段**（= 最多分割 `limit-1` 次）；负数 = 不限
 
 **返回**: `array` - 分割后的字符串数组
 
 ```leno
 regexs.split("a,b,c", ",")              // ["a", "b", "c"]
-regexs.split("a1b2c3", "[0-9]")         // ["a", "b", "c", ""]
-regexs.split("a,b,c,d", ",", 2)         // ["a", "b", "c,d"] (限制2次)
+regexs.split("a1b2c3", "[0-9]")         // ["a", "b", "c", ""]   ← 尾部空段保留
+regexs.split("a,b,c,d", ",", 2)         // ["a", "b,c,d"]        ← limit=2 ⇒ 只切 1 次、共 2 段
 ```
+
+> ★ 2026-11-15 两条修正（都与 `strings.split` 对齐）：
+> - **尾部空段保留**：`"a,b,"` ⇒ `["a","b",""]`（旧实现静默丢掉最后那段 ⇒ 同一文本
+>   `strings.split` 给 3 段、`regexs.split` 给 2 段）
+> - **零宽模式不再崩溃**：`regexs.split("ab", "")` 此前会无限追空串、把数组撑爆后
+>   **0xC0000005**；现在跳过零宽匹配 ⇒ 返回 `["ab"]`（原串原样）
+> - 空输入 ⇒ `[]`（同 `strings.split("", ",")`）
 
 ---
 

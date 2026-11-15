@@ -32,6 +32,13 @@ main() {
     want_error("④非法转义", "abc", "\\q", "不支持的转义")
     want_error("⑤量词 {}", "abc", "a{2}", "不支持量词")
 
+    // ⑤b 更具体的诊断（2026-11-15）：此前这几种都只得到笼统的「无效的正则表达式」
+    want_error("⑤b 未闭合字符类（有内容）", "abc", "[abc", "字符类没有闭合")
+    want_error("⑤c 量词前面没有元素", "abc", "a**", "前面没有可重复的元素")
+    want_error("⑤d 开头就是量词", "abc", "*a", "前面没有可重复的元素")
+    want_error("⑤e 捕获组超上限", "abcdefghijklmnopq",
+        "(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)(l)(m)(n)(o)(p)(q)", "捕获组太多")
+
     // ⑥ 正常路径不受影响
     assert_eq(regexs.match("abc", "^a.c$"), true, "⑥锚定匹配")
     assert_eq(regexs.find("abc", "b"), 1, "⑥子串查找")
