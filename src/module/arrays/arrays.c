@@ -379,14 +379,25 @@ static int value_compare_for_sort(const void* a, const void* b) {
 //   时后一个会把前一个的 g_sort_cmp 覆盖掉 ⇒ 前一个线程**用别人的比较器排序**（静默错序，
 //   比较器签名不同时还会把错类型的 Value 交给回调 ⇒ 崩）。与 regexs 的内存池同一条教训。
 static _Thread_local Value g_sort_cmp = {0};   // 排序期间的比较器（非递归调用时置 null）
+// ★ 2026-11-15：比较器返回**非数字**（bool / string / …）时只报一次错，随后按"相等"走完。
+//   此前一律 `return 0` ⇒ 所有比较都"相等" ⇒ **排序整体静默失效**（实测
+//   `a.sort(func(int x, int y) { return x < y })` 返回后 a 仍是 [3, 1, 2] —— 不报错、不排序 ✗）。
+static _Thread_local int g_sort_cmp_failed = 0;
+// ★ 2026-11-15：比较器**中途抛异常**时也停下并保持原数组（此前归并已把 buf 排了一半，
+//   写回后调用方在 catch 里看到的是**半排序**的中间态：实测 [5,3,1,4,2] ⇒ [3,5,1,2,4] ✗）。
+static _Thread_local int g_sort_cmp_threw = 0;
 
 static int sort_cmp_via_callback(Value a, Value b) {
     Value cargs[2];
     cargs[0] = a;
     cargs[1] = b;
     Value r = val_int(0);
-    if (!call_closure(g_sort_cmp, 2, cargs, &r)) return 0;   // 回调抛异常 ⇒ 当作相等
-    // 接受 int / float；返回值语义：<0 前、0 等、>0 后
+    if (!call_closure(g_sort_cmp, 2, cargs, &r)) {   // 回调抛异常 ⇒ 记账（异常已在 VM 里）
+        g_sort_cmp_threw = 1;
+        return 0;
+    }
+    if (g_sort_cmp_failed || g_sort_cmp_threw) return 0;
+    // 接受 int / float / bigint；返回值语义：<0 前、0 等、>0 后
     if (val_is_int(r)) {
         int c = (int)val_as_int(r);
         return c < 0 ? -1 : (c > 0 ? 1 : 0);
@@ -395,7 +406,16 @@ static int sort_cmp_via_callback(Value a, Value b) {
         double d = val_as_num(r);
         return d < 0 ? -1 : (d > 0 ? 1 : 0);
     }
-    return 0;   // 返回非数字 ⇒ 视为相等（不崩）
+    if (val_is_bigint(r)) {
+        double d = bigint_to_double(val_as_bigint(r));
+        return d < 0 ? -1 : (d > 0 ? 1 : 0);
+    }
+    // 非数字 ⇒ **响亮失败**（此前静默当"相等" ⇒ 排序整体不生效，实测难察觉）
+    g_sort_cmp_failed = 1;
+    native_throw_error("sort 比较器必须返回数字（负数 ⇒ 排前、0 ⇒ 相等、正数 ⇒ 排后）；"
+                       "返回 bool / string 会让排序静默失效 —— 请写 "
+                       "return if a < b then -1 else (if a > b then 1 else 0)");
+    return 0;
 }
 
 static void merge_sort_rec(Value* a, Value* tmp, int n) {
@@ -431,12 +451,20 @@ static Value arr_sort(int argc, Value* args) {
 
         Value saved = g_sort_cmp;
         g_sort_cmp = args[1];
+        g_sort_cmp_failed = 0;
+        g_sort_cmp_threw = 0;
         merge_sort_rec(buf, tmp, n);
+        int cmp_failed = g_sort_cmp_failed;
+        int cmp_threw = g_sort_cmp_threw;
         g_sort_cmp = saved;
+        g_sort_cmp_failed = 0;
+        g_sort_cmp_threw = 0;
 
         // 回调里可能删过元素 ⇒ 只写回 min(当前count, 原count) 个
-        int m = (arr->count < n) ? arr->count : n;
-        memcpy(arr->elements, buf, sizeof(Value) * (size_t)m);
+        // 比较器返回了非数字（已报错）/ 回调抛异常（异常已在 VM 里）⇒ **不写回**，
+        // 数组保持原样（不留半排序的中间态）
+        int m = (cmp_failed || cmp_threw) ? 0 : ((arr->count < n) ? arr->count : n);
+        if (m > 0) memcpy(arr->elements, buf, sizeof(Value) * (size_t)m);
         free(buf);
         free(tmp);
     }
