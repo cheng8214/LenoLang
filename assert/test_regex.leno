@@ -1,5 +1,6 @@
 // 正则表达式模块测试
 import regexs
+import strings
 
 main() {
     print("=== 测试 regexs 模块 ===")
@@ -342,6 +343,37 @@ main() {
     var dm = regexs.find_all("a中b", ".")[1]
     assert_eq(dm.start, 1, "`.` 匹配位置按字符")
     assert_eq("a中b"[dm.start : dm.end - 1], "中", "位置切片得到整字")
+
+    // ========== 三类"没实现但报错指错真因"（2026-11-16）=========
+    //   修前 `a+?` 与 `(?i)ABC` 都报「量词 '?' 前面没有可重复的元素」⇒ 让人去找量词；
+    //   `(?P<y>...)`（命名组）同样落到那句 ⇒ 完全看不出真因。
+    int e_ng = 0
+    try { var _a = regexs.find("abc", "a+?") } catch e {
+        e_ng += 1
+        assert_true(strings.has(e.msg, "不支持非贪婪"), "非贪婪要报「不支持非贪婪」")
+    }
+    assert_eq(e_ng, 1, "a+? 必须报错")
+
+    int e_flag = 0
+    try { var _b = regexs.find("ABC", "(?i)abc") } catch e {
+        e_flag += 1
+        assert_true(strings.has(e.msg, "不支持内联标志"), "内联标志要报「不支持内联标志」")
+    }
+    assert_eq(e_flag, 1, "(?i) 必须报错")
+
+    int e_name = 0
+    try { var _c = regexs.find("2024", "(?P<y>\\d\\d\\d\\d)") } catch e {
+        e_name += 1
+        assert_true(strings.has(e.msg, "不支持命名组"), "命名组要报「不支持命名组」")
+    }
+    assert_eq(e_name, 1, "(?P<name>) 必须报错")
+
+    // 合法写法照旧：普通捕获组 + groups 按序号
+    assert_eq(regexs.groups("2024-05", "(\\d\\d\\d\\d)-(\\d\\d)")[1], "2024")
+    // 贪婪量词 / 字符类里的 '?' 都不能被上面的检查误伤
+    assert_eq(regexs.find("<a><b>", "<.+>"), 0, "贪婪量词照常")
+    assert_eq(regexs.find("a?b", "a\\?b"), 0, "转义的 ? 是字面量")
+    assert_eq(regexs.find("ab", "a?b"), 0, "可选量词照常")
 
     print("\n=== 所有测试通过! ===")
 }
