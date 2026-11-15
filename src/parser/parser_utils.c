@@ -72,6 +72,17 @@ char* process_escape_sequences(const char* text, int len, int* out_len, int line
                                      && isxdigit((unsigned char)text[i+4]) && isxdigit((unsigned char)text[i+5])) {
                         char hex[5] = { text[i+2], text[i+3], text[i+4], text[i+5], '\0' };
                         uint32_t cp = (uint32_t)strtol(hex, NULL, 16);
+                        // ★ 2026-11-15：UTF-16 代理区（U+D800..U+DFFF）**不能单独表示字符** ——
+                        //   按 3 字节编出来是**非法 UTF-8**（实测 "\uD800" ⇒ ED A0 80），
+                        //   而本语言其余部分（strings.from_codepoint / jsons.decode）都拒绝代理区
+                        //   ⇒ 这里必须出声（此前是静默产出坏字节 ✗）。要 emoji 直接写字面量
+                        //   或 strings.from_codepoint(0x1F642)（那会对代理区/超范围抛错）。
+                        if (cp >= 0xD800 && cp <= 0xDFFF) {
+                            warning_add_at_fmt(WARN_BAD_ESCAPE, line, column,
+                                "\\u%04X 是 UTF-16 代理区码点，不能单独表示字符（已按 3 字节编出非法 UTF-8）；"
+                                "要 emoji / 增补平面字符请直接写字面量或 strings.from_codepoint(...)",
+                                cp);
+                        }
                         // 编码为 UTF-8
                         if (cp <= 0x7F) {
                             str[j++] = (char)cp;
@@ -85,7 +96,11 @@ char* process_escape_sequences(const char* text, int len, int* out_len, int line
                         }
                         i += 5; // 跳过 u 和四位十六进制
                     } else {
-                        // \u 后不是四位hex，保留反斜杠原样
+                        // ★ 2026-11-15：与 `\x` / 未知转义同口径 —— 保留反斜杠必须**给警告**
+                        //   （此前 `\u` 这一条是**静默**的：`"\u12"` 悄悄变成 4 个字符，
+                        //   与文档"容错处理"并列的 `\x` 却会警告 ⇒ 同一类问题两种待遇 ✗）
+                        warning_add_at_fmt(WARN_BAD_ESCAPE, line, column,
+                            "无效的转义序列 '\\u'（后跟非四位十六进制），已按原样保留");
                         str[j++] = text[i];
                     }
                     break;

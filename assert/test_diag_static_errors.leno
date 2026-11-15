@@ -345,6 +345,27 @@ main() {
 ")
     ce.expect_ok(ok2, "无效转义按原样保留", "OK")
 
+    // ---- 无效 \u 转义：与 \x / \q 同口径，必须**给警告**（2026-11-15 前是静默保留 ✗）----
+    var uesc1 = dirs.join(work, "bad_uescape_warn.leno")
+    files.write(uesc1, @"main() {
+    var s = ""a\u12z""
+    // \u 后不是四位 hex ⇒ 原样保留：a + 反斜杠 + u + 1 + 2 + z，共 6 字符
+    assert_eq(s.len(), 6)
+    print(""OK"")
+}
+")
+    ce.expect_warning(uesc1, "无效 \\u 转义要给警告", "无效的转义序列 '\\u'", 2)
+
+    // ---- 代理区码点：按 3 字节编出来是非法 UTF-8 ⇒ 必须给警告 ----
+    var uesc2 = dirs.join(work, "surrogate_escape_warn.leno")
+    files.write(uesc2, @"main() {
+    var s = ""\uD800""
+    assert_eq(s.byte_len(), 3)
+    print(""OK"")
+}
+")
+    ce.expect_warning(uesc2, "代理区 \\uD800 要给警告", "UTF-16 代理区", 2)
+
     // ---- v3.2.6：native 类型通道（use 通道 + 同名诊断）----
     //   背景：native 模块**没有 sym_table**（字段表在 native 类型规格注册表里）⇒ `use dirs.DirEntry`
     //   过去只会得到"模块 'dirs' 没有符号表"。现在走独立通道，且名字写错要**列出可用类型**；
