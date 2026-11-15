@@ -329,6 +329,9 @@ for lines to line {
 
 **返回**: `int` - 写入的字节数
 
+> ★ 2026-11-15：**写不全就抛错**（"只写入 0/1 字节（文件可能是以只读模式打开的，或磁盘已满）"）。
+> 此前只读模式的文件调 `write` 会静默返回 `0` —— 看着像"写了 0 字节"，其实一个字节都没落盘 ✗
+
 ```leno
 import files
 
@@ -355,6 +358,8 @@ f.close()
 - `string` (string): 要写入的内容
 
 **返回**: `null`
+
+> ★ 2026-11-15：与 `write` 同口径 —— 写失败（只读句柄 / 磁盘满）**抛错**，不再静默当成功。
 
 ```leno
 import files
@@ -772,42 +777,48 @@ print("复制了 " + copied + " 字节")
 
 ```leno
 import files
-import dicts
 import jsons
 
-func load_config(path) {
+func load_config(string path): Dict[string, any] {
     if not files.exists(path) {
         return {}
     }
     var content = files.read(path)
-    return jsons.parse(content)
+    var obj = jsons.decode(content)
+    if obj is Dict[string, any] => d {
+        return d
+    }
+    return {}
 }
 
-func save_config(path, config) {
-    var json = jsons.stringify(config, true)  // 格式化输出
-    files.write(path, json)
+func save_config(string path, Dict[string, any] config) {
+    files.write(path, jsons.encode_pretty(config))
 }
 
 main() {
     var config_path = "app.config"
-    
+
     // 加载配置
     var config = load_config(config_path)
-    
-    // 使用配置
-    var host = config.get("host", "localhost")
-    var port = config.get("port", 8080)
-    print("服务器: " + host + ":" + port)
-    
+
+    // 使用配置（类型化取值：键缺失/类型不符时给默认值，不必自己收窄）
+    var host = jsons.get_str(config, "host", "localhost")
+    var port = jsons.get_int(config, "port", 8080)
+    print("服务器: " + host + ":" + _str(port))
+
     // 修改配置
     config["port"] = 3000
     config["debug"] = true
-    
+
     // 保存配置
     save_config(config_path, config)
     print("配置已保存")
 }
 ```
+
+> ★ 2026-11-15：本示例此前是**跑不通**的（`import dicts` 不是模块；`jsons.parse` /
+> `jsons.stringify` 都不存在，对 `any` 直接 `.get` 也会被静态检查拦）—— 现改为
+> `jsons.decode` / `jsons.encode_pretty` + `jsons.get_str` / `get_int`，并实测编译运行通过。
 
 ### 示例2：日志记录器
 

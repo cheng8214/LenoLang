@@ -247,6 +247,17 @@ static Value file_method_write(int argCount, Value* args) {
     ObjString* str = value_to_objstring(args[1]);
 
     size_t written = fwrite(str->chars, 1, str->len, file->fp);
+    // ★ 2026-11-15：**写不全就报错**。原来直接把"写进去几个字节"当返回值 ⇒ 用只读模式
+    //   打开的文件调用 write 会静默得到 0（看着像"写了 0 字节"，实际是**一个字节都没写** ✗）；
+    //   磁盘满 / 句柄异常同理。返回值只该表示"成功写了多少"，失败得响亮 ✓
+    if (written != (size_t)str->len) {
+        char msg[192];
+        snprintf(msg, sizeof(msg),
+                 "写入失败：只写入 %zu/%d 字节（文件可能是以只读模式打开的，或磁盘已满）",
+                 written, str->len);
+        native_throw_error(msg);
+        return val_null();
+    }
     return val_int((int)written);
 }
 
@@ -267,8 +278,13 @@ static Value file_method_writeln(int argCount, Value* args) {
     // 获取要写入的字符串
     ObjString* str = value_to_objstring(args[1]);
 
-    fwrite(str->chars, 1, str->len, file->fp);
-    fwrite("\n", 1, 1, file->fp);
+    size_t w1 = fwrite(str->chars, 1, str->len, file->fp);
+    size_t w2 = fwrite("\n", 1, 1, file->fp);
+    // ★ 2026-11-15：与 write 同口径 —— 写失败必须报错（原来完全忽略返回值 ✗）
+    if (w1 != (size_t)str->len || w2 != 1) {
+        native_throw_error("writeln 写入失败（文件可能是以只读模式打开的，或磁盘已满）");
+        return val_null();
+    }
 
     return val_null();
 }
@@ -625,8 +641,18 @@ static Value native_files_write(int argCount, Value* args) {
         return val_null();
     }
 
-    fwrite(content->chars, 1, content->len, fp);
-    fclose(fp);
+    size_t written = content->len > 0 ? fwrite(content->chars, 1, (size_t)content->len, fp) : 0;
+    int close_rc = fclose(fp);
+    // ★ 2026-11-15：写不全 / 关闭失败（缓冲刷盘失败，典型是磁盘满）⇒ 报错。
+    //   原来完全忽略返回值 ⇒ "写成功"的假象（内容其实没落盘）✗
+    if (written != (size_t)content->len || close_rc != 0) {
+        char msg[192];
+        snprintf(msg, sizeof(msg),
+                 "写入文件 '%s' 失败：只写入 %zu/%d 字节（磁盘已满或无权限？）",
+                 path->chars, written, content->len);
+        native_throw_error(msg);
+        return val_null();
+    }
 
     return val_null();
 }

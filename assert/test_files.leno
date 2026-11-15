@@ -24,7 +24,7 @@ func write_read_ptr(Ptr p): int {
 
 struct FileWrap {
     File handle
-    string path = 0
+    string path = ""
 }
 
 struct PtrWrap {
@@ -87,8 +87,11 @@ main()
     string first_line = lines[0]
     assert_eq(first_line, "Line 1")
     assert_eq(typed_lines.len(), 3)
-    assert_eq(f.writeln("contract"), null)     // 追加一行（返回值是 null，不是字节数 —— 与 f.write() 不同）
-    assert_eq(f.close(), null)
+    // ⚠ 2026-11-15：契约检查也要用**可写**句柄 —— 上面这个 f 是 "r" 打开的，
+    //   而 writeln 现在对"写不进去"会抛错（原来静默返回 null）。另开一个追加句柄 ✓
+    var wf = files.open(filename, "a")
+    assert_eq(wf.writeln("contract"), null)     // 追加一行（返回值是 null，不是字节数 —— 与 f.write() 不同）
+    assert_eq(wf.close(), null)
 
     // 模块级 `files.write()` 同样返回 null（只写盘、不产生值）
     assert_eq(files.write(filename, "rewritten-by-contract"), null)
@@ -162,6 +165,38 @@ main()
     assert_eq(files.exists(dirs.join(work, "no_such_thing")), false, "不存在的路径")
     assert_eq(files.exists(""), false, "空路径 ⇒ false（不抛）")
     files.delete(exfile)
+
+    // ---- 写入失败必须报错，不能"静默写 0 字节"（2026-11-15）----
+    //   旧行为：只读模式打开的 File 调 write ⇒ fwrite 返回 0 ⇒ **当成正常返回值 0** ✗
+    //   （看着像"写了 0 字节"）。磁盘满 / 关闭刷盘失败同理。
+    var roPath = dirs.join(work, "readonly.txt")
+    files.write(roPath, "abc")
+    bool threwWrite = false
+    try {
+        var rof = files.open(roPath, "r")
+        rof.write("x")
+        rof.close()
+    } catch eWrite {
+        threwWrite = true
+    }
+    assert_eq(threwWrite, true, "只读模式的文件调 write 必须抛错（不能静默返回 0）")
+
+    bool threwWriteln = false
+    try {
+        var rof2 = files.open(roPath, "r")
+        rof2.writeln("x")
+        rof2.close()
+    } catch eWriteln {
+        threwWriteln = true
+    }
+    assert_eq(threwWriteln, true, "只读模式的文件调 writeln 必须抛错")
+
+    // 对照：正常写模式仍然返回实际写入字节数
+    var wokPath = dirs.join(work, "write_ok.txt")
+    var wok = files.open(wokPath, "w")
+    assert_eq(wok.write("hello"), 5, "写模式返回真实字节数")
+    wok.close()
+    assert_eq(files.read(wokPath), "hello", "写进去的内容能读回来")
 
     // 清理
     dirs.delete(work)
