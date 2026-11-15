@@ -118,11 +118,16 @@ typedef struct {
     double num_value;
     // ★ 2026-10-10（B 组第 11 条）：**整数文本按 int 解析**，不再一律过 double ✗
     //   `is_integer`：文本里**没有** '.' / 'e' / 'E' ✓（即 JSON 意义上的整数 ✓）；
-    //   `int_overflow`：是整数文本但**超出 int64** ⇒ 退回 double（见下面的说明 ✓）；
+    //   `int_overflow`：是整数文本但**超出 int64** ⇒ 走 `big_int`（2026-11-15 起）✓
     //   `int_value`：`is_integer && !int_overflow` 时有效 ✓
     int is_integer;
     int int_overflow;
     int64_t int_value;
+    // ★ 2026-11-15：超出 int64 的整数文本 → **bigint**（此前退回 double ⇒ 雪花 ID
+    //   这类值被静默改值：`decode("12345678901234567890")` 得到 1.2345678901234567e+19）。
+    //   语言本来就有 bigint、`int` 溢出也自动提升 ⇒ 这里对齐同一口径。
+    //   只在 `int_overflow` 时有效；其它 token 是 val_null()。
+    Value big_int;
 } JsonToken;
 
 typedef struct {
@@ -187,6 +192,7 @@ static JsonToken json_lexer_read_number(JsonLexer* lexer) {
     JsonToken token;
     token.type = JSON_TOKEN_NUMBER;
     token.start = lexer->input + lexer->pos;
+    token.big_int = val_null();          // 只有 int_overflow 那条路会填（见下）
     
     if (json_lexer_peek(lexer) == '-') {
         json_lexer_advance(lexer);
@@ -239,8 +245,9 @@ static JsonToken json_lexer_read_number(JsonLexer* lexer) {
     //   **超出 2^53** 的值根本不成立 ✓（double 存不下 ⇒ 比较必然错/做溢出转换 ✗），
     //   实测 `jsons.decode("12345678901234567890")` ⇒ 精度丢失 ✗。而现实里最需要它的
     //   正是**雪花 ID / 大时间戳**这类值 ✓（它们 > 2^53 但**在 int64 内** ✓ ⇒ 现在能精确 ✓）。
-    //   ⚠ 超出 int64 的整数文本（>19 位）仍然退回 double ✓ —— 想连这个也精确得引
-    //     bigint 的"从十进制串构造"入口 ✓ **本轮不做**（先把最常见的区间修对 ✓ 文档写明 ✓）。
+    //   ★ 2026-11-15：超出 int64 的整数文本（>19 位）**改走 bigint**（见下面的 else 分支）——
+    //     原先退回 double ⇒ `decode("12345678901234567890")` 得到 1.2345678901234567e+19，
+    //     静默改值（雪花 ID / 大 ID 往返就毁）。语言有 bigint、`int` 溢出会自动提升 ⇒ 对齐。
     token.is_integer = 1;
     token.int_overflow = 0;
     token.int_value = 0;
@@ -258,7 +265,10 @@ static JsonToken json_lexer_read_number(JsonLexer* lexer) {
         if (end && *end == '\0' && errno != ERANGE) {
             token.int_value = (int64_t)n;
         } else {
+            // ★ 2026-11-15：超 int64 ⇒ bigint（不再退回 double 丢精度）
             token.int_overflow = 1;
+            ObjBigInt* big = bigint_from_string(num_str);
+            if (big) token.big_int = val_obj((Object*)big);
         }
     }
     free(num_str);
@@ -289,22 +299,37 @@ static JsonToken json_lexer_read_identifier(JsonLexer* lexer) {
     return token;
 }
 
+// 无载荷 token 的唯一构造口（新增字段时只改这里，避免每个 return 各写一份 ⇒
+//   `-Wmissing-field-initializers` 也不会再冒出来）
+static JsonToken json_token_plain(JsonTokenType type) {
+    JsonToken t;
+    t.type = type;
+    t.start = NULL;
+    t.len = 0;
+    t.num_value = 0;
+    t.is_integer = 0;
+    t.int_overflow = 0;
+    t.int_value = 0;
+    t.big_int = val_null();
+    return t;
+}
+
 static JsonToken json_lexer_next_token(JsonLexer* lexer) {
     json_lexer_skip_whitespace(lexer);
     
     if (lexer->pos >= lexer->len) {
-        return (JsonToken){JSON_TOKEN_EOF, NULL, 0, 0, 0, 0, 0};
+        return json_token_plain(JSON_TOKEN_EOF);
     }
     
     char c = json_lexer_peek(lexer);
     
     switch (c) {
-        case '{': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_LBRACE, NULL, 0, 0, 0, 0, 0};
-        case '}': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_RBRACE, NULL, 0, 0, 0, 0, 0};
-        case '[': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_LBRACKET, NULL, 0, 0, 0, 0, 0};
-        case ']': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_RBRACKET, NULL, 0, 0, 0, 0, 0};
-        case ':': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_COLON, NULL, 0, 0, 0, 0, 0};
-        case ',': json_lexer_advance(lexer); return (JsonToken){JSON_TOKEN_COMMA, NULL, 0, 0, 0, 0, 0};
+        case '{': json_lexer_advance(lexer); return json_token_plain(JSON_TOKEN_LBRACE);
+        case '}': json_lexer_advance(lexer); return json_token_plain(JSON_TOKEN_RBRACE);
+        case '[': json_lexer_advance(lexer); return json_token_plain(JSON_TOKEN_LBRACKET);
+        case ']': json_lexer_advance(lexer); return json_token_plain(JSON_TOKEN_RBRACKET);
+        case ':': json_lexer_advance(lexer); return json_token_plain(JSON_TOKEN_COLON);
+        case ',': json_lexer_advance(lexer); return json_token_plain(JSON_TOKEN_COMMA);
         case '"': return json_lexer_read_string(lexer);
         default:
             if (isdigit(c) || c == '-') {
@@ -313,7 +338,7 @@ static JsonToken json_lexer_next_token(JsonLexer* lexer) {
                 return json_lexer_read_identifier(lexer);
             } else {
                 json_lexer_advance(lexer);
-                return (JsonToken){JSON_TOKEN_ERROR, NULL, 0, 0, 0, 0, 0};
+                return json_token_plain(JSON_TOKEN_ERROR);
             }
     }
 }
@@ -542,11 +567,18 @@ static Value json_parse_value(JsonParser* parser) {
             //     对 >2^53 的值**连比较都不成立** ✓（精度早就丢了 ✓ 实测过 ✓）。
             //   ⚠ 这里**先取字段再 advance**（advance 会把 current 换掉 ✓）
             int is_int = parser->current.is_integer && !parser->current.int_overflow;
+            // ★ 2026-11-15：整数文本超 int64 ⇒ 用词法阶段造好的 bigint（不再退 double）
+            int is_big = parser->current.is_integer && parser->current.int_overflow &&
+                         val_is_bigint(parser->current.big_int);
             int64_t iv = parser->current.int_value;
             double num = parser->current.num_value;
+            Value big = parser->current.big_int;
             json_parser_advance(parser);
             if (is_int) {
                 return val_int_safe(iv);
+            }
+            if (is_big) {
+                return big;
             }
             return val_float(num);
         }

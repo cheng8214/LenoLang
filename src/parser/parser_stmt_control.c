@@ -69,6 +69,13 @@ static void defer_collect_vars(Ast* a, const char** names, int* count, int cap) 
                 defer_collect_vars(a->u.block.items[i], names, count, cap);
             }
             break;
+        // ★ 2026-11-15：块里的**语句**被包在 AST_EXPR_STMT 里（`defer { ffi.free(p) }`
+        //   的 items[0] 就是它）⇒ 不认这一层就一个变量都收不到。
+        //   实测：表达式形式 `defer ffi.free(p)` 有警告，块形式**零警告** ——
+        //   而块形式恰恰是官方推荐写法（`defer { if p != null { ffi.free(p) } }`）✗
+        case AST_EXPR_STMT:
+            defer_collect_vars(a->u.expr_stmt.expr, names, count, cap);
+            break;
         // ★ 2026-11-11（P2 压测补）：`defer { if p != null { ffi.free(p) } }` —— 块形式
         //   最常见的写法就是带 if 守卫；不认 AST_IF 就一个变量都收不到（实测漏报）。
         case AST_IF:

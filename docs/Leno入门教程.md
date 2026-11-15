@@ -11367,7 +11367,7 @@ main() {
 `clib` 里写 cstruct 名，语义是**传指针**（不是 C 的按值传结构体）：
 
 ```leno
-cstruct POINT { i32 x  i32 y }
+cstruct POINT { i32 x ; i32 y }
 
 // ⚠ 这种写法会被当作 Ptr[POINT]（编译器给一条警告，提示你确认语义）
 clib user32_a {

@@ -1,0 +1,47 @@
+// test_jsons_bigint.leno —— JSON 里超出 int64 的整数必须保持**精确**（走 bigint）
+//
+// 背景（2026-11-15 压测）：`jsons.decode("12345678901234567890")` 原先退回 double
+//   ⇒ 得到 1.2345678901234567e+19，静默改值（雪花 ID / 大 ID 往返就毁，零诊断）。
+//   语言本来就有 bigint、`int` 溢出也自动提升 ⇒ 这里对齐：超 int64 的整数文本走 bigint。
+//
+// 判据：①int64 内的整数仍然精确且是 int（老路径不回退）
+//      ②超 int64 的整数精确、类型是 bigint、与 bigint 字面量相等
+//      ③浮点文本仍走 double（不被误当整数）
+//      ④encode(decode(x)) 往返一致
+import jsons
+
+main() {
+    // ① int64 内：精确，且仍是 int（2^53+1 这种 double 存不下的值）
+    var w = jsons.decode("9007199254740993")
+    assert_eq(w == 9007199254740993, true, "①2^53+1 精确")
+    assert_eq(type(w), "int", "①int64 内仍是 int")
+
+    // ② 超 int64：精确（走 bigint）
+    var v = jsons.decode("12345678901234567890")
+    assert_eq(v == 12345678901234567890, true, "②超 int64 精确（bigint）")
+    // ⚠ decode 返回 `any`，不能直接参与大小比较（编译期拦）⇒ 顺序比较由
+    //   assert/test_bigint_cmp.leno 覆盖，这里只判精确相等 / 往返。
+
+    var neg = jsons.decode("-123456789012345678901234567890")
+    assert_eq(neg == -123456789012345678901234567890, true, "②负的超大整数同样精确")
+
+    // ③ 浮点文本仍走 double
+    var f = jsons.decode("1.5")
+    assert_eq(f == 1.5, true, "③浮点文本走 double")
+    var e = jsons.decode("1e3")
+    assert_eq(e == 1000.0, true, "③科学计数走 double")
+
+    // ④ 往返：encode 出来的十进制串要能原样解回去
+    assert_eq(jsons.encode(v), "12345678901234567890", "④encode 输出十进制串")
+    var back = jsons.decode(jsons.encode(v))
+    assert_eq(back == v, true, "④encode → decode 往返一致")
+
+    // ⑤ 嵌在对象/数组里也一样
+    var obj = jsons.decode("{\"id\":12345678901234567890,\"tags\":[123456789012345678901]}")
+    var d = obj as Dict
+    assert_eq(d["id"] == 12345678901234567890, true, "⑤对象里的超大整数精确")
+    var arr = d["tags"] as Array
+    assert_eq(arr[0] == 123456789012345678901, true, "⑤数组里的超大整数精确")
+
+    print("test_jsons_bigint passed（int64 内 / 超 int64 / 负数 / 浮点 / 往返 / 嵌套）")
+}

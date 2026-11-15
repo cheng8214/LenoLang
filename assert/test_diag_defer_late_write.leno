@@ -1,0 +1,56 @@
+// test_diag_defer_late_write.leno —— 「defer 里的变量在 defer 之后被重新赋值」警告
+//   必须同时覆盖 **表达式形式** 和 **块形式**（2026-11-15 前块形式完全静默：
+//   `defer_collect_vars` 没认 AST_EXPR_STMT 这一层，而块形式恰恰是推荐写法）。
+import dirs
+import files
+
+func checkOut(string work, string name, string src): string {
+    var f = dirs.join(work, name)
+    files.write(f, src)
+    var r = _exec(_executable() + " --check \"" + f + "\"", 30000)
+    return r.output as string
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_defer_warn")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ① 表达式形式（一直有警告，防回归）
+    var o1 = checkOut(work, "expr.leno", @"main() {
+    var p = 1
+    defer print(_str(p))
+    p = 2
+}
+")
+    assert_true(o1.has("defer后改值"), "①表达式形式：有警告")
+
+    // ② 块形式（本轮修复点）
+    var o2 = checkOut(work, "block.leno", @"main() {
+    var p = 1
+    defer { print(_str(p)) }
+    p = 2
+}
+")
+    assert_true(o2.has("defer后改值"), "②块形式：有警告（修复前静默）")
+
+    // ③ 块 + if 守卫（官方推荐写法 `defer { if p != null { ffi.free(p) } }`）
+    var o3 = checkOut(work, "guard.leno", @"main() {
+    var p = 1
+    defer { if p > 0 { print(_str(p)) } }
+    p = 2
+}
+")
+    assert_true(o3.has("defer后改值"), "③块 + if 守卫：有警告")
+
+    // ④ defer 之后没再赋值 ⇒ 不打扰
+    var o4 = checkOut(work, "nowrite.leno", @"main() {
+    var p = 1
+    defer { print(_str(p)) }
+    print(_str(p))
+}
+")
+    assert_true(not o4.has("defer后改值"), "④没改 ⇒ 不报警")
+
+    print("test_diag_defer_late_write passed（表达式 / 块 / if 守卫 / 无误报）")
+}
