@@ -45,5 +45,37 @@ main()
     assert_eq(_bool([1, 2]), true)
     assert_eq(_bool([]), false)
 
+    // 测试7: null / 空串 的转换口径（2026-11-16 复核后钉住 —— 两个函数口径**不同**）
+    //   `_int(null)` = 0 ✓，而 `_int_or(null, d)` = d（`_int_or` 把 null 当"类型不对"）
+    assert_eq(_int(null), 0, "_int(null) ⇒ 0")
+    assert_eq(_float(null), 0.0, "_float(null) ⇒ 0.0")
+    assert_eq(_int_or(null, 7), 7, "_int_or(null, 7) ⇒ 7（默认值，与 _int 口径不同）")
+    // `_int("")` 自 2026-11-15 起**抛异常**（此前静默给 0）
+    int empty_threw = 0
+    try { var _e = _int("") } catch e { empty_threw += 1 }
+    assert_eq(empty_threw, 1, "_int(\"\") 必须抛错")
+    assert_eq(_int_or("", -1), -1, "_int_or(\"\") ⇒ 默认值")
+
+    // 测试8: 精度 —— 超出 int64 的浮点/字符串走 bigint，不再夹到 INT64_MAX
+    assert_eq(_str(_int(1e20)), "100000000000000000000", "1e20 精确展开（不是 9223372036854775807）")
+    var big = _int("18446744073709551616")
+    assert_eq(_str(big + 1), "18446744073709551617", "bigint 精确运算")
+    assert_eq(type(big), "int", "bigint 对外统一报 int")
+    assert_eq(big is int, true, "bigint 也满足 is int")
+    assert_true(_str(_int(1e300)).len() > 300, "1e300 ⇒ 301 位整数（走 bigint）")
+
+    // 测试9: NaN / Inf —— 转 int 抛错；_float 接受它们（strtod 口径）
+    var nan = _float("nan")
+    assert_eq(nan == nan, false, "NaN 不等于自己")
+    assert_eq(_float("inf") > 1e308, true, "inf 可表示")
+    int nan_threw = 0
+    try { var _n = _int(nan) } catch e { nan_threw += 1 }
+    assert_eq(nan_threw, 1, "_int(NaN) 必须抛错")
+
+    // 测试10: 位宽截断
+    assert_eq(_uint8(256), 0)
+    assert_eq(_uint8(-1), 255)
+    assert_eq(_str(_uint64(-1)), "18446744073709551615")
+
     print("test_types_module passed")
 }
