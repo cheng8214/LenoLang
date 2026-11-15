@@ -733,6 +733,9 @@
                         if (memcmp(mp->name, key->chars, (size_t)key->len) != 0) continue;
                         int slot = mp->global_index;
                         if (slot >= 0 && slot < mod->global_capacity) {
+                            // ★ 2026-11-15：跨模块 `m.x = v` 也走这里 ⇒ 同一个跨堆写入检测
+                            //   （判定与去重见 module.c 的 module_warn_cross_heap_write）
+                            module_warn_cross_heap_write(mod, slot, R(a));
                             mod->globals[slot] = R(a);
                             gc_write_barrier((Object*)mod, R(a));
                             if (mod->exports) dict_set(mod->exports, idx, R(a));

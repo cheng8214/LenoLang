@@ -1,0 +1,136 @@
+// test_thread_local_var.leno —— `thread_local var`：每个线程各一份、首次访问按声明初值新建
+//
+// 为什么需要它（2026-11-15，Aria 服务端 CRC/QR 两次实测的根治项）：
+//   · 模块级 `var`（ObjModule.globals）是**全线程共享的同一份槽**，子线程写进去的对象
+//     会变成跨堆引用（线程退出/GC 后读到残值 185 / -1 / 0）；
+//   · 此前"每线程一份状态"只能用 `threads.local_set/get`：字符串 key、无类型、全线程共用
+//     一个命名空间（得自己加 `lenoqr.` 之类前缀防撞）。
+//   ⇒ 语言特性 `thread_local var x = 初值`：编译期定位槽位，值放**本线程的 VM.tls_slots**。
+//
+// 判据：
+//   ① 每线程各一份：子线程的累加不影响主线程，主线程的初值也不漏给子线程（子线程从声明初值建）
+//   ② 容器默认值**每线程新建**（空数组 / 空字典不能跨堆共享同一个对象）
+//   ③ 子线程写 thread_local ⇒ **不该**触发"跨堆写入模块级 var"警告
+//   ④~⑧ 非法写法必须编译失败并给出定向文案（不能静默）
+import dirs
+import files
+import strings
+import "helpers/compiler.leno" as ce
+
+var WARN_MARK = "写进了模块级变量"
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_thread_local_var")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // 被所有用例共享的模块（主线程在 import 时加载并执行模块顶层）
+    files.write(dirs.join(work, "tl.leno"),
+        "thread_local var counter = 0\n"
+        + "thread_local Array[int] buf = []\n"
+        + "thread_local var names = {}\n"
+        + "export func bump(): int { counter += 1; return counter }\n"
+        + "export func bump_three(): int {\n"
+        + "    counter += 1\n"
+        + "    counter = counter + 1\n"
+        + "    counter += 1\n"
+        + "    return counter\n"
+        + "}\n"
+        + "export func count(): int { return counter }\n"
+        + "export func buf_len(): int { buf.add(1); return buf.len() }\n"
+        + "export func names_size(): int { names[\"k\"] = 1; return names.len() }\n")
+
+    // ① 主线程：初值 0 起累加；子线程的累加**不影响**主线程
+    var p1 = dirs.join(work, "isolation.leno")
+    files.write(p1,
+        "import \"tl.leno\" as tl\n"
+        + "import threads\n"
+        + "func worker(): int {\n"
+        + "    var a = tl.bump()\n"          // 子线程自己的 1
+        + "    var b = tl.bump()\n"          // 子线程自己的 2
+        + "    var c = tl.buf_len()\n"       // 子线程自己的空数组 ⇒ 1
+        + "    var d = tl.names_size()\n"    // 子线程自己的空字典 ⇒ 1
+        + "    return a * 1000 + b * 100 + c * 10 + d\n"
+        + "}\n"
+        + "main() {\n"
+        + "    print(\"first=\" + _str(tl.bump()) + \"\\n\")\n"          // 1
+        + "    print(\"second=\" + _str(tl.bump_three()) + \"\\n\")\n"   // 1 + 3 = 4
+        + "    var t = threads.start(worker)\n"
+        + "    var got = _int(t.join())\n"
+        + "    print(\"child=\" + _str(got) + \"\\n\")\n"                // 1211
+        + "    print(\"after=\" + _str(tl.count()) + \"\\n\")\n"         // 4（子线程没有污染它）
+        + "    print(\"mainbuf=\" + _str(tl.buf_len()) + \"\\n\")\n"     // 1（主线程自己的数组）
+        + "    print(\"DONE\\n\")\n"
+        + "}\n")
+    var o1 = ce.expect_ok(p1, "①每线程一份", "DONE")
+    assert_true(strings.has(o1, "first=1"), "①主线程初值应为 0 起（first=1）；实际=" + o1)
+    assert_true(strings.has(o1, "second=4"), "②+= / 赋值累加都应生效（second=4）；实际=" + o1)
+    assert_true(strings.has(o1, "child=1211"),
+        "③子线程应从声明初值各建一份（counter 1→2、空数组、空字典 ⇒ child=1211）；实际=" + o1)
+    assert_true(strings.has(o1, "after=4"),
+        "④子线程的累加不能影响主线程（after=4）；实际=" + o1)
+    assert_true(strings.has(o1, "mainbuf=1"),
+        "⑤容器默认值每线程新建（主线程的数组与子线程无关）；实际=" + o1)
+    ce.expect_no_warning(o1, "⑥子线程写 thread_local 不该触发跨堆警告", WARN_MARK)
+
+    // ② 多线程并发：每个线程各自数满 100，互不干扰
+    var p2 = dirs.join(work, "parallel.leno")
+    files.write(p2,
+        "import \"tl.leno\" as tl\n"
+        + "import threads\n"
+        + "func worker(any ch, int n) {\n"
+        + "    for 0 : n - 1 to i { tl.bump() }\n"
+        + "    if ch is Channel { var c = ch; c.send(tl.count()) }\n"
+        + "}\n"
+        + "main() {\n"
+        + "    var ch = threads.channel(4)\n"
+        + "    var ts = []\n"
+        + "    for 0 : 3 to i { ts.add(threads.start(worker, ch, 100)) }\n"
+        + "    var sum = 0\n"
+        + "    for 0 : 3 to i { sum = sum + _int(ch.receive()) }\n"
+        + "    for ts to t { t.join() }\n"
+        + "    print(\"sum=\" + _str(sum) + \"\\n\")\n"
+        + "    print(\"main=\" + _str(tl.count()) + \"\\n\")\n"
+        + "    print(\"DONE\\n\")\n"
+        + "}\n")
+    var o2 = ce.expect_ok(p2, "②并发各数各的", "DONE")
+    assert_true(strings.has(o2, "sum=400"),
+        "⑦4 个线程各累加 100 次，合计应为 400（不能互相覆盖）；实际=" + o2)
+    assert_true(strings.has(o2, "main=0"),
+        "⑧子线程的累加不能落到主线程；实际=" + o2)
+
+    // ③ 脚本里声明 ⇒ 定向报错（脚本顶层本来就是每线程一份）
+    var e1 = dirs.join(work, "err_script.leno")
+    files.write(e1, "thread_local var x = 0\nmain() { print(_str(x)) }\n")
+    ce.expect_error(e1, "③脚本里用 thread_local", "只在**模块文件**里需要", 1)
+
+    // ④ 函数内声明 ⇒ 定向报错（局部变量天然线程私有）
+    var e2 = dirs.join(work, "err_func.leno")
+    files.write(e2,
+        "func f() {\n"
+        + "    thread_local var x = 0\n"
+        + "    x = x + 1\n"
+        + "}\n"
+        + "export func g(): int { return 1 }\n")
+    ce.expect_error(e2, "④函数内用 thread_local", "只能声明在**模块顶层**", 2)
+
+    // ⑤ 初值不是字面量/空容器 ⇒ 定向报错（别的线程不会重新执行那段代码）
+    var e3 = dirs.join(work, "err_init.leno")
+    files.write(e3,
+        "func build(): int { return 1 }\n"
+        + "thread_local var t = build()\n"
+        + "export func g(): int { return t }\n")
+    ce.expect_error(e3, "⑤非字面量初值", "初值必须是**字面量或空容器**", 2)
+
+    // ⑥ export thread_local var ⇒ 定向报错（每线程各一份，导出没有一致值）
+    var e4 = dirs.join(work, "err_export.leno")
+    files.write(e4, "export thread_local var t = 0\n")
+    ce.expect_error(e4, "⑥export thread_local var", "不能 export", 1)
+
+    // ⑦ thread_local const ⇒ 定向报错
+    var e5 = dirs.join(work, "err_const.leno")
+    files.write(e5, "thread_local const C = 1\n")
+    ce.expect_error(e5, "⑦thread_local const", "只能修饰 `var`", 1)
+
+    print("test_thread_local_var passed")
+}

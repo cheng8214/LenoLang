@@ -76,6 +76,12 @@ typedef struct Object {
     uint8_t flags;
     uint8_t generation;
     uint8_t survived;
+    // ★ 2026-11-15：**对象所属线程的序号**（跨堆写入检测用；0 = 主线程）。
+    //   为什么能白拿：上面 4 个 uint8_t 之后正好有 1 字节对齐填充（size 需要 8 对齐），
+    //   加在这里 sizeof(Object) 不变。每个线程一个 VM ⇒ VM.thread_serial 在分配时抄进来。
+    //   用途：模块级 var 是**全线程共享的同一份槽**；把"本线程堆的对象"写进去，
+    //   本线程退出/GC 后那个槽就是悬空引用（读到残值）。module.c 的 module_set_var 用它判。
+    uint8_t owner_thread;
     size_t size;
 } Object;
 
@@ -501,6 +507,17 @@ typedef struct {
     int global_index;
 } ExportGlobalMapping;
 
+// ★ 2026-11-15：`thread_local var` 的槽位描述（下标 = 模块全局槽号）。
+//   tls_id 是**进程内唯一**的线程局部槽位号（VM.tls_slots 的下标），在模块顶层执行
+//   `OP_TLS_DECL` 时分配；kind 描述"别的线程首次访问时按什么新建默认值"。
+//   为什么每个线程要能自己新建：声明处的初值只在**主线程**执行一次（模块顶层），
+//   子线程从 `default` 建自己那份 —— 容器必须是**新对象**（不能跨堆共享）。
+typedef struct {
+    int tls_id;      // >= 0：本槽是 thread_local；-1：普通模块变量
+    uint8_t kind;    // TLS_DEF_*（见 leno_vm.h）
+    Value def;       // 标量 / 字符串默认值（TLS_DEF_ARRAY/DICT 不用，每线程新建空容器）
+} TlsSlotInfo;
+
 // 模块对象 - 包含模块级别的变量和函数
 typedef struct {
     Object header;
@@ -528,6 +545,12 @@ typedef struct {
     char** use_reexport_names;  // use 导入的需要 re-export 的类型名（运行时添加到 exports）
     int* use_reexport_kinds;    // use re-export 的类型种类（TYPE_ENUM, TYPE_STRUCT 等）
     int use_reexport_count;     // use re-export 数量
+    // ★ 2026-11-15：`thread_local var` 槽位表（下标 = 模块全局槽号；NULL = 本模块没有）。
+    //   读写模块变量时（OP_GET/SET_MODULE_VAR）按它分流到 **本线程** 的 VM.tls_slots。
+    //   为什么挂在模块上而不是编译期常量表：模块对象是进程共享的，tls_id 只需分配一次，
+    //   所有线程（含从 .lenb 加载的）都读同一份描述 ⇒ 不需要改序列化格式 ✓
+    TlsSlotInfo* tls_slots;
+    int tls_slot_cap;           // tls_slots 的长度（跟着 global_capacity 一起长）
 } ObjModule;
 
 // 绑定方法对象 - 将 receiver 和 method 绑定在一起

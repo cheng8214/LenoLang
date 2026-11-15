@@ -1629,7 +1629,15 @@ static void gen_var_decl(CodeGen* gen, Ast* ast) {
         }
         emit_lock_if_const(gen, ast, r);
         emit_decl_runtime_type(gen, r, ast->u.var_decl.type, ast->line);
-        reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, ast->line);
+        // ★ 2026-11-15：`thread_local var` ⇒ 发 OP_TLS_DECL（登记每线程槽位 + 写入本线程初值），
+        //   而**不是** OP_SET_MODULE_VAR（那会写进全线程共享的 module->globals ✗）。
+        //   之后所有读/写仍走 OP_GET/SET_MODULE_VAR —— VM 按 module->tls_slots 分流到本线程，
+        //   所以复合赋值、自增、`m.x`（不导出）等既有路径全都自动正确 ✓
+        if (ast->u.var_decl.is_thread_local) {
+            reg_encode_iABx(gen->chunk, OP_TLS_DECL, r, ref->index, ast->line);
+        } else {
+            reg_encode_iABx(gen->chunk, OP_SET_MODULE_VAR, r, ref->index, ast->line);
+        }
         reg_free(gen, r);
         return;
     }

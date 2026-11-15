@@ -410,6 +410,29 @@ Ast* parse_export_stmt(Parser* p) {
         return NULL;
     }
 
+    // ★ 2026-11-15：`export thread_local var` —— 每线程各一份，跨模块没有"一个一致的值"可导出。
+    //   不给这条定向提示的话，thread_local 会被 parse_type 当成**类型名** ⇒ 报「期望变量名」✗
+    if (p->lex.current.type == TOK_IDENT && p->lex.current.len == 12 &&
+        memcmp(p->lex.current.text, "thread_local", 12) == 0) {
+        Lexer saved = p->lex;
+        lexer_next(&p->lex);
+        int next_is_var = (p->lex.current.type == TOK_VAR);
+        p->lex = saved;
+        error_set_column(saved.current.column);
+        if (next_is_var) {
+            int bad_line = p->lex.current.line;
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "thread_local var 不能 export —— 它每个线程各一份，别的模块读到的值取决于"
+                "**哪个线程在读**。要跨模块共享：① 普通 `export func get_xxx()` 提供访问器；"
+                "② 或干脆用普通模块级 `var`（全线程共享，注意只由主线程写）");
+            // ⚠ 吃掉整条语句，否则调用方的语句循环会在同一位置反复解析（死循环）
+            while (p->lex.current.type != TOK_EOF && p->lex.current.line == bad_line) {
+                lexer_next(&p->lex);
+            }
+            return NULL;
+        }
+    }
+
     // export 后面可以是 var/const 声明、func 定义、struct 定义、cstruct 定义或 enum 定义
     if (p->lex.current.type == TOK_VAR || p->lex.current.type == TOK_CONST) {
         Ast* decl = parse_var_decl_internal(p);

@@ -1,0 +1,91 @@
+// test_thread_cross_heap_warn.leno —— 回归：**子线程把本线程堆的对象写进模块级 var** 必须警告
+//
+// 背景（2026-11-15，Aria 服务端两次实测）：
+//   · 每个子线程 = 独立 VM / 独立 GC / 独立堆；
+//   · 但**模块级 `var`（ObjModule.globals）是全线程共享的同一份槽**（module_frame_new 直接
+//     把 module->globals 交给帧）⇒ 子线程写进去的对象归属它自己的堆，那个线程退出/GC 之后
+//     共享槽指向已回收内存，别的线程读到的是**残值**（实测 CRC 表返回 185 / -1 / 0）。
+//   · 所以 LenoCompress 的 CRC 表 / LenoQR 的 GF 表都改成了 threads.local_*（每线程一份）。
+//
+// 本用例钉住"看得见"：对象头里记了分配它的线程序号（Object.owner_thread），写模块级 var 时
+// 与模块自己的 owner 不同 ⇒ 打一条警告。四条判据：
+//   ① 子线程写**对象** ⇒ 必须警告（并给出模块名 / 槽位 / 两个线程序号）
+//   ② 主线程写对象 ⇒ **不该**警告（同堆，安全）
+//   ③ 子线程写**标量**（int） ⇒ 不该警告（值复制，无跨堆引用）
+//   ④ 子线程**读**模块级 var ⇒ 不该警告（只读跨堆是安全的）
+import dirs
+import files
+import strings
+import "helpers/compiler.leno" as ce
+
+var WARN_MARK = "写进了模块级变量"
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_cross_heap_warn")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // 被所有用例共享的模块（主线程在 import 时加载 ⇒ 模块对象属于主线程堆）
+    files.write(dirs.join(work, "m.leno"),
+        "export var g = []\n"
+        + "export var n = 0\n"
+        + "export func get_n(): int { return n }\n")
+
+    // ① 子线程写对象 ⇒ 必须警告
+    var p1 = dirs.join(work, "child_write_obj.leno")
+    files.write(p1,
+        "import \"m.leno\" as m\n"
+        + "import threads\n"
+        + "func evil() { m.g = [1, 2, 3] }\n"
+        + "main() {\n"
+        + "    var t = threads.start(evil)\n"
+        + "    t.join()\n"
+        + "    print(\"DONE\\n\")\n"
+        + "}\n")
+    var o1 = ce.expect_ok(p1, "①子线程写模块级 var（对象）", "DONE")
+    assert_true(strings.has(o1, WARN_MARK),
+        "①跨堆写入必须警告；实际输出=" + o1)
+    assert_true(strings.has(o1, "模块 'm'"),
+        "①警告里要点名模块；实际输出=" + o1)
+    assert_true(strings.has(o1, "threads.local_"),
+        "①警告里要给出 threads.local_ 的出路；实际输出=" + o1)
+
+    // ② 主线程写对象 ⇒ 同堆，不该警告
+    var p2 = dirs.join(work, "main_write_obj.leno")
+    files.write(p2,
+        "import \"m.leno\" as m\n"
+        + "main() { m.g = [1, 2, 3]; print(\"DONE\\n\") }\n")
+    var o2 = ce.expect_ok(p2, "②主线程写模块级 var（对象）", "DONE")
+    ce.expect_no_warning(o2, "②主线程写对象不该警告", WARN_MARK)
+
+    // ③ 子线程写标量 ⇒ 值复制，不该警告
+    var p3 = dirs.join(work, "child_write_int.leno")
+    files.write(p3,
+        "import \"m.leno\" as m\n"
+        + "import threads\n"
+        + "func ok() { m.n = 5 }\n"
+        + "main() {\n"
+        + "    var t = threads.start(ok)\n"
+        + "    t.join()\n"
+        + "    print(\"n=\" + _str(m.get_n()) + \"\\n\")\n"
+        + "}\n")
+    var o3 = ce.expect_ok(p3, "③子线程写模块级标量", "n=5")
+    ce.expect_no_warning(o3, "③写标量不该警告", WARN_MARK)
+
+    // ④ 子线程只读模块级 var（对象） ⇒ 只读跨堆是安全的，不该警告
+    var p4 = dirs.join(work, "child_read_obj.leno")
+    files.write(p4,
+        "import \"m.leno\" as m\n"
+        + "import threads\n"
+        + "func rd() { print(\"len=\" + _str(m.g.len()) + \"\\n\") }\n"
+        + "main() {\n"
+        + "    m.g = [1, 2]\n"
+        + "    var t = threads.start(rd)\n"
+        + "    t.join()\n"
+        + "    print(\"DONE\\n\")\n"
+        + "}\n")
+    var o4 = ce.expect_ok(p4, "④子线程只读模块级 var（对象）", "len=2")
+    ce.expect_no_warning(o4, "④只读不该警告", WARN_MARK)
+
+    print("test_thread_cross_heap_warn passed")
+}

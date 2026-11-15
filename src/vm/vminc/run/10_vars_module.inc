@@ -134,6 +134,22 @@
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
+        // ★ 2026-11-15：thread_local var ⇒ 读**本线程**的槽位（不在共享的 module->globals 里）。
+        //   ⚠ 这一段必须在下面 `bx >= global_count` 的"未写入 ⇒ null"之前：
+        //     thread_local 声明发的是 OP_TLS_DECL、**不写 globals** ⇒ global_count 可能还是 0，
+        //     放在后面会把"已初始化的线程局部量"当成未初始化返回 null ✗
+        if (unlikely(module->tls_slots && bx >= 0 && bx < module->tls_slot_cap &&
+                     module->tls_slots[bx].tls_id >= 0)) {
+            // 快路径（已初始化过）：两次下标 + 一次标记位判断，不进出 C 函数；
+            // 首次访问 / 数组还没分配 ⇒ 走冷路径按声明初值新建（module.c）
+            int tid = module->tls_slots[bx].tls_id;
+            if (likely(tid < vm.tls_slot_count && vm.tls_slot_ready[tid])) {
+                R(a) = vm.tls_slots[tid];
+            } else {
+                R(a) = module_tls_get(&vm, module, bx);
+            }
+            DISPATCH();
+        }
         if (unlikely(bx < 0 || bx >= module->global_count)) {
             // 尚未写入过的槽位：视为 null（与全局变量未初始化一致）
             R(a) = val_null();
@@ -153,6 +169,19 @@
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
+        // ★ 2026-11-15：thread_local var ⇒ 写**本线程**的槽位。
+        //   这条分支让"子线程写模块级 var"不再发生跨堆引用（也就不需要跨堆警告）✓
+        if (unlikely(module->tls_slots && bx >= 0 && bx < module->tls_slot_cap &&
+                     module->tls_slots[bx].tls_id >= 0)) {
+            int tid = module->tls_slots[bx].tls_id;
+            if (likely(tid < vm.tls_slot_count)) {
+                vm.tls_slots[tid] = R(a);
+                vm.tls_slot_ready[tid] = 1;      // 写入即视为已初始化
+            } else {
+                module_tls_set(&vm, module, bx, R(a));
+            }
+            DISPATCH();
+        }
         if (bx >= module->global_capacity) {
             int new_capacity = module->global_capacity == 0 ? 8 : module->global_capacity * 2;
             while (new_capacity <= bx) new_capacity *= 2;
@@ -167,6 +196,9 @@
             module->globals = new_globals;
             module->global_capacity = new_capacity;
         }
+        // ★ 2026-11-15：跨堆写入检测（编译后的 `m.g = ...` 走这里 ⇒ 必须接；
+        //   判定与去重见 module.c 的 module_warn_cross_heap_write）
+        module_warn_cross_heap_write(module, bx, R(a));
         module->globals[bx] = R(a);
         if (bx >= module->global_count) module->global_count = bx + 1;
         gc_write_barrier((Object*)module, R(a));
@@ -184,6 +216,28 @@
             if (export_key) {
                 dict_set(module->exports, val_obj((Object*)export_key), module->globals[bx]);
             }
+        }
+        DISPATCH();
+    }
+    // OP_TLS_DECL A Bx: `thread_local var` 声明（模块顶层、每个线程各认一次默认值）
+    //   A = 初值寄存器，Bx = 模块槽号。
+    //   做三件事：① 把该槽登记成 thread_local 并分配**进程内唯一**的 TLS 槽位号；
+    //   ② 记下"别的线程首次访问时按什么建默认值"（标量/字符串复制，Array/Dict 各建空容器）；
+    //   ③ 写入**本线程**的槽（= 声明处算出来的初值）。
+    //   ⚠ 不写 module->globals —— 那正是"全线程共享同一份槽"的来源。
+    LABEL(OP_TLS_DECL): {
+        int a = READ_A();
+        int bx = READ_Bx();
+        int line = GET_CURRENT_LINE();
+        ObjModule* module = (ObjModule*)frame->module;
+        if (unlikely(!module)) {
+            if (!throw_runtime_error("thread_local var 声明: 不在模块上下文中", line)) return -1;
+            frame = &vm.frames[vm.frame_cnt - 1];
+            DISPATCH();
+        }
+        if (unlikely(module_tls_declare(module, bx, R(a)) < 0)) {
+            runtime_error("thread_local var 槽位登记失败（内存不足）", line);
+            return -1;
         }
         DISPATCH();
     }

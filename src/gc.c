@@ -602,6 +602,11 @@ Object* gc_alloc(size_t size, ObjType type) {
 
     // 初始化对象头部，新对象默认为年轻代
     obj->type = type;
+    // ★ 2026-11-15：记录对象所属线程（跨堆写入检测用；主线程为 0）。
+    {
+        extern THREAD_LOCAL VM* current_exec_vm;
+        obj->owner_thread = current_exec_vm ? current_exec_vm->thread_serial : 0;
+    }
     // 所有新对象标记为存活，避免 GC 误回收刚分配但尚未存入根集合的对象。
     // 存活对象在下轮 GC 时会被 mark_roots 重新标记；已失效对象会被 clear_all_marks
     // 清零后在下轮 sweep 中回收。额外的存活一个 GC 周期不会导致明显的内存浪费。
@@ -1219,6 +1224,18 @@ static void mark_roots(void) {
     //   「本 VM 的字段」⇒ 主/子线程各一份，标记这一处即可 ✓
     //   ⚠ 漏了它 ⇒ 该字典会被回收，而 `threads.local_get` 仍拿着指针 ⇒ use-after-free ✗
     gc_mark_value(gc.vm->thread_local_store);
+    // 3.45 ★ 2026-11-15：`thread_local var` 的槽位数组（VM.tls_slots，每线程一份）。
+    //   漏了这里 = 该线程的线程局部量被当成垃圾回收 ⇒ 之后读到的是别的对象（残值）✗
+    //   只扫**已分配**的槽位号（tls_slot_count），容量里未用到的部分不碰 ✓
+    if (gc.vm->tls_slots) {
+        int n = gc.vm->tls_slot_count;
+        if (n > gc.vm->tls_slot_capacity) n = gc.vm->tls_slot_capacity;
+        for (int i = 0; i < n; i++) {
+            if (gc.vm->tls_slot_ready && gc.vm->tls_slot_ready[i]) {
+                gc_mark_value(gc.vm->tls_slots[i]);
+            }
+        }
+    }
 
     // 3.5 标记当前模块帧及其全局变量
     ModuleFrame* module_frame = gc.vm->current_module_frame;

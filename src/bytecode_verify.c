@@ -541,6 +541,11 @@ static int verify_one(const Chunk* c, int pos, int cap,
         case OP_DEFINE_MODULE_FUNC:
             REG_CHK(a);                                   // Bx = 模块 globals 下标（VM 有检查）
             break;
+        // ★ 2026-11-15：`thread_local var` 声明（iABx：A=初值寄存器，Bx=模块槽号）。
+        //   Bx 不是寄存器也不是常量（模块槽号由 VM 侧按容量检查）⇒ 只校验 A。
+        case OP_TLS_DECL:
+            REG_CHK(a);
+            break;
         case OP_INIT_LENOMODULE:
             REG_CHK(a);
             break;

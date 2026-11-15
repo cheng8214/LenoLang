@@ -4,14 +4,36 @@
 //   会被当成成功）。gzip 的 trailer 也是同一个 CRC32 —— 只是 web_gzip 当年出于性能
 //   取舍没校验（那时只有解压、没有压缩）。
 //
-// 实现：256 项查表（懒初始化一次）。表值最大 0xFFFFFFFF，Leno 的 int 是 64 位 ⇒ 不必
-//   担心符号位；最后统一 `& 0xFFFFFFFF` 再返回，避免出现负数。
-Array[int] g_crc_table = []
-var g_crc_ready = false
+// 实现：256 项查表，表值最大 0xFFFFFFFF；Leno 的 int 是 64 位 ⇒ 不必担心符号位；
+//   最后统一 `& 0xFFFFFFFF` 再返回，避免出现负数。
+//
+// ★★ 2026-11-15 修（Aria 服务端实测崩溃）：CRC 表**不能**放模块级可变变量。
+//
+//   Leno 的线程模型（见 docs/threads使用指南.md 第 2/4 条、docs/多线程struct与模块全局变量问题记录.md §八）：
+//     · 每个子线程 = **独立 VM + 独立 GC + 独立堆**；
+//     · **模块级 `var`（ObjModule.globals）是所有线程同一份槽**（进程级 loaded_modules 共享，
+//       有意不隔离）⇒ 往那个槽里写"本线程堆里的对象"，就是**跨堆引用**：
+//       对象归属本线程堆，别的线程（和它自己的 GC）按堆归属处理 ⇒ 读到的是被回收/复用的内存，
+//       或者干脆"跑一阵值就没了"（deployd 的白名单 403 现场就是这个形状）。
+//
+//   原来的实现正是这个雷：`Array[int] g_crc_table` 在模块级 + `g_crc_ready` 懒初始化。
+//   4 个 worker 并发第一次 gzip 时：
+//     ① 后到的线程看到 ready=true，拿**还没填完**的表去查 ⇒ 索引越界
+//        （线上实测「索引 132, 长度 1」，这条 HTTP 连接被断开 ⇒ 广场页偶发加载失败）；
+//     ② 就算改成"判长度 + 填完再赋值"（试过），实测 `table_entry(1)` 仍返回 185 / -1 / 0
+//        —— 那不是"读到半成品"，是**跨堆对象被回收后的残值**（子线程建的表写进了共享槽）✗。
+//
+//   ⇒ 正解：状态放 **`threads.local_*`**（实现是 VM 结构体上的 `thread_local_store`，
+//     每线程一个 VM ⇒ 天然一份，且 gc.c 的 mark_roots 已把它当根，不会漏标）。
+//     与 server/db.leno 给 sqlite 句柄"每线程一份连接"、deployd 的 cfg 缓存同一套做法 ✓
+//   并发探针：4 线程 × 200 次 gzip/gunzip 往返（修复前 4 线程各 170+ 次报错，修复后 0 错，
+//   连跑 8 次稳定）✓
+import threads
 
-func _crc_init() {
-    if g_crc_ready { return }
-    g_crc_ready = true
+const CRC_TLS_KEY = "leno_compress_crc_table"
+
+// 构建一份 256 项表（纯局部，线程安全 ✓）
+func _crc_build(): Array[int] {
     Array[int] t = []
     for 0:255 to n {
         var c = n
@@ -21,15 +43,27 @@ func _crc_init() {
         }
         t.add(c & 0xFFFFFFFF)
     }
-    g_crc_table = t
+    return t
+}
+
+// 本线程的表（首次调用构建，之后从线程局部存储取回）
+func _crc_table(): Array[int] {
+    if threads.local_has(CRC_TLS_KEY) {
+        var cached = threads.local_get(CRC_TLS_KEY, null) as Array[int]
+        // 长度校验兜底：万一取回的东西不完整，重建一份（宁可多算一次）✓
+        if cached.len() == 256 { return cached }
+    }
+    Array[int] built = _crc_build()
+    threads.local_set(CRC_TLS_KEY, built)
+    return built
 }
 
 // 字节数组 → CRC32（内部用；避免同一份数据先转字符串再转回来）
 export func crc32_bytes(Array[int] bs): int {
-    _crc_init()
+    var tbl = _crc_table()
     var crc = 0xFFFFFFFF
     for bs to b {
-        crc = (crc >> 8) ^ g_crc_table[(crc ^ b) & 0xFF]
+        crc = (crc >> 8) ^ tbl[(crc ^ b) & 0xFF]
     }
     return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF
 }
@@ -54,6 +88,7 @@ export func adler32(string s): int {
 
 // CRC 表本身（自检用：table[1] 必须是 0x77073096）
 export func table_entry(int i): int {
-    _crc_init()
-    return g_crc_table[i]
+    var tbl = _crc_table()
+    if i < 0 or i >= tbl.len() { return 0 }
+    return tbl[i]
 }

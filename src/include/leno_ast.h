@@ -290,6 +290,10 @@ struct Ast {
         // is_synthetic：编译器改写出来的声明（目前是"带载荷 enum 的 case 绑定变量"）
         //   ⇒ 不参与 WARN_UNUSED_VAR（用户没写这条声明，让他去"删掉"或改 `_` 没有意义）
         struct { char* name; Ast* init; SymRef ref; TypeInfo* type; int is_const;
+                 // ★ 2026-11-15：`thread_local var x: T = 初值` —— 每个线程各一份的模块级变量。
+                 //   语义：存储不在 module->globals（全线程共享），而在 **本线程的 VM 槽位**里；
+                 //   首次访问按声明时的字面量/空容器**惰性初始化**（见 module.c 的 module_tls_declare）。
+                 int is_thread_local;
                  int is_synthetic; } var_decl;
         struct { Ast* expr; } expr_stmt;
         struct { char* module_name; char* alias; char* file_path; } import;

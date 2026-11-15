@@ -268,6 +268,44 @@ Ast* parse_statement(Parser* p) {
         return parse_defer_stmt(p);
     }
 
+    // ★ 2026-11-15：`thread_local var x: T = 初值` —— **每个线程各一份**的模块级变量。
+    //   `thread_local` 是**上下文关键字**（不是保留字）：只有后面紧跟**声明**时才生效
+    //   （`var` / `const` / 类型名），所以 `thread_local = 1`、`thread_local.foo` 这种
+    //   "真有个同名变量"的写法完全不受影响 ✓
+    //   为什么需要它：模块级 `var` 是全线程共享的同一份槽（ObjModule.globals），
+    //   想把"每线程状态"放进去只能写 `threads.local_set/get` + 字符串 key + `as` 收窄。
+    //   ⚠ 语义检查（只能在模块顶层 / 初值必须是字面量或空容器 / 不能 export）在语义阶段做。
+    if (p->lex.current.type == TOK_IDENT && cur_ident_is(p, "thread_local")) {
+        Lexer saved = p->lex;
+        lexer_next(&p->lex);
+        LenoTokenType peek = p->lex.current.type;
+        p->lex = saved;
+        error_set_column(saved.current.column);
+        // 只把"声明形态"吃进来：`var`（推断）/ 类型关键字（`int`、`Array[int]`…）/
+        // 标识符（用户 struct 类型）。`=` `.` `(` 等表达式续写形态一律放行 ✓
+        int looks_like_decl = (peek == TOK_VAR || peek == TOK_CONST ||
+                               peek == TOK_IDENT || is_type_keyword(peek));
+        if (looks_like_decl) {
+            if (peek == TOK_CONST) {
+                int bad_line = p->lex.current.line;
+                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                    "thread_local 只能修饰 `var`（线程局部量是**可变槽位**；常量用 `const` 即可，"
+                    "常量本来就全线程只读共享）");
+                // ⚠ 必须把这条语句**吃掉**：只报错不推进 ⇒ 调用方的语句循环会在同一位置
+                //   反复解析同一行（实测 `thread_local const C = 1` 直接死循环）✗
+                while (p->lex.current.type != TOK_EOF && p->lex.current.line == bad_line) {
+                    lexer_next(&p->lex);
+                }
+                return NULL;
+            }
+            lexer_next(&p->lex);              // 吃掉 thread_local（后面是 var / 类型名）
+            p->pending_thread_local = 1;
+            Ast* decl = parse_var_decl_internal(p);
+            p->pending_thread_local = 0;
+            return decl;
+        }
+    }
+
     // ★ 2026-10-14：**跨语言关键字** ⇒ 定向报错（AI / 跨语言作者的高频笔误）
     //   这些词在 Leno 里都**不是关键字** ⇒ 解析器把它们当"类型名"或"表达式"继续往下走，
     //   最后报的是「声明语句后期望换行或 ';'」「期望表达式」这类**指不出真因**的话 ✗
@@ -888,6 +926,11 @@ void parser_init(Parser* p, const char* src) {
     p->alias_type_param_counts = NULL;
     p->alias_count = 0;
     p->alias_capacity = 0;
+    // ★ 2026-11-15：这两个标记必须显式清零 —— Parser 是调用方的**栈上局部量**
+    //   （`Parser parser; parser_init(&parser, src);`），不初始化就是随机值：
+    //   pending_thread_local 若为脏值，普通 `var` 会被当成 thread_local var ✗
+    p->arrow_hint = 0;
+    p->pending_thread_local = 0;
 }
 
 // 释放 Parser 自己在解析过程中累积的辅助表（struct 名称 / 类型别名）。

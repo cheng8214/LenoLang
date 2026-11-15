@@ -1475,6 +1475,9 @@ Ast* parse_var_decl_internal(Parser* p) {
         ast->u.var_decl.init = init;
         ast->u.var_decl.type = var_type;
         ast->u.var_decl.is_const = is_const;
+        // ★ 2026-11-15：语句层看到 `thread_local var` 时置的待定标记（见 leno_parser.h）。
+        //   只抄进 AST，不改解析行为 —— 合法性（模块顶层 / 初值形态 / 不能 export）由语义阶段判。
+        ast->u.var_decl.is_thread_local = p->pending_thread_local ? 1 : 0;
         
         // 添加到数组
         if (decl_count >= decl_capacity) {

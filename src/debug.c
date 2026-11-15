@@ -115,6 +115,7 @@ static const char* opCodeNames[] = {
     "OP_INDEX_SET_PTR_I32",
     "OP_INDEX_PTR_U8",      // 同上（Ptr[u8]）
     "OP_INDEX_SET_PTR_U8",
+    "OP_TLS_DECL",          // thread_local var 声明：登记槽位 + 写入本线程初值（2026-11-15）
     "OP_OPCODE_COUNT",
     };
 
@@ -645,6 +646,7 @@ int disassembleInstruction(Chunk* chunk, int offset) {
             case OP_SET_DECLARED_FACE:
             case OP_TYPE_CHECK:
             case OP_AS_CAST:
+            case OP_TLS_DECL:      // iABx：A=初值寄存器，Bx=模块槽号
             case OP_CFUNC_CALLBACK:
             case OP_PUSH_TYPE_ARGS:
             case OP_SWITCH_LOOKUP:

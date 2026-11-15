@@ -1,4 +1,46 @@
         case AST_VAR_DECL: {
+            // ★ 2026-11-15：`thread_local var`（每线程一份的模块级变量）的**合法性判定**。
+            //   为什么放在这里：AST_VAR_DECL 的单一入口（函数体/模块体/脚本都在这一条路径上），
+            //   漏一处就会让非法写法静默走到 codegen（codegen 只按"声明存在"发指令）。
+            if (ast->u.var_decl.is_thread_local) {
+                if (s->current && s->current->parent != NULL) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                        "thread_local var 只能声明在**模块顶层** —— 函数/块内的变量本来就是"
+                        "每次调用各一份（局部变量天然是线程私有的），不需要 thread_local ✗");
+                } else if (!s->is_module) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                        "thread_local var 只在**模块文件**里需要 —— 脚本的顶层变量本来就是"
+                        "每个线程各一份（threads.start 时深拷贝）⇒ 直接用 `var` 即可 ✓");
+                }
+                if (ast->u.var_decl.is_const) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                        "thread_local 不能和 const 连用（每线程各一份的可变槽位）");
+                }
+                // 初值只能是"字面量 / 空容器 / 缺省"：其它线程首次访问时要按它**重建**默认值，
+                // 编译期求值的表达式在别的线程里不会重新执行 ⇒ 写得出来却对不上语义，宁可报错。
+                Ast* init = ast->u.var_decl.init;
+                int ok_init = 1;
+                if (init) {
+                    switch (init->kind) {
+                        case AST_NUM: case AST_STRING: case AST_BOOL: case AST_NULL:
+                            ok_init = 1; break;
+                        case AST_UNARY:
+                            ok_init = (init->u.unary.op == TOK_MINUS &&
+                                       init->u.unary.operand &&
+                                       init->u.unary.operand->kind == AST_NUM);
+                            break;
+                        case AST_ARRAY: ok_init = (init->u.array.count == 0); break;
+                        case AST_DICT:  ok_init = (init->u.dict.count == 0);   break;
+                        default:        ok_init = 0; break;
+                    }
+                }
+                if (!ok_init) {
+                    error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                        "thread_local var 的初值必须是**字面量或空容器**（如 0 / \"\" / [] / {}）"
+                        " —— 其它线程首次访问时按它新建一份；要跑一段代码初始化，写成可空值 + "
+                        "首次访问时赋值（`thread_local var t: Array[int]? = null` 然后 `if t == null { t = 构建() }`）");
+                }
+            }
             // 检查变量声明类型是否使用了 C 布局类型（i32/u8/f32 等）
             // C 布局类型只能在 clib 声明、cstruct 字段、Ptr[T] 中使用
             if (ast->u.var_decl.type && is_c_layout_type(ast->u.var_decl.type->kind)) {

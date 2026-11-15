@@ -477,6 +477,19 @@ static void* thread_entry_point(void* arg) {
     VM child_vm;
     memset(&child_vm, 0, sizeof(VM));
 
+    // ★ 2026-11-15：线程序号（主线程 VM 恒为 0，这里从 1 开始）。
+    //   分配对象时抄进 Object.owner_thread ⇒ module.c 的 module_set_var 据此发现
+    //   "子线程把本线程堆的对象写进共享的模块级 var"（跨堆引用，GC 后会变残值）。
+    //   只用于诊断，计数用原子自增避免多线程同时 start 时数据竞争。
+    {
+        static volatile long g_child_thread_serial = 0;
+#ifdef _MSC_VER
+        child_vm.thread_serial = (uint8_t)_InterlockedIncrement(&g_child_thread_serial);
+#else
+        child_vm.thread_serial = (uint8_t)__sync_add_and_fetch(&g_child_thread_serial, 1);
+#endif
+    }
+
     int dbg = thr_dbg_on();
     uint64_t dt0 = dbg ? thr_dbg_now_us() : 0;
 
@@ -880,6 +893,9 @@ static void* thread_entry_point(void* arg) {
     if (child_vm.ffi_args) free(child_vm.ffi_args);   // FFI 参数区（2026-11-01）
     if (child_vm.globals) free(child_vm.globals);
     if (child_vm.global_funcs) free(child_vm.global_funcs);
+    // ★ 2026-11-15：`thread_local var` 的槽位数组（值与对象由 GC 统一释放，这里只放数组本身）
+    if (child_vm.tls_slots) free(child_vm.tls_slots);
+    if (child_vm.tls_slot_ready) free(child_vm.tls_slot_ready);
 
     // ★ 2026-10-19：释放本线程的**注册表**（它们也是 THREAD_LOCAL，且都在线程初始化时各自分配）
     //   与堆无关：即使因为 channel / 未 join 子线程而**不**整堆释放，这些表也必须释放

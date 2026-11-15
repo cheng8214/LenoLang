@@ -609,6 +609,19 @@ typedef enum {
     OP_INDEX_PTR_U8,
     OP_INDEX_SET_PTR_U8,
 
+    // ★ 2026-11-15：`thread_local var` 的声明（**追加在枚举末尾** ⇒ 既有 opcode 编号不动，
+    //   仍按惯例 bump 序列化版本，见 leno_serialize.h）。
+    //   编码 iABx：A = 初值寄存器，Bx = 模块全局槽号。
+    //   语义（模块顶层、主线程执行一次）：
+    //     ① 在 module->tls_slots[Bx] 登记"这个槽是 thread_local"，按 R[A] 的**运行期种类**
+    //        得出别的线程的默认值怎么建（int/float/bool/string 直接复制；Array/Dict 让每个
+    //        线程各自新建**空容器**；null 就是 null）；
+    //     ② 给这个槽分配一个**进程内唯一**的 TLS 槽位号（VM.tls_slots 的下标）；
+    //     ③ 把 R[A] 写进**当前线程**的槽（主线程的初值就是声明处算出来的值）。
+    //   为什么用指令而不是"编译器直接记在模块上"：模块可能来自 .lenb 反序列化（没有 AST），
+    //   而模块顶层一定会执行 ⇒ 用一条指令登记，编译路径与反序列化路径**天然一致** ✓
+    OP_TLS_DECL,        // iABx   thread_local var 声明：登记槽位 + 写入本线程初值
+
     OP_OPCODE_COUNT,    // 用于跳转表大小
 } OpCode;
 
@@ -1356,6 +1369,9 @@ typedef struct VM {
     ObjCoroutine* current_coroutine;
     ObjCoroutine* all_coroutines;
     int next_coroutine_id;         // 协程 ID 计数器（coroutine_new 递增；asyncs.current() 读）
+    // ★ 2026-11-15：线程序号（0 = 主线程 VM；子线程从 1 开始，见 object_thread.c）。
+    //   分配对象时抄进 Object.owner_thread，供"模块级 var 跨堆写入"检测（module.c）。
+    uint8_t thread_serial;
                                    //   放 VM 上而不是文件级 static：各线程的 VM 都是
                                    //   memset(&vm, 0, sizeof(VM)) 出来的，天然线程安全
     Value last_return_value;
@@ -1395,6 +1411,16 @@ typedef struct VM {
     //   类型 = `ObjDict`（懒创建）：key 用 string，value 任意可跨线程的值 ✓。
     //   ⚠ 新增字段必须**同时**在 gc.c 的 mark_roots 里标记（否则会被回收 ⇒ use-after-free ✗）
     Value thread_local_store;
+    // ★ 2026-11-15：`thread_local var` 的**每线程值**（下标 = 全局 TLS 槽位号，见 TlsSlotInfo）。
+    //   与 thread_local_store 的分工：那个是 `threads.local_*` 的字符串键字典（用户 API），
+    //   这个是**语言特性**的槽位数组（编译期定位、无哈希、无字符串）。
+    //   槽位号由 module_tls_declare 在模块顶层执行 OP_TLS_DECL 时分配（进程内唯一），
+    //   所以不同模块、不同线程都按同一个号索引各自的数组 ✓
+    //   ⚠ 同 thread_local_store：**必须在 gc.c 的 mark_roots 里标记**。
+    Value* tls_slots;
+    unsigned char* tls_slot_ready;  // 每个槽是否已按默认值初始化（0/1）
+    int tls_slot_count;             // 已分配槽位数
+    int tls_slot_capacity;          // tls_slots / tls_slot_ready 的容量
 } VM;
 
 // 主线程使用全局 VM（效率第一）
@@ -1539,8 +1565,47 @@ Value module_get_var(int index);
 // 设置当前模块帧中的变量
 void module_set_var(int index, Value value);
 
+// ★ 2026-11-15：模块级 var 的**跨堆写入**提示（唯一实现，见 module.c）。
+//   OP_SET_MODULE_VAR 与 module_set_var 两个写入点都要调 —— 只改后者会漏掉编译后的赋值。
+void module_warn_cross_heap_write(ObjModule* mod, int slot, Value value);
+
 // 确保模块变量数组容量
 int module_ensure_var_capacity(int slot);
+
+// ============================================================================
+// `thread_local var`（每线程一份的模块级变量，2026-11-15）
+// ----------------------------------------------------------------------------
+// 语言表面：`thread_local var g: Dict = {}` —— 每个线程各一份，首次访问按声明初值新建。
+// 实现：值不在 ObjModule.globals（那是全线程共享的同一份槽），而在 **VM.tls_slots** 里；
+//   模块只保存"这个槽是 thread_local + 默认值怎么建"（TlsSlotInfo），运行时按
+//   TlsSlotInfo.tls_id 索引**当前线程**的数组。
+// ============================================================================
+
+// 默认值的种类（别的线程首次访问时按它新建）
+enum {
+    TLS_DEF_NULL = 0,
+    TLS_DEF_INT,
+    TLS_DEF_FLOAT,
+    TLS_DEF_BOOL,
+    TLS_DEF_STRING,
+    TLS_DEF_ARRAY,   // 每线程新建**空数组**（不能跨堆共享同一个对象）
+    TLS_DEF_DICT     // 每线程新建**空字典**
+};
+
+// 登记一个 thread_local 槽（OP_TLS_DECL 执行时调用，模块顶层、主线程一次）。
+//   init 是本线程（= 执行声明的那一个）的初值，同时决定"别的线程的默认值怎么建"。
+//   返回全局槽位号；失败返回 -1（已报运行期错误）。
+int module_tls_declare(ObjModule* mod, int slot, Value init);
+
+// 读 / 写某个 thread_local 槽的**本线程**值（首次访问按默认值初始化）。
+Value module_tls_get(VM* vm, ObjModule* mod, int slot);
+void module_tls_set(VM* vm, ObjModule* mod, int slot, Value value);
+
+// 该模块槽是否是 thread_local（是则给出 tls_id）；不是返回 -1。
+static inline int module_tls_id_of(ObjModule* mod, int slot) {
+    if (!mod || !mod->tls_slots || slot < 0 || slot >= mod->tls_slot_cap) return -1;
+    return mod->tls_slots[slot].tls_id;
+}
 
 // 模块函数定义
 void module_define_func(int index, Value func);

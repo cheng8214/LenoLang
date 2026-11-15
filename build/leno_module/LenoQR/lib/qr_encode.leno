@@ -40,49 +40,105 @@ var ECI_UTF8 = 26
 const ALNUM = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:"
 
 // ==================== GF(256) / 0x11D ====================
-Array[int] g_exp = []
-Array[int] g_log = []
-var g_gf_ready = false
+// ★ 2026-11-15（按 Leno 线程模型复核后的同类修复 —— 与 LenoCompress 的 CRC 表同一个雷）：
+//   模块级 `var`（`ObjModule.globals`）是**所有线程同一份槽**，而每个子线程有**独立的堆/GC**。
+//   原来这里是「`g_gf_ready` 先置位 + 懒初始化写模块级数组」⇒ 多线程并发首次编码时：
+//     ① 后到的线程看到 ready=true，拿**空表**去查 ⇒ 索引越界；
+//     ② 就算改成"填完再赋值"，子线程堆里的表写进共享槽也是**跨堆引用** ⇒ 被回收后读到残值
+//        （LenoCompress 的 CRC 实测过 185 / -1 / 0 这种残值，别重复踩 ✗）。
+//   现在：
+//     ① 两张表在**模块顶层**构建一次（入口脚本 import 时、主线程完成）⇒ 之后所有线程**只读**
+//        共享。只读跨堆是安全的（同 LenoWeb 的 `_EMPTY_CHILDREN` 契约 ✓），且零运行时开销；
+//     ② `gf_mul` 先做一次长度检查：万一没走到顶层那条路（极端：子线程首次加载模块），
+//        退回本线程的 `threads.local_*` 表 —— 慢但对，绝不越界 ✓
+//     ③ 生成多项式缓存 / 掩码条件缓存是**纯加速缓存**（只增不改语义）⇒ 直接每线程一份 ✓
+import threads
 
-func gf_init() {
-    if g_gf_ready { return }
-    g_gf_ready = true
+const GF_TLS_EXP = "lenoqr.gf.exp"
+const GF_TLS_LOG = "lenoqr.gf.log"
+const GF_TLS_GENS = "lenoqr.gens"
+const GF_TLS_MASK = "lenoqr.mask"
+
+func _gf_build_exp(): Array[int] {
     Array[int] ex = []
-    Array[int] lg = []
     for 0:511 to i { ex.add(0) }
-    for 0:255 to i { lg.add(0) }
     var x = 1
     for 0:254 to i {
         ex[i] = x
-        lg[x] = i
         x = x << 1
         if x >= 256 { x = x ^ 285 }      // 285 = 0x11D
     }
     // exp 扩到 512：乘法时 log[a]+log[b] 最大 508，免去取模
     for 255:511 to i { ex[i] = ex[i - 255] }
-    g_exp = ex
-    g_log = lg
+    return ex
+}
+
+func _gf_build_log(): Array[int] {
+    Array[int] lg = []
+    for 0:255 to i { lg.add(0) }
+    var x = 1
+    for 0:254 to i {
+        lg[x] = i
+        x = x << 1
+        if x >= 256 { x = x ^ 285 }
+    }
+    return lg
+}
+
+// 模块顶层构建：主线程 import 时一次算好，之后全线程只读 ✓
+Array[int] g_exp = _gf_build_exp()
+Array[int] g_log = _gf_build_log()
+
+// 兜底：本线程一份（只在顶层没执行到的极端情况下用到）
+func _gf_init_tls() {
+    if threads.local_has(GF_TLS_EXP) { return }
+    threads.local_set(GF_TLS_EXP, _gf_build_exp())
+    threads.local_set(GF_TLS_LOG, _gf_build_log())
+}
+
+// 确保表可用（保留这个名字：`_encode` / `rs_generator` 原来都调它）
+func gf_init() {
+    if g_exp.len() == 512 { return }     // 常规路径：模块顶层已经建好 ✓
+    _gf_init_tls()
 }
 
 export func gf_mul(int a, int b): int {
-    gf_init()
     if a == 0 or b == 0 { return 0 }
-    return g_exp[g_log[a] + g_log[b]]
+    var ex = g_exp
+    var lg = g_log
+    if ex.len() != 512 {
+        _gf_init_tls()
+        ex = threads.local_get(GF_TLS_EXP, null) as Array[int]
+        lg = threads.local_get(GF_TLS_LOG, null) as Array[int]
+    }
+    return ex[lg[a] + lg[b]]
 }
 
 // 生成多项式 g(x) = (x-α^0)(x-α^1)…(x-α^(n-1))，返回 n+1 个系数（g[0] 恒为 1）
 // 结果按 n 缓存：同一个 n 在一张码里会被**每个块**重复用到（v10 有 4 块），
 // 跨次调用也复用（多项式只与 n 有关）。缓存把这块从"每块一次多项式乘法"降到一次。
-Dict g_gens = {}
+// ⚠ 缓存是**每线程一份**（threads.local_*）：模块级 Dict 跨线程写 = 跨堆引用，会被回收 ✗
+func _gens(): Dict {
+    if threads.local_has(GF_TLS_GENS) { return threads.local_get(GF_TLS_GENS, null) as Dict }
+    Dict d = {}
+    threads.local_set(GF_TLS_GENS, d)
+    return d
+}
 
 func rs_generator(int n): Array[int] {
     gf_init()
+    var ex = g_exp
+    if ex.len() != 512 {
+        _gf_init_tls()
+        ex = threads.local_get(GF_TLS_EXP, null) as Array[int]
+    }
+    Dict gens = _gens()
     string key = _str(n)
-    if g_gens.has(key) { return g_gens.get(key) as Array[int] }
+    if gens.has(key) { return gens.get(key) as Array[int] }
     Array[int] g = [1]
     Array[int] ng = []
-    // `for 集合 to 元素` 直接遍历元素（不是下标）；g_exp 有 256 项 ⇒ 用切片取前 n 个
-    for g_exp[0:n-1] to factor {
+    // `for 集合 to 元素` 直接遍历元素（不是下标）；exp 有 512 项 ⇒ 用切片取前 n 个
+    for ex[0:n-1] to factor {
         ng = []
         for 0:g.len() to k { ng.add(0) }
         for 0:g.len()-1 to k {
@@ -91,7 +147,7 @@ func rs_generator(int n): Array[int] {
         }
         g = ng
     }
-    g_gens.set(key, g)
+    gens.set(key, g)
     return g
 }
 
@@ -536,11 +592,18 @@ func _place_data(Array[int] m, Array[int] fn, int size, Array[int] cw, int versi
 //   为什么值得缓存：条件里有 %2/%3 与乘法，v40 上是 8×31329 ≈ 25 万次求值；
 //   而同一版本（同一 size）批量生成多张码时，这 8 套条件完全一样。
 //   实测 v10：每次重算 ≈2ms；命中缓存后这段基本归零。
-Dict g_mask_tables = {}
+// ⚠ 同样**每线程一份**（threads.local_*），理由见文件上方的 GF 段注释 ✗ 别再用模块级 Dict
+func _masks(): Dict {
+    if threads.local_has(GF_TLS_MASK) { return threads.local_get(GF_TLS_MASK, null) as Dict }
+    Dict d = {}
+    threads.local_set(GF_TLS_MASK, d)
+    return d
+}
 
 func _mask_table(int size, Array[int] fn): Array[int] {
+    Dict tb = _masks()
     string key = _str(size)
-    if g_mask_tables.has(key) { return g_mask_tables.get(key) as Array[int] }
+    if tb.has(key) { return tb.get(key) as Array[int] }
     int area = size * size
     Array[int] t = []
     for 0:area*8-1 to i { t.add(0) }
@@ -564,7 +627,7 @@ func _mask_table(int size, Array[int] fn): Array[int] {
             }
         }
     }
-    g_mask_tables.set(key, t)
+    tb.set(key, t)
     return t
 }
 

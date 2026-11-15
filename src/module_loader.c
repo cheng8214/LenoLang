@@ -189,6 +189,20 @@ static void add_loaded_module(const char* path, ObjModule* module) {
                 MAX_LOADED_MODULES, path);
         return;
     }
+    // ★ 2026-11-15：**子线程首次加载模块** ⇒ 模块对象与 globals 落在子线程堆上，
+    //   而 loaded_modules 是**进程级共享表** ⇒ 该线程结束后别的线程访问到的是悬空对象。
+    //   正常做法：main 里先 import 一遍（主线程完成加载），子线程之后只使用（只读）。
+    {
+        extern THREAD_LOCAL VM* current_exec_vm;
+        if (current_exec_vm && current_exec_vm->thread_serial != 0) {
+            fprintf(stderr,
+                "[警告] 子线程（#%u）首次加载模块 '%s'：模块对象会分配在**本线程堆**上，"
+                "但模块表是所有线程共享的 —— 该线程结束后，其它线程再访问这个模块会读到残值。\n"
+                "       建议：在 main 里先 import / 调用一次，让主线程完成加载；子线程之后只使用。\n",
+                (unsigned)current_exec_vm->thread_serial, path);
+            fflush(stderr);
+        }
+    }
     size_t path_len = strlen(path);
     if (path_len >= MAX_PATH_LEN) path_len = MAX_PATH_LEN - 1;
     memcpy(loaded_modules.paths[loaded_modules.count], path, path_len);

@@ -30,6 +30,11 @@ typedef struct {
     // 为什么要这个字段：`(…)` 的参数表是**静默投机**解析的（失败就回退成普通括号表达式），
     //   期间不能报错；只能先记下"为什么失败"，回到 parse_grouping 再给定向提示。
     int arrow_hint;
+    // ★ 2026-11-15：语句层看到 `thread_local var` 时置 1，由 parse_var_decl_internal
+    //   抄进 AST（var_decl.is_thread_local）后清零。
+    //   为什么用"待定标记"而不是给 parse_var_decl_internal 加参数：它有三个调用点
+    //   （var / const / 类型关键字），改签名要连带改 parser_module.c 的两处。
+    int pending_thread_local;
 } Parser;
 
 void parser_init(Parser* p, const char* src);

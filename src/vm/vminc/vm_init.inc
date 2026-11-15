@@ -118,6 +118,11 @@ void vm_init_with_scope(Scope* global_scope) {
 
     // 线程局部存储（`threads.local_get/set`，TH5）：懒创建 ⇒ 先置 null ✓
     vm.thread_local_store = val_null();
+    // ★ 2026-11-15：`thread_local var` 的每线程槽位（懒分配，见 module.c 的 tls_ensure_capacity）
+    vm.tls_slots = NULL;
+    vm.tls_slot_ready = NULL;
+    vm.tls_slot_count = 0;
+    vm.tls_slot_capacity = 0;
     
     // 初始化协程系统
     vm.event_loop = NULL;

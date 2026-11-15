@@ -384,6 +384,34 @@ main() {
 3. **`any` 两边都要收窄**：发的时候 `if ch is Channel { var c = ch; c.send(x) }`，
    收的时候 `if got is P => p { p.n }`（`receive()` 返回 `any`）。
 
+**每线程状态：用 `thread_local var`（2026-11-15 起），不要用模块级 var 存缓存**
+
+```leno
+// lib/crc.leno —— 每个线程各一份（表/缓存/计数器都该这样写）
+thread_local var counter = 0
+thread_local Array[int] table = []
+
+export func crc_init() {
+    if table.len() == 0 { for 0 : 255 to n { table.add(n) } }   // 每个线程建自己那份
+}
+```
+
+```leno
+// ❌ 模块级 var 是全线程**共享的同一份槽**：子线程写进去的对象属于它自己的堆，
+//    线程退出/GC 之后别的线程读到的是 185 / -1 / 0 这类**残值**（不报错、不崩，只是值没了）
+Array[int] g_table = []
+int g_ready = 0
+```
+
+- 初值只能是**字面量或空容器**（`0` / `""` / `[]` / `{}`）；要跑代码初始化就
+  `thread_local var t = null` + 首次访问时 `if t == null { t = 构建() }`
+- 只能在**模块顶层**；**不能 `export`**（每线程一份 ⇒ 导出没有一致值）
+- 主线程 import 时构建一次、之后全线程**只读**也是安全的（模块对象在所有 GC 的根里）
+- 运行期会检测"子线程把本线程堆的对象写进模块级 var"并打一次警告；
+  把 `threads.local_*` 留着给"键是运行期才知道"的场景
+
+
+
 **批量并行**（不用自己起线程）：
 
 ```leno
