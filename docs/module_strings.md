@@ -262,6 +262,11 @@ strings.len("abc")   // 返回 3
 "a b a".replace("a", "x")                  // "x b x"
 ```
 
+> ⚠ 边界（2026-11-16 实测）：
+> - `replace("", "x")` ⇒ `"xaxbxcx"`（在每字符**前后**都插入，与 Python / JS 一致）
+> - `replace` 只接受**字面量**子串（没有正则）；要模式替换用 `regexs.replace`
+> - 旧串不存在 ⇒ 原样返回（不报错）
+
 #### `find(pattern, start?, plain?)`
 
 查找子串在字符串中的位置（返回**字符索引**，不是字节偏移）。
@@ -477,6 +482,9 @@ var unpadded = decrypted.byte_slice(0, decrypted.byte_len() - pad_len - 1)
 "abc".rep(0)    // "" (空字符串)
 ```
 
+> ⚠ 边界（2026-11-16 实测）：`rep(负数)` ⇒ `""`（当 0 处理，不报错）；`rep(n)` 的结果长度
+> 是 `len * n`，对大串 × 大 n 要自己估一下内存（没有上限保护）。
+
 #### `count(substr)`
 
 统计子串在字符串中出现的次数（不重叠计数）。
@@ -493,6 +501,9 @@ var unpadded = decrypted.byte_slice(0, decrypted.byte_len() - pad_len - 1)
 "aaa".count("aa")          // 1 (不重叠)
 "abc".count("xyz")         // 0
 ```
+
+> ⚠ `count("")` ⇒ **0**（不是 `len+1` —— 与 Python 的 `"abc".count("")==4` 不同；空模式在
+> 本语言里"不计次"，2026-11-16 实测）。
 
 #### `pad_start(target_len, pad_char?)`
 
@@ -513,6 +524,9 @@ var unpadded = decrypted.byte_slice(0, decrypted.byte_len() - pad_len - 1)
 "hi".pad_start(5, "-")     // "---hi"
 "hello".pad_start(3, "0")  // "hello" (不截断)
 ```
+
+> ⚠ 边界（2026-11-16 实测）：`target_len <= 当前长度` ⇒ 原样返回；显式传**空串**当 pad
+> （`pad_start(6, "")`）⇒ 退回用**空格**填充（`"   abc"`），不是报错。
 
 #### `pad_end(target_len, pad_char?)`
 
