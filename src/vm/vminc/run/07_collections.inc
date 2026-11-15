@@ -209,7 +209,7 @@
                 int i2 = (int)value_to_double(idx);
                 if (unlikely((uint64_t)i2 >= (uint64_t)arr->count)) {
                     char msg[128];
-                    snprintf(msg, sizeof(msg), "数组索引越界: 索引 %d, 长度 %d", i2, arr->count);
+                    vm_format_index_oob(msg, sizeof(msg), "数组索引", i2, arr->count, (Object*)arr);
                     if (!throw_runtime_error(msg, line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
@@ -250,8 +250,8 @@
                 }
                 int i2 = (int)value_to_double(idx);
                 if (unlikely(i2 < 0 || i2 >= s->char_len)) {
-                    char msg[128];
-                    snprintf(msg, sizeof(msg), "字符串索引越界: 索引 %d, 长度 %d", i2, s->char_len);
+                    char msg[192];
+                    vm_format_index_oob(msg, sizeof(msg), "字符串索引", i2, s->char_len, (Object*)s);
                     if (!throw_runtime_error(msg, line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
@@ -595,8 +595,8 @@
         }
         {
             int line = GET_CURRENT_LINE();
-            char msg[128];
-            snprintf(msg, sizeof(msg), "数组索引越界: 索引 %d, 长度 %d", i2, arr->count);
+            char msg[192];
+            vm_format_index_oob(msg, sizeof(msg), "数组索引", i2, arr->count, (Object*)arr);
             if (!throw_runtime_error(msg, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
@@ -614,8 +614,8 @@
         }
         {
             int line = GET_CURRENT_LINE();
-            char msg[128];
-            snprintf(msg, sizeof(msg), "数组索引越界: 索引 %d, 长度 %d", i2, arr->count);
+            char msg[192];
+            vm_format_index_oob(msg, sizeof(msg), "数组索引", i2, arr->count, (Object*)arr);
             if (!throw_runtime_error(msg, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
@@ -642,8 +642,8 @@
         }
         {
             int line = GET_CURRENT_LINE();
-            char msg[128];
-            snprintf(msg, sizeof(msg), "数组索引越界: 索引 %d, 长度 %d", i2, arr->count);
+            char msg[192];
+            vm_format_index_oob(msg, sizeof(msg), "数组索引", i2, arr->count, (Object*)arr);
             if (!throw_runtime_error(msg, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
@@ -754,7 +754,7 @@
                 int i2 = val_is_num(idx) ? (int)value_to_double(idx) : -1;
                 if (unlikely(i2 < 0 || i2 >= arr->count)) {
                     char msg[128];
-                    snprintf(msg, sizeof(msg), "数组索引越界: 索引 %d, 长度 %d", i2, arr->count);
+                    vm_format_index_oob(msg, sizeof(msg), "数组索引", i2, arr->count, (Object*)arr);
                     if (!throw_runtime_error(msg, line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
@@ -1010,8 +1010,8 @@
         int i2 = (int)val_as_int(R(c));
         if (unlikely((uint64_t)i2 >= (uint64_t)arr->count)) {
             int line = GET_CURRENT_LINE();
-            char msg[128];
-            snprintf(msg, sizeof(msg), "数组索引越界: 索引 %d, 长度 %d", i2, arr->count);
+            char msg[192];
+            vm_format_index_oob(msg, sizeof(msg), "数组索引", i2, arr->count, (Object*)arr);
             if (!throw_runtime_error(msg, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
@@ -1040,8 +1040,8 @@
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
         if (unlikely((uint64_t)i2 >= (uint64_t)arr->count)) {
             int line = GET_CURRENT_LINE();
-            char msg[128];
-            snprintf(msg, sizeof(msg), "数组索引越界: 索引 %d, 长度 %d", i2, arr->count);
+            char msg[192];
+            vm_format_index_oob(msg, sizeof(msg), "数组索引", i2, arr->count, (Object*)arr);
             if (!throw_runtime_error(msg, line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();

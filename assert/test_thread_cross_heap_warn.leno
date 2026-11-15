@@ -87,5 +87,39 @@ main() {
     var o4 = ce.expect_ok(p4, "④子线程只读模块级 var（对象）", "len=2")
     ce.expect_no_warning(o4, "④只读不该警告", WARN_MARK)
 
+    // ⑤ 子线程**索引主线程堆的数组**越界 ⇒ 报错要点名"它属于哪个线程的堆"
+    //    为什么钉这条：跨堆残值/半成品最常表现为"索引越界"，而「索引 132, 长度 1」本身
+    //    完全看不出跨线程（Aria 为此查了很久）⇒ 文案必须带上归属。
+    var p5 = dirs.join(work, "oob_cross.leno")
+    files.write(p5,
+        "import \"m.leno\" as m\n"
+        + "import threads\n"
+        + "func bad() { print(_str(m.g[5])) }\n"
+        + "main() {\n"
+        + "    m.g = [1, 2]\n"
+        + "    var t = threads.start(bad)\n"
+        + "    try { t.join() } catch e { print(\"caught:\" + e.msg + \"\\n\") }\n"
+        + "    print(\"DONE\\n\")\n"
+        + "}\n")
+    var o5 = ce.expect_ok(p5, "⑤子线程索引主线程数组越界", "DONE")
+    assert_true(strings.has(o5, "属于线程 #0 的堆"),
+        "⑤跨线程越界要点名对象所属线程；实际输出=" + o5)
+    assert_true(strings.has(o5, "当前线程 #1"),
+        "⑤跨线程越界要点名当前线程；实际输出=" + o5)
+
+    // ⑥ 同线程越界 ⇒ 文案保持原样（不追加跨线程提示，防噪音）
+    var p6 = dirs.join(work, "oob_same.leno")
+    files.write(p6,
+        "main() {\n"
+        + "    Array[int] a = [1]\n"
+        + "    try { print(_str(a[5])) } catch e { print(\"caught:\" + e.msg + \"\\n\") }\n"
+        + "    print(\"DONE\\n\")\n"
+        + "}\n")
+    var o6 = ce.expect_ok(p6, "⑥同线程数组越界", "DONE")
+    assert_true(strings.has(o6, "数组索引越界: 索引 5, 长度 1"),
+        "⑥同线程越界文案应与原来一致；实际输出=" + o6)
+    assert_true(not strings.has(o6, "属于线程"),
+        "⑥同线程越界不该带跨线程提示；实际输出=" + o6)
+
     print("test_thread_cross_heap_warn passed")
 }

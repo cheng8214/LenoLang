@@ -696,6 +696,19 @@ static TypeInfo* parse_type_internal(Parser* p) {
     int type_column = p->lex.current.column;
     TypeInfo* t = NULL;
 
+    // ★ 2026-11-15：`thread_local` **不是类型名**，它是每线程一份的模块级变量修饰符。
+    //   放在这里 = 单一收口：`struct S { thread_local var x = 0 }` / face / cstruct 字段位置
+    //   此前把它当类型名吃掉 ⇒ 报的是「期望字段名 / 逗号后只写名字」这类指不出真因的话 ✗
+    //   （thread_local 从来不是合法类型名 ⇒ 这条拦截不会误伤任何正常代码 ✓）
+    if (p->lex.current.type == TOK_IDENT && p->lex.current.len == 12 &&
+        memcmp(p->lex.current.text, "thread_local", 12) == 0) {
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            "'thread_local' 不是类型名 —— 它是**每线程一份的模块级变量**修饰符："
+            "写 `thread_local var x = 初值` 或 `thread_local int n = 0`，而且**只能在模块顶层**。"
+            "struct / face / cstruct 体内要每个实例一份，直接写普通字段即可");
+        return NULL;
+    }
+
     // 尝试解析函数类型
     if (p->lex.current.type == TOK_FUNC) {
         t = parse_function_type(p);

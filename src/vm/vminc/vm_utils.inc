@@ -251,6 +251,27 @@ static inline int check_is_number(Value v, const char* context, int line) {
 }
 
 // ============================================================================
+// 索引越界的**统一文案**（数组 / 字符串 / 视图共用 ⇒ 一处口径）
+// ----------------------------------------------------------------------------
+// ★ 2026-11-15：**跨线程堆的对象**额外点名它属于哪个线程。
+//   为什么：这类越界第一眼像算法错，实际多半是"共享了别的线程建的对象/半成品表"——
+//   Aria 服务端实测过一次「索引 132, 长度 1」，查了很久才发现是跨堆残值。
+//   只在**确实跨线程**时追加（同线程越界文案与原来逐字一致，不刷噪音 ✓）。
+//   ⚠ 调用方的缓冲至少要 128 字节；超长由 snprintf 截断（不会越界 ✓）。
+static void vm_format_index_oob(char* buf, size_t cap, const char* what,
+                                int idx, int len, const Object* obj) {
+    extern THREAD_LOCAL VM* current_exec_vm;
+    if (obj && current_exec_vm && obj->owner_thread != current_exec_vm->thread_serial) {
+        snprintf(buf, cap,
+                 "%s越界: 索引 %d, 长度 %d（该对象属于线程 #%u 的堆，当前线程 #%u —— 疑似跨线程）",
+                 what, idx, len,
+                 (unsigned)obj->owner_thread, (unsigned)current_exec_vm->thread_serial);
+    } else {
+        snprintf(buf, cap, "%s越界: 索引 %d, 长度 %d", what, idx, len);
+    }
+}
+
+// ============================================================================
 // 局部变量访问函数
 // ============================================================================
 
