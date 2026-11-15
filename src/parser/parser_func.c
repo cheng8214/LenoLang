@@ -472,6 +472,36 @@ static TypeInfo* parse_dict_type(Parser* p) {
         skip_type_arg_brackets(p);
         return type_dict(type_new(TYPE_ANY), type_new(TYPE_ANY));
     }
+    // ★ 2026-11-15：**不让明显不能作键的类型过**（唯一收口：所有 `Dict[K,V]` 标注）。
+    //   为什么：dict 字面量的浮点键**编译期就报错**（"浮点数不能作键"），而
+    //   `Dict[float, string]` 这条类型标注此前**静默通过** ⇒ 同一件事两种态度；
+    //   更麻烦的是运行期 `d[1]` 与 `d[1.0]` 是**两个不同的键**（`==` 却说它们相等）
+    //   ⇒ 存了却查不到，且看不出为什么 ✗（实测 len 会变 2）。
+    //   允许：string / int（bigint 走 int）/ enum（就是 int）/ any / 推断 / 泛型参数。
+    //   ⚠ 只拦**语法层就能确定**的类型：parse 阶段 `Color`（enum）与泛型参数 `K` 都还是
+    //     "命名的用户类型"（TYPE_STRUCT 占位），语义阶段才区分 ⇒ 不在这里判 struct/face
+    //     （否则 `Dict[Color, string]` / `Dict[K, V]` 会被误杀 ✗）。
+    switch (key_type->kind) {
+        case TYPE_FLOAT:
+            error_add_at_fmt(ERR_SYNTAX, key_type->line, key_type->column,
+                "Dict 的键不能用 float —— 浮点键存了会查不到（`1` 与 `1.0` 在字典里是两个键，"
+                "而 `==` 判定相等）。要按数值查找请用**整数键**（`d[_int(x)]`）"
+                "或字符串键（`d[_str(x)]`）✓");
+            break;
+        case TYPE_BOOL:
+        case TYPE_NULL:
+        case TYPE_ARRAY:
+        case TYPE_DICT:
+        case TYPE_CSTRUCT:
+        case TYPE_PTR_GENERIC:
+        case TYPE_FUNCTION:
+            error_add_at_fmt(ERR_SYNTAX, key_type->line, key_type->column,
+                "Dict 的键只支持 **string / int / enum**（另外 any / 泛型参数也可以）"
+                " —— bool、数组、字典、cstruct、指针、函数不能作键");
+            break;
+        default:
+            break;   // string / int / enum / any / unknown / 泛型参数 / 命名的用户类型 ⇒ 放行
+    }
     
     if (p->lex.current.type != TOK_COMMA) {
         error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "Dict 类型需要两个参数: Dict[KeyType, ValueType]");

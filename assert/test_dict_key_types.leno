@@ -1,0 +1,75 @@
+// test_dict_key_types.leno —— 字典键的类型口径要**前后一致**
+//
+// 背景（2026-11-15 压测）：
+//   ① `Dict[float, string]` 这条类型标注此前**静默通过**，而 dict 字面量的浮点键
+//      编译期就报「浮点数不能作键」⇒ 同一件事两种态度。更麻烦的是运行期
+//      `d[1]` 与 `d[1.0]` 是**两个不同的键**（`==` 却说它们相等）⇒ 存了查不到。
+//   ② `Dict[Color, string]` + `d[Color.red] = "x"` 报
+//      「字典键类型不匹配: 期望 'int'，实际 'int'」—— enum 的底层就是 int，
+//      两个名字还都印成 int，完全看不出问题在哪 ✗
+//
+// 判据：float / bool 键 ⇒ 编译期拦住；enum 键 ⇒ 正常读写；string 键配 int 键值 ⇒ 仍拦截。
+import dirs
+import files
+import "helpers/compiler.leno" as ce
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_dict_key_types")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ① float 键：类型标注要拦住
+    var f1 = dirs.join(work, "float_key.leno")
+    files.write(f1,
+        "main() {\n"
+        + "    Dict[float, string] d = {}\n"
+        + "    d[1.5] = \"x\"\n"
+        + "    print(_str(d.len()))\n"
+        + "}\n")
+    ce.expect_error(f1, "①Dict[float, ...] 必须报错", "Dict 的键不能用 float", 2)
+
+    // ② bool 键：同样拦住
+    var f2 = dirs.join(work, "bool_key.leno")
+    files.write(f2,
+        "main() {\n"
+        + "    Dict[bool, string] d = {}\n"
+        + "    print(_str(d.len()))\n"
+        + "}\n")
+    ce.expect_error(f2, "②Dict[bool, ...] 必须报错", "只支持 **string / int / enum**", 2)
+
+    // ③ enum 键：读写都要正常（enum 的底层是 int）
+    var f3 = dirs.join(work, "enum_key.leno")
+    files.write(f3,
+        "enum Color { red; green }\n"
+        + "main() {\n"
+        + "    Dict[Color, string] d = {}\n"
+        + "    d[Color.red] = \"x\"\n"
+        + "    Dict[int, string] e = {}\n"
+        + "    e[Color.green] = \"y\"\n"
+        + "    print(\"d=\" + d[Color.red] + \" e=\" + e[Color.green] + \"\\n\")\n"
+        + "}\n")
+    ce.expect_ok(f3, "③enum 键读写", "d=x e=y")
+
+    // ④ string 键配 int 键值：仍然要拦（这条检查的本职）
+    var f4 = dirs.join(work, "string_key_int.leno")
+    files.write(f4,
+        "main() {\n"
+        + "    Dict[string, int] d = {}\n"
+        + "    d[123] = 5\n"
+        + "    print(_str(d.len()))\n"
+        + "}\n")
+    ce.expect_error(f4, "④Dict[string,...] 不接受 int 键", "字典键类型不匹配", 3)
+
+    // ⑤ any 键：放行（运行期动态键）
+    var f5 = dirs.join(work, "any_key.leno")
+    files.write(f5,
+        "main() {\n"
+        + "    Dict[any, int] d = {}\n"
+        + "    d[\"k\"] = 1\n"
+        + "    d[2] = 2\n"
+        + "    print(\"len=\" + _str(d.len()) + \"\\n\")\n"
+        + "}\n")
+    ce.expect_ok(f5, "⑤Dict[any,...] 放行", "len=2")
+
+    print("test_dict_key_types passed（float/bool 拦截、enum 读写、string 配 int 仍拦、any 放行）")
+}

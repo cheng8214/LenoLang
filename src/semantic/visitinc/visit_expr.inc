@@ -375,11 +375,17 @@
             if (obj_type && obj_type->kind == TYPE_DICT && obj_type->key_type &&
                 obj_type->key_type->kind != TYPE_ANY) {
                 TypeInfo* key_t = infer_expr_type(s, ast->u.index_assign.index);
-                if (key_t && key_t->kind != TYPE_ANY && key_t->kind != TYPE_UNKNOWN &&
-                    key_t->kind != obj_type->key_type->kind) {
+                if (key_t && key_t->kind != TYPE_ANY && key_t->kind != TYPE_UNKNOWN) {
+                    // ★ 2026-11-15：enum 的底层就是 int（`Color.red == 0`）⇒ 比较前两边都
+                    //   归一成 int。此前 `Dict[Color, string]` 连 `d[Color.red] = "x"` 都报
+                    //   「期望 'int'，实际 'int'」（两个名字都印成 int，完全看不懂 ✗）。
+                    TypeKind want_k = obj_type->key_type->kind;
+                    TypeKind got_k = key_t->kind;
+                    if (want_k == TYPE_ENUM) want_k = TYPE_INT;
+                    if (got_k == TYPE_ENUM) got_k = TYPE_INT;
                     // int 可以隐式转 float（与值类型同一口径）
-                    int allowed = (obj_type->key_type->kind == TYPE_FLOAT && key_t->kind == TYPE_INT);
-                    if (!allowed) {
+                    int allowed = (want_k == TYPE_FLOAT && got_k == TYPE_INT);
+                    if (!allowed && got_k != want_k) {
                         error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                             "字典键类型不匹配: 期望 '%s'，实际 '%s'",
                             type_kind_to_string(obj_type->key_type->kind),
@@ -2273,10 +2279,14 @@
             if (obj_type && obj_type->kind == TYPE_DICT && obj_type->key_type &&
                 obj_type->key_type->kind != TYPE_ANY) {
                 TypeInfo* key_t = infer_expr_type(s, ast->u.index.index);
-                if (key_t && key_t->kind != TYPE_ANY && key_t->kind != TYPE_UNKNOWN &&
-                    key_t->kind != obj_type->key_type->kind) {
-                    int allowed = (obj_type->key_type->kind == TYPE_FLOAT && key_t->kind == TYPE_INT);
-                    if (!allowed) {
+                if (key_t && key_t->kind != TYPE_ANY && key_t->kind != TYPE_UNKNOWN) {
+                    // ★ 2026-11-15：enum 归一成 int 再比（同 AST_INDEX_ASSIGN 那条，见上面的说明）
+                    TypeKind want_k = obj_type->key_type->kind;
+                    TypeKind got_k = key_t->kind;
+                    if (want_k == TYPE_ENUM) want_k = TYPE_INT;
+                    if (got_k == TYPE_ENUM) got_k = TYPE_INT;
+                    int allowed = (want_k == TYPE_FLOAT && got_k == TYPE_INT);
+                    if (!allowed && got_k != want_k) {
                         error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                             "字典键类型不匹配: 期望 '%s'，实际 '%s'",
                             type_kind_to_string(obj_type->key_type->kind),
