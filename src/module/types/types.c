@@ -650,7 +650,11 @@ static Value native_to_int(int argCount, Value* args) {
                 char* end;
                 errno = 0;
                 long long num = strtoll(str->chars, &end, 10);
-                if (*end == '\0') {
+                // ★ 2026-11-15：**必须真的读到了数字**才算成功。
+                //   原来只判 `*end == '\0'` ⇒ `_int("")` / `_int("   ")` 走 strtoll 的
+                //   "没有可转换字符"分支（end 指回串首、*end 也是 '\0'）⇒ **静默返回 0** ✗
+                //   （与同族 `_int_or("", -1)` ⇒ -1 的口径也自相矛盾）。
+                if (end != str->chars && *end == '\0') {
                     if (errno == ERANGE) {
                         // 超出 int64 ⇒ 交给 bigint（与 `_int(bigint)` 分支返回 BigInt 的口径一致 ✓）
                         return val_bigint_from_string(str->chars);
@@ -710,7 +714,9 @@ static Value native_to_float(int argCount, Value* args) {
                 ObjString* str = (ObjString*)val_as_obj(value);
                 char* end;
                 double num = strtod(str->chars, &end);
-                if (*end == '\0') {
+                // ★ 2026-11-15：与 `_int` 同口径 —— 空串 / 全是空白（strtod 一个字符都没吃）
+                //   原来会静默给 0.0 ✗
+                if (end != str->chars && *end == '\0') {
                     return val_float(num);
                 }
                 num_convert_err("无法将字符串转换为浮点数", str);

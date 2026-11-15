@@ -74,5 +74,36 @@ main() {
     }
     assert_eq(threwInt, true, "③_int 的旧语义必须保持不变")
 
+    // ---------- ④ 空串 / 全空白：**必须抛**，不能静默给 0（2026-11-15）----------
+    //   根因：strtoll/strtod 在"一个字符都没转"时把 end 指回串首，而 `*end` 恰好也是 '\0'
+    //   ⇒ 旧判据 `*end == '\0'` 为真 ⇒ `_int("")` / `_float("  ")` **静默 0** ✗
+    //   （同时与同族的 `_int_or("", -1)` ⇒ -1 自相矛盾）
+    bool threwEmptyInt = false
+    try {
+        var _v5 = _int("")
+    } catch e5 {
+        threwEmptyInt = true
+    }
+    assert_eq(threwEmptyInt, true, "④_int(\"\") 必须抛异常（不能静默 0）")
+
+    bool threwBlankInt = false
+    try {
+        var _v6 = _int("   ")
+    } catch e6 {
+        threwBlankInt = true
+    }
+    assert_eq(threwBlankInt, true, "④_int(全空白) 必须抛异常")
+
+    bool threwEmptyFloat = false
+    try {
+        var _v7 = _float("")
+    } catch e7 {
+        threwEmptyFloat = true
+    }
+    assert_eq(threwEmptyFloat, true, "④_float(\"\") 必须抛异常（不能静默 0.0）")
+
+    assert_eq(_int("42"), 42, "④正常串照常转")
+    assert_eq(_float(" 1.5"), 1.5, "④前导空格仍是合法输入（strtod 吃掉空白后读到了数字）")
+
     print("test_num_convert passed")
 }
