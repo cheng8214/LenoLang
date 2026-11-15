@@ -577,7 +577,10 @@ static Value native_dirs_join(int argCount, Value* args) {
                 while (*p == '/' || *p == '\\') p++;
             }
             strcat(buffer, p);
-            if (i < argCount - 1) {
+            // ★ 2026-11-15：**累积串是空的就别补分隔符** —— 原来无条件补，于是
+            //   `join("", "")` ⇒ `"\"`（一个"当前盘根目录"的路径 ✗，静默错值）。
+            //   空段（`join("", "b")` / `join("a", "", "b")`）现在都只起"跳过"作用 ✓
+            if (i < argCount - 1 && buffer[0] != '\0') {
                 // 收拢末尾的**所有**分隔符，再补一个平台分隔符
                 int len = (int)strlen(buffer);
                 while (len > 0 && (buffer[len-1] == '/' || buffer[len-1] == '\\')) len--;

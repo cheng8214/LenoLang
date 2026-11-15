@@ -1,0 +1,89 @@
+// test_native_null_arg.leno —— 传给 native 形参的 null **不能静默**（要么编译报错、要么运行期报错）
+//
+// 背景（2026-11-15 压测）：
+//   ① `times.format(0, null)` 编译通过，运行期 native 侧 `(ObjString*)val_as_obj(args[1])->chars`
+//      直接 0xC0000005（访问违例）—— 崩得莫名其妙，跟"格式串写错"毫无关联的样子。
+//   ② `dirs.join(1, 2)` 编译通过，运行期把 int 当空串 ⇒ 返回 "a\" 这种**静默错值**
+//      （根因：注册表只认 declared_count > 0，`NATIVE_VARARG(…, 0, NULL, TYPE_STRING)`
+//       这种"只声明尾部类型"的签名整张表被判无效）。
+//
+// 判据：
+//   ① 可空类型 / null 字面量 → 具体类型的形参 ⇒ **编译期**点名报错（三条 native 通道同口径）；
+//   ② 尾部声明了类型（dirs.join 全是 string）⇒ 传 int 也是编译期类型错误；
+//   ③ 静态看不出的 null（泛型 struct 的 T 字段默认 null）⇒ **运行期**报错，不许崩；
+//   ④ 防误报：正常调用（含 `print(null)` 这种 any 形参）照常工作。
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import times
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_native_null_arg")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 模块方法 + null 字面量：编译期报错 ----
+    var modNull = dirs.join(work, "mod_null.leno")
+    files.write(modNull, @"import times
+
+main() {
+    print(times.format(0, null))
+}
+")
+    ce.expect_error(modNull, "模块方法传 null 字面量 => 编译错误",
+        "null 不能传给 times.format", 4)
+
+    // ---- ② 全局内置函数 + null 字面量：编译期报错（第三条通道）----
+    var globalNull = dirs.join(work, "global_null.leno")
+    files.write(globalNull, @"main() {
+    sleep(null)
+}
+")
+    ce.expect_error(globalNull, "全局内置函数传 null 字面量 => 编译错误",
+        "不能传 null", 2)
+
+    // ---- ③ 只声明了**尾部类型**的可变参数：int 也是类型错误（此前静默拼成 "a\"）----
+    var joinInt = dirs.join(work, "join_int.leno")
+    files.write(joinInt, @"import dirs
+
+main() {
+    print(dirs.join(""a"", 1))
+}
+")
+    ce.expect_error(joinInt, "dirs.join 传 int => 编译错误（尾部声明了 string）",
+        "dirs.join 参数 2 类型错误", 4)
+
+    // ---- ④ 静态看不出的 null（泛型 struct 的 T 字段）：运行期报错而不是崩 ----
+    var dynNull = dirs.join(work, "dyn_null.leno")
+    files.write(dynNull, @"import times
+
+struct Box[T] {
+    T v = null
+}
+
+main() {
+    Box[string] b = new Box[string]()
+    print(times.format(0, b.v))
+}
+")
+    var outDyn = ce.expect_error(dynNull, "泛型字段的 null => 运行期报错（不是崩溃）",
+        "是 null（期望 'string'）", 0)
+    ce.expect_no_warning(outDyn, "null 兜底不该崩", "[崩溃]")
+
+    // ---- ⑤ 防误报：正常调用照常工作（含 any 形参收 null）----
+    var okCall = dirs.join(work, "ok_call.leno")
+    files.write(okCall, @"import dirs
+import times
+
+main() {
+    print(dirs.join(""a"", ""b""))
+    print(times.format(0, ""%Y""))
+    print(null)
+    assert_null(null, ""空值也合法"")
+    print(""OK"")
+}
+")
+    ce.expect_ok(okCall, "正常调用 / any 形参收 null（防误报）", "OK")
+
+    print("test_native_null_arg passed（null 三条通道 + 尾部类型 + 运行期兜底）")
+}

@@ -1972,7 +1972,16 @@
                                     //   而 native 侧普遍无校验强转 ⇒ 实测 `sleep(_env("X"))`
                                     //   此前编译期直接放行。
                                     if (arg_type) {
-                                        if (arg_type->kind != expected_param_type) {
+                                        // ★ 2026-11-15：**null 字面量** → 具体类型形参 ⇒ 拦
+                                        //   （与模块/实例通道同口径；null 与谁都 type_is_compatible，
+                                        //    不单独拦就会一路放行到 native 的无校验强转 ⇒ 崩）
+                                        if (arg_type->kind == TYPE_NULL &&
+                                            expected_param_type != TYPE_NULL && expected_param_type != TYPE_UNKNOWN) {
+                                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                     "类型错误: 函数 '%s' 的参数 %d 期望 '%s'，但不能传 null"
+                                                     "（native 侧不做 null 校验，会崩）—— 请先判空或给默认值",
+                                                     func_name, j + 1, type_kind_to_string(expected_param_type));
+                                        } else if (arg_type->kind != expected_param_type) {
                                             // ★ 2026-10-12：同 visit_module.inc 那处 —— 收掉手抄的兼容小表，
                                             //   改为交给 type_is_compatible（口径唯一 ✓）。原来那份漏了枚举 ⇒
                                             //   本通道（全局内置函数）会报「期望 'int'，但传入 'int'」这种

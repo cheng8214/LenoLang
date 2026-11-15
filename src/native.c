@@ -403,7 +403,11 @@ static void function_meta_fill_param_types(NativeFunctionMeta* meta, int declare
     for (int i = 0; i < declared_count && i < MAX_METHOD_PARAMS; i++) {
         meta->param_types[i] = declared ? declared[i] : TYPE_ANY;
     }
-    meta->param_type_count = (declared_count > 0) ? MAX_METHOD_PARAMS : 0;
+    // ★ 2026-11-15：**尾部类型也算"有效声明"** —— 原来只看 declared_count > 0，
+    //   于是 `dirs.join`（declared_count = 0、tail_type = TYPE_STRING）整张表被判无效
+    //   ⇒ `dirs.join(1, 2)` 静态放行、运行期把 int 当 "" 拼出 "a\" 这种静默错值 ✗
+    meta->param_type_count = (declared_count > 0 || tail_type != TYPE_ANY)
+                                 ? MAX_METHOD_PARAMS : 0;
 }
 
 // 注册全局函数的元信息（由 vm_register_native 调用；类型规格一次给全 ✓）
@@ -804,7 +808,10 @@ static void module_meta_fill_param_types(ModuleMethodMeta* meta, int declared_co
     for (int i = 0; i < declared_count && i < MAX_METHOD_PARAMS; i++) {
         meta->param_types[i] = declared ? declared[i] : TYPE_ANY;
     }
-    meta->param_type_count = (declared_count > 0) ? MAX_METHOD_PARAMS : 0;
+    // ★ 2026-11-15：与 function_meta_fill_param_types 同口径 —— 尾部类型也算有效声明，
+    //   否则 `dirs.join(1, 2)` 这种"只声明尾部 string"的签名等于没声明（见那处注释）。
+    meta->param_type_count = (declared_count > 0 || tail_type != TYPE_ANY)
+                                 ? MAX_METHOD_PARAMS : 0;
 }
 
 // 取模块方法的返回类型规格（编译期：语义侧构造返回类型时优先用它）

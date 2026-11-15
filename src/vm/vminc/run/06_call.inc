@@ -244,6 +244,26 @@
             cache->fn = native;
         }
 
+        // ★ 2026-11-15：**null 实参兜底**（同 OP_MODULE_CALL 的口径）。
+        //   只有真的出现 null 实参时才去查参数声明表 —— 热路径不付"每个实参一次表查询"的代价。
+        if (unlikely(nargs > 0)) {
+            const char* fname = ((ObjString*)val_as_obj(name_val))->chars;
+            int nchk = nargs < MAX_METHOD_PARAMS ? nargs : MAX_METHOD_PARAMS;
+            for (int i = 0; i < nchk; i++) {
+                if (!val_is_null(R(a + 1 + i))) continue;
+                TypeKind want = native_get_global_function_param_type(fname, i);
+                if (want == TYPE_ANY || want == TYPE_NULL || want == TYPE_UNKNOWN) continue;
+                char msg[224];
+                snprintf(msg, sizeof(msg),
+                         "%s 的第 %d 个参数是 null（期望 '%s'）—— native 函数不做 null 校验，"
+                         "传 null 会崩；请先判空或给默认值",
+                         fname, i + 1, type_kind_to_string(want));
+                if (!throw_runtime_error(msg, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+        }
+
         // ★ 2026-11-01：参数区改用独立的 ffi_args（永不 realloc ⇒ native 回调期间指针稳定 ✓）
         int abase = vm_ffi_begin(&vm, nargs);
         if (unlikely(abase < 0)) {

@@ -2080,6 +2080,20 @@ int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKin
         return 1;
     }
 
+    // ★ 2026-11-15：**null 字面量** → 具体类型形参 ⇒ 拦
+    //   上面那一关拦得住"可空类型"，但 null **字面量**的静态类型是 TYPE_NULL（非可空），
+    //   会一路走到 type_is_compatible（null 与谁都兼容）⇒ 实测 `times.format(0, null)`
+    //   编译通过、运行期 native 侧 `(ObjString*)val_as_obj(args[1])->chars` 直接 0xC0000005 ✗
+    if (arg_type->kind == TYPE_NULL && expected != TYPE_ANY && expected != TYPE_NULL
+        && expected != TYPE_UNKNOWN) {
+        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                 "null 不能传给 %s 的第 %d 个参数（期望 '%s'）\n"
+                 "  提示: native 侧**不做 null 校验**（盲转会崩）⇒ 请声明成 '%s?' 并先用 is 收窄，或给个默认值",
+                 callee_desc ? callee_desc : "native 方法", arg_index + 1,
+                 type_kind_to_string(expected), type_kind_to_string(expected));
+        return 1;
+    }
+
     // 只认"泛型参数"：主路径是 TYPE_GENERIC_PARAM ✓；另兼容历史遗留的
     // TYPE_STRUCT + struct_name="T" 占位 —— 2026-10-03 产生端根治后 **AST 路径不再产生它**，
     // 这条兼容只为兜住**跨模块缓存/外部符号表**里的旧内容（见 type_substitute 同处说明 ✓）

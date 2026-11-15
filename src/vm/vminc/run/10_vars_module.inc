@@ -90,6 +90,30 @@
             cache->meta = (void*)meta;
         }
 
+        // ★ 2026-11-15：**null 实参兜底**（native 侧普遍 `(ObjString*)val_as_obj(args[i])`
+        //   无校验盲转 ⇒ null 直接 0xC0000005）。静态通道只拦得住"静态看得出是 null 的"
+        //   （null 字面量 / 可空类型）；any / 泛型 / 回调带进来的 null 只能到运行期才现形。
+        //   这里报错而不是崩 —— 与「有问题要么报错、要么警告」的口径一致。
+        if (unlikely(meta->param_type_count > 0)) {
+            int nchk = nargs < MAX_METHOD_PARAMS ? nargs : MAX_METHOD_PARAMS;
+            for (int i = 0; i < nchk; i++) {
+                TypeKind want = meta->param_types[i];
+                if (want == TYPE_ANY || want == TYPE_NULL || want == TYPE_UNKNOWN) continue;
+                if (!val_is_null(R(a + 1 + i))) continue;
+                // 冷路径：只有真要报错时才拆 "模块名\0方法名"（命中路径不做 strlen ✓）
+                char msg[256];
+                const char* mn = combo->chars;
+                int ml = (int)strlen(mn);
+                snprintf(msg, sizeof(msg),
+                         "%s.%s 的第 %d 个参数是 null（期望 '%s'）—— native 函数不做 null 校验，"
+                         "传 null 会崩；请先判空或给默认值",
+                         mn, mn + ml + 1, i + 1, type_kind_to_string(want));
+                if (!throw_runtime_error(msg, line)) return -1;
+                frame = &vm.frames[vm.frame_cnt - 1];
+                DISPATCH();
+            }
+        }
+
         // ★ 2026-11-01：参数区改用独立的 ffi_args（永不 realloc ⇒ 回调期间指针不悬空 ✓）
         //   原来用 `vm.stack + base`：native 回调里再调 native 会 push ⇒ realloc ⇒ UAF ✗
         int abase = vm_ffi_begin(&vm, nargs);
