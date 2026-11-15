@@ -50,5 +50,24 @@ main()
     assert_eq(split_first, "a")
     assert_eq(split_all[2], "c")          // string 元素 ⇒ 能直接进 Array[string] 的方法
 
+    // ---- find 的 ^ / $ 锚点（2026-11-15 统一：多字节与 ASCII 同一语义、x$ 尊重 start）----
+    //   修之前：锚点只认"目标恰好 1 字节" ⇒ "中x".find("^中") 当字面量找 ⇒ -1；
+    //   且 "abc".find("c$", 3) 无视 start ⇒ 给 2（早于起点）
+    assert_eq("abc".find("^a"), 0)
+    assert_eq("abc".find("^b"), -1)
+    assert_eq("abc".find("^b", 1), 1)
+    assert_eq("abc".find("c$"), 2)
+    assert_eq("abc".find("c$", 3), -1, "命中位置 2 早于 start=3 ⇒ -1（原来给 2）")
+    assert_eq("中x".find("^中"), 0, "多字节 ^ 锚点（原来当字面量 ⇒ -1）")
+    assert_eq("x中".find("中$"), 1, "多字节 $ 锚点（原来当字面量 ⇒ -1）")
+    assert_eq("中x".find("中$"), -1)
+    assert_eq("a".find("^a$"), 0)
+    assert_eq("ab".find("^a$"), -1)
+    assert_eq("".find("^$"), 0)
+    assert_eq("abc".find("^$"), -1)
+    assert_eq("a^b".find("^"), 1, "单独 ^ 不是锚点，按字面量找")
+    assert_eq("x^a".find("^a", 0, true), 1, "plain=true ⇒ 一律字面量")
+    assert_eq("x^a".find("^a"), -1, "plain 省略 ⇒ ^ 是锚点")
+
     print("test_string_methods passed")
 }

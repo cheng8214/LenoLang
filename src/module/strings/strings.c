@@ -628,27 +628,44 @@ static Value str_find(int argc, Value* args) {
             return val_int(utf8_char_len(str->chars, byte_pos));
         }
     } else {
-        // 简单模式匹配（支持 ^ 开头和 $ 结尾）
-        if (pattern->len == 2 && pattern->chars[0] == '^') {
-            // 匹配开头
-            char target = pattern->chars[1];
-            if (byte_start < str->len && str->chars[byte_start] == target) {
-                return val_int(start);
+        // 简单模式匹配（`^x` = 必须出现在 start 处；`x$` = 必须以 x 结尾）
+        // ★ 2026-11-15：原来只认"目标**恰好 1 字节**"（pattern->len == 2），多字节写法
+        //   （`"^中"` / `"中$"`）会掉进下面的 strstr 分支 ⇒ `^` / `$` 被当**字面字符** ✗
+        //   实测不一致：`"abc".find("^a")` = 0（当锚点）而 `"x^中".find("^中")` = 1（当字面量）
+        //   —— 同一语法在 ASCII / 多字节下语义不同，纯属静默。另外 `x$` 分支原来无视 start
+        //   （`"abc".find("c$", 3)` 给 2，结果早于起点）。现在统一按**字符边界**处理：
+        //   锚点比较用 memcmp，位置是字符索引，且 `x$` 要求命中位置 >= start。
+        int an_start = (pattern->len >= 2 && pattern->chars[0] == '^');
+        int an_end   = (pattern->len >= 2 && pattern->chars[pattern->len - 1] == '$');
+        int bo = an_start ? 1 : 0;                                  // body 在 pattern 内的偏移
+        int bl = pattern->len - bo - (an_end ? 1 : 0);              // body 字节长度
+        if (an_start || an_end) {
+            if (bl <= 0) {
+                // 只有 "^$" 落到这里（"^" / "$" 单独出现仍是字面量）：空主体锚定两端 ⇒ 只匹配空串
+                return (str->len == 0 && start == 0) ? val_int(0) : val_int(-1);
             }
-        } else if (pattern->len == 2 && pattern->chars[1] == '$') {
-            // 匹配结尾
-            char target = pattern->chars[0];
-            if (str->len > 0 && str->chars[str->len - 1] == target) {
-                return val_int(char_len - 1);
+            if (an_start) {
+                if (byte_start + bl <= str->len &&
+                    memcmp(str->chars + byte_start, pattern->chars + bo, (size_t)bl) == 0 &&
+                    (!an_end || byte_start + bl == str->len)) {
+                    return val_int(start);
+                }
+                return val_int(-1);
             }
-        } else {
-            // 普通子串查找
-            const char* found = strstr(str->chars + byte_start, pattern->chars);
-            if (found) {
-                int byte_pos = (int)(found - str->chars);
-                // 将字节偏移转换为字符索引
-                return val_int(utf8_char_len(str->chars, byte_pos));
+            // 只锚定结尾：body 必须落在串尾，且命中位置不得早于 start
+            if (bl <= str->len &&
+                memcmp(str->chars + str->len - bl, pattern->chars + bo, (size_t)bl) == 0) {
+                int pos = utf8_char_len(str->chars, str->len - bl);
+                if (pos >= start) return val_int(pos);
             }
+            return val_int(-1);
+        }
+        // 普通子串查找
+        const char* found = strstr(str->chars + byte_start, pattern->chars);
+        if (found) {
+            int byte_pos = (int)(found - str->chars);
+            // 将字节偏移转换为字符索引
+            return val_int(utf8_char_len(str->chars, byte_pos));
         }
     }
     
