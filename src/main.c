@@ -955,6 +955,23 @@ int lenolang_run_binary(const char* path) {
     return vm_get_exit_code();
 }
 
+// ★ 2026-11-15：文件"看起来是模块"吗（顶层有 `export` 声明）？
+//   为什么需要：入口文件默认按**脚本**分析，而库文件（被别人 import 的那个）真正编译时
+//   走的是**模块**模式。于是 `--check lib/xxx.leno` 会把模块专属写法当成脚本错误 ——
+//   实测：LenoCompress/lib/compress_crc.leno 加 `thread_local var` 之后，
+//   `--check` 报「thread_local var 只在**模块文件**里需要」（假错 ✗），
+//   而它被 import 时完全正常。
+//   判据：顶层出现 `export` ⇒ 这就是给别人 import 的库 ⇒ 按模块模式检查。
+//   ⚠ 只在 checkMode 下生效（--check 不产出、不执行，不会改变真实运行路径）。
+static int ast_has_toplevel_export(Ast* root) {
+    if (!root || root->kind != AST_BLOCK) return 0;
+    for (int i = 0; i < root->u.block.count; i++) {
+        Ast* st = root->u.block.items[i];
+        if (st && st->kind == AST_EXPORT) return 1;
+    }
+    return 0;
+}
+
 // 编译源代码到二进制文件
 int lenolang_compile(const char* source, const char* output_path) {
     clock_t compile_t0 = clock();
@@ -1001,7 +1018,13 @@ int lenolang_compile(const char* source, const char* output_path) {
     if (error_has_any()) goto compile_fail;
 
     clock_t t_sem0 = clock();
-    semantic_analyze(&sem, parser.root);
+    // ★ 2026-11-15：`--check` 一个**库文件**时按模块模式分析（判据见 ast_has_toplevel_export）。
+    //   否则模块专属写法（`thread_local var`、模块级前向引用…）会被当成脚本错误误报。
+    if (checkMode && ast_has_toplevel_export(parser.root)) {
+        semantic_analyze_module(&sem, parser.root);
+    } else {
+        semantic_analyze(&sem, parser.root);
+    }
     clock_t t_sem1 = clock();
     fprintf(stderr, "[TIME] semantic: %.1f ms\n", (double)(t_sem1 - t_sem0) / CLOCKS_PER_SEC * 1000.0);
     if (error_has_any()) goto compile_fail;

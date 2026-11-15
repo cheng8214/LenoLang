@@ -23,14 +23,15 @@
 //     ② 就算改成"判长度 + 填完再赋值"（试过），实测 `table_entry(1)` 仍返回 185 / -1 / 0
 //        —— 那不是"读到半成品"，是**跨堆对象被回收后的残值**（子线程建的表写进了共享槽）✗。
 //
-//   ⇒ 正解：状态放 **`threads.local_*`**（实现是 VM 结构体上的 `thread_local_store`，
-//     每线程一个 VM ⇒ 天然一份，且 gc.c 的 mark_roots 已把它当根，不会漏标）。
+//   ⇒ 正解：状态放**每线程一份**。2026-11-15 起语言里直接有 `thread_local var`：
+//     值在本线程的 VM 槽位里（编译期定位，无字符串 key、不用 `as` 收窄），
+//     容器默认值由每个线程首次访问时各建一个空数组 ✓
 //     与 server/db.leno 给 sqlite 句柄"每线程一份连接"、deployd 的 cfg 缓存同一套做法 ✓
 //   并发探针：4 线程 × 200 次 gzip/gunzip 往返（修复前 4 线程各 170+ 次报错，修复后 0 错，
 //   连跑 8 次稳定）✓
-import threads
 
-const CRC_TLS_KEY = "leno_compress_crc_table"
+// CRC-32 查表：每个线程一份（声明初值是空数组 ⇒ 首次用到时由 _crc_table() 填）
+thread_local Array[int] g_crc_table = []
 
 // 构建一份 256 项表（纯局部，线程安全 ✓）
 func _crc_build(): Array[int] {
@@ -46,16 +47,12 @@ func _crc_build(): Array[int] {
     return t
 }
 
-// 本线程的表（首次调用构建，之后从线程局部存储取回）
+// 本线程的表（首次调用构建，之后直接复用本线程那份）
 func _crc_table(): Array[int] {
-    if threads.local_has(CRC_TLS_KEY) {
-        var cached = threads.local_get(CRC_TLS_KEY, null) as Array[int]
-        // 长度校验兜底：万一取回的东西不完整，重建一份（宁可多算一次）✓
-        if cached.len() == 256 { return cached }
-    }
-    Array[int] built = _crc_build()
-    threads.local_set(CRC_TLS_KEY, built)
-    return built
+    // 长度校验兜底：万一取回的东西不完整，重建一份（宁可多算一次）✓
+    if g_crc_table.len() == 256 { return g_crc_table }
+    g_crc_table = _crc_build()
+    return g_crc_table
 }
 
 // 字节数组 → CRC32（内部用；避免同一份数据先转字符串再转回来）

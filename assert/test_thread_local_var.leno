@@ -11,7 +11,8 @@
 //   ① 每线程各一份：子线程的累加不影响主线程，主线程的初值也不漏给子线程（子线程从声明初值建）
 //   ② 容器默认值**每线程新建**（空数组 / 空字典不能跨堆共享同一个对象）
 //   ③ 子线程写 thread_local ⇒ **不该**触发"跨堆写入模块级 var"警告
-//   ④~⑧ 非法写法必须编译失败并给出定向文案（不能静默）
+//   ④~⑦ 非法写法必须编译失败并给出定向文案（不能静默）
+//   ⑧ 库文件单独 `--check` 要按**模块**模式分析（含 export ⇒ 不是脚本）
 import dirs
 import files
 import strings
@@ -131,6 +132,19 @@ main() {
     var e5 = dirs.join(work, "err_const.leno")
     files.write(e5, "thread_local const C = 1\n")
     ce.expect_error(e5, "⑦thread_local const", "只能修饰 `var`", 1)
+
+    // ⑧ 库文件单独 --check：要按**模块**模式分析（含 export ⇒ 它是给别人 import 的库）
+    //    为什么重要：--check 的入口默认按脚本分析 ⇒ 模块专属写法会被误报成
+    //    「thread_local var 只在**模块文件**里需要」（假错 ✗，实测 LenoCompress 的 lib 就是）。
+    var libCheck = dirs.join(work, "lib_check.leno")
+    files.write(libCheck,
+        "thread_local var hits = 0\n"
+        + "export func bump(): int { hits += 1; return hits }\n")
+    var r = _exec(_executable() + " --check \"" + libCheck + "\"", 30000)
+    assert_ne(r, null, "⑧库文件 --check：_exec 返回 null")
+    assert_eq(r.code, 0,
+        "⑧库文件（含 export）单独 --check 应按模块模式通过，实际 exit=" + _str(r.code)
+        + "；输出=" + _str(r.output))
 
     print("test_thread_local_var passed")
 }
