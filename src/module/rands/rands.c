@@ -137,9 +137,12 @@ static Value rands_ints(int argc, Value* args) {
     int64_t max_val = val_is_bigint(args[1]) ? bigint_to_int64(val_as_bigint(args[1])) : (int64_t)val_as_num(args[1]);
     
     if (min_val > max_val) {
-        int64_t temp = min_val;
-        min_val = max_val;
-        max_val = temp;
+        // ★ 2026-11-16：不再**静默对调**。参数写反是调用方的 bug，静默纠正会把
+        //   "拿到一个 [3,10] 的数"变成看起来正常的随机值 ⇒ 排查时完全看不出问题
+        //   （本仓口径：静默错值 > 编译期报错 > 性能，这种静默纠正必须消灭）。
+        native_throw_error("ints() 的 min 不能大于 max"
+                           "（想让两个值之间随机就按 [min, max] 顺序传）");
+        return val_null();
     }
     
     int64_t range = max_val - min_val + 1;
@@ -244,6 +247,12 @@ static Value rands_floats(int argc, Value* args) {
     
     double min = val_as_num_ex(args[0]);
     double max = val_as_num_ex(args[1]);
+    if (min > max) {
+        // 此前**不检查**：`floats(4.0, 2.0)` 会走 `min + r*(max-min)` ⇒ 结果落在
+        // [2,4) 却**小于 min**，静默给出与参数名相反的值（2026-11-16 修）。
+        native_throw_error("floats() 的 min 不能大于 max");
+        return val_null();
+    }
     
     return val_float(min + random_double() * (max - min));
 }
@@ -289,7 +298,16 @@ static Value rands_sample(int argc, Value* args) {
     }
     
     if (count > source->count) {
-        count = source->count;
+        // ★ 2026-11-16：不再静默截断成"全部元素"。`sample([1,2,3], 5)` 此前**静默**
+        //   返回 3 个 ⇒ 调用方以为拿到了 5 个样本（与 choice([]) 报错、sample 负数报错
+        //   的口径也不一致）。空数组要 2 个同样走这条。
+        char msg[BUFFER_MEDIUM];
+        snprintf(msg, sizeof(msg),
+                 "sample() 的采样数量超过了数组长度：要 %d 个，但只有 %d 个元素"
+                 "（不重复采样最多只能取满整个数组）",
+                 count, source->count);
+        native_throw_error(msg);
+        return val_null();
     }
     
     if (count == 0) {
@@ -413,9 +431,9 @@ static Value rands_int_array(int argc, Value* args) {
     int max = val_is_bigint(args[1]) ? (int)bigint_to_int64(val_as_bigint(args[1])) : (int)val_as_num(args[1]);
     
     if (min > max) {
-        int temp = min;
-        min = max;
-        max = temp;
+        // 同 ints()：不再静默对调（见 rands_ints 的说明）
+        native_throw_error("int_array() 的 min 不能大于 max");
+        return val_null();
     }
     
     int rangeSize = max - min + 1;
@@ -482,9 +500,9 @@ static Value rands_array(int argc, Value* args) {
     }
     
     if (min > max) {
-        int temp = min;
-        min = max;
-        max = temp;
+        // 同 ints()：不再静默对调
+        native_throw_error("array() 的 min 不能大于 max");
+        return val_null();
     }
     
     uint32_t range = (uint32_t)(max - min + 1);

@@ -1,6 +1,7 @@
 // rands 模块测试
 
 import rands
+import strings
 
 main()
 {
@@ -91,6 +92,38 @@ main()
     assert_eq(rands.ints(1, 4294967296) > 0, true)     // 2^32 上限（int64 快路）
     var rbig = rands.ints(1, 10000000000)              // 更大范围（BigInt 路）⇒ 修前必崩
     assert_eq(rbig >= 1 and rbig <= 10000000000, true)
+
+    // ---- 参数边界：不静默纠正 / 不静默截断（2026-11-16）----
+    //   修前实测：`ints(10, 3)` **静默对调**成 [3,10]、`floats(4.0, 2.0)` 算出**小于 min** 的值、
+    //   `sample([1,2,3], 5)` **静默返回 3 个**（调用方以为拿到 5 个）。
+    int e_ints = 0
+    try { var _a = rands.ints(10, 3) } catch e { e_ints += 1; assert_true(strings.has(e.msg, "不能大于 max")) }
+    assert_eq(e_ints, 1, "ints(min>max) 必须报错（不再静默对调）")
+
+    int e_floats = 0
+    try { var _b = rands.floats(4.0, 2.0) } catch e { e_floats += 1; assert_true(strings.has(e.msg, "不能大于 max")) }
+    assert_eq(e_floats, 1, "floats(min>max) 必须报错")
+
+    int e_sample = 0
+    try { var _c = rands.sample([1, 2, 3], 5) } catch e { e_sample += 1; assert_true(strings.has(e.msg, "超过了数组长度")) }
+    assert_eq(e_sample, 1, "sample(count>len) 必须报错（不再静默截断）")
+
+    int e_sample0 = 0
+    try { var _d = rands.sample([], 2) } catch e { e_sample0 += 1 }
+    assert_eq(e_sample0, 1, "sample(空数组, 2) 必须报错")
+
+    int e_iarr = 0
+    try { var _e = rands.int_array(5, 1) } catch e { e_iarr += 1 }
+    assert_eq(e_iarr, 1, "int_array(min>max) 必须报错")
+
+    int e_arr = 0
+    try { var _f = rands.array(2, 5, 1) } catch e { e_arr += 1 }
+    assert_eq(e_arr, 1, "array(n, min>max) 必须报错")
+
+    // 边界正常路径：min == max、count == len、count == 0
+    assert_eq(rands.ints(7, 7), 7, "ints(min==max) 恒等于该值")
+    assert_eq(rands.sample([1, 2, 3], 3).len(), 3, "sample(count==len) 是全部元素")
+    assert_eq(rands.sample([1, 2, 3], 0).len(), 0, "sample(_,0) 是空数组")
 
     print("test_rands passed")
 }
