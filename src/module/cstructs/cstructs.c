@@ -62,10 +62,22 @@ static Value cstruct_method_to_ptr(int argc, Value* args) {
     
     if (val_as_obj(args[0])->type == OBJ_CSTRUCT) {
         ObjCStruct* instance = (ObjCStruct*)val_as_obj(args[0]);
+        // ★ 2026-11-16：free() 之后 `instance->data` 为 NULL ⇒ 此前**静默返回一个
+        //   悬垂指针**（`ptr->ptr = NULL` 时其实还好，但视图/free_all 之后 data 指针
+        //   可能仍是旧值？不 —— 这里统一走存活判定，与字段读写同口径）。
+        //   它正是崩溃提示里"Ptr 在 free() 之后继续用"的主要来源 ⇒ 明确报错。
+        if (!cstruct_is_alive(instance)) {
+            native_throw_error("cstruct 数据已释放（free/free_all 之后不能再 to_ptr()）");
+            return val_null();
+        }
         ptr->ptr = instance->data;
         ptr->size = instance->def->total_size;
     } else if (val_as_obj(args[0])->type == OBJ_CSTRUCT_ARRAY) {
         ObjCStructArray* array = (ObjCStructArray*)val_as_obj(args[0]);
+        if (!array->data) {
+            native_throw_error("cstruct 数组已释放（free_all 之后不能再 to_ptr()）");
+            return val_null();
+        }
         ptr->ptr = array->data;
         ptr->size = array->element_size * array->count;
     } else {
@@ -346,6 +358,12 @@ static Value cstruct_method_to_str(int argc, Value* args) {
     int offset = 0;
 
     if (instance) {
+        // ★ 2026-11-16：free() 之后此前会**静默输出空值**（`i32 x;` 没有值），
+        //   与"字段读写会报错"的口径不一致 ⇒ 明确报错。
+        if (!cstruct_is_alive(instance)) {
+            native_throw_error("cstruct 数据已释放（free/free_all 之后不能再 to_str()）");
+            return val_null();
+        }
         // 实例：使用递归格式
         cstruct_instance_to_str(instance, buffer, sizeof(buffer), &offset, 0);
     } else {
@@ -558,6 +576,12 @@ static Value cstruct_method_debug(int argc, Value* args) {
     } else {
         instance = (ObjCStruct*)val_as_obj(args[0]);
         def = instance->def;
+        // ★ 2026-11-16：debug() 会打印每个字段当前值 ⇒ free() 之后读 data 直接
+        //   0xC0000005 崩溃（实测）。与 to_str / hex / to_ptr 统一口径。
+        if (!cstruct_is_alive(instance)) {
+            native_throw_error("cstruct 数据已释放（free/free_all 之后不能再 debug()）");
+            return val_null();
+        }
     }
     
     // 构建详细的调试信息字符串
@@ -747,6 +771,13 @@ static Value cstruct_method_hex(int argc, Value* args) {
 
     ObjCStruct* instance = (ObjCStruct*)val_as_obj(args[0]);
     ObjCStructDef* def = instance->def;
+
+    // ★ 2026-11-16：free() 之后 `instance->data` 是 NULL ⇒ 下面按 def->total_size 逐字节读
+    //   会直接 0xC0000005 崩溃（实测）。与字段读写的口径一致：明确报错。
+    if (!cstruct_is_alive(instance)) {
+        native_throw_error("cstruct 数据已释放（free/free_all 之后不能再 hex()）");
+        return val_null();
+    }
     
     // 构建十六进制输出
     char buffer[8192];

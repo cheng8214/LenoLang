@@ -1,0 +1,89 @@
+// cstruct 的 use-after-free：所有"读内存"的方法都必须明确报错（2026-11-16）
+//
+// 修前实测（build\leno.exe）：
+//   · `p.free(); p.hex()`     ⇒ 0xC0000005 崩溃（按 def->total_size 逐字节读 data）
+//   · `p.free(); p.debug()`   ⇒ 0xC0000005 崩溃（打印字段当前值）
+//   · `p.free(); p.to_str()`  ⇒ **静默**输出空字段（`i32 x;` 没有值）
+//   · `p.free(); p.to_ptr()`  ⇒ **静默**返回一个悬垂指针（`ffi.read_int(ptr)` 随后读野内存）
+//   · `o.free(); var v = o.inner` 这类嵌套视图：字段读写早已报错 ✓（2026-11-11），
+//     但 to_str / to_ptr 两条又漏了
+// 现在统一走 cstruct_is_alive（该判定已从 vm.c 提为公共函数），与字段读写同口径。
+import strings
+
+cstruct Inner {
+    i32 v
+}
+
+cstruct Outer {
+    Inner inner
+    i32 tag
+}
+
+cstruct Point {
+    i32 x
+    i32 y
+}
+
+main() {
+    // ① 正常路径不受影响
+    var ok = Point.malloc()
+    ok.x = 1
+    assert_eq(strings.has(ok.to_str(), "1"), true, "① to_str 正常")
+    assert_eq(strings.has(ok.hex(), "原始字节"), true, "① hex 正常")
+    assert_eq(strings.has(ok.debug(), "调试信息"), true, "① debug 正常")
+    assert_eq(ok.to_ptr() != null, true, "① to_ptr 正常")
+    ok.free()
+
+    // ② free 之后：四个方法都抛错（不是崩溃、不是静默）
+    var p = Point.malloc()
+    p.x = 3
+    p.free()
+
+    int n_str = 0
+    try { var _a = p.to_str() } catch e { n_str += 1; assert_eq(strings.has(e.msg, "已释放"), true) }
+    assert_eq(n_str, 1, "② free 后 to_str 必须抛错")
+
+    int n_hex = 0
+    try { var _b = p.hex() } catch e { n_hex += 1; assert_eq(strings.has(e.msg, "已释放"), true) }
+    assert_eq(n_hex, 1, "② free 后 hex 必须抛错（修前崩溃）")
+
+    int n_dbg = 0
+    try { var _c = p.debug() } catch e { n_dbg += 1; assert_eq(strings.has(e.msg, "已释放"), true) }
+    assert_eq(n_dbg, 1, "② free 后 debug 必须抛错（修前崩溃）")
+
+    int n_ptr = 0
+    try { var _d = p.to_ptr() } catch e { n_ptr += 1; assert_eq(strings.has(e.msg, "已释放"), true) }
+    assert_eq(n_ptr, 1, "② free 后 to_ptr 必须抛错（修前给悬垂指针）")
+
+    // ③ 嵌套视图：父实例 free 之后，视图的三个方法也要报错
+    var o = Outer.malloc()
+    o.inner.v = 42
+    o.tag = 7
+    var view = o.inner
+    assert_eq(view.v, 42, "③ 父实例存活时视图正常")
+    o.free()
+
+    int v_read = 0
+    try { var _e = view.v } catch e { v_read += 1 }
+    assert_eq(v_read, 1, "③ 父实例 free 后视图字段读必须抛错")
+
+    int v_str = 0
+    try { var _f = view.to_str() } catch e { v_str += 1 }
+    assert_eq(v_str, 1, "③ 父实例 free 后视图 to_str 必须抛错")
+
+    int v_ptr = 0
+    try { var _g = view.to_ptr() } catch e { v_ptr += 1 }
+    assert_eq(v_ptr, 1, "③ 父实例 free 后视图 to_ptr 必须抛错")
+
+    // ④ 数组：free_all 之后 to_ptr 报错
+    var arr = Point.malloc_array(2)
+    arr[0].x = 5
+    assert_eq(arr.to_ptr() != null, true, "④ 未释放时 to_ptr 正常")
+    arr.free_all()
+
+    int a_ptr = 0
+    try { var _h = arr.to_ptr() } catch e { a_ptr += 1; assert_eq(strings.has(e.msg, "已释放"), true) }
+    assert_eq(a_ptr, 1, "④ free_all 后 to_ptr 必须抛错")
+
+    print("test_cstruct_use_after_free passed")
+}

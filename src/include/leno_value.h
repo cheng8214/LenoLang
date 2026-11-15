@@ -1835,6 +1835,12 @@ ObjCStruct* cstruct_new(ObjCStructDef* def);
 // 从指针创建 C 布局结构体实例（不拥有内存）
 ObjCStruct* cstruct_from_ptr(ObjCStructDef* def, void* ptr);
 
+// 实例 / 元素视图 / 嵌套视图是否仍然可用（2026-11-16 提为公共）
+//   判据：自己的 data 非 NULL；元素视图的父数组未 free_all；嵌套视图的父实例存活；
+//         来自 `Ptr[cstruct]` 下标时指针未被 ffi.free。
+//   字段读写的 VM 指令与 `to_ptr()/to_str()/hex()` 共用这一处判定。
+int cstruct_is_alive(ObjCStruct* co);
+
 // 注册 C 布局结构体定义
 void cstruct_def_register(ObjCStructDef* def);
 

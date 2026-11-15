@@ -1441,7 +1441,11 @@ static inline int vm_ptr_index_ok(ObjFFIPointer* p, int64_t idx, int esz) {
     }
 }
 
-static inline int vm_cstruct_alive(ObjCStruct* co) {
+// cstruct 实例 / 元素视图 / 嵌套视图是否仍可用（2026-11-16：提为**公共函数**，
+//   modules/cstructs 的 to_ptr()/to_str()/hex() 也要用 —— 此前它们不检查，
+//   实测 free() 之后 `hex()` 直接 0xC0000005 崩溃、`to_str()` 静默输出空字段、
+//   `to_ptr()` 静默给一个**悬垂指针**（正是崩溃提示里"Ptr 在 free 之后继续用"的来源）。
+int cstruct_is_alive(ObjCStruct* co) {
     int depth = 0;
     while (co && depth++ < 32) {
         if (!co->data) return 0;

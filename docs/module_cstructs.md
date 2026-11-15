@@ -501,6 +501,13 @@ main() {
 **参数**: 无  
 **返回**: `bool` - 是否成功释放（拥有内存并成功释放返回 true，否则返回 false）
 
+> ⚠ **free() 之后所有"读内存"的操作都明确报错**（2026-11-16 收口）：字段读写（2026-11-11）、
+> `to_str()` / `hex()` / `debug()` / `to_ptr()`、以及嵌套字段视图（`var v = o.inner`）都检查
+> `cstruct_is_alive` 并抛 `cstruct 数据已释放（…）`。
+> 修前实测：`hex()` / `debug()` **0xC0000005 崩溃**，`to_str()` 静默输出空字段，
+> `to_ptr()` 静默返回**悬垂指针**（正是"Ptr 在 free 之后继续用"那类崩溃的来源）。
+> `size()` / `alignment()` / `offset_of()` 只用**定义**里的布局信息，free 后仍可用。
+
 ```leno
 var p = Point.malloc()
 // 使用 p...
@@ -568,8 +575,8 @@ p.free()
 **返回**: `int` - 大小（字节）
 
 ```leno
-print(Point.size())     // 8 (两个 i32)
-print(Buffer.size())    // 1024 + 4 = 1028
+print(Point.size())     // 8（两个 i32）
+print(Buffer.size())    // 1024（`u8 data[1024]` 那种写法；`u8 data[10]` 则是 10）
 ```
 
 #### `alignment()`
@@ -675,6 +682,9 @@ main() {
 
 **参数**: 无  
 **返回**: `string` - 调试信息
+
+> ⚠ 实例形式下 free() 之后调用会抛错（`[当前值]` 要读内存）；**定义**形式（`Point.debug()`）
+> 只读布局，任何时候都能用。
 
 ```leno
 var p = Point.malloc()
