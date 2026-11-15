@@ -349,6 +349,21 @@ static int env_write_utf8(const char* name, const char* value) {
 #endif
 }
 
+// 环境变量名合法性（2026-11-16）
+//   空名 / 含 '=' 的名字一律**报错**，不静默接受。实测（build\leno.exe）：
+//     `_env("LENO=A", "v")` ⇒ 返回 **true**，本进程 `_env("LENO=A")` 还能读回 "v"，
+//     但子进程里 `cmd /c set LENO` 输出的是 `LENO=A=v` ⇒ 变量**名**其实是 "LENO"、
+//     值成了 "A=v"（`_putenv_s` 按第一个 '=' 切分）。
+//   这正是文档里那条"本进程读得回、子进程读不到"的同类欺骗（2026-10-14 修过一次编码版）。
+//   空名同理：`_env("", "v")` 静默返回 false，调用方只能靠"接返回值"发现（口径太弱）。
+static const char* env_name_reject_reason(const ObjString* name) {
+    if (name->len == 0) return "名字不能为空";
+    for (int i = 0; i < name->len; i++) {
+        if (name->chars[i] == '=') return "名字不能包含 '='";
+    }
+    return NULL;
+}
+
 // _env(name) - 获取环境变量
 // _env(name, value) - 设置环境变量，返回是否成功
 static Value native_env(int argCount, Value* args) {
@@ -358,6 +373,14 @@ static Value native_env(int argCount, Value* args) {
     }
 
     ObjString* name = (ObjString*)val_as_obj(args[0]);
+
+    const char* bad = env_name_reject_reason(name);
+    if (bad) {
+        native_throw_error("_env() 的环境变量名非法：名字不能为空、也不能包含 '='"
+                           "（系统以第一个 '=' 分隔名与值：`_env(\"LENO=A\", \"v\")` 实际写成 "
+                           "LENO=A=v ⇒ 名字变成 \"LENO\"、值变成 \"A=v\"，子进程看到的是另一个变量）");
+        return argCount >= 2 ? val_bool(false) : val_null();
+    }
 
     if (argCount >= 2 && val_is_string(args[1])) {
         // 设置环境变量（UTF-8 边界见 env_write_utf8）
@@ -380,8 +403,10 @@ static Value native_env(int argCount, Value* args) {
 // 取不到 ⇒ null、取到 ⇒ string ⇒ 想安全地读一个字符串变量，必须写 `if x == null` 再 `_str(x)`；
 // 而 `_str(null)` 得到的是字符串 `"null"`（不是空串 ✗，TraeSign 里实测踩过）。
 // 这里给一个"**总是 string**"的入口，省掉那两步 ✓（与 `_env` 并存，不是替换：设置/判存在仍用 `_env`）。
-// 空串也回 default：Windows 的 `cmd` 里 `set VAR=` 本身就是**删除**该变量 ⇒ 平台上基本不可达 ✓；
-// 想"特意设成空"请继续用 `_env` ✓。
+// 空串也回 default：**`_env(name, "")` 就是删除该变量**（Windows `SetEnvironmentVariableW`/
+// `_putenv_s` 与 POSIX 的 "NAME=" 同义）⇒ 平台上"值为空串的变量"基本不可达 ✓
+//   ⚠ 2026-11-16 更正：原文写"想『特意设成空』请继续用 `_env`"——**做不到**：
+//     实测 `_env("K", "")` 之后 `_env("K")` 是 null、子进程也看不到（变量已被删除）。
 static Value native_env_or(int argCount, Value* args) {
     ObjString* def = NULL;
     if (argCount >= 2 && val_is_string(args[1])) {
@@ -390,6 +415,14 @@ static Value native_env_or(int argCount, Value* args) {
     // 个数由编译期把关（`_env_or` 是**定长 2 参**：实测 0 参 ⇒「参数数量不匹配: 期望 2」）⇒ 这里只守类型
     if (!val_is_string(args[0])) {
         return def ? val_obj((Object*)def) : val_obj((Object*)str_copy("", 0));
+    }
+
+    {
+        const char* bad = env_name_reject_reason((ObjString*)val_as_obj(args[0]));
+        if (bad) {
+            native_throw_error("_env_or() 的环境变量名非法：名字不能为空、也不能包含 '='");
+            return def ? val_obj((Object*)def) : val_obj((Object*)str_copy("", 0));
+        }
     }
 
     char* val = env_read_utf8(((ObjString*)val_as_obj(args[0]))->chars);

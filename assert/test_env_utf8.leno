@@ -62,5 +62,31 @@ main() {
     assert_eq(_env("LENO_ENV_MULTI", multi), true, "④多行（含非 ASCII）写应成功")
     assert_eq(_env("LENO_ENV_MULTI"), multi, "④多行读回应逐字节一致")
 
+    // ⑤ 非法的名字：**报错**，不静默接受（2026-11-16）
+    //   修前实测：`_env("LENO=A", "v")` 返回 true、本进程还能读回 "v"，
+    //   但子进程 `cmd /c set LENO` 里是 `LENO=A=v` ⇒ 变量名其实是 "LENO"、值是 "A=v"。
+    //   空名则是静默 false（口径太弱，调用方容易忽略返回值）。
+    int e_eq = 0
+    try { var _a = _env("LENO=A", "v") } catch e { e_eq += 1; assert_true(strings.has(e.msg, "不能包含 '='")) }
+    assert_eq(e_eq, 1, "⑤含 '=' 的名必须报错")
+
+    int e_empty = 0
+    try { var _b = _env("", "v") } catch e { e_empty += 1; assert_true(strings.has(e.msg, "不能为空")) }
+    assert_eq(e_empty, 1, "⑤空名必须报错")
+
+    int e_read = 0
+    try { var _c = _env("A=B") } catch e { e_read += 1 }
+    assert_eq(e_read, 1, "⑤读取也拒绝非法名")
+
+    int e_or = 0
+    try { var _d = _env_or("A=B", "def") } catch e { e_or += 1 }
+    assert_eq(e_or, 1, "⑤_env_or 同样拒绝非法名")
+
+    // ⑥ 设成空串 = **删除**该变量（不是"设成空值"）—— 文档 2026-11-16 更正
+    assert_eq(_env("LENO_ENV_DEL", "v"), true, "⑥设置成功")
+    assert_eq(_env("LENO_ENV_DEL", ""), true, "⑥空串设置返回 true")
+    assert_eq(_env("LENO_ENV_DEL"), null, "⑥空串 ⇒ 变量被删除（读回 null）")
+    assert_eq(_env_or("LENO_ENV_DEL", "def"), "def", "⑥删除后 _env_or 回默认值")
+
     print("test_env_utf8 passed")
 }
