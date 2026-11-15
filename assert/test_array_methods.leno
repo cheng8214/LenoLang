@@ -19,6 +19,22 @@ main()
     assert_eq(arr[0], 0)
     assert_eq(arr[1], 1)
 
+    // insert 的负索引是 `pos = len + index + 1`：-1 ⇒ 末尾之后（= append），-2 ⇒ 最后一个之前
+    //   ⚠ 与 Python 的 list.insert(-1, x) **差一位**；文档 module_arrays.md 曾把 -1 写成"最后一个之前"✗
+    //   这套"越界夹取、不抛错"的口径由 test_semantics_pins.leno 的 P33 钉住
+    var ins = [1, 2, 3]
+    assert_eq(ins.insert(-1, 4), 4, "insert 返回新长度")
+    assert_eq(_str(ins), "[1, 2, 3, 4]", "-1 ⇒ 追加到末尾")
+    var ins2 = [1, 2, 3]
+    ins2.insert(-2, 9)
+    assert_eq(_str(ins2), "[1, 2, 9, 3]", "-2 ⇒ 插到最后一个元素之前")
+    var ins3 = [1, 2, 3]
+    ins3.insert(-999, 8)
+    assert_eq(_str(ins3), "[8, 1, 2, 3]", "负向越界夹到 0")
+    var ins4 = [1, 2, 3]
+    ins4.insert(999, 7)
+    assert_eq(_str(ins4), "[1, 2, 3, 7]", "正向越界夹到末尾")
+
     // 测试 remove
     var removed = arr.remove(0)
     assert_eq(removed, 0)

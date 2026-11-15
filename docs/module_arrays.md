@@ -173,7 +173,7 @@ print(result)  // null
 在指定位置插入元素。
 
 **参数**:
-- `index` (int): 插入位置（支持负索引）
+- `index` (int): 插入位置（支持负索引，规则见下）
 - `value` (any): 要插入的元素
 
 **返回**: `int` - 插入后的数组长度
@@ -183,14 +183,23 @@ var arr = [1, 2, 3]
 arr.insert(1, 99)
 print(arr)  // [1, 99, 2, 3]
 
-// 负索引（从末尾计算）
+// 负索引：实现是 `pos = len + index + 1` ⇒ -1 是**末尾之后**（= append），
+// -2 才是"最后一个元素之前"（⚠ 与 Python 的 list.insert(-1, x) **差一位**）
 arr.insert(-1, 88)
-print(arr)  // [1, 99, 2, 88, 3]
+print(arr)  // [1, 99, 2, 3, 88]
 
-// 插入到末尾
-arr.insert(5, 77)
-print(arr)  // [1, 99, 2, 88, 3, 77]
+arr.insert(-2, 77)
+print(arr)  // [1, 99, 2, 77, 3, 88]
+
+// 越界（正 / 负）一律**夹到边界**、不抛错
+arr.insert(999, 66)   // 追加到末尾 ⇒ [..., 88, 66]
+arr.insert(-999, 55)  // 插到最前面 ⇒ [55, ...]
 ```
+
+> ⚠ **`insert` 不抛错**（与 `remove` / `a[i]` 的"越界抛错"不是一套口径）：
+> 正索引超界 ⇒ 追加，负索引小于 `-(len+1)` ⇒ 夹到 0。
+> 这条口径由 `assert/test_semantics_pins.leno` 的 **P33** 钉住（理由见
+> `docs/语言陷阱速查.md` ⑲）；**别按 Python 的 `insert(-1, x)` 理解**。
 
 ---
 
