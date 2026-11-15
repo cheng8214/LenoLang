@@ -22,9 +22,17 @@ static const char* leno_keywords[] = {
     "while", "for", "to", "break", "continue",
     "switch", "case", "default",
     "return",
+    // 延迟执行（2026-10-22 起的语言关键字，块级作用域退出时执行）
+    "defer",
     // 声明
-    "var", "func", "struct", "cstruct", "enum", "face", "impl",
+    "var", "const", "func", "struct", "cstruct", "enum", "face", "impl",
     "alias", "clib", "cfunc", "packed", "align",
+    // C 布局联合体（字段共享同一块内存）
+    "union",
+    // 跨模块给已有 struct 追加方法
+    "extend",
+    // 每线程一份的模块级变量（上下文关键字：出现在模块顶层 `thread_local var …`）
+    "thread_local",
     // 实例化
     "new",
     // 模块
@@ -49,6 +57,7 @@ static const char* leno_types[] = {
     "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64",
     "c_int", "c_uint", "c_long", "c_ulong", "c_longlong", "c_ulonglong", "c_size", "c_ssize",
     "bigint", "str8", "str16", "Thread", "Channel", "Socket", "Future",
+    "union",   // C 布局联合体（与 cstruct 并列的声明关键字）
     NULL
 };
 
@@ -69,15 +78,20 @@ static const KeywordInfo keyword_info[] = {
     {"to", "control flow", NULL},
     {"break", "control flow", "Break out of loop"},
     {"continue", "control flow", "Continue to next iteration"},
-    {"switch", "control flow", "Switch statement: `switch value { case x: ... }`"},
-    {"case", "control flow", NULL},
+    {"switch", "control flow", "Switch statement: `switch v { case x { ... } default { ... } }`"},
+    {"case", "control flow", "Case branch: `case x { ... }` / `case 1 to 3 { ... }` / `case Msg.progress(d, t) { ... }`"},
     {"default", "control flow", NULL},
     {"return", "control flow", "Return from function: `return value`"},
+    {"defer", "defer", "Run when the current block exits (normal end / return / break / continue / throw). LIFO; evaluated at exit, not at registration."},
     {"var", "declaration", "Variable declaration: `var name: type = value`"},
+    {"const", "declaration", "Constant: wholly immutable (no reassign, no field writes)"},
     {"func", "declaration", "Function definition: `func name(args) { ... }`"},
     {"struct", "declaration", "Struct definition: `struct Name { ... }`"},
     {"cstruct", "declaration", "C struct definition: `cstruct Name { ... }`"},
-    {"enum", "declaration", "Enum definition: `enum Name { ... }`"},
+    {"union", "declaration", "C union: all fields share one memory block (type punning). No bitfields; same API as cstruct."},
+    {"extend", "declaration", "Attach methods to an existing struct: `extend alias.Type { func ... }`"},
+    {"thread_local", "declaration", "Per-thread module-level variable: `thread_local var x = init` (module files only, cannot export)"},
+    {"enum", "declaration", "Enum definition (members separated by newline or ';'). Members may carry payload: `enum Msg { progress(int done, int total) }`"},
     {"face", "declaration", "Interface definition: `face Name { ... }`"},
     {"impl", "declaration", "Implementation block: `impl Type { ... }`"},
     {"alias", "declaration", "Type alias: `alias Name = ExistingType`"},
@@ -98,7 +112,7 @@ static const KeywordInfo keyword_info[] = {
     {"in", "logic", "Membership test: `x in collection`"},
     {"try", "exception", "Try block: `try { ... } catch e: Error { ... }`"},
     {"catch", "exception", "Catch block"},
-    {"throw", "exception", "Throw exception: `throw Error(\"message\")`"},
+    {"throw", "exception", "Throw an exception: `throw \"message\"`（任意值都可以；`catch e` 接住）"},
     {"finally", "exception", "Finally block"},
     {"async", "async", "Async function: `async func name() { ... }`"},
     {"await", "async", "Await async result"},
@@ -122,17 +136,32 @@ static const SnippetDef snippets[] = {
     {"while", "while ${1:condition} {\n\t$0\n}", "while loop"},
     {"for", "for ${1:i}:${2:end} {\n\t$0\n}", "for loop"},
     {"forpairs", "for ${1:k}:${2:v}:pairs(${3:dict}) {\n\t$0\n}", "for key:value in pairs"},
-    {"switch", "switch ${1:value} {\n\tcase ${2:x}:\n\t\t$0\n}", "switch statement"},
+    {"switch", "switch ${1:value} {\n\tcase ${2:x} {\n\t\t$0\n\t}\n}", "switch statement"},
     {"func", "func ${1:name}(${2:args}) {\n\t$0\n}", "function definition"},
     {"export func", "export func ${1:name}(${2:args}) {\n\t$0\n}", "exported function"},
     {"struct", "struct ${1:Name} {\n\t$0\n}", "struct definition"},
-    {"enum", "enum ${1:Name} {\n\t${2:MEMBER_A},\n\t${3:MEMBER_B}\n}", "enum definition"},
+    {"enum", "enum ${1:Name} {\n\t${2:MEMBER_A}\n\t${3:MEMBER_B}\n}", "enum definition"},
+    {"enum payload", "enum ${1:Msg} {\n\t${2:progress}(int ${3:done}, int ${4:total})\n\t${5:finished}(string ${6:path})\n}\n\nswitch ${7:m} {\n\tcase ${1:Msg}.${2:progress}(${3:done}, ${4:total}) {\n\t\t$0\n\t}\n\tcase ${1:Msg}.${5:finished}(${6:path}) {\n\t}\n}", "payload enum + exhaustive switch"},
     {"face", "face ${1:Name} {\n\t$0\n}", "interface definition"},
-    {"try", "try {\n\t$1\n} catch ${2:e}: Error {\n\t$0\n}", "try...catch block"},
+    {"try", "try {\n\t$1\n} catch ${2:e} {\n\t$0\n}", "try...catch block"},
+    {"defer", "defer {\n\t$0\n}", "run when the block exits"},
+    {"defer free", "defer ffi.free(${1:p})", "auto free on scope exit"},
+    {"thread_local", "thread_local var ${1:name} = ${2:0}", "per-thread module-level variable"},
+    {"union", "union ${1:Name} {\n\t${2:i32} ${3:i}\n\t${4:f32} ${5:f}\n}", "C union (shared memory)"},
     {"impl", "impl ${1:TypeName} {\n\t$0\n}", "implementation block"},
 };
 
 /* ========== 辅助函数 ========== */
+
+// 内置类型名判定（唯一来源 = 上面的 leno_types 表）
+//   `const int LIMIT = 3` 这种写法里，名字在**类型后面** ⇒ 大纲/符号提取必须跳过类型名
+bool comp_is_builtin_type(const char* name) {
+    if (!name) return false;
+    for (int i = 0; leno_types[i]; i++) {
+        if (strcmp(leno_types[i], name) == 0) return true;
+    }
+    return false;
+}
 
 static const char* get_keyword_detail(const char* kw) {
     for (int i = 0; keyword_info[i].keyword; i++) {

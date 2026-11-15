@@ -1837,12 +1837,102 @@ static char* get_keyword_doc(const char* word) {
     }
     else if (strcmp(word, "enum") == 0) {
         return strdup("**enum** - 枚举类型\n\n"
-                     "定义一组命名的常量。\n\n"
+                     "定义一组命名的常量。**成员之间用换行或 `;`**（`db6c832e` 起 `,` 会报错——\n"
+                     "逗号只留给 `int a, b, c` 这类同一类型的多名字声明）。\n\n"
                      "```leno\n"
                      "enum Color {\n"
-                     "    RED, GREEN, BLUE\n"
+                     "    RED\n"
+                     "    GREEN\n"
+                     "    BLUE\n"
+                     "}\n\n"
+                     "enum Page { HOME = 0; SEARCH = 1; LYRIC = 2 }   // 同一行用 ';'\n"
+                     "```\n\n"
+                     "**带载荷的成员**（成员可以带数据，`switch` 还能查穷尽性）：\n\n"
+                     "```leno\n"
+                     "enum Msg {\n"
+                     "    progress(int done, int total)\n"
+                     "    finished(string path)\n"
+                     "}\n\n"
+                     "Msg m = Msg.progress(3, 10)      // 构造：Enum.成员(实参…)\n"
+                     "switch m {\n"
+                     "    case Msg.progress(d, t) { print(_str(d) + \"/\" + _str(t)) }\n"
+                     "    case Msg.finished(p)    { print(p) }\n"
                      "}\n"
-                     "```");
+                     "```\n\n"
+                     "> 规则：同一 enum 里成员**要么全带参数、要么全不带**；带载荷成员不是 int\n"
+                     "> （不能 `int x = Msg.progress(1,2)`，也不能 `new Msg(...)`）；`switch` 主题必须是**变量**；\n"
+                     "> `_` 表示忽略该位置。漏成员又没有 `default` ⇒ 穷尽性警告。");
+    }
+    else if (strcmp(word, "defer") == 0) {
+        return strdup("**defer** - 延迟到作用域退出时执行\n\n"
+                     "注册一段代码，**离开当前块**时自动执行：正常结束、`return`、`break`、\n"
+                     "`continue`、`throw` 都会执行（**块级**，Swift 风格；不像 Go 那样函数级）。\n"
+                     "多个 `defer` **逆序**执行。\n\n"
+                     "```leno\n"
+                     "var p = ffi.malloc(32)\n"
+                     "defer ffi.free(p)                        // 表达式形式\n"
+                     "defer { if p != null { ffi.free(p) } }   // 块形式（推荐，可带守卫）\n"
+                     "```\n\n"
+                     "> ⚠ 表达式是**块退出时求值**（不是注册时）⇒ `defer ffi.free(p)` 之后又给 `p`\n"
+                     "> 赋了新缓冲，释放的就是**新**缓冲（编译器会报 `[defer后改值]` 警告）。\n"
+                     "> 要锁定注册时的值，先存局部副本：`var saved = p` 再 `defer ffi.free(saved)`。");
+    }
+    else if (strcmp(word, "const") == 0) {
+        return strdup("**const** - 常量声明\n\n"
+                     "**整体不可变**：既不能再赋值，也不能改它指向对象的字段。\n\n"
+                     "```leno\n"
+                     "const int LIMIT = 5\n"
+                     "const Cfg c = new Cfg(n = 2)\n"
+                     "c.n = 9        // ❌ 编译错误：const 是整体不可变\n"
+                     "```\n\n"
+                     "> 需要可变对象请用 `var`。");
+    }
+    else if (strcmp(word, "union") == 0) {
+        return strdup("**union** - C 布局联合体\n\n"
+                     "所有字段**共享同一块内存**（偏移都是 0），总大小 = 最大字段。\n"
+                     "最典型的用法是类型双关：\n\n"
+                     "```leno\n"
+                     "union Num {\n"
+                     "    i32 i\n"
+                     "    f32 f\n"
+                     "    u8 bytes[4]\n"
+                     "}\n\n"
+                     "var n = Num.malloc()\n"
+                     "n.i = 1065353216        // 0x3F800000\n"
+                     "print(n.f)              // 1.0  ← 同一块内存，按 float 读\n"
+                     "n.free()\n"
+                     "```\n\n"
+                     "> 用法与 `cstruct` 完全一致（`malloc` / `malloc_array` / 嵌套 / `to_ptr`）；\n"
+                     "> **不能含位域**（各编译器对 union 位域布局不一致 ⇒ 编译期直接报错）。");
+    }
+    else if (strcmp(word, "thread_local") == 0) {
+        return strdup("**thread_local** - 每线程一份的模块级变量（2026-11-15 起）\n\n"
+                     "只写在**模块文件顶层**：每个线程首次访问时按声明初值新建一份，\n"
+                     "主线程与各子线程**互不影响**（标量和容器都是）。\n\n"
+                     "```leno\n"
+                     "// lib/xxx.leno\n"
+                     "thread_local var hits = 0\n"
+                     "thread_local var buf = []\n\n"
+                     "export func bump(): int {\n"
+                     "    hits = hits + 1\n"
+                     "    return hits\n"
+                     "}\n"
+                     "```\n\n"
+                     "> · 入口脚本（不是模块）的顶层变量本来就是每线程深拷贝 ⇒ 脚本里写它会报错，用 `var` 即可；\n"
+                     "> · 不能 `export`（每线程各一份，没有\"一个一致的值\"可导出）；\n"
+                     "> · 初值必须是字面量或空容器。");
+    }
+    else if (strcmp(word, "extend") == 0) {
+        return strdup("**extend** - 给已有 struct 追加方法\n\n"
+                     "`extend 模块别名.类型名 { func ... }`：跨模块给**已存在**的类型挂方法\n"
+                     "（扩展模块初始化时执行一次）。\n\n"
+                     "```leno\n"
+                     "import \"player.leno\" as player\n\n"
+                     "extend player.Player {\n"
+                     "    func shout(): string { return self.name + \"!\" }\n"
+                     "}\n"
+                     "```\n\n"
+                     "> 方法按名字挂到类型上；追加后方法查找缓存会失效重算，不需要额外声明。");
     }
     else if (strcmp(word, "face") == 0) {
         return strdup("**face** - 接口定义关键字\n\n"

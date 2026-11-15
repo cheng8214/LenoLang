@@ -15,9 +15,53 @@
 #include "../src/include/native.h"
 #include "../src/include/module_symbol_table.h"
 #include "../src/include/leno_value.h"
+#include "../src/include/leno_ast.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* ========== 带载荷 enum（2026-11-10 起的语言特性）的补全支持 ========== */
+
+// 带载荷 enum 会被编译器降级成**同名 struct**（字段 tag/p0/p1…）。
+//   判据：该 struct 的 AST 上有 enum_src（合成产物才有）。
+//   为什么要在这里判：`Msg.` 的补全走的是"struct 字段"那条路，
+//   不拦就会把 tag/p0/p1 这些**实现细节**当成员补出来（用户根本不该看到）。
+static Ast* lsp_payload_enum_src_of(Symbol* sym) {
+    if (!sym || !sym->type_decl_ast) return NULL;
+    Ast* td = (Ast*)sym->type_decl_ast;
+    if (td->kind != AST_STRUCT_DEF) return NULL;
+    return td->u.struct_def.enum_src;
+}
+
+// 生成成员签名 `(int done, int total)`（无参数 ⇒ 空串）
+static void lsp_enum_member_signature(Ast* esrc, int m, char* out, int cap) {
+    out[0] = '\0';
+    if (!esrc || esrc->kind != AST_ENUM_DEF || m < 0 ||
+        m >= esrc->u.enum_def.member_count) {
+        return;
+    }
+    int pc = esrc->u.enum_def.member_param_counts
+                 ? esrc->u.enum_def.member_param_counts[m] : 0;
+    if (pc <= 0) return;
+    int off = 0;
+    off += snprintf(out + off, (size_t)(cap - off), "(");
+    for (int k = 0; k < pc && off < cap - 1; k++) {
+        const char* pn = (esrc->u.enum_def.member_param_names &&
+                          esrc->u.enum_def.member_param_names[m] &&
+                          esrc->u.enum_def.member_param_names[m][k])
+                             ? esrc->u.enum_def.member_param_names[m][k] : NULL;
+        TypeInfo* pt = (esrc->u.enum_def.member_param_types &&
+                        esrc->u.enum_def.member_param_types[m])
+                           ? esrc->u.enum_def.member_param_types[m][k] : NULL;
+        const char* ts = pt ? type_to_string(pt) : "any";
+        off += snprintf(out + off, (size_t)(cap - off), "%s%s%s",
+                        k == 0 ? "" : ", ", ts, pn ? "" : "");
+        if (pn && off < cap - 1) {
+            off += snprintf(out + off, (size_t)(cap - off), " %s", pn);
+        }
+    }
+    if (off < cap - 1) snprintf(out + off, (size_t)(cap - off), ")");
+}
 
 /* ========== Import 相关（兼容旧接口） ========== */
 
@@ -1347,6 +1391,26 @@ void comp_provider_add_variable_members(
             
             if (sctx.root_scope) {
                 Symbol* struct_sym = scope_resolve_tree_bfs(sctx.root_scope, struct_name);
+                // ★ 带载荷 enum：`Msg.` 要补成员（progress / finished），不是 tag/p0/p1
+                if (struct_sym) {
+                    Ast* esrc = lsp_payload_enum_src_of(struct_sym);
+                    if (esrc) {
+                        for (int m = 0; m < esrc->u.enum_def.member_count; m++) {
+                            const char* mn = esrc->u.enum_def.member_names
+                                                 ? esrc->u.enum_def.member_names[m] : NULL;
+                            if (!mn) continue;
+                            char sig[192];
+                            char detail[256];
+                            lsp_enum_member_signature(esrc, m, sig, (int)sizeof(sig));
+                            snprintf(detail, sizeof(detail), "%s.%s%s", struct_name, mn, sig);
+                            comp_set_add(set, mn, LSP_COMP_ENUM_MEMBER, PRIO_FIELD,
+                                         detail, NULL, NULL, NULL);
+                        }
+                        compiler_context_cleanup(&sctx);
+                        free(type_resolved);
+                        return;
+                    }
+                }
                 if (struct_sym && (struct_sym->type->kind == TYPE_STRUCT || struct_sym->type->kind == TYPE_CSTRUCT)) {
                     for (int i = 0; i < struct_sym->struct_field_count; i++) {
                         const char* field_name = struct_sym->struct_field_names[i];
@@ -2521,6 +2585,24 @@ bool comp_provider_add_enum_type_members(
         compiler_context_init(&ctx);
         bool ok = compiler_analyze_with_filename(&ctx, content, file_path);
         Symbol* esym = (ok && ctx.root_scope) ? scope_resolve_tree_bfs(ctx.root_scope, type_name) : NULL;
+        // ★ 带载荷 enum（本地声明）：成员名/参数在 AST 上（降级成同名 struct）
+        if (esym) {
+            Ast* esrc = lsp_payload_enum_src_of(esym);
+            if (esrc) {
+                for (int m = 0; m < esrc->u.enum_def.member_count; m++) {
+                    const char* mn = esrc->u.enum_def.member_names
+                                         ? esrc->u.enum_def.member_names[m] : NULL;
+                    if (!mn) continue;
+                    char sig[192];
+                    char detail[256];
+                    lsp_enum_member_signature(esrc, m, sig, (int)sizeof(sig));
+                    snprintf(detail, sizeof(detail), "%s.%s%s", type_name, mn, sig);
+                    comp_set_add(set, mn, LSP_COMP_ENUM_MEMBER, PRIO_FIELD, detail, NULL, NULL, NULL);
+                }
+                compiler_context_cleanup(&ctx);
+                return true;
+            }
+        }
         // 判据与 hover 保持一致：认 enum 成员表，而不是认 kind（use 导入的符号 kind 可能是 SYM_TYPE）
         if (esym && esym->enum_value_count > 0 && esym->enum_value_names) {
             fprintf(stderr, "[COMPLETE-ENUM] type='%s' scope hit, members=%d\n", type_name, esym->enum_value_count);
@@ -2553,12 +2635,18 @@ bool comp_provider_add_enum_type_members(
                 fprintf(stderr, "[COMPLETE-ENUM] type='%s' module hit '%s', members=%d\n",
                         type_name, import_aliases[i].alias, me->member_count);
                 fflush(stderr);
+                // 带载荷成员没有 int 值可显示 ⇒ 详情写成 `Msg.progress(…)`（成员数/参数）
+                int is_payload = module_symbol_table_enum_is_payload(me);
                 for (int j = 0; j < me->member_count; j++) {
                     const char* mn = me->member_names[j];
                     if (!mn) continue;
                     char detail[256];
-                    snprintf(detail, sizeof(detail), "%s.%s = %lld", type_name, mn,
-                             (long long)(me->member_values ? me->member_values[j] : 0));
+                    if (is_payload) {
+                        snprintf(detail, sizeof(detail), "%s.%s(...)", type_name, mn);
+                    } else {
+                        snprintf(detail, sizeof(detail), "%s.%s = %lld", type_name, mn,
+                                 (long long)(me->member_values ? me->member_values[j] : 0));
+                    }
                     comp_set_add(set, mn, LSP_COMP_ENUM_MEMBER, PRIO_FIELD, detail, NULL, NULL, NULL);
                 }
                 hit = true;

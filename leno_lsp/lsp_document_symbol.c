@@ -15,6 +15,7 @@
  */
 
 #include "leno_lsp.h"
+#include "lsp_completion.h"   // comp_is_builtin_type（内置类型名判定，唯一来源在 comp_keywords.c）
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,34 @@ static bool at_line_boundary(const char* content, const char* p) {
         q--;
     }
     return (q < content);
+}
+
+// `main() {` / `run(int x): int {` —— 行首「标识符(…)」后紧跟 `{`（可带返回类型注解）
+//   判据必须是「`)`（或返回类型）后面就是 `{`」：单纯 `foo(1)` 这种顶层调用不算，
+//   否则 outline 里会混进一堆调用语句。
+static bool looks_like_bare_func(const char* p) {
+    const char* q = p;
+    while (*q && (isalnum((unsigned char)*q) || *q == '_')) q++;
+    if (q == p) return false;
+    while (*q == ' ' || *q == '\t') q++;
+    if (*q != '(') return false;
+    int depth = 0;
+    while (*q && *q != '\n') {
+        if (*q == '(') {
+            depth++;
+        } else if (*q == ')') {
+            depth--;
+            if (depth == 0) { q++; break; }
+        }
+        q++;
+    }
+    if (depth != 0) return false;
+    while (*q == ' ' || *q == '\t') q++;
+    if (*q == ':') {                       // 返回类型注解 `): int {`
+        q++;
+        while (*q && *q != '\n' && *q != '{') q++;
+    }
+    return *q == '{';
 }
 
 // 提取标识符 [a-zA-Z_][a-zA-Z0-9_]*
@@ -311,9 +340,31 @@ static void parse_enum_children(const char* content, int block_start,
             while (i < block_end && (isalnum((unsigned char)content[i]) || content[i] == '_')) i++;
             int name_len = i - name_start;
 
+            // 带载荷成员 `progress(int done, int total)`：名字后面跟括号 ⇒ 整段跳过。
+            //   不跳过的话，括号里的参数类型/参数名会被当成**下一个成员**
+            //   （实测 outline 里出现 `int` / `total` 两条假成员）
+            if (i < block_end && content[i] == '(') {
+                int depth = 0;
+                while (i < block_end) {
+                    if (content[i] == '(') {
+                        depth++;
+                    } else if (content[i] == ')') {
+                        depth--;
+                        if (depth == 0) { i++; break; }
+                    }
+                    i++;
+                }
+            }
+
             int member_end = i;
-            while (member_end < block_end && content[member_end] != ',' && content[member_end] != '\n') member_end++;
-            if (member_end < block_end && content[member_end] == ',') member_end++;
+            while (member_end < block_end && content[member_end] != ';' &&
+                   content[member_end] != ',' && content[member_end] != '\n') {
+                member_end++;
+            }
+            if (member_end < block_end &&
+                (content[member_end] == ',' || content[member_end] == ';')) {
+                member_end++;
+            }
 
             char* member_name = (char*)malloc(name_len + 1);
             if (member_name) {
@@ -578,14 +629,30 @@ LspDocumentSymbol* lsp_get_document_symbols(const char* content, int* count) {
             }
         }
 
+        // 检查 `thread_local ` 前缀（2026-11-15 起：模块级每线程一份的变量）
+        //   ⚠ 它是**上下文关键字**（不是 lexer 关键字）⇒ 必须单独剥掉，否则整行都被
+        //   当成"不认识的标识符"跳过，outline 里那条声明直接消失（实测缺 `hits`）
+        bool is_tls = false;
+        if (strncmp(p, "thread_local", 12) == 0 &&
+            !isalnum((unsigned char)p[12]) && p[12] != '_') {
+            is_tls = true;
+            p += 12;
+            while (*p && isspace((unsigned char)*p)) {
+                if (*p == '\n') line++;
+                p++;
+            }
+        }
+
         // 匹配声明关键字
         int kw_len = 0;
-        enum { KW_FUNC, KW_STRUCT, KW_CSTRUCT, KW_ENUM, KW_FACE, KW_CLIB,
+        enum { KW_FUNC, KW_STRUCT, KW_CSTRUCT, KW_UNION, KW_ENUM, KW_FACE, KW_CLIB,
                KW_VAR, KW_CONST, KW_IMPORT, KW_NONE } kw = KW_NONE;
 
-        // cstruct 必须先于 struct 检查
+        // cstruct 必须先于 struct 检查；union 同理（C 布局联合体，2026-11-14 起）
         if (strncmp(p, "cstruct", 7) == 0 && !isalnum((unsigned char)p[7]) && p[7] != '_') {
             kw = KW_CSTRUCT; kw_len = 7;
+        } else if (strncmp(p, "union", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
+            kw = KW_UNION; kw_len = 5;
         } else if (strncmp(p, "clib", 4) == 0 && !isalnum((unsigned char)p[4]) && p[4] != '_') {
             kw = KW_CLIB; kw_len = 4;
         } else if (strncmp(p, "cfunc", 5) == 0 && !isalnum((unsigned char)p[5]) && p[5] != '_') {
@@ -604,6 +671,10 @@ LspDocumentSymbol* lsp_get_document_symbols(const char* content, int* count) {
             kw = KW_VAR; kw_len = 3;
         } else if (strncmp(p, "import", 6) == 0 && !isalnum((unsigned char)p[6]) && p[6] != '_') {
             kw = KW_IMPORT; kw_len = 6;
+        } else if ((isalpha((unsigned char)*p) || *p == '_') && looks_like_bare_func(p)) {
+            // `main() {` / `run(int x): int {` —— Leno 的**入口函数不写 func**
+            //   ⇒ 以前整个 main 都不在 outline 里（每个脚本文件都缺最显眼的那一条）
+            kw = KW_FUNC; kw_len = 0;   // 名字就在 p 处，交给 KW_FUNC 分支提取
         }
 
         if (kw == KW_NONE) {
@@ -791,8 +862,8 @@ LspDocumentSymbol* lsp_get_document_symbols(const char* content, int* count) {
             if (func_name) free(func_name);
         }
 
-        // --- struct / cstruct ---
-        if (kw == KW_STRUCT || kw == KW_CSTRUCT) {
+        // --- struct / cstruct / union ---
+        if (kw == KW_STRUCT || kw == KW_CSTRUCT || kw == KW_UNION) {
             char* type_name = NULL;
             int name_offset = (int)(p - content);
             p = extract_identifier(p, &type_name);
@@ -843,7 +914,8 @@ LspDocumentSymbol* lsp_get_document_symbols(const char* content, int* count) {
 
                 // detail
                 char detail_buf[128];
-                const char* kind_str = (kw == KW_CSTRUCT) ? "cstruct" : "struct";
+                const char* kind_str = (kw == KW_CSTRUCT) ? "cstruct"
+                                     : (kw == KW_UNION)  ? "union" : "struct";
                 if (is_export)
                     snprintf(detail_buf, sizeof(detail_buf), "export %s", kind_str);
                 else
@@ -1099,13 +1171,37 @@ LspDocumentSymbol* lsp_get_document_symbols(const char* content, int* count) {
             p = extract_identifier(p, &var_name);
             int name_len = (int)(p - content) - name_offset;
 
+            // `const int LIMIT = 3` / `thread_local int n = 0`：名字在**类型后面**
+            //   ⇒ 先剥掉内置类型名，否则 outline 里会出现一个叫 "int" 的常量（真实变量名丢失）
+            while (var_name && comp_is_builtin_type(var_name)) {
+                free(var_name);
+                var_name = NULL;
+                while (*p == ' ' || *p == '\t') p++;
+                name_offset = (int)(p - content);
+                p = extract_identifier(p, &var_name);
+                name_len = (int)(p - content) - name_offset;
+            }
+            // 自定义类型同理（`const Cfg c = new Cfg(…)`）：名字后面**还跟着标识符** ⇒ 前面那个是类型
+            if (var_name && name_len > 0) {
+                const char* peek = p;
+                while (*peek == ' ' || *peek == '\t') peek++;
+                if ((isalpha((unsigned char)*peek) || *peek == '_') && *peek != '=') {
+                    free(var_name);
+                    var_name = NULL;
+                    name_offset = (int)(peek - content);
+                    p = extract_identifier(peek, &var_name);
+                    name_len = (int)(p - content) - name_offset;
+                }
+            }
+
             if (var_name && name_len > 0) {
                 int var_end = name_offset + name_len;
                 while (content[var_end] && content[var_end] != '\n') var_end++;
 
                 char detail_buf[128];
-                snprintf(detail_buf, sizeof(detail_buf), "%s%s",
+                snprintf(detail_buf, sizeof(detail_buf), "%s%s%s",
                          is_export ? "export " : "",
+                         is_tls ? "thread_local " : "",
                          kw == KW_CONST ? "const" : "var");
 
                 if (*count >= cap) {

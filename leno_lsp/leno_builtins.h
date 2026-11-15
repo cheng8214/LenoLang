@@ -213,6 +213,232 @@ static const BuiltinFunctionMeta builtin_functions[] = {
         0,
         "string"
     },
+    // ★ 2026-11-15：补齐编译器里已注册、但补全表漏掉的下划线全局内置
+    //   （对照 `vm_register_native(\"…\")` 全量核对：此前 37 个里只列了 10 个）
+    {
+        "_arch",
+        "_arch()",
+        "目标架构名",
+        "_arch()             // \"x64\" / \"arm64\"",
+        0,
+        "string"
+    },
+    {
+        "_args",
+        "_args()",
+        "命令行参数数组（不含可执行文件名）",
+        "var a = _args()     // Array[string]",
+        0,
+        "Array[string]"
+    },
+    {
+        "_byte",
+        "_byte(value)",
+        "转成 0..255 的字节值（取低 8 位）",
+        "_byte(300)          // 44",
+        1,
+        "int"
+    },
+    {
+        "_clear",
+        "_clear()",
+        "清屏",
+        "_clear()",
+        0,
+        "null"
+    },
+    {
+        "_console",
+        "_console([show])",
+        "显示/隐藏控制台窗口（Windows 有效），返回是否成功",
+        "_console(false)     // 隐藏控制台（GUI 程序常用）",
+        -1,
+        "bool"
+    },
+    {
+        "_env",
+        "_env(name)",
+        "读环境变量，缺失返回 null（宽容版用 `_env_or`）",
+        "_env(\"PATH\")",
+        1,
+        "string?"
+    },
+    {
+        "_env_or",
+        "_env_or(name, default)",
+        "读环境变量，缺失时返回默认值",
+        "_env_or(\"HOME\", \"C:/\")",
+        2,
+        "string"
+    },
+    {
+        "_exec",
+        "_exec(cmd, [timeout_ms], [cwd])",
+        "执行外部命令并等待结束，返回 ExecResult（code / output）",
+        "var r = _exec(\"git status\", 30000)",
+        -1,
+        "ExecResult?"
+    },
+    {
+        "_exit",
+        "_exit(code)",
+        "立即退出进程并返回退出码",
+        "_exit(1)",
+        1,
+        "null"
+    },
+    {
+        "_field",
+        "_field(obj, name)",
+        "按名字取字段（运行期动态访问，绕过静态检查）",
+        "_field(p, \"x\")",
+        2,
+        "any"
+    },
+    {
+        "_float_or",
+        "_float_or(value, default)",
+        "宽容解析为 float，解析失败返回默认值（严格版 `_float` 会抛）",
+        "_float_or(\"1.5x\", 0.0)   // 0.0",
+        2,
+        "float"
+    },
+    {
+        "_gc_stats",
+        "_gc_stats()",
+        "GC 统计信息（分配次数 / 回收次数 / 堆大小等）",
+        "print(_gc_stats())",
+        0,
+        "Dict"
+    },
+    {
+        "_homedir",
+        "_homedir()",
+        "当前用户主目录",
+        "_homedir()          // \"C:\\\\Users\\\\xxx\"",
+        0,
+        "string"
+    },
+    {
+        "_instance_activate",
+        "_instance_activate([name])",
+        "唤起已经运行的同一程序实例（配合 `_single_instance`），返回是否成功",
+        "if not _single_instance(\"myapp\") { _instance_activate(\"myapp\"); _exit(0) }",
+        -1,
+        "bool"
+    },
+    {
+        "_int_or",
+        "_int_or(value, default)",
+        "宽容解析为 int，解析失败返回默认值（严格版 `_int` 会抛）",
+        "_int_or(\"12x\", -1)   // -1",
+        2,
+        "int"
+    },
+    {
+        "_int32",
+        "_int32(value)",
+        "转成 32 位有符号整数（超范围按位截断）",
+        "_int32(2147483648)   // -2147483648",
+        1,
+        "int"
+    },
+    {
+        "_int64",
+        "_int64(value)",
+        "转成 64 位有符号整数",
+        "_int64(1e30)",
+        1,
+        "int"
+    },
+    {
+        "_uint8",
+        "_uint8(value)",
+        "转成 8 位无符号整数（0..255）",
+        "_uint8(300)          // 44",
+        1,
+        "int"
+    },
+    {
+        "_uint32",
+        "_uint32(value)",
+        "转成 32 位无符号整数",
+        "_uint32(-1)          // 4294967295",
+        1,
+        "int"
+    },
+    {
+        "_uint64",
+        "_uint64(value)",
+        "转成 64 位无符号整数（超出 int64 时自动提升为 bigint）",
+        "_uint64(-1)",
+        1,
+        "int"
+    },
+    {
+        "_kill",
+        "_kill(pid)",
+        "结束由 `_spawn` 启动的进程，返回是否成功",
+        "var pid = _spawn(\"notepad.exe\")\n_kill(pid)",
+        1,
+        "bool"
+    },
+    {
+        "_mem",
+        "_mem()",
+        "当前进程的内存占用信息",
+        "print(_mem())",
+        0,
+        "Dict"
+    },
+    {
+        "_pid",
+        "_pid()",
+        "当前进程号",
+        "_pid()",
+        0,
+        "int"
+    },
+    {
+        "_sep",
+        "_sep()",
+        "路径分隔符（Windows \"\\\\\"、POSIX \"/\"）",
+        "_sep()",
+        0,
+        "string"
+    },
+    {
+        "_single_instance",
+        "_single_instance([name])",
+        "单实例锁：第一个实例返回 true，后续实例返回 false",
+        "if not _single_instance(\"myapp\") { _exit(0) }",
+        -1,
+        "bool"
+    },
+    {
+        "_spawn",
+        "_spawn(exe, [args])",
+        "启动子进程（不等待），返回 pid；失败返回 -1",
+        "var pid = _spawn(\"notepad.exe\")",
+        -1,
+        "int"
+    },
+    {
+        "_tmpdir",
+        "_tmpdir()",
+        "系统临时目录",
+        "_tmpdir()",
+        0,
+        "string"
+    },
+    {
+        "_username",
+        "_username()",
+        "当前用户名",
+        "_username()",
+        0,
+        "string"
+    },
     {NULL, NULL, NULL, NULL, 0, NULL}
 };
 

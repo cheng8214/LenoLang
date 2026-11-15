@@ -330,6 +330,11 @@ bool is_inside_comment_at(const char* content, int offset);
 // 检查指定位置是否在字符串字面量中
 bool is_inside_string_literal_at(const char* content, int offset);
 
+// 内置类型名判定（**唯一来源**：comp_keywords.c 的 leno_types 表）
+//   用途：`const int LIMIT = 3` 这类声明里名字在**类型后面** ⇒ 符号大纲不能把 `int`
+//   当成变量名（否则 outline 里会出现一个叫 "int" 的常量，找不到真正的 LIMIT）。
+bool comp_is_builtin_type(const char* name);
+
 #ifdef __cplusplus
 }
 #endif
