@@ -655,15 +655,26 @@ static int json_parse_int_text(const char* s, int len, Value* out) {
         if (s[k] < '0' || s[k] > '9') return 0;
     }
 
-    if (e - b < 20) {                       // 一定装得进 int64
+    // ★ 2026-11-15：这里**不能按位数猜**能不能装进 int64，也**不能直接 val_int(...)**
+    //   —— Leno 的 int 是 **int48**，val_int 会把高位**静默掩掉**：
+    //   实测 `jsons.fill(s, "{\"id\":\"9223372036854775808\"}")` 给 `int id` 填出 **-1**
+    //   （2^63-1 的低 48 位恰好全 1 ⇒ 符号扩展成 -1），数据无声损毁。
+    //   ⇒ 先用 strtoll + errno 判 int64 溢出，再用 INT48_IN_RANGE 判 Leno int 范围；
+    //     任一超出都走 **bigint**（语言里 int 溢出本来就提升到 bigint，口径一致 ✓）。
+    {
         char buf[32];
-        int n = e - b < (int)sizeof(buf) - 1 ? e - b : (int)sizeof(buf) - 1;
-        memcpy(buf, s + b, (size_t)n);
-        buf[n] = '\0';
-        *out = val_int((int64_t)strtoll(buf, NULL, 10));
-        return 1;
+        if (e - b < (int)sizeof(buf)) {
+            memcpy(buf, s + b, (size_t)(e - b));
+            buf[e - b] = '\0';
+            errno = 0;
+            long long v = strtoll(buf, NULL, 10);
+            if (errno != ERANGE && INT48_IN_RANGE(v)) {
+                *out = val_int((int64_t)v);
+                return 1;
+            }
+        }
     }
-    // 超长 ⇒ 走 bigint（大 id 逐位保留，别退化成 double）
+    // 超 int48 / 超 int64 / 超长 ⇒ 走 bigint（大 id 逐位保留，别退化成 double）
     char* tmp = (char*)malloc((size_t)(e - b) + 1);
     if (!tmp) return 0;
     memcpy(tmp, s + b, (size_t)(e - b));
@@ -687,6 +698,28 @@ static int json_parse_float_text(const char* s, int len, double* out) {
     return 1;
 }
 
+// ★ 2026-11-15：JSON 的**浮点**装进 `int` 字段时的统一换算（两处 coerce 共用）。
+//   为什么不能直接 `(int64_t)double`：超出 int64 的转换是 **UB** —— 实测 `{"n":1e20}` 填
+//   `int n` 得到 **0**（静默错值 ✗）。口径：int48 内 ⇒ int；整数且更大 ⇒ bigint；
+//   带小数 ⇒ 截断（与 `_int(float)` 一致）；NaN / ±inf ⇒ null（调用方保留字段默认值）。
+//   ⚠ `%.0f` 只在 |d| < 1e21 内保证 Lua 串长度可控（超过就交给"转不了"路径，
+//     那一档 double 本身也没有 15 位以上的整数精度了）。
+static Value json_number_to_int_value(double d) {
+    if (d != d) return val_null();                       // NaN
+    if (d > 1.7976931348623157e308 || d < -1.7976931348623157e308) return val_null();
+    if (d >= -9223372036854775808.0 && d < 9223372036854775808.0) {
+        int64_t iv = (int64_t)d;                         // 范围已判 ⇒ 无 UB（小数截断）
+        return INT48_IN_RANGE(iv) ? val_int(iv) : val_bigint_from_int64(iv);
+    }
+    if (d > -1e21 && d < 1e21) {
+        char buf[40];
+        snprintf(buf, sizeof(buf), "%.0f", d);
+        return val_bigint_from_string(buf);
+    }
+    return val_null();                                   // 转不了 ⇒ 保留字段默认值
+}
+
+
 // ★ 2026-11-11：按**数组元素声明类型**把 JSON 值转成该元素可接受的值（口径同标量字段）。
 //   转不了 ⇒ val_null()（读的时候会当场报错，而不是按错误类型读出垃圾）。
 static Value json_coerce_to_elem(Value raw, TypeKind elem_type) {
@@ -695,7 +728,7 @@ static Value json_coerce_to_elem(Value raw, TypeKind elem_type) {
         case TYPE_INT: {
             if (val_is_int(raw) || val_is_bigint(raw)) return raw;
             if (val_is_bool(raw)) return val_int(val_as_bool(raw) ? 1 : 0);
-            if (val_is_float(raw)) return val_int((int64_t)val_as_num(raw));
+            if (val_is_float(raw)) return json_number_to_int_value(val_as_num(raw));
             if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) {
                 ObjString* t = (ObjString*)val_as_obj(raw);
                 Value iv = val_null();
@@ -704,6 +737,8 @@ static Value json_coerce_to_elem(Value raw, TypeKind elem_type) {
             return val_null();
         }
         case TYPE_FLOAT: {
+            // ★ 2026-11-15：bigint 也要能进 float 字段（此前静默保留默认值 ⇒ 大 ID 变 -1.0）
+            if (val_is_bigint(raw)) return val_float(bigint_to_double(val_as_bigint(raw)));
             if (val_is_float(raw) || val_is_int(raw)) return val_float((double)val_as_num(raw));
             if (val_is_bool(raw)) return val_float(val_as_bool(raw) ? 1.0 : 0.0);
             if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) {
@@ -749,7 +784,7 @@ static Value json_coerce_to_field(Value raw, StructFieldInfo* f) {
             // 大整数原样保留（转 double 会丢精度，见 encode 那边 bigint 的同类注释）
             if (val_is_int(raw) || val_is_bigint(raw)) return raw;
             if (val_is_bool(raw)) return val_int(val_as_bool(raw) ? 1 : 0);
-            if (val_is_float(raw)) return val_int((int64_t)val_as_num(raw));
+            if (val_is_float(raw)) return json_number_to_int_value(val_as_num(raw));
             // 字符串 ⇒ 严格解析（DB / CSV 的列都是字符串）
             if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) {
                 ObjString* t = (ObjString*)val_as_obj(raw);
@@ -759,6 +794,8 @@ static Value json_coerce_to_field(Value raw, StructFieldInfo* f) {
             return val_null();
         }
         case TYPE_FLOAT: {
+            // ★ 2026-11-15：bigint 也要能进 float 字段（此前静默保留默认值 ⇒ 大 ID 变 -1.0）
+            if (val_is_bigint(raw)) return val_float(bigint_to_double(val_as_bigint(raw)));
             if (val_is_float(raw) || val_is_int(raw)) return val_float((double)val_as_num(raw));
             if (val_is_bool(raw)) return val_float(val_as_bool(raw) ? 1.0 : 0.0);
             if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) {

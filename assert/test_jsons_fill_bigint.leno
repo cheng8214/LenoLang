@@ -1,0 +1,67 @@
+// test_jsons_fill_bigint.leno —— jsons.fill 里的大整数必须**精确**（与 decode/encode 同口径）
+//
+// 背景（2026-11-15 压测）：decode/encode 已经改走 bigint，但 **fill 的两条转换路径还漏着**：
+//   ① 字符串形态的大 ID 走 `strtoll + val_int` —— val_int 是 **int48**，
+//      `"9223372036854775808"` 填 `int n` 实测得到 **-1**（低 48 位全 1 后被符号扩展）；
+//   ② 浮点 `1e20` 填 `int` 走 `(int64_t)double` —— 超 int64 是 **UB**，实测得到 **0**；
+//   ③ bigint 填 `float` 字段直接"类型对不上"⇒ 静默保留默认值 -1.0。
+// 三条都是**静默错值**（雪花 ID / 大金额场景直接毁数据）。
+//
+// 判据：int48 边界两侧都精确；字符串 / 浮点 / bigint 三种来源一致；
+//      转不了的（非数字文本）仍按文档"保留默认值"。
+import jsons
+
+struct S {
+    int n = -1
+    float f = -1.0
+}
+
+struct T {
+    Array[int] xs = []
+}
+
+main() {
+    // ① 字符串形态的大整数 ⇒ int 字段（修复前是 -1）
+    var a = new S()
+    jsons.fill(a, "{\"n\":\"9223372036854775808\"}")
+    assert_eq(a.n == 9223372036854775808, true, "①字符串大整数填 int 字段要精确")
+    assert_ne(a.n, -1, "①不能再静默变成 -1")
+
+    // ② int48 边界两侧（2^47-1 仍是 int，2^47 提升 bigint，但值都要精确）
+    var b = new S()
+    jsons.fill(b, "{\"n\":\"140737488355327\"}")
+    assert_eq(b.n == 140737488355327, true, "②2^47-1 精确")
+    var c = new S()
+    jsons.fill(c, "{\"n\":\"140737488355328\"}")
+    assert_eq(c.n == 140737488355328, true, "②2^47 精确")
+
+    // ③ 浮点 1e20 填 int 字段（修复前是 0）
+    var d = new S()
+    jsons.fill(d, "{\"n\":1e20}")
+    assert_eq(d.n == 100000000000000000000, true, "③浮点大整数填 int 字段要精确")
+    assert_ne(d.n, 0, "③不能再静默变成 0")
+
+    // ④ bigint 填 float 字段（修复前保留默认 -1.0）
+    var e = new S()
+    jsons.fill(e, "{\"f\":9223372036854775808}")
+    assert_eq(e.f > 9.0e18, true, "④bigint 填 float 字段要转换，不能留默认值")
+    assert_ne(e.f, -1.0, "④不能再静默保留 -1.0")
+
+    // ⑤ 转不了的仍然保留默认值（非数字文本）
+    var g = new S()
+    jsons.fill(g, "{\"n\":\"abc\"}")
+    assert_eq(g.n, -1, "⑤非数字文本按文档保留默认值")
+
+    // ⑥ 数组元素同口径（`Array[int]` 的逐元素转换走同一条解析）
+    var t = new T()
+    jsons.fill(t, "{\"xs\":[\"9223372036854775808\", 140737488355328]}")
+    assert_eq(t.xs[0] == 9223372036854775808, true, "⑥数组元素（字符串形态）精确")
+    assert_eq(t.xs[1] == 140737488355328, true, "⑥数组元素（int48 外）精确")
+
+    // ⑦ 与 decode / encode 往返一致（同一条口径）
+    var js = jsons.encode({"n": 9223372036854775808})
+    var back = jsons.decode(js) as Dict
+    assert_eq(back["n"] == 9223372036854775808, true, "⑦encode → decode 仍是精确值")
+
+    print("test_jsons_fill_bigint passed（字符串 / int48 边界 / 浮点 / bigint→float / 默认值 / 数组 / 往返）")
+}
