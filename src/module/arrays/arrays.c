@@ -375,7 +375,10 @@ static int value_compare_for_sort(const void* a, const void* b) {
 //   ② 排序前把元素**复制**到 malloc 缓冲：回调里可能 `arr.add()` / `arr.clear()`
 //      （实测这类"边排边改"最容易写出），直接操作 `arr->elements` 会在 realloc 后野指针。
 //   ③ GC 是**标记-清除、不移动对象**（src/gc.c）⇒ 回调期间持有的 Value 副本安全。
-static Value g_sort_cmp = {0};      // 排序期间的比较器（非递归调用时置 null）
+// ★ 2026-11-15：比较器改成**线程局部**。此前是普通 static —— 两个线程同时 `sort(比较器)`
+//   时后一个会把前一个的 g_sort_cmp 覆盖掉 ⇒ 前一个线程**用别人的比较器排序**（静默错序，
+//   比较器签名不同时还会把错类型的 Value 交给回调 ⇒ 崩）。与 regexs 的内存池同一条教训。
+static _Thread_local Value g_sort_cmp = {0};   // 排序期间的比较器（非递归调用时置 null）
 
 static int sort_cmp_via_callback(Value a, Value b) {
     Value cargs[2];

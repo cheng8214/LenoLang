@@ -21,8 +21,13 @@ typedef struct {
     uint64_t inc;
 } pcg32_random_t;
 
-static pcg32_random_t pcg32_global = { 0, 0 };
-static int pcg32_initialized = 0;
+// ★ 2026-11-15：RNG 状态改为**线程局部**（`_Thread_local`）。
+//   此前是普通 static：多线程同时 `rands.*` 就是在同一个 `state` 上做读-改-写 ⇒
+//   ① C 语言层面是 **data race（UB）**；② 两个线程会拿到相同/残缺的序列（看似"随机感变差"，
+//   其实是状态被另一个线程踩了）✗。改成每线程一条独立流后，各线程互不干扰；
+//   `rands.seed(n)` 只影响**当前线程**（要并行可复现，请在每个线程入口各自 seed）。
+static _Thread_local pcg32_random_t pcg32_global = { 0, 0 };
+static _Thread_local int pcg32_initialized = 0;
 
 // PCG32 初始化
 static void pcg32_srandom_r(pcg32_random_t* rng, uint64_t initstate, uint64_t initseq) {
@@ -57,10 +62,17 @@ static uint32_t pcg32_boundedrand_r(pcg32_random_t* rng, uint32_t bound) {
     }
 }
 
-// 初始化全局 PCG32
+// 初始化本线程的 PCG32
+//   ★ 2026-11-15：种子必须**每线程不同** —— 改成线程局部之后，若仍只用
+//   `time(NULL)` + `clock()`，同一瞬启动的几个线程会拿到**完全相同的种子** ⇒
+//   实测 4 个线程各取 200 个整数，和一模一样（99979）—— 各自"看着随机"，实际是同一串 ✗
+//   这里把 TLS 变量自己的地址（每线程不同）与一个固定的 64 位混合常量拌进种子。
 static void init_pcg32(void) {
     if (!pcg32_initialized) {
-        pcg32_srandom_r(&pcg32_global, (uint64_t)time(NULL), (uint64_t)clock());
+        uint64_t mix = (uint64_t)(uintptr_t)&pcg32_global;
+        uint64_t seed = (uint64_t)time(NULL) ^ ((uint64_t)clock() << 32) ^ mix;
+        uint64_t seq = seed ^ 0x9E3779B97F4A7C15ULL;
+        pcg32_srandom_r(&pcg32_global, seed, seq);
         pcg32_initialized = 1;
     }
 }

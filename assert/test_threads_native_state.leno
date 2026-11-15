@@ -1,0 +1,98 @@
+// test_threads_native_state.leno —— native 模块的**跨线程可变状态**必须各线程独立（2026-11-15）
+//
+// 背景（都在 build/leno.exe 上实测）：
+//   ① `regexs` 的节点池 / 组号计数器原来是普通 static ⇒ 4 线程各 500 次 match
+//      **直接 0xC0000005 崩溃**（A 线程 re_free_all 把 B 线程正在用的节点释放了）
+//   ② `arrays.sort(比较器)` 的比较器存在一个 static 槽里 ⇒ 两线程同时排序时
+//      后一个把前一个覆盖 ⇒ 前一个线程**用别人的比较器排**（静默错序）
+//   ③ `rands` 的 PCG32 状态是普通 static ⇒ data race；改成线程局部后若种子仍只取
+//      `time()+clock()`，同瞬启动的线程会拿到**完全相同的序列**（实测 4 线程和都是 99979）
+//
+// 本用例：并发跑这三件事，断言结果正确且各线程的随机流不同。
+import threads
+import regexs
+import rands
+
+func stat_regex(any ch, int k) {
+    int ok = 0
+    for 0:200 to i {
+        var text = "user" + _str(i) + "@example.com#" + _str(k)
+        if regexs.match(text, "([a-z0-9]+)@([a-z.]+)") { ok = ok + 1 }
+    }
+    if ch is Channel {
+        var c = ch
+        c.send(ok)
+    }
+}
+
+func stat_sort(any ch, int desc) {
+    int ok = 0
+    for 0:200 to r {
+        Array[int] a = [3, 1, 2, 5, 4]
+        if desc == 0 {
+            a.sort(func(int x, int y) { return x - y })
+            if a[0] == 1 and a[4] == 5 { ok = ok + 1 }
+        } else {
+            a.sort(func(int x, int y) { return y - x })
+            if a[0] == 5 and a[4] == 1 { ok = ok + 1 }
+        }
+    }
+    if ch is Channel {
+        var c = ch
+        c.send(ok)
+    }
+}
+
+func stat_rands(any ch, int k) {
+    var first = 0
+    for 0:99 to i {
+        var v = rands.ints(1, 1000000000)
+        if i == 0 { first = v }
+    }
+    if ch is Channel {
+        var c = ch
+        c.send(first)
+    }
+}
+
+main() {
+    // ---- ① 并发正则：不许崩、结果全对 ----
+    var ch1 = threads.channel(4)
+    Array[Thread] t1 = []
+    for 0:3 to k1 {
+        t1.add(threads.start(stat_regex, ch1, k1))
+    }
+    for 0:3 to j1 {
+        assert_eq(_int(ch1.receive()), 201, "并发 regex 第 " + _str(j1) + " 个线程全部匹配")
+    }
+    threads.join_all(t1)
+
+    // ---- ② 并发排序：两种比较器不许串台 ----
+    var ch2 = threads.channel(4)
+    Array[Thread] t2 = []
+    t2.add(threads.start(stat_sort, ch2, 0))
+    t2.add(threads.start(stat_sort, ch2, 1))
+    t2.add(threads.start(stat_sort, ch2, 0))
+    t2.add(threads.start(stat_sort, ch2, 1))
+    for 0:3 to j2 {
+        assert_eq(_int(ch2.receive()), 201, "并发 sort 第 " + _str(j2) + " 个线程用对了比较器")
+    }
+    threads.join_all(t2)
+
+    // ---- ③ 并发随机：各线程的序列必须不同（每线程独立流 + 不同种子）----
+    var ch3 = threads.channel(4)
+    Array[Thread] t3 = []
+    for 0:3 to k3 {
+        t3.add(threads.start(stat_rands, ch3, k3))
+    }
+    int first_val = -1
+    int diff = 0
+    for 0:3 to j3 {
+        int v = _int(ch3.receive())
+        if first_val == -1 { first_val = v } else if v != first_val { diff = diff + 1 }
+    }
+    threads.join_all(t3)
+    assert_eq(diff, 3, "4 个线程的首个随机数应各不相同（否则是同一个种子）")
+
+    print("test_threads_native_state passed（regex / sort / rands 跨线程互不干扰）")
+}

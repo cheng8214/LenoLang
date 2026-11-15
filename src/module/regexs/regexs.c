@@ -119,9 +119,14 @@ static void re_cap_rollback(ReCtx* ctx, int mark) {
 }
 
 // 简单的内存池
+//   ★ 2026-11-15：**必须是线程局部**（`_Thread_local`，与 io.c / value.c 的缓冲区同口径）。
+//   此前是普通 static：两个线程同时调 regexs ⇒ 共用同一个池与下标，A 线程 `re_free_all`
+//   会把 B 线程正在用的节点 `class_chars` free 掉 ⇒ 实测 4 线程各 500 次 match **直接
+//   0xC0000005 崩溃**（不是偶发错值，是崩）。改成每线程一份后互不干扰 ✓。
+//   ⚠ 同一线程内的**重入**仍不支持（一次 API 调用内是原子的；本模块没有回调进 Leno 的路径）。
 #define RE_POOL_SIZE 256
-static ReNode re_pool[RE_POOL_SIZE];
-static int re_pool_idx = 0;
+static _Thread_local ReNode re_pool[RE_POOL_SIZE];
+static _Thread_local int re_pool_idx = 0;
 
 static ReNode* re_alloc_node(void) {
     if (re_pool_idx >= RE_POOL_SIZE) return NULL;
@@ -140,9 +145,9 @@ static void re_free_all(void) {
 }
 
 // 解析期的组号计数器（**只在一次 parse 会话内有效**：入口置 0、解析完立刻读走 ✓）。
-//   ⚠ 顺带记录一笔既有事实：本模块整体**不是线程安全的** —— 内存池 `re_pool` 与它都是静态的，
-//     多线程同时调 regexs 会互相踩（2026-10-01 记录在案；本轮未处理，见 docs 的说明）。
-static int re_group_counter = 0;
+//   ★ 2026-11-15：同样是 `_Thread_local` —— 与上面的内存池一起，本模块现在**可以多线程用**了
+//     （原来是普通 static：两个线程同时解析会互相把组号清零 ⇒ 捕获错乱/越界崩溃）。
+static _Thread_local int re_group_counter = 0;
 
 // 可转义的字符 —— **元字符 + `-` + `/`**。其余（`\d` `\w` `\s` `\b` `\t` … 字母数字类）一律算
 // "不支持的转义"，编译期就失败 ⇒ 上层报错。
