@@ -32,6 +32,39 @@ struct Box {
     Array[any] anyarr = []
 }
 
+// ⑥ 之后的边界用例
+struct Node {
+    string name = ""
+    Array[Node] kids = []
+}
+
+struct Deep {
+    Array[Array[Array[int]]] d = []
+}
+
+struct Tag {
+    string name = ""
+    Dict[string, Array[int]] nums = {}
+}
+
+struct Root {
+    Array[Tag] tags = []
+    Dict[string, Array[Tag]] byName = {}
+    Dict[string, Array[int]] m = {}
+}
+
+struct Opt {
+    Array[int]? a = null
+}
+
+struct Def {
+    Dict[string, Array[int]] m = {"keep": [9]}
+}
+
+struct Gen[T] {
+    Array[T] items = []
+}
+
 const DOC = "{\"m\":{\"a\":[\"1\",2]},\"n\":{\"x\":{\"k\":\"7\"},\"bad\":5},"
           + "\"a\":[{\"k\":\"3\"}],\"aa\":[[\"1\",\"2\"],[3]],"
           + "\"items\":{\"first\":{\"name\":\"pen\",\"qty\":\"5\"},\"bad\":9},"
@@ -99,6 +132,54 @@ main() {
                 "⑤序列化往返后行为必须一致；实际输出=" + _str(rr.output))
     files.delete(src)
     files.delete(lenb)
+
+    // ⑥ 自引用 struct（`Array[Node]` 递归）：逐层造成 Node 再填
+    var nd = new Node()
+    jsons.fill(nd, "{\"name\":\"root\",\"kids\":[{\"name\":\"k1\",\"kids\":[{\"name\":\"k2\"}]}]}")
+    assert_true(nd.kids[0] is Node, "⑥kids[0] 要造成 Node")
+    assert_eq(nd.kids[0].name, "k1", "⑥第一层")
+    assert_eq(nd.kids[0].kids[0].name, "k2", "⑥第二层（递归）")
+
+    // ⑦ 三层嵌套
+    var dp = new Deep()
+    jsons.fill(dp, "{\"d\":[[[\"1\",2]],[[\"3\"]]]}")
+    assert_eq(type(dp.d[0][0][0]), "int", "⑦三层内层元素要转")
+    assert_eq(dp.d[0][0][0], 1, "⑦值正确")
+    assert_eq(dp.d[1][0][0], 3, "⑦第二分支")
+
+    // ⑧ 容器里的 struct 自己还带容器（递归走 json_fill_struct ⇒ 用内层字段的树）
+    var rt = new Root()
+    jsons.fill(rt, "{\"tags\":[{\"name\":\"t1\",\"nums\":{\"a\":[\"1\"]}}],"
+                 + "\"byName\":{\"x\":[{\"name\":\"t2\",\"nums\":{\"b\":[\"2\"]}}]},"
+                 + "\"m\":{\"a\":[\"1\",null,3]}}")
+    assert_eq(type(rt.tags[0].nums["a"][0]), "int", "⑧Array[Tag] 里 Tag 自己的 Dict 字段也要递归转")
+    assert_eq(rt.byName["x"][0].nums["b"][0], 2, "⑧Dict[K,Array[Tag]] 同样")
+    assert_eq(rt.m["a"][1], null, "⑧数组里的 null 保持 null（不塞 0）")
+    assert_eq(rt.m["a"][2], 3, "⑧null 之后的元素照常转")
+
+    // ⑨ 可空容器：JSON null ⇒ 保留默认（null）；有值 ⇒ 照常转换
+    var op = new Opt()
+    jsons.fill(op, "{\"a\":null}")
+    assert_eq(op.a, null, "⑨null ⇒ 保留默认值")
+    var op2 = new Opt()
+    jsons.fill(op2, "{\"a\":[\"1\"]}")
+    assert_eq(_str(op2.a), "[1]", "⑨有值 ⇒ 逐元素转换")
+
+    // ⑩ 默认值：源里没有的字段保留（含非空容器默认值）
+    var df = new Def()
+    jsons.fill(df, "{}")
+    assert_eq(df.m["keep"][0], 9, "⑩缺字段 ⇒ 保留默认容器")
+
+    // ⑪ 顶层类型对不上 ⇒ 保留默认值（不塞错类型）
+    var df2 = new Def()
+    jsons.fill(df2, "{\"m\":5}")
+    assert_eq(_str(df2.m), "{keep: [9]}", "⑪类型对不上 ⇒ 保留默认")
+
+    // ⑫ 泛型 struct 的 `Array[T]`：运行时没有具体 T ⇒ 原样（已知限制，钉住不静默退化）
+    var g = new Gen[int]()
+    jsons.fill(g, "{\"items\":[\"1\",2]}")
+    assert_eq(type(g.items[0]), "string", "⑫泛型字段原样（运行时无具体 T）")
+    assert_eq(g.items[1], 2, "⑫原本是 int 的不动")
 
     print("test_jsons_fill_nested passed")
 }

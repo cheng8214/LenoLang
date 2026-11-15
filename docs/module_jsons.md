@@ -333,6 +333,10 @@ jsons.fill(j, "{\"id\":\"a1\",\"song\":{\"name\":\"夜曲\",\"dur\":227}}")
 > | `Dict[string, Array[int]] m` | `m["a"]` = `[1, 2]`（元素都是 int）|
 > | `Dict[string, Dict[string,int]] n` | `n["x"]["k"]` = `7` |
 > | `Array[Dict[string,int]] arr` | `arr[0]["k"]` = `3` |
+>
+> ⚠ **泛型 struct 的容器字段是例外**：`struct Gen[T] { Array[T] items }` 里 `items` 的声明类型
+> 在运行时仍是类型参数 `T`（没有具体类型）⇒ fill 对 `items` **原样**（`["1"]` 的 `"1"` 不会转）。
+> 需要转换时改用具体类型的 struct，或填完自己 `_int`（`assert/test_jsons_fill_nested.leno` ⑫ 钉住了这条）。
 
 > **为什么字符串能转数字、但数字不能转字符串**：JSON 本身能区分类型，而
 > **SQLite 的 `column_text` / CSV 的每一列都是字符串** —— 不让字符串转数字，
