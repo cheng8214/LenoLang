@@ -111,6 +111,15 @@ if server != null {
 }
 ```
 
+> ⚠ **端口被占用 ⇒ `null`，不抢占**（2026-11-16 平台分叉）：
+> Windows 上此前设的是 `SO_REUSEADDR`，而它的语义与 POSIX **完全不同** —— 允许**抢占**
+> 一个已经在监听的端口。实测同进程里对同一 host:port 再 `listen` 一次会**成功**并返回新
+> Socket，而原来那个 `accept()` 永远等不到连接（服务静默"换主"，排查极难）。
+> 现在 Windows 改设 `SO_EXCLUSIVEADDRUSE` ⇒ 端口被占用时 `bind` 失败、返回 `null`
+> （符合上面"失败 ⇒ null"的口径）；POSIX 仍用 `SO_REUSEADDR`（只放行 TIME_WAIT 复用）。
+> 代价：Windows 上**连 TIME_WAIT 也一并拒绝**，刚关闭的服务立刻重启用同一端口可能失败 ——
+> 这是换取"不静默抢占"的取舍。
+
 ---
 
 ### `sockets.udp_bind(host, port)`
@@ -224,6 +233,8 @@ if conn != null {
 - 失败/连接关闭: `null`
 - **误用 ⇒ 抛错（2026-11-14 起）**：在**监听 socket**（还没 `accept`）或**未连接的 TCP socket**
   上调用时，直接报错。此前这两种情况静默返回 `null`，与"对端关闭"完全分不开 ✗
+- **`max_bytes <= 0` ⇒ 抛错（2026-11-16 起）**：此前静默当成 1024 ⇒ 没数据时一直阻塞
+  （没有 `set_timeout` 就是永久卡死，看起来像"对端没发数据"）。`recvfrom` / `arecv` 同口径。
 
 ```leno
 var data = conn.recv(1024)

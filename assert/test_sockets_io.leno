@@ -125,5 +125,51 @@ main()
     a_run(aport)
     asyncs.run()                                        // 只能在主线程调用
 
+    // ==================== 参数 / 生命周期边界（2026-11-16）====================
+    // ① 端口越界 ⇒ 报错（不是静默截断）
+    int e_port = 0
+    try { var _p = sockets.connect("127.0.0.1", 70000) } catch e { e_port += 1 }
+    assert_eq(e_port, 1, "①端口 70000 必须报错")
+    int e_port2 = 0
+    try { var _q = sockets.listen("127.0.0.1", -1) } catch e { e_port2 += 1 }
+    assert_eq(e_port2, 1, "①端口 -1 必须报错")
+
+    // ② 同端口二次 listen：Windows 上必须**失败**（此前 SO_REUSEADDR 会静默抢占 ⇒
+    //    原 socket 的 accept 永远等不到连接；POSIX 的 SO_REUSEADDR 只放行 TIME_WAIT，本就失败）
+    var la = sockets.listen("127.0.0.1", 0)
+    assert_ne(la, null, "②listen 应成功")
+    if la != null {
+        var lport = la.local_port()
+        var lb = sockets.listen("127.0.0.1", lport)
+        assert_eq(lb, null, "②同端口二次 listen 必须失败（不能静默抢占）")
+        if lb != null { lb.close() }
+
+        // ③ recv 的 max_bytes 边界：0 / 负数 ⇒ 报错（修前静默当 1024 ⇒ 无数据时永久阻塞）
+        var cc = sockets.connect("127.0.0.1", lport)
+        var peer = la.accept()
+        assert_ne(cc, null, "③connect 应成功")
+        assert_ne(peer, null, "③accept 应成功")
+        if peer != null {
+            int e_r0 = 0
+            try { var _r = peer.recv(0) } catch e { e_r0 += 1 }
+            assert_eq(e_r0, 1, "③recv(0) 必须报错")
+            int e_rn = 0
+            try { var _r2 = peer.recv(-5) } catch e { e_rn += 1 }
+            assert_eq(e_rn, 1, "③recv(-5) 必须报错")
+
+            // ④ close 之后的方法：按文档口径给 false / null（不崩、不越界写）
+            peer.close()
+            assert_eq(peer.send("x"), false, "④close 后 send ⇒ false")
+            assert_eq(peer.recv(16), null, "④close 后 recv ⇒ null")
+            assert_eq(peer.accept(), null, "④close 后 accept ⇒ null")
+            assert_eq(peer.close(), null, "④二次 close ⇒ null（文档：返回 null）")
+        }
+        if cc != null { cc.close() }
+        la.close()
+    }
+
+    // ⑤ select([]) 早退给空数组
+    assert_eq(sockets.select([], 10).len(), 0, "⑤select([]) ⇒ []")
+
     print("test_sockets_io passed")
 }

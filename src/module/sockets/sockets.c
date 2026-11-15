@@ -458,7 +458,11 @@ static Value socket_arecv_func(int argc, Value* args) {
         }
     }
 
-    if (max_bytes <= 0) max_bytes = 1024;
+    if (max_bytes <= 0) {
+        // 同 recv：不静默改成 1024（见 recv 处的说明）
+        native_throw_error("arecv: max_bytes 必须大于 0（传 0 / 负数会被当成读取上限 ⇒ 没数据时一直等待）");
+        return val_null();
+    }
     if (max_bytes > 65536) max_bytes = 65536;
 
     // 设置非阻塞
@@ -712,8 +716,15 @@ static Value socket_recv_func(int argc, Value* args) {
         }
     }
 
-    // 限制最大缓冲区大小
-    if (max_bytes <= 0) max_bytes = 1024;
+    // ★ 2026-11-16：`max_bytes <= 0` 不再**静默改成 1024**。
+    //   实测 `peer.recv(0)` / `peer.recv(-5)` 会被悄悄当成 1024 ⇒ 无数据时**阻塞**
+    //   （没有 set_timeout 就是永久卡死，看起来像"对端没发数据"）。参数写错要当场说。
+    if (max_bytes <= 0) {
+        native_throw_error("recv: max_bytes 必须大于 0"
+                           "（传 0 / 负数会被当成读取上限 ⇒ 没数据时一直阻塞）");
+        return val_null();
+    }
+    // 上限保留静默夹取：这是防"一次 malloc 64MB"的保护，不是参数写错
     if (max_bytes > 65536) max_bytes = 65536;
 
     char* buffer = (char*)malloc(max_bytes + 1);
@@ -875,7 +886,11 @@ static Value socket_recvfrom_func(int argc, Value* args) {
 
     if (!socket_is_valid(sock)) return val_null();
 
-    if (max_bytes <= 0) max_bytes = 1024;
+    if (max_bytes <= 0) {
+        // 同 recv：不静默改成 1024（见 recv 处的说明）
+        native_throw_error("recvfrom: max_bytes 必须大于 0（传 0 / 负数会被当成读取上限 ⇒ 没数据时一直阻塞）");
+        return val_null();
+    }
     if (max_bytes > 65536) max_bytes = 65536;
 
     char* buffer = (char*)malloc(max_bytes + 1);
@@ -1287,9 +1302,30 @@ static Value sockets_listen_func(int argc, Value* args) {
         return val_null();
     }
 
-    // 设置地址重用
-    int reuse = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
+    // 地址重用（★ 2026-11-16 平台分叉）
+    //   POSIX：`SO_REUSEADDR` 只放行 **TIME_WAIT 复用**，与"正在监听"的端口冲突仍会
+    //          EADDRINUSE ⇒ 安全，保留。
+    //   Windows：`SO_REUSEADDR` 的语义完全不同 —— 它允许**抢占**一个已经在监听的端口
+    //          （实测：同进程里对同一 host:port 再 listen 一次会**成功**，返回新 Socket，
+    //           而原来那个 accept 永远等不到连接 ⇒ 服务静默"换主"，排查极难）。
+    //          这里改设 `SO_EXCLUSIVEADDRUSE`：端口被占用 ⇒ bind 失败 ⇒ 按本文档既有
+    //          口径返回 null（"失败返回 null"）。注意它会连 TIME_WAIT 也一并拒绝 ——
+    //          这是 Windows 上换取"不静默抢占"的代价，必须知道。
+#ifdef _WIN32
+    {
+        int exclusive = 1;
+        if (setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                       (const char*)&exclusive, sizeof(exclusive)) != 0) {
+            CLOSE_SOCKET(fd);
+            return val_null();
+        }
+    }
+#else
+    {
+        int reuse = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
+    }
+#endif
 
     // 绑定地址
     struct sockaddr_in addr;
