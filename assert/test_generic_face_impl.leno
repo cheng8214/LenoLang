@@ -72,11 +72,16 @@ face Comparable[T] {
     func compareTo(T other): int
 }
 
-struct OrdInt impl Comparable[int] {
+struct OrdInt impl Comparable[OrdInt] {
     int val = 0
-    func compareTo(int other): int {
-        if self.val < other { return -1 }
-        if self.val > other { return 1 }
+    // ★ 2026-11-15：原先写的是 `impl Comparable[int]` + `compareTo(int other)`，
+    //   而 `max_val[T: Comparable](T a, T b)` 里 `a.compareTo(b)` 传的是 **T 值（OrdInt）**
+    //   ⇒ 运行期一直是「struct 塞进 int 形参」。它没报错只是因为旧的 int 特化比较把
+    //   指针位当大正数（`10 < 巨大值` 恒真），`max_val` 碰巧返回对的那个 —— 绿是假的。
+    //   现在非数值操作数会直接报「操作数类型不可比较」，所以 impl 必须与 T 自身一致。
+    func compareTo(OrdInt other): int {
+        if self.val < other.val { return -1 }
+        if self.val > other.val { return 1 }
         return 0
     }
 }

@@ -1572,17 +1572,15 @@ static VM_NOINLINE int vm_int_cmp_cold(Value a, Value b, int kind, int* out) {
         return 1;
     }
 
-    // 非数值：保持改动前的位模式比较（不在本次修复范围内，见函数头说明）
-    int64_t x = val_is_bigint(a) ? vm_bigint_as_i64(a) : (int64_t)VAL_INT48_PAYLOAD(a);
-    int64_t y = val_is_bigint(b) ? vm_bigint_as_i64(b) : (int64_t)VAL_INT48_PAYLOAD(b);
-    switch (kind) {
-        case 0: *out = (x < y); break;
-        case 1: *out = (x > y); break;
-        case 2: *out = (x <= y); break;
-        case 3: *out = (x >= y); break;
-        default: *out = (x == y); break;
-    }
-    return 1;
+    // ★ 2026-11-15（第二轮）：非数值（struct / string / array …）**不再拿位模式硬比**，
+    //   一律交给调用方报「操作数类型不可比较」。
+    //   为什么：静态类型是 int 却拿到 struct，唯一已知来源是**泛型 face 的类型实参没对上**
+    //   （`struct OrdInt impl Comparable[int]` + `func f[T: Comparable](T a, T b)` 里
+    //     `a.compareTo(b)` 把 OrdInt 传进 `compareTo(int)` 形参）。旧代码把指针位当大正数
+    //   比较 ⇒ `10 < 巨大值` 恒真、`max()` 恰好返回对的那个 —— **测试是绿的，语义是假的**。
+    //   现在它会带着两个操作数的真实类型炸出来（不静默）。
+    *out = 0;
+    return 0;
 }
 
 // ============================================================================

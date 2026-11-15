@@ -1,0 +1,52 @@
+// test_generic_face_mismatch.leno —— 泛型 face 的**类型实参**与 T 对不上时，必须炸，不能静默
+//
+// 场景（2026-11-15 压测暴露，此前一直是隐形的）：
+//   face Comparable[T] { func compareTo(T other): int }
+//   struct OrdInt impl Comparable[int] { func compareTo(int other): int { … } }
+//   func max_val[T: Comparable](T a, T b): T { if a.compareTo(b) >= 0 { … } }
+//
+//   `a.compareTo(b)` 传进去的是 **T 值（OrdInt）**，而 impl 把形参替换成了 `int`
+//   ⇒ 结构体被塞进 int 形参。旧代码不报错：int 特化比较把指针位当大正数
+//   （`10 < 巨大值` 恒真）⇒ 返回 -1 ⇒ `max_val` 碰巧返回较大的那个 —— **绿是假的**。
+//
+// 现在的口径：int 特化比较收到**非数值**操作数 ⇒ 报「操作数类型不可比较」，
+//   并把两个操作数的真实类型打进错误信息（`type=int` / `type=OrdInt`）。
+//   合法用法（`m1.compareTo(5)` 直接传 int）不受影响。
+face Comparable[T] {
+    func compareTo(T other): int
+}
+
+struct OrdInt impl Comparable[int] {
+    int val = 0
+    func compareTo(int other): int {
+        if self.val < other { return -1 }
+        if self.val > other { return 1 }
+        return 0
+    }
+}
+
+func max_val[T: Comparable](T a, T b): T {
+    if a.compareTo(b) >= 0 { return a }
+    return b
+}
+
+main() {
+    // ① 合法：impl Comparable[int] 直接把 int 传进去，照常工作
+    var m1 = new OrdInt(val=10)
+    assert_eq(m1.compareTo(5), 1, "①compareTo(5) ⇒ 1")
+    assert_eq(m1.compareTo(10), 0, "①compareTo(10) ⇒ 0")
+    assert_eq(m1.compareTo(20), -1, "①compareTo(20) ⇒ -1")
+
+    // ② 不合法：把 T 值（OrdInt）传给 `compareTo(int)` ⇒ 必须抛错（不静默）
+    var m2 = new OrdInt(val=20)
+    bool caught = false
+    try {
+        var r = max_val(m1, m2)
+        print("不该走到这里: " + _str(r.val))
+    } catch err {
+        caught = true
+    }
+    assert_eq(caught, true, "②T 值进 int 形参 ⇒ 运行期报错（不再按指针位瞎比）")
+
+    print("test_generic_face_mismatch passed（合法调用正常 / 类型实参错配必炸）")
+}
