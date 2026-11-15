@@ -383,6 +383,52 @@ main()
     assert_eq(dirs.rmdir(tg), true)
     assert_eq(dirs.rmdir(lbase), true)
 
+    // ---- 测试19：路径函数边界 + 写操作边界（2026-11-15 压测补）----
+    // ① 路径切分的三条边界（Python os.path 同口径）
+    assert_eq(dirs.basename("a" + rsep + "b" + rsep), "", "末尾分隔符 ⇒ 文件名空串")
+    assert_eq(dirs.dirname("a" + rsep + "b"), "a")
+    assert_eq(dirs.dirname(""), ".", "空路径的目录部分是 '.'")
+    assert_eq(dirs.extname("a."), ".", "`a.` 的扩展名是 '.'（与 stem 互补）")
+    assert_eq(dirs.extname("dir.d/file"), "", "扩展名只看最后一段（目录里的点不算）")
+    assert_eq(dirs.stem("a.b.c"), "a.b", "只去最后一个扩展名")
+    // stem + extname == basename 必须**恒成立**（隐藏文件 / 无扩展名 / 尾点 都算上）
+    int stem_bad = 0
+    for ["a.b.c", ".bashrc", "noext", "a.", "dir.d/file", "x.tar.gz"] to p2 {
+        if dirs.stem(p2) + dirs.extname(p2) != dirs.basename(p2) { stem_bad += 1 }
+    }
+    assert_eq(stem_bad, 0, "stem + extname == basename 必须恒成立")
+    // ② join 的空段口径（2026-11-15 起：空段不产生多余分隔符）
+    assert_eq(dirs.join("", ""), "", "两个空段 ⇒ 空串（不是盘根）")
+    assert_eq(dirs.join("", "b"), "b")
+    assert_eq(dirs.join("a", "", "b"), "a" + rsep + "b")
+
+    // ③ 写操作边界：mkdir_p 幂等 / delete(目录) 递归 / rename 目标已存在的平台差异
+    string w2 = "test_dirs_tmp_w2"
+    if dirs.exists(w2) { dirs.delete(w2) }
+    assert_eq(dirs.mkdir_p(dirs.join(w2, "x")), true)
+    assert_eq(dirs.mkdir_p(dirs.join(w2, "x")), true, "mkdir_p 已存在 ⇒ true（幂等）")
+    files.write(dirs.join(w2, "x", "f.txt"), "1")
+    assert_eq(dirs.delete(dirs.join(w2, "x")), true, "delete(目录) ⇒ 递归删除")
+    assert_eq(dirs.exists(dirs.join(w2, "x")), false)
+    assert_eq(dirs.exists(dirs.join(w2, "x", "f.txt")), false, "目录下的文件也一并删掉")
+
+    var ra = dirs.join(w2, "a.txt")
+    var rb = dirs.join(w2, "b.txt")
+    files.write(ra, "A")
+    files.write(rb, "B")
+    bool rn2 = dirs.rename(ra, rb)
+    if _os() == "windows" {
+        // Windows：_wrename 不覆盖 ⇒ false，且 src/dst 都不动
+        assert_eq(rn2, false, "Windows: 目标已存在 ⇒ false")
+        assert_eq(files.read(rb), "B", "Windows: 目标内容不动")
+        assert_eq(dirs.exists(ra), true, "Windows: 源仍在")
+    } else {
+        // POSIX：rename() 覆盖 ⇒ true，dst 内容变成 src 的
+        assert_eq(rn2, true, "POSIX: rename 覆盖目标")
+        assert_eq(files.read(rb), "A")
+    }
+    dirs.delete(w2)
+
     print("test_dirs passed")
 }
 

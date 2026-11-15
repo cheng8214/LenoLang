@@ -369,11 +369,13 @@ dirs.mkdir("a/b/c")             // false (父目录不存在)
 **参数**:
 - `path` (string): 目录路径
 
-**返回**: `bool` - 是否创建成功
+**返回**: `bool` - 是否创建成功（**已存在 ⇒ `true`**，幂等；路径上已有同名**文件** ⇒ `false`）
 
 ```leno
 dirs.mkdir_p("a/b/c")           // true (创建 a, a/b, a/b/c)
 dirs.mkdir_p("deep/nested/dir") // true
+dirs.mkdir_p("a/b/c")           // true（已存在，不报错、不重建）
+dirs.mkdir_p("file.txt/sub")    // false（file.txt 是文件，建不了子目录）
 ```
 
 ---
@@ -438,6 +440,22 @@ dirs.rename("old.txt", "new.txt")           // true
 dirs.rename("folder1", "folder2")           // true
 dirs.rename("not_exist.txt", "new.txt")     // false
 ```
+
+> ⚠ **目标已存在时是平台相关的**（2026-11-15 实测补记）：
+>
+> | 平台 | `rename(src, dst)` 且 dst 已存在 |
+> |---|---|
+> | Windows | **`false`**，src 与 dst 都不动（`_wrename` 不覆盖）|
+> | Linux / macOS | **`true`** 且 dst 被**静默覆盖**（POSIX `rename()` 的语义）|
+>
+> 同一份代码在两边行为不同 ⇒ 要覆盖请**显式**先删：
+> ```leno
+> if dirs.exists(dst) { dirs.delete(dst) }
+> dirs.rename(src, dst)
+> ```
+> 反过来，"先写临时文件再 rename 覆盖"这种 POSIX 原子替换惯用法在 Windows 上**不成立**
+> （会拿到 false）⇒ 跨平台代码别用它。`assert/test_dirs.leno` 的测试 19 按 `_os()`
+> 分别钉住了两边行为。
 
 ---
 
