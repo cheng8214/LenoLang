@@ -1,36 +1,35 @@
 // 泛型函数 re-export 回归断言测试
-// 防止 Ok[T]/Err[T]/map[T,U]/filter[T]/reduce[T,U] 通过 export func 转发后回归
+// 防止 map[T,U]/filter[T]/reduce[T,U]/forEach[T] 通过 export func 转发后回归
+//   ★ 2026-11-15：`Ok[T]/Err[T]` 已从 web_generic / Web.leno 移除，改成独立模块 Result
+//     （构造 `res.ok(v)` / `res.err(code, msg)`，判据 isOk/isErr，取值 orElse/errText）
 
 import "web_generic" as gen
 import "Web" as web
+import "Result" as res
 
 main()
 {
     print("=== generic re-export regression ===")
 
-    // ---------- 1. Ok/Err 直接调用 gen 模块 ----------
-    var ok1 = gen.Ok[int](42)
+    // ---------- 1. Result 构造 / 判据 / 取值 ----------
+    var ok1 = res.ok[int](42)
     assert_eq(ok1.isOk(), true)
-    assert_eq(ok1.unwrapOr(0), 42)
+    assert_eq(ok1.orElse(0), 42)
 
-    var err1 = gen.Err[int]("error msg")
-    assert_eq(err1.isError(), true)
-    assert_eq(err1.getError(), "error msg")
-    assert_eq(err1.unwrapOr(-1), -1)
+    var err1 = res.err[int](500, "error msg")
+    assert_eq(err1.isErr(), true)
+    assert_eq(err1.orElse(-1), -1)
+    assert_eq(err1.errText().has("error msg"), true)
 
-    // ---------- 2. Ok/Err 通过 Web.leno 转发调用 ----------
-    var ok2 = web.Ok[int](100)
-    assert_eq(ok2.isOk(), true)
-    assert_eq(ok2.unwrapOr(0), 100)
+    // ---------- 2. Result 经泛型函数转发（mapResult）----------
+    var doubled = res.mapResult(res.ok[int](100), func(int x): int {
+        return x * 2
+    })
+    assert_eq(doubled.orElse(0), 200)
 
-    var err2 = web.Err[int]("web error")
-    assert_eq(err2.isError(), true)
-    assert_eq(err2.getError(), "web error")
-    assert_eq(err2.unwrapOr(-99), -99)
-
-    // ---------- 3. Ok/Err 不同类型参数 ----------
-    var okStr = web.Ok[string]("hello")
-    assert_eq(okStr.unwrapOr(""), "hello")
+    // ---------- 3. 不同 T ----------
+    var okStr = res.ok[string]("hello")
+    assert_eq(okStr.orElse(""), "hello")
 
     // ---------- 4. map 通过 Web.leno 转发 ----------
     var nums = [1, 2, 3, 4, 5]

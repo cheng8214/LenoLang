@@ -3,7 +3,8 @@
 
 import "Web" as web
 import "web_generic" as gen
-use gen.(Result, Ok, Err, Stack, LinkedList, ListNode)
+import "Result" as res          // ★ 2026-11-15：Result/Ok/Err 已从 web_generic 拆到独立模块
+use gen.(Stack, LinkedList, ListNode)
 
 main()
 {
@@ -44,13 +45,14 @@ main()
     print("")
     print("=== 场景2: Result[T] 安全请求 ===")
 
-    // Ok/Err 通过 Web.leno 转发调用
-    var okResult = web.Ok[int](200)
-    print("Ok 值: " + okResult.unwrapOr(0))
+    // ★ 2026-11-15：`Ok[T]/Err[T]` 已从 web_generic / Web.leno 移除，
+    //   现在是独立模块 Result（`ok(v)` / `err(code, msg)`，判据是 isOk/isErr）。
+    var okResult = res.ok[int](200)
+    print("Ok 值: " + _str(okResult.orElse(0)))
 
-    var errResult = web.Err[int]("connection refused")
-    print("Err 消息: " + errResult.getError())
-    print("Err 默认值: " + errResult.unwrapOr(-1))
+    var errResult = res.err[int](500, "connection refused")
+    print("Err 消息: " + errResult.errText())
+    print("Err 默认值: " + _str(errResult.orElse(-1)))
 
     print("")
     print("=== 场景3: Stack[T] DFS 模拟 ===")
