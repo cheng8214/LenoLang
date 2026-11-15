@@ -147,8 +147,10 @@ export enum Opt {
     CAINFO              = 10065   // CURLOPTTYPE_STRINGPOINT + 65, CA 证书路径
     COOKIEJAR           = 10082   // CURLOPTTYPE_STRINGPOINT + 82
     CAPATH              = 10097   // CURLOPTTYPE_STRINGPOINT + 97, CA 证书目录
+    // ⚠ 只列**规范名**：libcurl 里 `CURLOPT_ENCODING` 就是 `CURLOPT_ACCEPT_ENCODING` 的
+    //   `#define` 别名（同一个 10102）⇒ 再列一条 ENCODING 会被编译器判「enum 值重复」✗
+    //   （2026-11-15：删掉那条别名，全仓只有这里用规范名，行为不变 ✓）
     ACCEPT_ENCODING     = 10102   // CURLOPTTYPE_STRINGPOINT + 102
-    ENCODING            = 10102   // CURLOPT_ACCEPT_ENCODING 别名
     USERNAME            = 10173   // CURLOPTTYPE_STRINGPOINT + 173
     PASSWORD            = 10174   // CURLOPTTYPE_STRINGPOINT + 174
 
@@ -184,8 +186,9 @@ export enum Opt {
 // 每个 enum 值 = TYPE + 序号（编译器不支持 enum 表达式，此处使用计算后的十六进制）
 export enum Info {
     EFFECTIVE_URL       = 0x100001  // CURLINFO_STRING + 1, 最终 URL
+    // ⚠ 同理只留规范名：`CURLINFO_HTTP_CODE` 是 `CURLINFO_RESPONSE_CODE` 的别名（都是 0x200002）
+    //   2026-11-15 删掉重复的 HTTP_CODE 那一条（代码里一律用 RESPONSE_CODE ✓）
     RESPONSE_CODE       = 0x200002  // CURLINFO_LONG   + 2, HTTP 响应码
-    HTTP_CODE           = 0x200002  // 同 RESPONSE_CODE（已弃用别名）
     TOTAL_TIME          = 0x300003  // CURLINFO_DOUBLE + 3, 总耗时
     NAMELOOKUP_TIME     = 0x300004  // CURLINFO_DOUBLE + 4, DNS 解析时间
     CONNECT_TIME        = 0x300005  // CURLINFO_DOUBLE + 5, 连接时间
