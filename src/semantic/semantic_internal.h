@@ -241,6 +241,11 @@ TypeInfo* infer_return_type_from_body(Semantic* s, Ast* body);
 //   同时也覆盖**可空值**（`int?`/`string?` 直传非可空 native 形参 = 盲转遇 null ⇒ 段错误 ✗）
 int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKind expected,
                               const char* callee_desc, int arg_index);
+// ★ 2026-11-15（WARN_ITER_MUTATE）：容器遍历（`for 容器 to x`）的循环体里，
+//   对**同一个变量**做结构性修改（add/insert/remove/clear/pop/sort/set…，字典还包括
+//   `容器[k] = v`）⇒ 警告。实测会静默跳过元素/键，或"边加边遍历"。
+//   `is_dict` = 1 时把索引赋值也算作结构性修改（数组的 `arr[i] = v` 不算）。
+void semantic_check_iter_mutation(const char* container_name, Ast* body, int is_dict);
 // 约束名 → 内建具体类型 kind（`[T: string]` 这类；不是具体类型名 ⇒ TYPE_UNKNOWN，走 face 那条路 ✓）
 TypeKind semantic_constraint_builtin_kind(const char* name);
 // ★ 2026-11-07：校验泛型 struct 的类型实参是否满足声明处的约束（new 实例化用）

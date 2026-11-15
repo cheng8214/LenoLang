@@ -656,6 +656,9 @@
                 }
                 if (stt) type_free(stt);
             }
+            // ★ 2026-11-15（WARN_ITER_MUTATE）：被遍历对象是不是 Dict（决定"索引赋值"算不算
+            //   结构性修改 —— 数组 `arr[i] = v` 是改元素，字典 `d[k] = v` 是加键）
+            int _iter_is_dict = 0;
             if (ast->u.for_.end) {
                 TypeInfo* et = infer_expr_type(s, ast->u.for_.end);
                 // ★ 2026-11-09：容器遍历（`for 集合 to 元素`，AST 里 start==NULL）与数字区间
@@ -663,6 +666,7 @@
                 //   （不再是"静默 0 次"），所以这里不能再说"一次都不执行"（那是旧口径 ✗）。
                 //   判据只看**静态**类型：`Array[T]?` / `Dict?`（nullable）或 null 字面量。
                 int is_container_loop = (ast->u.for_.start == NULL);
+                if (is_container_loop && et && et->kind == TYPE_DICT) _iter_is_dict = 1;
                 if (is_container_loop && et && (et->kind == TYPE_NULL || et->nullable)) {
                     warning_add_at_fmt(WARN_FOR_EMPTY_RANGE, ast->line, ast->column,
                         "for 的遍历对象是 '%s'（null 或可空类型）⇒ 运行时会报错"
@@ -801,6 +805,18 @@
                         }
                         idx_sym->is_in_loop = 1;
                     }
+                }
+
+                // ★ 2026-11-15（WARN_ITER_MUTATE）：`for 容器 to x { 容器.remove(...) }`
+                //   会**跳过**下一个元素/键（遍历按下标推进），字典还会"边加边遍历"。
+                //   实测零诊断 ⇒ 补一条警告（只认同一个变量名的结构性修改，少报不误报）。
+                //   ⚠ 必须在 **visit(body) 之前**扫：语义阶段会把 `arr.add(…)` 这种
+                //     "变量当模块名"的 MODULE_CALL **就地改写成 AST_CALL**（见 visit_module.inc），
+                //     改完再扫就认不出接收者了（第一版就是在后面扫、结果一条都没报 ✗）。
+                if (ast->u.for_.start == NULL && ast->u.for_.end &&
+                    ast->u.for_.end->kind == AST_VAR && ast->u.for_.end->u.var.name) {
+                    semantic_check_iter_mutation(ast->u.for_.end->u.var.name,
+                                                 ast->u.for_.body, _iter_is_dict);
                 }
 
                 if (ast->u.for_.body->kind == AST_BLOCK) {

@@ -2036,6 +2036,196 @@ void semantic_check_struct_type_arg_constraint(const char* struct_name, const ch
 }
 
 // ============================================================================
+// 遍历中修改容器（WARN_ITER_MUTATE，2026-11-15）
+// ----------------------------------------------------------------------------
+// 实测（都在 build/leno.exe 上跑过）：
+//   · `for a to v { a.remove(...) }` —— [1,2,3,4,5] 删掉 2 之后，**3 再也不会被访问**
+//     （遍历按"当前下标 +1"推进，删除把后面的元素整体前移 ⇒ 跳过一位）
+//   · `for d to k { d.remove(k) }` —— 同样跳键（{"a","b","c"} 只删掉 a、b，c 留在里面）
+//   · `for d to k { d["x"+…] = 1 }` —— **边加边遍历**（实测循环了 11 次、字典涨到 11 个键）
+// 三者在编译期一声不吭，症状是"循环少跑一轮 / 结果看着像数据不全"，极难倒查 ✗
+//
+// 判据刻意**收窄**（少报不误报）：
+//   · 只认"**同一个变量名**"的容器的**结构性**修改（增 / 删 / 清 / 排序）；
+//   · `arr[i] = v`（改元素）、`s.field = v`（改字段）**都不报**；
+//   · 只下探语句层（block / if / while / for / switch / try），**不进** lambda 与函数体
+//     （那里可能是"稍后再改"，报了就是噪音）。
+// ============================================================================
+static int iter_mut_is_structural(const char* name) {
+    static const char* const kNames[] = {
+        "add", "insert", "remove", "clear", "pop", "sort", "set", "setdefault"
+    };
+    for (size_t i = 0; i < sizeof(kNames) / sizeof(kNames[0]); i++) {
+        if (strcmp(name, kNames[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static void iter_mut_scan_expr(Ast* e, const char* cname, int is_dict);
+static void iter_mut_scan_stmt(Ast* st, const char* cname, int is_dict);
+
+static void iter_mut_warn(Ast* at, const char* cname, const char* what) {
+    warning_add_at_fmt(WARN_ITER_MUTATE, at->line, at->column,
+        "for 循环体里对正在遍历的容器 '%s' 做了**结构性修改**（%s）—— "
+        "遍历按下标推进，删除会**跳过**下一个元素/键，新增会出现\"边加边遍历\"；"
+        "请先把要删的键/元素收集到临时数组，循环结束后再统一处理",
+        cname, what);
+}
+
+static void iter_mut_scan_expr(Ast* e, const char* cname, int is_dict) {
+    if (!e) return;
+    switch (e->kind) {
+        case AST_CALL:
+            // 实例方法：`容器.remove(...)`（callee 是字段访问，obj 是变量）
+            if (e->u.call.callee && e->u.call.callee->kind == AST_FIELD_ACCESS) {
+                Ast* obj = e->u.call.callee->u.field_access.obj;
+                const char* fn = e->u.call.callee->u.field_access.field_name;
+                if (obj && obj->kind == AST_VAR && obj->u.var.name && fn &&
+                    strcmp(obj->u.var.name, cname) == 0 && iter_mut_is_structural(fn)) {
+                    iter_mut_warn(e, cname, fn);
+                }
+            }
+            for (int i = 0; i < e->u.call.args.count; i++) {
+                iter_mut_scan_expr(e->u.call.args.items[i], cname, is_dict);
+            }
+            return;
+        case AST_MODULE_CALL: {
+            // ⚠ 两种形状都要认：
+            //   ① `容器.remove(...)`（接收者是**变量**）在解析阶段就是 AST_MODULE_CALL，
+            //      `module_name` 就是那个变量名、接收者**不占实参位**（见 parser_expr.c 的
+            //      parse_dot：变量方法调用"统一创建为 MODULE_CALL，由语义阶段确定具体类型"）；
+            //   ② 真模块调用 `arrays.remove(容器, …)`（接收者在第 0 个实参）。
+            if (iter_mut_is_structural(e->u.module_call.method_name)) {
+                const char* mn = e->u.module_call.module_name;
+                int hit = 0;
+                if (mn && strcmp(mn, cname) == 0) {
+                    hit = 1;
+                } else if (e->u.module_call.args.count > 0) {
+                    Ast* a0 = e->u.module_call.args.items[0];
+                    if (a0 && a0->kind == AST_VAR && a0->u.var.name &&
+                        strcmp(a0->u.var.name, cname) == 0) {
+                        hit = 1;
+                    }
+                }
+                if (hit) iter_mut_warn(e, cname, e->u.module_call.method_name);
+            }
+            for (int i = 0; i < e->u.module_call.args.count; i++) {
+                iter_mut_scan_expr(e->u.module_call.args.items[i], cname, is_dict);
+            }
+            return;
+        }
+        case AST_BINOP:
+            iter_mut_scan_expr(e->u.binop.l, cname, is_dict);
+            iter_mut_scan_expr(e->u.binop.r, cname, is_dict);
+            return;
+        case AST_UNARY:
+            iter_mut_scan_expr(e->u.unary.operand, cname, is_dict);
+            return;
+        case AST_INDEX: {
+            // ⚠ 这里**只下探、不报警**：`d["k"]` 绝大多数是**读**（`_str(d[k])`）。
+            //   字典加键只在"赋值目标"位置才算结构性修改 ⇒ 见 AST_ASSIGN 那两支。
+            iter_mut_scan_expr(e->u.index.obj, cname, is_dict);
+            iter_mut_scan_expr(e->u.index.index, cname, is_dict);
+            return;
+        }
+        case AST_INDEX_ASSIGN: {
+            Ast* obj = e->u.index_assign.obj;
+            if (is_dict && obj && obj->kind == AST_VAR && obj->u.var.name &&
+                strcmp(obj->u.var.name, cname) == 0) {
+                iter_mut_warn(e, cname, "字典新增键");
+            }
+            iter_mut_scan_expr(e->u.index_assign.value, cname, is_dict);
+            return;
+        }
+        case AST_ASSIGN: {
+            // `d["k"] = v`（字典加键）在"表达式语句"里就是 AST_EXPR_STMT → AST_ASSIGN，
+            //   目标在 targets[0]（AST_INDEX）⇒ 要单独判"目标"，**读**不报警。
+            for (int i = 0; i < e->u.assign.name_count; i++) {
+                Ast* tgt = e->u.assign.targets ? e->u.assign.targets[i] : NULL;
+                if (is_dict && tgt && tgt->kind == AST_INDEX && tgt->u.index.obj &&
+                    tgt->u.index.obj->kind == AST_VAR && tgt->u.index.obj->u.var.name &&
+                    strcmp(tgt->u.index.obj->u.var.name, cname) == 0) {
+                    iter_mut_warn(tgt, cname, "字典新增键");
+                }
+                iter_mut_scan_expr(tgt, cname, is_dict);
+            }
+            iter_mut_scan_expr(e->u.assign.value, cname, is_dict);
+            return;
+        }
+        case AST_TYPE_CHECK:
+            iter_mut_scan_expr(e->u.type_check.expr, cname, is_dict);
+            return;
+        default:
+            return;
+    }
+}
+
+static void iter_mut_scan_stmt(Ast* st, const char* cname, int is_dict) {
+    if (!st) return;
+    switch (st->kind) {
+        case AST_BLOCK:
+            for (int i = 0; i < st->u.block.count; i++) {
+                iter_mut_scan_stmt(st->u.block.items[i], cname, is_dict);
+            }
+            return;
+        case AST_IF:
+            iter_mut_scan_expr(st->u.if_.cond, cname, is_dict);
+            iter_mut_scan_stmt(st->u.if_.then, cname, is_dict);
+            iter_mut_scan_stmt(st->u.if_.else_, cname, is_dict);
+            return;
+        case AST_WHILE:
+            iter_mut_scan_expr(st->u.while_.cond, cname, is_dict);
+            iter_mut_scan_stmt(st->u.while_.body, cname, is_dict);
+            return;
+        case AST_FOR:
+            iter_mut_scan_stmt(st->u.for_.body, cname, is_dict);
+            return;
+        case AST_SWITCH:
+            for (int i = 0; i < st->u.switch_.case_count; i++) {
+                iter_mut_scan_stmt(st->u.switch_.cases[i].body, cname, is_dict);
+            }
+            iter_mut_scan_stmt(st->u.switch_.default_body, cname, is_dict);
+            return;
+        case AST_TRY:
+            iter_mut_scan_stmt(st->u.try_.try_body, cname, is_dict);
+            iter_mut_scan_stmt(st->u.try_.catch_body, cname, is_dict);
+            iter_mut_scan_stmt(st->u.try_.finally_body, cname, is_dict);
+            return;
+        case AST_EXPR_STMT:
+            iter_mut_scan_expr(st->u.expr_stmt.expr, cname, is_dict);
+            return;
+        case AST_VAR_DECL:
+            iter_mut_scan_expr(st->u.var_decl.init, cname, is_dict);
+            return;
+        case AST_ASSIGN:
+            // 交给表达式侧的统一实现（它同时处理"目标里带字典下标"的那种）
+            iter_mut_scan_expr(st, cname, is_dict);
+            return;
+        case AST_COMPOUND_ASSIGN:
+            iter_mut_scan_expr(st->u.compound_assign.value, cname, is_dict);
+            return;
+        case AST_INDEX_ASSIGN:
+            iter_mut_scan_expr(st, cname, is_dict);
+            return;
+        case AST_RETURN:
+            iter_mut_scan_expr(st->u.ret, cname, is_dict);
+            return;
+        case AST_THROW:
+            iter_mut_scan_expr(st->u.throw_.expr, cname, is_dict);
+            return;
+        default:
+            return;   // ⚠ 刻意不下探 FUNC_DEF / 其它：lambda 里可能是"稍后再改"
+    }
+}
+
+// 对外入口：容器遍历（`for 容器 to x`）时检查循环体里有没有对**同一个变量**的结构性修改。
+//   is_dict = 1 时把"索引赋值"也当作结构性修改（字典加键）；数组的 `arr[i]=v` 不报。
+void semantic_check_iter_mutation(const char* container_name, Ast* body, int is_dict) {
+    if (!container_name || !body) return;
+    iter_mut_scan_stmt(body, container_name, is_dict);
+}
+
+// ============================================================================
 // 泛型参数 → native 形参：**两段式需求推断**（B 方案，2026-10-02）
 // ----------------------------------------------------------------------------
 // 为什么不干脆在 `type_is_compatible` 里全局收紧 `source == GENERIC_PARAM`：

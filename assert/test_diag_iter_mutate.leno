@@ -1,0 +1,118 @@
+// test_diag_iter_mutate.leno —— 遍历中**结构性修改**正在遍历的容器必须给警告（2026-11-15）
+//
+// 背景（压测实录，都在 build/leno.exe 上跑过）：
+//   ① `for a to v { a.remove(...) }` —— [1,2,3,4,5] 删掉 2 之后，**3 再也不会被访问**
+//   ② `for d to k { d.remove(k) }` —— {"a","b","c"} 只删掉 a、b，c 留在里面
+//   ③ `for d to k { d["x" + k] = 2 }` —— **永不结束**（边加边遍历，实测 20s 超时被 kill）
+// 三者编译期一声不吭，症状是"循环少跑一轮 / 结果像数据不全 / 卡死"。
+//
+// 判据：结构性修改（add/insert/remove/clear/pop/sort/set，字典还包括 `d[k] = v`）⇒ 警告；
+//      只改元素（`arr[i] = v`）、只读（`_str(d[k])`）、先收集后删 ⇒ **不许**误报。
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_diag_iter_mutate")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ---- ① 数组遍历中 remove（警告落在 remove 那一行）----
+    var arrRm = dirs.join(work, "arr_remove.leno")
+    files.write(arrRm, @"main() {
+    Array[int] a = [1, 2, 3, 4, 5]
+    for a to v {
+        if v == 2 { a.remove(a.index_of(v)) }
+    }
+    print(_str(a.len()))
+}
+")
+    var out1 = ce.expect_warning(arrRm, "数组遍历中 remove => 警告",
+        "遍历中修改容器", 4)
+    assert_true(strings.has(out1, "容器 'a'"), "警告要说是哪个容器；输出=" + out1)
+
+    // ---- ② 字典遍历中 remove ----
+    var dictRm = dirs.join(work, "dict_remove.leno")
+    files.write(dictRm, @"main() {
+    Dict[string, int] d = {""a"": 1, ""b"": 2, ""c"": 3}
+    for d to k {
+        d.remove(k)
+    }
+    print(_str(d.len()))
+}
+")
+    ce.expect_warning(dictRm, "字典遍历中 remove => 警告",
+        "遍历中修改容器", 4)
+
+    // ---- ③ 字典遍历中加键（实测会永不结束）----
+    var dictAdd = dirs.join(work, "dict_add.leno")
+    files.write(dictAdd, @"main() {
+    Dict[string, int] d = {""a"": 1}
+    for d to k {
+        d[""x"" + k] = 2
+        if d.len() > 10 { break }    // 护栏：真跑起来会**永不结束**（边加边遍历）
+    }
+    print(_str(d.len()))
+}
+")
+    var out3 = ce.expect_warning(dictAdd, "字典遍历中加键 => 警告",
+        "字典新增键", 4)
+    assert_true(not strings.has(out3, "结构性修改（remove）"),
+        "加键的文案要独立于删除；输出=" + out3)
+
+    // ---- ④ 模块式 arrays.remove(容器, …) ----
+    var modRm = dirs.join(work, "module_remove.leno")
+    files.write(modRm, @"import arrays
+
+main() {
+    Array[int] a = [1, 2, 3]
+    for a to v {
+        arrays.remove(a, 0)
+    }
+    print(_str(a.len()))
+}
+")
+    ce.expect_warning(modRm, "模块式 arrays.remove => 警告",
+        "遍历中修改容器", 6)
+
+    // ---- ⑤ 防误报：只改元素 / 只读 / 先收集后删 ----
+    var okCase = dirs.join(work, "iter_mutate_ok.leno")
+    files.write(okCase, @"main() {
+    Array[int] a = [1, 2, 3]
+    for a to v {
+        a[v - 1] = v * 10
+    }
+    Dict[string, int] d = {""a"": 1, ""b"": 2}
+    for d to k {
+        print(_str(k) + ""="" + _str(d[k]))
+    }
+    Array[int] toDel = []
+    for a to x {
+        if x > 10 { toDel.add(x) }
+    }
+    for toDel to y {
+        a.remove(a.index_of(y))
+    }
+    print(_str(a.len()))
+}
+")
+    var out5 = ce.expect_ok(okCase, "改元素 / 只读 / 收集后删（防误报）", "1")
+    ce.expect_no_warning(out5, "改元素不该报", "遍历中修改容器")
+
+    // ---- ⑥ 遍历别的容器时改这个容器：不报（不是同一个变量名）----
+    var otherCase = dirs.join(work, "iter_other.leno")
+    files.write(otherCase, @"main() {
+    Array[int] a = [1, 2, 3]
+    Array[int] b = []
+    for a to v {
+        b.add(v * 2)
+    }
+    print(_str(b.len()))
+}
+")
+    var out6 = ce.expect_ok(otherCase, "遍历 a 时改 b（防误报）", "3")
+    ce.expect_no_warning(out6, "改别的容器不该报", "遍历中修改容器")
+
+    print("test_diag_iter_mutate passed（数组/字典/模块式 + 三组防误报）")
+}

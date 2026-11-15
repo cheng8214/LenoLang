@@ -603,6 +603,7 @@ void warning_print_all(void) {
             case WARN_DEFER_LATE_WRITE:      type_str = "defer后改值"; break;
             case WARN_DUP_ENUM_VALUE:        type_str = "enum值重复"; break;
             case WARN_FORMAT_SPEC:           type_str = "格式串与实参不匹配"; break;
+            case WARN_ITER_MUTATE:           type_str = "遍历中修改容器"; break;
             // （原 WARN_EMPTY_CATCH / WARN_IMPOSSIBLE_CAST 已升为错误 ⇒ 类别名移入消息前缀 ✓）
             default: break;
         }
