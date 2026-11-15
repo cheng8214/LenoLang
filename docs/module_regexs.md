@@ -445,7 +445,8 @@ func parse_date(string date_str):Dict {
 
 main() {
     var date = parse_date("2024-05-28")
-    // ⚠ 直接 `print(date)` 只会显示 `<object>`（Dict 的打印就是这样）⇒ 取值打印 ✓
+    // `print(date)` 现在会完整展开（`{year: 2024, month: 5, day: 28}`）；
+    // 单取字段仍更直观 ⇒ 按需取值打印 ✓
     print(date.get("year"))    // 2024
     print(date.get("month"))   // 5
     print(date.get("day"))     // 28

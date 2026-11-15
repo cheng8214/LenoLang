@@ -70,6 +70,11 @@ print(type(add))        // "func"
 print(type(99999999999999999999))   // "int"
 ```
 
+> ⚠ **自引用容器**（`Dict[string,any] d; d["self"] = d`、`Array[any] a; a.add(a)`）：
+> `type()` 靠递归推断元素类型 ⇒ 成环时**抛错**
+> （`type() 失败：嵌套超过 512 层（容器可能存在循环引用）`），不再栈溢出崩溃（2026-11-16 修）。
+> 同一族保护也在 `.copy()` 深拷贝、`print()` / `_str()`（后两者是**地址栈**环检测）。
+
 ### 嵌套类型推断
 
 ```leno
@@ -297,12 +302,22 @@ print(_str(true))       // "true"
 print(_str(null))       // "null"
 ```
 
-**注意**：其他对象类型会返回类型名：
+**注意**：容器 / struct / 异常对象都会**展开成正经文本**（与 `print` / `$"{x}"` / 字符串拼接
+同一口径，走 `value_to_string`）：
 
 ```leno
 var arr = [1, 2, 3]
-print(_str(arr))        // "<object>"（数组转字符串显示为对象类型）
+print(_str(arr))        // "[1, 2, 3]"   ⚠ 2026-10-07 前这里是 "<object>"（B4，已修）
+
+struct P { int x = 1 }
+print(_str(new P()))    // "P{x=1}"
+print("v=" + new P())   // "v=P{x=1}"
+
+try { var _z = 1 / 0 } catch e { print(_str(e)) }   // 异常对象 ⇒ 只给 msg 文本（不是 "<object>"）
 ```
+
+> ⚠ 自引用容器（`d["self"] = d`）会让展开**无限递归** ⇒ 命中环时抛错
+> （`转字符串失败：检测到循环引用…`）并给占位 `"..."`（2026-11-16 修；此前栈溢出崩溃）。
 
 ---
 
@@ -485,7 +500,7 @@ func process(var x) {
 process(42)         // 整数: 42
 process("100")      // 从字符串转换: 100
 process("abc")      // 无法转换为整数
-process([1, 2])     // 其他类型: <object>
+process([1, 2])     // 其他类型: [1, 2]     （容器会展开，不是 "<object>"）
 ```
 
 ### 场景 2：处理 any 参数
@@ -532,8 +547,8 @@ func debug(var value) {
 }
 
 debug(123)              // [DEBUG] 类型: int, 值: 123
-debug([1, 2, 3])        // [DEBUG] 类型: Array[int], 值: <object>
-debug({"a": 1})         // [DEBUG] 类型: Dict[string, int], 值: <object>
+debug([1, 2, 3])        // [DEBUG] 类型: Array[int], 值: [1, 2, 3]
+debug({"a": 1})         // [DEBUG] 类型: Dict[string, int], 值: {a: 1}
 ```
 
 ### 场景 2：类型检查辅助

@@ -2359,8 +2359,29 @@ void native_throw_error(const char* msg) {
 // 前向声明：结构体拷贝方法（在 structs.c 中定义）
 extern Value struct_copy_recursive(ObjStruct* source);
 
+// 深拷贝的嵌套深度保护（2026-11-16）
+//   `Array` / `Dict` / `struct` 都能**自引用**（`Node? next = null`、`arr.add(arr)`），
+//   一旦构造成环，深拷贝就是无限递归 —— 实测 `Node a; a.next = a; a.copy()` 与
+//   `Array[any] a; a.add(a); a.copy()` 都会栈溢出崩溃（0xC00000FD，try/catch 接不住）。
+//   口径与 jsons.encode 一致（512 层）：超限**明确报错**，不静默返回半截数据。
+#define VALUE_COPY_MAX_DEPTH 512
+static THREAD_LOCAL int g_value_copy_depth = 0;
+
+static Value value_copy_impl(Value v);
+
 // 深拷贝一个 Value（递归处理数组、字典、结构体等引用类型）
 Value value_copy(Value v) {
+    if (g_value_copy_depth >= VALUE_COPY_MAX_DEPTH) {
+        native_throw_error("深拷贝失败：嵌套超过 512 层（结构可能存在循环引用）");
+        return val_null();
+    }
+    g_value_copy_depth++;
+    Value result = value_copy_impl(v);
+    g_value_copy_depth--;
+    return result;
+}
+
+static Value value_copy_impl(Value v) {
     if (val_is_obj(v)) {
         Object* obj = val_as_obj(v);
         switch (obj->type) {

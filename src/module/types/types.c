@@ -30,9 +30,40 @@ static TypeKind get_value_type(Value value) {
 // 前向声明 infer_dict_type（供 infer_array_type 调用）
 static ObjString* infer_dict_type(ObjDict* dict);
 
+// 类型推断的嵌套深度保护（2026-11-16）
+//   容器可以**自引用**（`Dict[string,any] d; d["self"] = d`、`Array[any] a; a.add(a)`），
+//   而 type() 靠递归推断元素类型 ⇒ 成环时无限递归。实测 `type(d)`（环字典）栈溢出崩溃
+//   （0xC00000FD，try/catch 接不住）。口径与 jsons.encode / 深拷贝 / print 一致（512 层）：
+//   超限**明确报错**，不静默降级成 "any"。
+#define TYPE_INFER_MAX_DEPTH 512
+static _Thread_local int g_type_infer_depth = 0;
+
+static int type_infer_enter(void) {
+    if (g_type_infer_depth >= TYPE_INFER_MAX_DEPTH) {
+        native_throw_error("type() 失败：嵌套超过 512 层（容器可能存在循环引用）");
+        return 0;
+    }
+    g_type_infer_depth++;
+    return 1;
+}
+
+static void type_infer_leave(void) {
+    g_type_infer_depth--;
+}
+
+static ObjString* infer_array_type_internal(ObjArray* arr);
+
+// 带深度保护的入口（递归调用点都走这里）
+static ObjString* infer_array_type(ObjArray* arr) {
+    if (!type_infer_enter()) return str_copy("any", 3);   // 占位；异常会抛，调用方拿不到
+    ObjString* result = infer_array_type_internal(arr);
+    type_infer_leave();
+    return result;
+}
+
 // 辅助函数：递归推断数组类型并构建泛型格式字符串
 // 返回 Array[ElementType] 格式的类型字符串
-static ObjString* infer_array_type(ObjArray* arr) {
+static ObjString* infer_array_type_internal(ObjArray* arr) {
     if (arr->count == 0) {
         // 空数组：优先使用 type_info（如果有）
         if (arr->type_info != NULL) {
@@ -494,7 +525,10 @@ mixed_type:
 }
 
 static ObjString* infer_dict_type(ObjDict* dict) {
-    return infer_dict_type_internal(dict);
+    if (!type_infer_enter()) return str_copy("any", 3);   // 占位；异常会抛
+    ObjString* result = infer_dict_type_internal(dict);
+    type_infer_leave();
+    return result;
 }
 
 // type(value) - 返回值的类型字符串

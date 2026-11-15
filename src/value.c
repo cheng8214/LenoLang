@@ -95,7 +95,61 @@ const char* val_to_string(Value v) {
 }
 
 // 将 Value 转换为动态分配的字符串（调用者需要 free）
+//
+// 嵌套深度保护（2026-11-16）
+//   `Array` / `Dict` / `struct` 都能**自引用**（`d["self"] = d`、`arr.add(arr)`），
+//   而本函数对容器是递归展开 ⇒ 成环时无限递归。实测 `Dict[string,any] d; d["self"] = d;
+//   _str(d)`（以及 `"" + d` 的字符串拼接路径）都会栈溢出崩溃（0xC00000FD，try/catch 接不住）。
+//   口径与 jsons.encode / 深拷贝 / print 一致（512 层）：超限**明确报错**并给占位串，
+//   不静默返回半截内容。
+#define VALUE_STR_MAX_DEPTH 512
+static THREAD_LOCAL int g_value_str_depth = 0;
+// 当前递归路径上的容器地址（**只**记路径 ⇒ 共享子对象不会被误判成环）
+static THREAD_LOCAL const void* g_value_str_stack[VALUE_STR_MAX_DEPTH + 1];
+// 一次顶层转换只报一次错（dict 分支是"先算长度、再拼接"的两遍结构，否则会报两次）
+static THREAD_LOCAL int g_value_str_reported = 0;
+
+static char* value_to_string_impl(Value v);
+
 char* value_to_string(Value v) {
+    int is_top = (g_value_str_depth == 0);
+    if (is_top) g_value_str_reported = 0;
+
+    // 只有容器会递归 ⇒ 只对它们压栈（字符串/数字不进栈）
+    const void* obj = NULL;
+    if (val_is_obj(v)) {
+        Object* o = val_as_obj(v);
+        if (o->type == OBJ_ARRAY || o->type == OBJ_DICT || o->type == OBJ_STRUCT) {
+            obj = (const void*)o;
+        }
+    }
+    if (obj) {
+        // 环检测优先：同一对象出现在自己的路径上 ⇒ 立刻收尾（合法深层嵌套不受影响）
+        for (int i = 0; i < g_value_str_depth; i++) {
+            if (g_value_str_stack[i] == obj) {
+                if (!g_value_str_reported) {
+                    g_value_str_reported = 1;
+                    native_throw_error("转字符串失败：检测到循环引用（同一个对象出现在自己的子树里）");
+                }
+                return strdup("...");
+            }
+        }
+        if (g_value_str_depth >= VALUE_STR_MAX_DEPTH) {
+            if (!g_value_str_reported) {
+                g_value_str_reported = 1;
+                native_throw_error("转字符串失败：嵌套超过 512 层（容器可能存在循环引用）");
+            }
+            return strdup("...");
+        }
+        g_value_str_stack[g_value_str_depth] = obj;
+    }
+    g_value_str_depth++;
+    char* result = value_to_string_impl(v);
+    g_value_str_depth--;
+    return result;
+}
+
+static char* value_to_string_impl(Value v) {
     char* result = NULL;
 
     switch (val_get_type(v)) {

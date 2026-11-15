@@ -7,6 +7,15 @@
 //
 // 修法：只跳过「确实落在数组部分」的 int 键（ik < asize 且 array[ik] 非 null），
 //   其余落到正常打印流程。
+//
+// ★ 2026-11-16 再修一处：io.c 的 print_dict_internal 里还留着「跳过**纯数字字符串**键」
+//   的遗留逻辑（第 8 条注释说的那段 array 循环已在 2026-10-24 删掉，这段只剩副作用）：
+//     print({"123": 1, "a": 2})  ⇒ {a: 2}      ← 静默丢键
+//     print({"": 5})             ⇒ {}          ← 空串循环 0 次 ⇒ 也被判"数字"丢掉
+//   而 `_str()` / `len()` / `keys()` / `jsons.encode` 都完整 ⇒ 只有 print 一条路丢数据。
+import "helpers/compiler.leno" as ce
+import dirs
+import files
 import strings
 
 main() {
@@ -57,4 +66,23 @@ main() {
 
     var i2 = {"a": 1, 0: 2, 100: 3}
     assert_eq(_str(i2), "{a: 1, 0: 2, 100: 3}")
+
+    // ⑥ print(dict) 的数字串键 / 空串键不能被静默丢掉（2026-11-16）
+    var j = {"123": 1, "a": 2}
+    assert_eq(_str(j), "{123: 1, a: 2}", "⑥ _str 完整（这条一直是好的）")
+    var k = {"": 5}
+    assert_eq(_str(k), "{: 5}", "⑥ _str 空串键（这条一直是好的）")
+
+    // print 走 io.c 的独立实现 ⇒ 必须单独跑子进程断言（套件里拿不到 stdout）
+    var work = dirs.join(_tmpdir(), "leno_dict_print_digits")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+    var fp = dirs.join(work, "d.leno")
+    files.write(fp, @"main() {
+    var d = {""123"": 1, ""2024"": 2, """": 3, ""x"": 4}
+    print(d)
+}
+")
+    ce.expect_ok(fp, "⑥ print 数字串键/空串键不丢", "{123: 1, 2024: 2, : 3, x: 4}")
+    dirs.delete(work)
 }

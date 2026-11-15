@@ -34,13 +34,49 @@ static void print_array_internal(ObjArray* arr);
 static void print_dict_internal(ObjDict* dict);
 static void print_struct_internal(ObjStruct* st);
 
+// 容器打印的嵌套深度保护（2026-11-16）
+//   struct 可以**自引用**（`Node? next = null`），一旦构造成环，`print(a)` 就是无限递归：
+//   实测未加保护时输出 200KB 以上的 `Node{v=1, next=Node{v=1, next=...` 后栈溢出崩溃
+//   （0xC00000FD，try/catch 接不住）。口径与 jsons.encode 一致（512 层），超限**明确报错**
+//   而不是静默截断 —— 静默截断正是本项目反复在修的那类问题。
+#define PRINT_MAX_DEPTH 512
+static _Thread_local int g_print_depth = 0;
+// 当前打印路径上的容器地址（**只**记路径，不是全局集合 ⇒ 共享子对象不会被误判成环）
+static _Thread_local const void* g_print_stack[PRINT_MAX_DEPTH + 1];
+
+// 进入容器打印：返回 1 表示可以打印，0 表示已命中环 / 超限（已登记异常 + 打印占位）
+static int print_enter_container(const void* obj) {
+    // 环检测优先：同一个对象出现在自己的打印路径上 ⇒ 立刻收尾。
+    //   这样 `Node a; a.next = a; print(a)` 只输出 `Node{v=1, next=<循环>}`，
+    //   而不是刷出 10KB 的 `Node{v=1, next=Node{...` 再报错。
+    for (int i = 0; i < g_print_depth; i++) {
+        if (g_print_stack[i] == obj) {
+            printf("<循环>");
+            native_throw_error("打印失败：检测到循环引用（同一个对象出现在自己的子树里）");
+            return 0;
+        }
+    }
+    if (g_print_depth >= PRINT_MAX_DEPTH) {
+        printf("<...>");            // 占位，避免输出到一半没有收尾
+        native_throw_error("打印失败：嵌套超过 512 层（结构可能存在循环引用）");
+        return 0;
+    }
+    g_print_stack[g_print_depth] = obj;
+    g_print_depth++;
+    return 1;
+}
+
+static void print_leave_container(void) {
+    g_print_depth--;
+}
+
 // 外部声明：tombstone 哨兵（线程局部存储，用于标识已删除的字典条目）
 extern _Thread_local ObjString* tombstone;
 
 // ★ 2026-11-10：带载荷 enum 的显示 —— `Msg{tag=0, p0=7, p1=null, p2=null}`
 //   ⇒ `Msg.a(7)`。签名遍历与 jsons 共用 `enum_sig_member_at`（leno_value.h）。
 //   签名缺失 / tag 越界 / 不是 int tag ⇒ 退回通用 struct 显示（宁可多暴露字段，不崩）。
-static void print_struct_internal(ObjStruct* st) {
+static void print_struct_internal_impl(ObjStruct* st) {
     ObjStructDef* def = st ? st->def : NULL;
     if (!def) {
         printf("<struct>");
@@ -72,6 +108,13 @@ static void print_struct_internal(ObjStruct* st) {
         print_value_quoted(st->field_values[i]);
     }
     printf("}");
+}
+
+// 带深度保护的 struct 打印（见文件上方 PRINT_MAX_DEPTH）
+static void print_struct_internal(ObjStruct* st) {
+    if (!print_enter_container(st)) return;
+    print_struct_internal_impl(st);
+    print_leave_container();
 }
 
 // 打印值（用于普通输出，字符串不加引号）
@@ -257,6 +300,7 @@ static void print_value_quoted(Value value) {
 }
 
 static void print_array_internal(ObjArray* arr) {
+    if (!print_enter_container(arr)) return;
     printf("[");
     for (int i = 0; i < arr->count; i++) {
         print_value_quoted(arr->elements[i]);
@@ -265,9 +309,11 @@ static void print_array_internal(ObjArray* arr) {
         }
     }
     printf("]");
+    print_leave_container();
 }
 
 static void print_dict_internal(ObjDict* dict) {
+    if (!print_enter_container(dict)) return;
     printf("{");
     int printed = 0;
 
@@ -288,18 +334,14 @@ static void print_dict_internal(ObjDict* dict) {
         //     而 order 数组本来就是**插入序**（len() / keys() 都靠它，实测完整）
         //     ⇒ 直接以 order 为准打印：既不丢键，顺序也回到插入序 ✓
         //     （下面那段 array 循环已删，见注释）
-        // 跳过纯数字字符串键
-        if (val_is_obj(order_key) && val_as_obj(order_key)->type == OBJ_STRING) {
-            ObjString* ks = (ObjString*)val_as_obj(order_key);
-            int is_numeric = 1;
-            for (int j = 0; j < ks->len; j++) {
-                if (ks->chars[j] < '0' || ks->chars[j] > '9') {
-                    is_numeric = 0;
-                    break;
-                }
-            }
-            if (is_numeric) continue;
-        }
+        //
+        // ★ 2026-11-16：删掉"跳过纯数字字符串键"的遗留逻辑。
+        //   它原本配合上面那段 array 循环（把 int 键当数组下标打，怕重复），
+        //   但那段循环已经在 2026-10-24 删掉 ⇒ 这段只剩副作用：
+        //   `print({"123": 1, "a": 2})` ⇒ `{a: 2}`（**静默丢键**），
+        //   `print({"": 5})` ⇒ `{}`（空串循环 0 次 ⇒ is_numeric 仍为 1 ⇒ 也被丢）。
+        //   而 `len()` / `keys()` / `jsons.encode` 都完整 ⇒ 只有 print 一条路丢数据，
+        //   调试时看到 `{}` 完全误导。现在一律照 order 全打（int 键也是 `1: 100`）。
 
         if (printed > 0) {
             printf(", ");
@@ -326,6 +368,7 @@ static void print_dict_internal(ObjDict* dict) {
     //   ⚠ 如果以后有"只写 array 不写 order"的路径，这里会漏 —— 但那种路径本身就是 bug。
 
     printf("}");
+    print_leave_container();
 }
 
 // 核心：打印值到 stdout（带空格分隔，线程安全）

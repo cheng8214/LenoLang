@@ -1,0 +1,79 @@
+// 自引用容器 / 结构：深拷贝、type()、_str()、print() 都必须**有界 + 报错**，不能栈溢出崩溃
+//   （2026-11-16）
+//
+// 修前实测（build\leno.exe，均为 0xC00000FD 栈溢出 —— try/catch 接不住）：
+//   · `Node a; a.next = a; a.copy()`                     ⇒ 崩溃
+//   · `print(a)`                                         ⇒ 刷出 200KB `Node{v=1, next=Node{...` 后崩溃
+//   · `Array[any] x; x.add(x); x.copy()`                 ⇒ 崩溃
+//   · `Dict[string,any] d; d["self"] = d; type(d)`       ⇒ 崩溃（infer_dict_type 递归）
+//   · 同上 `_str(d)`                                     ⇒ 崩溃（value_to_string 递归）
+//
+// 修后：print / _str 用**地址栈**检测环（命中同一个对象在自己的路径上 ⇒ 立刻报错，
+//   共享子对象不算）；深拷贝 / type 用 512 层上限兜底（与 jsons.encode 同口径）。
+import strings
+
+struct Node {
+    int v = 0
+    Node? next = null
+}
+
+main() {
+    // ① struct 环：copy 抛错
+    Node a = new Node(v = 1)
+    a.next = a
+    int copy_threw = 0
+    try { var _c = a.copy() } catch e { copy_threw += 1 }
+    assert_eq(copy_threw, 1, "① 环 struct 的 copy 必须抛错（不是崩溃）")
+
+    // ② struct 环：print 抛错
+    int print_threw = 0
+    try { print(a) } catch e { print_threw += 1 }
+    assert_eq(print_threw, 1, "② 环 struct 的 print 必须抛错")
+
+    // ③ struct 环：_str 抛错
+    int str_threw = 0
+    try { var _s = _str(a) } catch e { str_threw += 1 }
+    assert_eq(str_threw, 1, "③ 环 struct 的 _str 必须抛错")
+
+    // ④ Array[any] 自引用：copy 抛错
+    Array[any] arr = []
+    arr.add(1)
+    arr.add(arr)
+    int arr_threw = 0
+    try { var _c2 = arr.copy() } catch e { arr_threw += 1 }
+    assert_eq(arr_threw, 1, "④ 自引用数组的 copy 必须抛错")
+
+    // ⑤ Dict 自引用：copy / type / _str 都抛错
+    Dict[string, any] d = {}
+    d["self"] = d
+    int dcopy_threw = 0
+    try { var _c3 = d.copy() } catch e { dcopy_threw += 1 }
+    assert_eq(dcopy_threw, 1, "⑤ 自引用字典的 copy 必须抛错")
+    int dtype_threw = 0
+    try { var _t = type(d) } catch e { dtype_threw += 1 }
+    assert_eq(dtype_threw, 1, "⑤ 自引用字典的 type 必须抛错")
+    int dstr_threw = 0
+    try { var _s2 = _str(d) } catch e { dstr_threw += 1 }
+    assert_eq(dstr_threw, 1, "⑤ 自引用字典的 _str 必须抛错")
+
+    // ⑥ 合法长链（20 层）：copy / _str / type 都要正常（不误伤）
+    Node head = new Node(v = 0)
+    Node cur = head
+    for 1 : 20 to i {
+        Node n = new Node(v = i)
+        cur.next = n
+        cur = n
+    }
+    var cp = head.copy()
+    assert_eq(cp.v, 0, "⑥ 长链 copy 正常")
+    assert_eq(cp.next.v, 1, "⑥ 长链 copy 深拷贝了第 2 个节点")
+    assert_eq(strings.has(_str(head), "Node{"), true, "⑥ 长链 _str 正常")
+    assert_eq(type(head), "Node", "⑥ 长链 type 正常")
+
+    // ⑦ 共享子对象（DAG，不是环）不能被误判
+    Node shared = new Node(v = 99)
+    Array[Node] kids = [shared, shared]
+    assert_eq(strings.has(_str(kids), "99"), true, "⑦ 共享子对象不算环")
+
+    print("test_struct_cycle_guard passed")
+}
