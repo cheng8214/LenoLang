@@ -143,6 +143,13 @@ void emit_type_spec_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int line) 
     emit_type_spec(gen, t, line);
 }
 
+// ★ 2026-11-15：只写规格本身（不带指令头）。OP_STRUCT_DEF 的 ARRAY/DICT 字段用，
+//   让运行时拿到**完整声明类型树**（容器套容器）；格式与上面同一份实现，读取侧长度用
+//   vm.c 的 type_spec_size（自定界）⇒ 不会出现"第二份格式认知"。
+void cg_emit_type_spec(CodeGen* gen, TypeInfo* t, int line) {
+    emit_type_spec(gen, t, line);
+}
+
 // Ptr[T] 的元素类型标注 —— **唯一发射点**（var_decl / 变量赋值 / 字段 / 返回 / 实参都走它）。
 //   标量元素 → OP_SET_PTR_ELEM_TYPE（紧凑：一个 TypeKind，既有字节码不变）
 //   复合元素 → OP_SET_PTR_SPEC（带完整类型子树：`Ptr[Ptr[u8]]` 的第二层要留住）

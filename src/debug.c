@@ -253,6 +253,13 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
                         if (dbg_take_u8(chunk, base, &p, &over)) dbg_take_u16(chunk, base, &p, &over);
                     }
                 }
+                // ★ 2026-11-15：ARRAY / DICT 字段的递归声明类型规格（自定界；只算长度跳过）
+                if (ftype == TYPE_ARRAY || ftype == TYPE_DICT) {
+                    int spec_len = type_spec_size_bounded(chunk->code + base + p,
+                                                          chunk->code + chunk->len);
+                    if (spec_len <= 0) over = 1;
+                    else p += spec_len;
+                }
                 if (dbg_take_u8(chunk, base, &p, &over)) dbg_take_u16(chunk, base, &p, &over);
             }
             for (int i = 0; i < methods; i++) {

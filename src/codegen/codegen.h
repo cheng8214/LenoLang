@@ -104,6 +104,11 @@ void emit_field_op(CodeGen* gen, OpCode op, int a, int b, int field_idx, int lin
 //   目前用于 OP_SET_PTR_SPEC（Ptr 元素类型是复合类型时，如 `Ptr[Ptr[u8]]`）。
 void emit_type_spec_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int line);
 
+// ★ 2026-11-15：单独写出一棵**自定界类型规格**（不带指令头）。
+//   `OP_STRUCT_DEF` 的 ARRAY / DICT 字段用它带"完整声明类型树"（容器套容器），
+//   供 `jsons.fill` 逐层转换。格式与 OP_TYPE_CHECK_SPEC 完全同一份（长度用 type_spec_size 算）。
+void cg_emit_type_spec(CodeGen* gen, TypeInfo* t, int line);
+
 // Ptr[T] 的元素类型标注（唯一发射点）：标量 → OP_SET_PTR_ELEM_TYPE，
 // 复合（Ptr/Array/Dict/Struct…）→ OP_SET_PTR_SPEC（带完整子树）。
 void emit_ptr_elem_annotation(CodeGen* gen, int reg, TypeInfo* elem, int line);

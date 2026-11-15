@@ -775,10 +775,115 @@ static Value json_coerce_dict_value(Value raw, TypeKind vtype, const char* vstru
     return json_coerce_to_elem(raw, vtype);
 }
 
+// ★ 2026-11-15：按字段的**完整声明类型树**递归转换（容器套容器）。
+//   规则与下面的单层版本完全同口径（能转就转、转不了 ⇒ null；键转不了 ⇒ 丢掉该项；
+//   `Array[any]` / `Dict[K,any]` 原样），只是逐层往下走：
+//   · `Array[Array[int]]`      ⇒ 内层元素也转（`[["1"]]` ⇒ `[[1]]`）
+//   · `Dict[K, Array[T]]`      ⇒ 值数组的元素也转
+//   · `Array[Dict[K, V]]`      ⇒ 元素字典的键/值也转（V 是 struct 时自动 `new` 并递归填）
+//   · `Dict[K, Dict[K2, V2]]`  ⇒ 内层字典的键/值也转
+//   不需要换对象时**返回原对象**（保持身份语义，与单层实现一致）。
+static Value json_coerce_by_meta(Value raw, const ContainerTypeMeta* m) {
+    if (!m || val_is_null(raw)) return raw;
+
+    switch (m->type) {
+        case TYPE_ARRAY: {
+            if (!val_is_obj(raw) || val_as_obj(raw)->type != OBJ_ARRAY) return val_null();
+            if (!m->element) return raw;
+            ObjArray* src = (ObjArray*)val_as_obj(raw);
+            int need = 0;
+            for (int i = 0; i < src->count; i++) {
+                Value c = json_coerce_by_meta(src->elements[i], m->element);
+                if (c != src->elements[i]) { need = 1; break; }
+            }
+            if (!need) return raw;      // 类型本来就对 ⇒ 不换对象
+            ObjArray* out = arr_new(src->count > 0 ? src->count : 1);
+            if (!out) return val_null();
+            Value ov = val_obj((Object*)out);
+            gc_push_root(&ov);
+            int n = 0;
+            for (int i = 0; i < src->count; i++) {
+                Value c = json_coerce_by_meta(src->elements[i], m->element);
+                gc_push_root(&c);
+                while (n >= out->capacity) {
+                    if (!arr_grow(out)) break;
+                }
+                if (n < out->capacity) arr_write(out, n++, c);
+                gc_pop_root();
+            }
+            out->count = n;
+            gc_pop_root();
+            return ov;
+        }
+        case TYPE_DICT: {
+            if (!val_is_obj(raw) || val_as_obj(raw)->type != OBJ_DICT) return val_null();
+            ObjDict* src = (ObjDict*)val_as_obj(raw);
+            TypeKind kk = m->key ? m->key->type : TYPE_UNKNOWN;
+            int key_scalar = (kk == TYPE_INT || kk == TYPE_FLOAT || kk == TYPE_BOOL);
+            int need = 0;
+            for (int i = 0; i < src->order_count && !need; i++) {
+                Value k = src->order[i];
+                if (val_is_null(k)) continue;
+                if (key_scalar && json_coerce_by_meta(k, m->key) != k) { need = 1; break; }
+                Value v = dict_get(src, k);
+                if (json_coerce_by_meta(v, m->value) != v) need = 1;
+            }
+            if (!need) return raw;
+            ObjDict* out = dict_new(src->order_count > 0 ? src->order_count : 1);
+            if (!out) return val_null();
+            Value ov = val_obj((Object*)out);
+            gc_push_root(&ov);
+            for (int i = 0; i < src->order_count; i++) {
+                Value k = src->order[i];
+                if (val_is_null(k)) continue;
+                Value ck = key_scalar ? json_coerce_by_meta(k, m->key) : k;
+                if (key_scalar && val_is_null(ck)) continue;   // 键转不了 ⇒ 丢掉该项
+                Value v = dict_get(src, k);
+                Value c = json_coerce_by_meta(v, m->value);
+                gc_push_root(&ck);
+                gc_push_root(&c);
+                dict_set(out, ck, c);
+                gc_pop_root();
+                gc_pop_root();
+            }
+            gc_pop_root();
+            return ov;
+        }
+        case TYPE_STRUCT:
+        case TYPE_FACE: {
+            if (!m->struct_name) return raw;
+            // 非对象 ⇒ 原样放入（宁可留个错类型，也不静默丢数据 —— 与数组元素路径同口径）
+            if (!val_is_obj(raw) || val_as_obj(raw)->type != OBJ_DICT) return raw;
+            ObjStruct* nested = native_struct_new(m->struct_name);
+            if (!nested) return val_null();
+            Value nv = val_obj((Object*)nested);
+            gc_push_root(&nv);                  // 递归里还会 gc_alloc
+            json_fill_struct(nested, (ObjDict*)val_as_obj(raw));
+            gc_pop_root();
+            return nv;
+        }
+        case TYPE_UNKNOWN:
+        case TYPE_INFER:
+        case TYPE_ANY:
+        case TYPE_NULL:
+        case TYPE_PTR:
+        case TYPE_PTR_GENERIC:
+            return raw;                         // 未记录 / 无约束 ⇒ 原样
+        default:
+            return json_coerce_to_elem(raw, m->type);
+    }
+}
+
 // 按字段**声明类型**把 JSON 值转成该字段可接受的值。
 //   转不了 ⇒ val_null()（调用方保留字段默认值，而不是塞个错类型进去）。
 static Value json_coerce_to_field(Value raw, StructFieldInfo* f) {
     if (val_is_null(raw) || !f) return val_null();
+
+    // ★ 2026-11-15：ARRAY / DICT 字段带了**完整声明类型树** ⇒ 递归转换（容器套容器）。
+    //   没有树时（未记录）继续走下面的单层分支。
+    if (f->container && (f->type == TYPE_ARRAY || f->type == TYPE_DICT)) {
+        return json_coerce_by_meta(raw, f->container);
+    }
 
     switch (f->type) {
         case TYPE_INT: {

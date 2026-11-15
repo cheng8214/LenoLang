@@ -602,6 +602,23 @@ typedef struct {
     int last_error;     // 最后一次错误码
 } ObjSocket;
 
+// ★ 2026-11-15：字段声明类型的**递归描述**（容器套容器用）。
+//   为什么需要：此前的元数据只记"外层容器的直接元素 / 值类型"（Array 的 element_type、
+//   Dict 的 dict_key_type / dict_value_type），再往里就不知道了 ⇒
+//   `Dict[string, Array[int]]` 里 `["1", 2]` 的 `"1"` 会留在声明为 int 的数组里、
+//   `Dict[string, Dict[string,int]]` 连外层都不校验（实测 `{"x":5}` 的 5 留在 Dict 字段里）✗
+//   —— 静态类型说谎、运行期静默错值，与本项目"要么报错要么警告"的口径冲突。
+//   现在每个 ARRAY / DICT 字段带一棵**声明类型树**（标量叶子 + 逐层容器），
+//   `jsons.fill` 按树递归转换。
+//   ⚠ 只在 ARRAY / DICT 字段上分配（其余字段为 NULL ⇒ jsons 走既有单层逻辑）。
+typedef struct ContainerTypeMeta {
+    TypeKind type;                      // 标量 / TYPE_ARRAY / TYPE_DICT / TYPE_STRUCT
+    char* struct_name;                  // TYPE_STRUCT 时（其余 NULL）
+    struct ContainerTypeMeta* element;  // TYPE_ARRAY 的元素
+    struct ContainerTypeMeta* key;      // TYPE_DICT 的键
+    struct ContainerTypeMeta* value;    // TYPE_DICT 的值
+} ContainerTypeMeta;
+
 // 结构体字段信息
 typedef struct {
     char* name;         // 字段名称
@@ -633,6 +650,10 @@ typedef struct {
     TypeKind dict_key_type;
     TypeKind dict_value_type;
     char* dict_value_struct_name;   // V 是 struct 时的类型名（其余 NULL）
+    // ★ 2026-11-15：ARRAY / DICT 字段的**完整声明类型树**（见上面 ContainerTypeMeta 的说明）。
+    //   非容器字段为 NULL；有了它 `jsons.fill` 才能按内层类型递归转换（容器套容器）。
+    //   生命周期：与 ObjStructDef 同寿（定义表是进程级的，不释放）。
+    ContainerTypeMeta* container;
     int nullable;       // 可空字段标记：1=Type?，0=Type
 } StructFieldInfo;
 
@@ -1691,6 +1712,10 @@ void struct_def_set_field(ObjStructDef* def, int index, const char* name, TypeKi
 void struct_def_set_field_dict_info(ObjStructDef* def, int index,
                                     TypeKind key_type, TypeKind value_type,
                                     const char* value_struct_name);
+
+// ★ 2026-11-15：设置 ARRAY / DICT 字段的**递归声明类型树**（jsons.fill 用）。
+//   传 NULL = 未记录（保持既有单层行为）。树的所有权归 ObjStructDef（调用方不要 free）。
+void struct_def_set_field_container(ObjStructDef* def, int index, ContainerTypeMeta* meta);
 
 // 创建结构体实例
 ObjStruct* struct_instance_new(ObjStructDef* def);

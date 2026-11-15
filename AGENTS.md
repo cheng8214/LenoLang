@@ -110,9 +110,9 @@ x.dur = _int(d.get("dur", "0"))
 > **容器字段按声明类型逐项转换**（2026-11-11 / 11-15 起）：`Array[T]` / `Dict[K,V]` 的元素
 > 按上表同口径转（`["1",2.9,true]` 填 `Array[int]` ⇒ `[1,2,1]`）；**转不了的值存 `null`**
 > （数组保长度、字典保键），字典的**键**转不了就丢掉该项。`Array[any]` / `Dict[K,any]` 才原样。
-> ⚠ **只转一层**：`Array[Array[int]]` / `Dict[K, Array[T]]` / `Array[Dict[K,V]]` 这类"容器套容器"
-> 只校验外层、内层原样（`Dict[K, Dict[K2,V2]]` 连外层都不校验）—— 内层若是数字字符串，
-> 填之前自己 `_int`（详见 `docs/module_jsons.md` 的那张表）。
+> ⚠ **容器套容器也递归**（2026-11-15 起）：`Array[Array[int]]` / `Dict[K, Array[T]]` /
+> `Array[Dict[K,V]]` / `Dict[K, Dict[K2,V2]]` 逐层按同口径转换（字节码 v3.2.42 起字段带
+> 完整声明类型树；序列化同步带）。内层写 `any` 仍原样（详见 `docs/module_jsons.md` 的表）。
 
 **能用字符串转数字**（`"269"` → `int 269`、`"8.5"` → `8.5`、`"1"` → `true`）——
 因为 **SQLite 的 `column_text` / CSV 的列全是字符串**。但反过来**不做**：

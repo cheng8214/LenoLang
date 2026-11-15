@@ -1635,6 +1635,39 @@ static inline const char* vm_typeinfo_to_generic_type_name(TypeInfo* type) {
     }
 }
 
+// ★ 2026-11-15：把 `OP_STRUCT_DEF` 里 ARRAY/DICT 字段的**类型规格**还原成声明类型树。
+//   规格格式与 OP_TYPE_CHECK_SPEC 完全同一份（kind u8；STRUCT/FACE/ENUM 跟 u16 名字常量；
+//   ARRAY 跟 1 个孩子；DICT 跟 K、V 两个孩子）⇒ 长度由 type_spec_size 算，不另写一份解析。
+//   树的用途：`jsons.fill` 按**内层**类型递归转换（容器套容器）。
+//   所有权归 ObjStructDef（定义表是进程级的，不释放）。
+static ContainerTypeMeta* vm_meta_from_spec(const uint8_t* spec, Chunk* chunk) {
+    if (!spec) return NULL;
+    TypeKind k = (TypeKind)spec[0];
+    ContainerTypeMeta* m = (ContainerTypeMeta*)calloc(1, sizeof(ContainerTypeMeta));
+    if (!m) return NULL;
+    m->type = k;
+    const uint8_t* p = spec + 1;
+    if (k == TYPE_STRUCT || k == TYPE_FACE || k == TYPE_ENUM) {
+        int idx = ((int)p[0] << 8) | (int)p[1];
+        if (chunk && idx >= 0 && idx < chunk->const_cnt) {
+            Value v = chunk->constants[idx];
+            if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
+                ObjString* s = (ObjString*)val_as_obj(v);
+                if (s->len > 0) m->struct_name = strdup(s->chars);
+            }
+        }
+    } else if (k == TYPE_ARRAY) {
+        m->element = vm_meta_from_spec(p, chunk);
+    } else if (k == TYPE_DICT) {
+        m->key = vm_meta_from_spec(p, chunk);
+        int ksz = type_spec_size(p);
+        if (ksz > 0) m->value = vm_meta_from_spec(p + ksz, chunk);
+    } else if (k == TYPE_PTR_GENERIC) {
+        m->element = vm_meta_from_spec(p, chunk);
+    }
+    return m;
+}
+
 int vm_run(void) {
     // 主线程直接使用全局 vm，零开销
     current_exec_vm = &vm;

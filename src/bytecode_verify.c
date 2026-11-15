@@ -62,6 +62,9 @@ static int ck_const_direct(const Chunk* c, int idx) {
 // 尾随数据的长度/边界扫描（checks=1 时同时校验其中的常量索引）
 // ----------------------------------------------------------------------------
 
+// 类型规格扫描（定义在下面；scan_struct_def 的 ARRAY/DICT 字段元数据要用）
+static int spec_scan(const Chunk* c, int p, int end, int checks, int depth, int* out);
+
 // OP_STRUCT_DEF：字段/方法/impl/泛型参数/关联常量表
 static int scan_struct_def(const Chunk* c, int base, int checks, Cur* k) {
     k->c = c; k->p = base; k->bad = 0;
@@ -115,6 +118,13 @@ static int scan_struct_def(const Chunk* c, int base, int checks, Cur* k) {
                     if (checks) ck_const(k, idx);
                 }
             }
+        }
+        // ★ 2026-11-15：ARRAY / DICT 字段的递归声明类型规格（自定界，长度由 spec_scan 算）。
+        //   ⚠ 漏改会让整条字节码流从下一个字段起错位（症状是"内存反序列化失败(6)"）。
+        if (ftype == TYPE_ARRAY || ftype == TYPE_DICT) {
+            int after = 0;
+            if (!spec_scan(c, k->p, c->len, checks, 0, &after)) { k->bad = 1; break; }
+            k->p = after;
         }
         int has_default = cur_u8(k);
         if (has_default) {

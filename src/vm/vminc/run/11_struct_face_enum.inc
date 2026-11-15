@@ -124,6 +124,22 @@
                 }
             }
 
+            // ★ 2026-11-15：ARRAY / DICT 字段的**完整声明类型树**（自定界类型规格）。
+            //   上面的 element_type / dict_* 只到"外层容器的直接元素"；容器套容器时
+            //   `jsons.fill` 需要内层类型才知道怎么转（见的 codegen_stmt.c 同名注释）。
+            //   长度由 type_spec_size 算（与发射端 / 反汇编 / 校验端同一份实现）。
+            ContainerTypeMeta* container = NULL;
+            if (field_type == TYPE_ARRAY || field_type == TYPE_DICT) {
+                container = vm_meta_from_spec(p, frame->chunk);
+                int spec_len = type_spec_size(p);
+                if (unlikely(spec_len <= 0)) {
+                    if (!throw_runtime_error("结构体字段类型元数据损坏", line)) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                p += spec_len;
+            }
+
             uint8_t has_default = *p++;
             Value field_name_val = frame->chunk->constants[field_name_idx];
             if (unlikely(!val_is_obj(field_name_val) || val_as_obj(field_name_val)->type != OBJ_STRING)) {
@@ -146,6 +162,9 @@
             if (field_type == TYPE_DICT) {
                 struct_def_set_field_dict_info(def, i, dict_key_type, dict_value_type,
                                                dict_value_struct_name);
+            }
+            if (container) {
+                struct_def_set_field_container(def, i, container);
             }
         }
 

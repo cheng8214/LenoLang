@@ -1,0 +1,104 @@
+// test_jsons_fill_nested.leno — jsons.fill 的「容器套容器」递归转换（2026-11-15）
+//
+// 背景：字段元数据原来只记"外层容器的直接元素 / 值类型"⇒ 内层没有记录，
+//   `Dict[string,Array[int]]` 里的 `"1"` 不会被转成 1、`Dict[string,Dict[string,int]]`
+//   连"值是不是字典"都不校验（实测 `{"x":5}` 的 5 会留在声明为 Dict 的位置）✗
+//   —— 静态类型说谎。现在每个 ARRAY/DICT 字段带一棵**完整声明类型树**
+//   （OP_STRUCT_DEF 里的自定界类型规格），fill 按树逐层转换。
+//
+// 判据：
+//   ① 四种嵌套形态的内层值都被转成声明类型（int）
+//   ② 内层 struct（Dict 的值 / Array 的元素）自动 new + 递归填
+//   ③ 容器键（`Dict[int, ...]`）照旧能转；值转不了 ⇒ null；键转不了 ⇒ 丢项
+//   ④ `Array[any]` 原样（any 不该被转）
+//   ⑤ 经 .lenb 序列化往返之后行为不变（模块缓存 / 成品同样带这棵树）
+import jsons
+import files
+import strings
+
+struct Item {
+    string name = ""
+    int qty = 0
+}
+
+struct Box {
+    Dict[string, Array[int]] m = {}
+    Dict[string, Dict[string, int]] n = {}
+    Array[Dict[string, int]] a = []
+    Array[Array[int]] aa = []
+    Dict[string, Item] items = {}
+    Array[Item] list = []
+    Dict[int, Array[string]] byId = {}
+    Array[any] anyarr = []
+}
+
+const DOC = "{\"m\":{\"a\":[\"1\",2]},\"n\":{\"x\":{\"k\":\"7\"},\"bad\":5},"
+          + "\"a\":[{\"k\":\"3\"}],\"aa\":[[\"1\",\"2\"],[3]],"
+          + "\"items\":{\"first\":{\"name\":\"pen\",\"qty\":\"5\"},\"bad\":9},"
+          + "\"list\":[{\"name\":\"book\",\"qty\":2}],"
+          + "\"byId\":{\"10\":[\"a\",1]},"
+          + "\"anyarr\":[1,\"x\",{\"k\":2}]}"
+
+main() {
+    var b = new Box()
+    jsons.fill(b, DOC)
+
+    // ① 四种嵌套形态的内层
+    assert_eq(type(b.m["a"][0]), "int", "①Dict[K,Array[int]] 的元素要转（\"1\" ⇒ int）")
+    assert_eq(b.m["a"][0], 1, "①值正确")
+    assert_eq(b.m["a"][1], 2, "①本来就是 int 的不动")
+    assert_eq(type(b.n["x"]["k"]), "int", "①Dict[K,Dict[K2,int]] 的内层值要转")
+    assert_eq(b.n["x"]["k"], 7, "①值正确")
+    assert_eq(type(b.a[0]["k"]), "int", "①Array[Dict[K,int]] 的字典值要转")
+    assert_eq(b.a[0]["k"], 3, "①值正确")
+    assert_eq(type(b.aa[0][0]), "int", "①Array[Array[int]] 的内层元素要转")
+    assert_eq(b.aa[0][0], 1, "①值正确")
+    assert_eq(b.aa[1][0], 3, "①本来就是 int 的不动")
+
+    // ② 内层 struct：自动 new + 递归填（Dict 的值 / Array 的元素）
+    assert_true(b.items["first"] is Item, "②Dict[K,Item] 的值要造成 Item")
+    assert_eq(b.items["first"].name, "pen", "②struct 字段递归填")
+    assert_eq(b.items["first"].qty, 5, "②struct 的 int 字段也按声明类型转（\"5\" ⇒ 5）")
+    assert_true(b.list[0] is Item, "②Array[Item] 的元素是 Item 实例")
+    assert_eq(b.list[0].name, "book", "②Array[Item] 元素递归填")
+    assert_eq(b.list[0].qty, 2, "②qty 正确")
+
+    // ③ 键 / 值转不了的口径
+    assert_true(b.byId.has(10), "③Dict[int,...] 的键 \"10\" ⇒ int 10")
+    assert_eq(b.byId[10][0], "a", "③值是 Array[string] ⇒ \"a\" 仍是 string")
+    assert_eq(b.byId[10][1], null, "③数字 1 不能变成 string ⇒ null（不做隐式 _str）")
+    assert_eq(b.n["bad"], null, "③值 5 不能进 Dict 值 ⇒ null（不再原样留下错类型）")
+    assert_eq(b.items["bad"], 9, "③值不是对象 ⇒ 原样保留（宁可留数据也不静默丢）")
+
+    // ④ any 原样
+    assert_eq(type(b.anyarr[0]), "int", "④任意元素原样")
+    assert_eq(type(b.anyarr[1]), "string", "④任意元素原样")
+    assert_eq(type(b.anyarr[2]), "Dict[string, int]", "④任意元素原样（不转）")
+
+    // ⑤ 序列化往返（.lenb）：同一段代码编成字节码文件再跑，结果必须一致
+    var exe = _executable()
+    var src = "test_jsons_fill_nested_tmp.leno"
+    var code = "import jsons\n" +
+        "struct T { Dict[string, Array[int]] m = {}\n" +
+        "           Array[Dict[string, int]] a = [] }\n" +
+        "main() {\n" +
+        "    var t = new T()\n" +
+        "    jsons.fill(t, \"{\\\"m\\\":{\\\"x\\\":[\\\"1\\\",2]},\\\"a\\\":[{\\\"k\\\":\\\"3\\\"}]}\")\n" +
+        "    print(\"nested=\" + type(t.m[\"x\"][0]) + \"/\" + _str(t.m[\"x\"][0])" +
+        "          + \"/\" + type(t.a[0][\"k\"]) + \"/\" + _str(t.a[0][\"k\"]) + \"\\n\")\n" +
+        "}\n"
+    files.write(src, code)
+    var cr = _exec(exe + " -c " + src)
+    assert_ne(cr, null, "⑤编译 .lenb 失败")
+    assert_eq(cr.code, 0, "⑤编译 .lenb 失败：" + _str(cr.output))
+    var lenb = "test_jsons_fill_nested_tmp.lenb"
+    var rr = _exec(exe + " " + lenb)
+    assert_ne(rr, null, "⑤运行 .lenb 失败")
+    assert_eq(rr.code, 0, "⑤运行 .lenb 失败：" + _str(rr.output))
+    assert_true(strings.has(_str(rr.output), "nested=int/1/int/3"),
+                "⑤序列化往返后行为必须一致；实际输出=" + _str(rr.output))
+    files.delete(src)
+    files.delete(lenb)
+
+    print("test_jsons_fill_nested passed")
+}

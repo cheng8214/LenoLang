@@ -152,6 +152,13 @@ void struct_def_set_field_dict_info(ObjStructDef* def, int index,
         value_struct_name ? strdup(value_struct_name) : NULL;
 }
 
+// ★ 2026-11-15：ARRAY / DICT 字段的递归声明类型树（jsons.fill 按它逐层转换）。
+//   树由调用方（VM 读字节码 / 反序列化）分配，所有权随 ObjStructDef（定义表是进程级的）。
+void struct_def_set_field_container(ObjStructDef* def, int index, ContainerTypeMeta* meta) {
+    if (!def || index < 0 || index >= def->field_count) return;
+    def->fields[index].container = meta;
+}
+
 // ============================================================================
 // 跨模块同名类型的冲突判定（四张定义表共用）
 // ----------------------------------------------------------------------------

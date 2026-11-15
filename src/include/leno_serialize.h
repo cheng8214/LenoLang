@@ -203,7 +203,16 @@
 //   用途：`jsons.fill` 按 `Dict[K,V]` 的 V 逐项转换（此前整份原样赋 ⇒ 值类型静默说谎）。
 //   ⇒ LENO_MODCACHE_VERSION 同步升。
 //   ⚠ 同时改了**序列化**的 struct 字段表（serialize.c，多 3 段）⇒ 旧 .lenb 必须重编。
-#define LENO_BIN_VERSION    0x00030229  // v3.2.41（2026-11-15）—— OP_STRUCT_DEF 字段元数据
+// v3.2.42（2026-11-15）：`OP_STRUCT_DEF` 的字段元数据对 **TYPE_ARRAY / TYPE_DICT** 追加
+//   一棵**自定界类型规格**（与 OP_TYPE_CHECK_SPEC 同格式：kind u8 + 逐层孩子），
+//   即字段的**完整声明类型树**（容器套容器）。长度用 vm.c 的 type_spec_size 算。
+//   为什么必须 bump：又是"变长尾随字节" —— 读错会让整条字节码流从下一个字段起错位。
+//   用途：`jsons.fill` 按内层类型递归转换（此前 `Dict[string,Array[int]]` 的内层不转换、
+//   `Dict[string,Dict[...]]` 连外层都不校验 ⇒ 静态类型说谎）。
+//   ⇒ LENO_MODCACHE_VERSION 同步升；serialize.c 的 struct 字段表也多了递归树 ⇒ 旧缓存重编。
+#define LENO_BIN_VERSION    0x0003022A  // v3.2.42（2026-11-15）—— OP_STRUCT_DEF 字段元数据
+                                        //   追加 ARRAY/DICT 的递归类型规格（布局变了）
+                                        // v3.2.41（2026-11-15）—— OP_STRUCT_DEF 字段元数据
                                         //   追加 Dict 键/值类型（布局变了）
                                         // v3.2.40（2026-11-15）—— 新增 opcode
                                         //   **OP_TLS_DECL**（`thread_local var` 的声明：
@@ -448,7 +457,9 @@
 // v45（2026-11-09）：OP_STRUCT_DEF 的字段元数据多一个 `element_struct_name`
 //   （见 LENO_BIN_VERSION v3.2.29）。模块字节码里是同一份布局 ⇒ 必须同步升，
 //   否则旧 .lenomc 会被当成新格式读，字段定义整体错位。
-#define LENO_MODCACHE_VERSION  0x00000039  // v56 - 同 LENO_BIN_VERSION v3.2.41（OP_STRUCT_DEF
+#define LENO_MODCACHE_VERSION  0x0000003A  // v57 - 同 LENO_BIN_VERSION v3.2.42（OP_STRUCT_DEF
+                                            //   字段元数据追加 ARRAY/DICT 的递归类型规格）
+                                            // v56 - 同 LENO_BIN_VERSION v3.2.41（OP_STRUCT_DEF
                                             //   字段元数据追加 Dict 键/值类型 ⇒ 布局变了）
                                             // v55 - 同 LENO_BIN_VERSION v3.2.40（新增 opcode
                                             //   OP_TLS_DECL ⇒ 模块字节码里同样含它）

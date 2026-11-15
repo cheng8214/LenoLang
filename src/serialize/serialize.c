@@ -569,6 +569,32 @@ static Scope* deserialize_scope_data(DeserializeCtx* ctx);
 // 常量序列化
 // ============================================================================
 
+// ★ 2026-11-15：ARRAY / DICT 字段的**递归声明类型树**（容器套容器）。
+//   为什么必须一起序列化：模块缓存 / .lenb 里的 struct 定义若丢掉这棵树，
+//   `jsons.fill` 在"从缓存加载的模块"里就会退回单层行为 ⇒ 同一份代码行为随缓存有无而变 ✗
+//   写侧格式（自描述递归，与读侧 deserialize_container_meta 对称）：
+//     u8 kind；STRUCT/FACE/ENUM ⇒ u8 has_name + 可选 string；ARRAY ⇒ 1 个孩子；DICT ⇒ K、V
+static int serialize_container_meta(WriteBuffer* wb, const ContainerTypeMeta* m) {
+    if (!m) { wb_write_u8(wb, (uint8_t)TYPE_UNKNOWN); return 1; }
+    wb_write_u8(wb, (uint8_t)m->type);
+    if (m->type == TYPE_STRUCT || m->type == TYPE_FACE || m->type == TYPE_ENUM) {
+        if (m->struct_name) {
+            wb_write_u8(wb, 1);
+            wb_write_string(wb, m->struct_name, (uint32_t)strlen(m->struct_name));
+        } else {
+            wb_write_u8(wb, 0);
+        }
+    } else if (m->type == TYPE_ARRAY) {
+        if (!serialize_container_meta(wb, m->element)) return 0;
+    } else if (m->type == TYPE_DICT) {
+        if (!serialize_container_meta(wb, m->key)) return 0;
+        if (!serialize_container_meta(wb, m->value)) return 0;
+    } else if (m->type == TYPE_PTR_GENERIC) {
+        if (!serialize_container_meta(wb, m->element)) return 0;
+    }
+    return 1;
+}
+
 static int serialize_constant(WriteBuffer* wb, Value val) {
     if (val_is_null(val)) {
         wb_write_u8(wb, CONST_TAG_NULL);
@@ -778,6 +804,8 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
                 } else {
                     wb_write_u8(wb, 0);
                 }
+                // ★ 2026-11-15：ARRAY / DICT 字段的递归声明类型树（读侧对称）
+                if (!serialize_container_meta(wb, f->container)) return 0;
             }
             wb_write_u32(wb, (uint32_t)struct_def->method_count);
             for (int i = 0; i < struct_def->method_count; i++) {
@@ -1148,6 +1176,31 @@ static void free_pgnames(char** names, int count) {
         free(names[i]);
     }
     free(names);
+}
+
+// ★ 2026-11-15：与 serialize_container_meta 对称的读侧（递归声明类型树）。
+static ContainerTypeMeta* deserialize_container_meta(DeserializeCtx* ctx) {
+    uint8_t kind;
+    if (!ctx_read_u8(ctx, &kind)) return NULL;
+    ContainerTypeMeta* m = (ContainerTypeMeta*)calloc(1, sizeof(ContainerTypeMeta));
+    if (!m) return NULL;
+    m->type = (TypeKind)kind;
+    if (m->type == TYPE_STRUCT || m->type == TYPE_FACE || m->type == TYPE_ENUM) {
+        uint8_t has_name = 0;
+        if (!ctx_read_u8(ctx, &has_name)) return m;
+        if (has_name) {
+            uint32_t len = 0;
+            m->struct_name = ctx_read_string(ctx, &len);
+        }
+    } else if (m->type == TYPE_ARRAY) {
+        m->element = deserialize_container_meta(ctx);
+    } else if (m->type == TYPE_DICT) {
+        m->key = deserialize_container_meta(ctx);
+        m->value = deserialize_container_meta(ctx);
+    } else if (m->type == TYPE_PTR_GENERIC) {
+        m->element = deserialize_container_meta(ctx);
+    }
+    return m;
 }
 
 static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
@@ -1544,6 +1597,9 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
                                  (TypeKind)element_type, element_struct_name, is_nullable);
             struct_def_set_field_dict_info(sdef, (int)i, (TypeKind)dict_key_type,
                                            (TypeKind)dict_value_type, dict_value_struct_name);
+            // ★ 2026-11-15：递归声明类型树（写侧对称；容器套容器靠它逐层转换）
+            ContainerTypeMeta* container = deserialize_container_meta(ctx);
+            if (container) struct_def_set_field_container(sdef, (int)i, container);
             free(fname);
             free(struct_type_name);
             free(element_struct_name);

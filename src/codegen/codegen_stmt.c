@@ -2849,6 +2849,19 @@ static void gen_struct_def(CodeGen* gen, Ast* ast) {
             }
         }
 
+        // ★ 2026-11-15：ARRAY / DICT 字段的**完整声明类型树**（自定界类型规格）。
+        //   为什么：上面的 element_type / dict_key_type / dict_value_type 只记到"外层容器的
+        //   直接元素"，容器套容器（`Dict[string, Array[int]]`、`Array[Dict[string,int]]`、
+        //   `Dict[string, Dict[string,int]]`）的内层类型在运行时**没有记录** ⇒
+        //   `jsons.fill` 只能原样放（实测 `["1"]` 的 "1"、`{"x":5}` 的 5 会留在声明为
+        //   int / Dict 的位置，静态类型说谎 ✗）。
+        //   格式复用 OP_TYPE_CHECK_SPEC 的**自定界类型规格**（kind u8 + 逐层孩子）⇒
+        //   长度直接用 vm.c 的 type_spec_size 算，读取侧不会各写一份。
+        //   ⚠ 布局变了 ⇒ LENO_BIN_VERSION / LENO_MODCACHE_VERSION 已同步 bump。
+        if (field_type == TYPE_ARRAY || field_type == TYPE_DICT) {
+            cg_emit_type_spec(gen, ft, ast->line);
+        }
+
         Ast* def_expr = ast->u.struct_def.field_defaults ? ast->u.struct_def.field_defaults[i] : NULL;
         if (def_expr) {
             Value dv = ast_default_to_value(def_expr);
