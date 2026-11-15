@@ -221,6 +221,28 @@ static void re_report_invalid(const char* pattern) {
             return;
         }
     }
+    // ★ 2026-11-15：括号是否配平（此前 `(unclosed` 被**静默**当成字面量/可匹配的组 ⇒
+    //   永远匹配不上，`find` 给 -1、`match` 给 false，看不出模式写错了 ✗）
+    {
+        int depth = 0;
+        int stray = 0;
+        for (const char* q = pattern; *q; q++) {
+            if (*q == '\\' && *(q + 1)) { q++; continue; }      // 转义的括号不算
+            if (*q == '(') depth++;
+            else if (*q == ')') {
+                if (depth == 0) stray = 1;
+                else depth--;
+            }
+        }
+        if (depth > 0) {
+            native_throw_error("无效的正则表达式：括号没有闭合（缺 ')'）");
+            return;
+        }
+        if (stray) {
+            native_throw_error("无效的正则表达式：多了一个 ')'（要匹配字面括号请写 \\)）");
+            return;
+        }
+    }
     native_throw_error("无效的正则表达式");
 }
 
@@ -369,7 +391,10 @@ static ReNode* parse_factor(const char** pp) {
         tail->next = endn;                        // 子链尾接 END
         start->next = sub;                        // START 接子链
         node = start;
-        if (*p == ')') p++;
+        // ★ 2026-11-15：这里必须**要求**遇到 ')' —— 原来写成 `if (*p == ')') p++;`，
+        //   于是 `(unclosed` 被静默接受（组一直延伸到串尾），匹配永远失败却不报错 ✗
+        if (*p != ')') return NULL;
+        p++;
     } else if (*p == '.') {
         p++;
         node = re_alloc_node();
@@ -469,6 +494,11 @@ static ReNode* re_parse(const char* pattern, int* out_ngroup) {
     const char* p = pattern;
     ReNode* n = parse_regex(&p);
     *out_ngroup = re_group_counter;
+    // ★ 2026-11-15：整条模式必须被**完整消费**。
+    //   顶层遇到多余的 ')' 时 parse_term 会停下（它把 ')' 当"组结束"），parse_regex 却
+    //   照样返回一条合法链 ⇒ `abc)` 被静默当成 `abc`、"看着匹配上了" ✗
+    //   这里判"有剩余 ⇒ 失败"，让 re_report_invalid 的"多了一个 ')'"文案真正生效 ✓
+    if (n && *p != '\0') return NULL;
     return n;
 }
 

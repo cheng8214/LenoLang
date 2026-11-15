@@ -1,0 +1,47 @@
+// test_regex_invalid.leno —— 正则的**非法模式必须报错**，不能静默"匹配不上"
+//
+// 背景（2026-11-15 压测）：`regexs.find("abc", "(unclosed")` 返回 **-1**、`match` 返回 false，
+//   零诊断 —— 根因是 parse_atom 里写成 `if (*p == ')') p++;`，未闭合的组被静默接受、
+//   一直延伸到串尾 ⇒ 永远匹配失败。这类"模式写错 = 永远 false"最难查（看着像数据不对）。
+//
+// 判据：未闭合 `(`、多余 `)`、未闭合 `[`、非法转义、`{}` 量词 都必须抛错且文案点名原因；
+//      正常模式（锚定 / 查找 / 替换 / 空模式）行为不变。
+import regexs
+
+func want_error(string tag, string text, string pattern, string expect) {
+    var caught = ""
+    try {
+        regexs.find(text, pattern)
+    } catch e {
+        caught = e.msg
+    }
+    assert_true(caught.len() > 0, tag + " 必须抛错（不能静默给 -1）；pattern=" + pattern)
+    assert_true(caught.find(expect) >= 0,
+        tag + " 的报错要点名原因「" + expect + "」；实际=" + caught)
+}
+
+main() {
+    // ① 未闭合的组（原先静默 -1）
+    want_error("①未闭合 (", "abc", "(unclosed", "括号没有闭合")
+
+    // ② 多出的 ')'
+    want_error("②多余 )", "abc", "abc)", "多了一个 ')'")
+
+    // ③ 未闭合字符类 / 非法转义 / 量词
+    want_error("③未闭合 [", "abc", "[", "无效的正则表达式")
+    want_error("④非法转义", "abc", "\\q", "不支持的转义")
+    want_error("⑤量词 {}", "abc", "a{2}", "不支持量词")
+
+    // ⑥ 正常路径不受影响
+    assert_eq(regexs.match("abc", "^a.c$"), true, "⑥锚定匹配")
+    assert_eq(regexs.find("abc", "b"), 1, "⑥子串查找")
+    assert_eq(regexs.replace_all("aaa", "a", "b"), "bbb", "⑥全量替换")
+    assert_eq(regexs.match("abc", ""), true, "⑥空模式匹配")
+    assert_eq(regexs.find("abc", "zzz"), -1, "⑥正常的不匹配仍是 -1")
+
+    // ⑦ 配平的括号 / 转义括号照常可用
+    assert_eq(regexs.match("abc", "(ab)c"), true, "⑦成对括号")
+    assert_eq(regexs.match("a(c", "a\\(c"), true, "⑦转义括号当字面量")
+
+    print("test_regex_invalid passed（未闭合/多余括号、非法转义、量词；正常模式不变）")
+}
