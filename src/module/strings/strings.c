@@ -2451,9 +2451,12 @@ void strings_init_instance_methods(void) {
     TypeKind int_params[] = {TYPE_INT};
     string_register_method("rep", make_native(str_rep, 2, "rep"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED(int_params));
 
-    // 8. 新增：获取字符的ASCII码值
-    string_register_method("byte", make_native(str_byte, 2, "byte"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(int_params));
-    // byte() 无参数版本使用默认值0（第1个字符）
+    // 8. 获取指定**字节偏移**处的字节值（0-255，越界给 null）
+    // ★ 2026-11-15：改成可变参数（0..1）—— 实现里本来就写着 `if (argc >= 2) pos = ...`（省略 ⇒ 0），
+    //   模块式 `strings.byte(s)` 也一直是可省略的；但实例式原来注册成 `NATIVE_FIXED(int_params)`
+    //   ⇒ `"AB".byte()` 编译期报「调用方法 'byte' 时参数不足: 至少需要 1, 实际 0」，
+    //   与文档 `byte(pos?)`（pos 可选、默认 0）自相矛盾 ✗。arity 传 -1 与 `to_hex` 同形。
+    string_register_method("byte", make_native(str_byte, -1, "byte"), TYPE_INT, TYPE_UNKNOWN, NATIVE_VARARG(0, 1, 1, int_params, TYPE_ANY));
 
     // 10. 新增：查找子串位置
     TypeKind str_int_bool_params[] = {TYPE_STRING, TYPE_INT, TYPE_BOOL};

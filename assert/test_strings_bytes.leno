@@ -132,5 +132,19 @@ main() {
     assert_eq(threw7, 4, "⑦非法码点 4 条都必须抛（实抛 " + threw7 + " 条）")
     io.print("[7] from_codepoint ✓")
 
+    // ⑧ byte(pos?)：**字节偏移**（不是字符索引）；pos 可省略（实例式 / 模块式同一口径）
+    //   来历：文档 `byte()` 一节原写"字符位置 / -1 表示最后一个字符"，与实现（`str->chars[pos]`，
+    //   纯字节索引）矛盾；实例式还注册成定长 1 参 ⇒ `"AB".byte()` 编译期报「参数不足」✗
+    var zb = "中🙂"
+    assert_eq(zb.byte_len(), 7, "⑧'中🙂' 7 字节")
+    assert_eq(zb.byte(0), 228, "⑧0xE4 = '中' 的首字节（不是码点，也不是字符位）")
+    assert_eq(zb.byte(3), 240, "⑧0xF0 = '🙂' 的首字节")
+    assert_eq(zb.byte(-1), 130, "⑧负索引按**字节**从末尾数（0x82，落在多字节字符中间）")
+    assert_eq(zb.byte(7), null, "⑧越界（== byte_len）⇒ null")
+    assert_eq("AB".byte(), 65, "⑧省略 pos ⇒ 0（实例式；此前编译期报参数不足）")
+    assert_eq(strings.byte("AB"), 65, "⑧模块式同样可省略 pos")
+    assert_eq(strings.byte("AB", 1), 66, "⑧模块式显式给 pos")
+    io.print("[8] byte 字节偏移口径 ✓")
+
     io.print("\n=== strings 字节桥全部通过 ===")
 }
