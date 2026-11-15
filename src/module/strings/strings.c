@@ -2518,7 +2518,10 @@ void strings_init_instance_methods(void) {
     string_register_method("from_base64", make_native(str_from_base64, 1, "from_base64"), TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     TypeKind one_str_params[] = {TYPE_STRING};
     string_register_method("eq_ignore_case", make_native(str_eq_ignore_case, 2, "eq_ignore_case"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(one_str_params));
-    string_register_method("codepoint_at", make_native(str_codepoint_at, 2, "codepoint_at"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(int_params));
+    // codepoint_at(pos?)：与 `byte(pos?)` 同一口径 —— 实现里 `if (argc >= 2)` 省略 ⇒ 0，
+    //   文档也写 `pos?`；原来实例式注册成 NATIVE_FIXED(int_params)（定长 1 参）⇒
+    //   `"abc".codepoint_at()` 编译期报「参数不足」（模块式 `strings.codepoint_at(s)` 却能省略）✗
+    string_register_method("codepoint_at", make_native(str_codepoint_at, -1, "codepoint_at"), TYPE_INT, TYPE_UNKNOWN, NATIVE_VARARG(0, 1, 1, int_params, TYPE_ANY));
     string_register_method("to_codepoints", make_native(str_to_codepoints, 1, "to_codepoints"), TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     native_register_instance_method_return_spec("string", "to_codepoints", &NATIVE_T_ARR_INT);
     // 实例式 from_codepoint：与 to_codepoints 配对（可发现性）。⚠ 接收者本身用不上、被忽略 ——

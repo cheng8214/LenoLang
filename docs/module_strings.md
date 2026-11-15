@@ -917,10 +917,14 @@ strings.from_base64("Zg")     // "f"    ← 缺 padding 也收
 "a中🙂".codepoint_at(1)     // 20013   ('中' = U+4E2D)
 "a中🙂".codepoint_at(-1)    // 128578  ('🙂' = U+1F642，4 字节)
 "a中🙂".codepoint_at(99)    // null（越界，与 byte 同口径）
+"a中🙂".codepoint_at()      // 97   （省略 pos ⇒ 0；实例式与模块式一致）
 "a中🙂".to_codepoints()     // [97, 20013, 128578]
 strings.from_codepoint(20013)   // "中"  ← to_codepoints 的**逆操作**（不扫全串 ⇒ O(1)）
 "x".from_codepoint(65)          // "A"   ← 实例式也可（接收者被忽略，仅为与 to_codepoints 配对）
 ```
+
+> ⚠ 越界时运行期给 `null`，而静态返回类型是 `int` ⇒ 与 `byte` 同一条注意事项：
+> 先把下标夹到 `0 .. len()-1`（负索引则用 `len()+i`）再用，别指望赋值给 `int` 之后还能判 `null`。
 
 **逐字符要"字符串"的场景（例如 `measureString(ch)` 逐字测宽）请配对使用**：
 `Array[int] cps = s.to_codepoints()`（一趟 O(n)）+ 循环里 `strings.from_codepoint(cps[k])` ——

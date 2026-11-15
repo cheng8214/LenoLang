@@ -88,6 +88,8 @@ main() {
     assert_eq(s.codepoint_at(-1), 128578, "⑤负索引取最后一个字符")
     assert_eq(s.codepoint_at(99), null, "⑤越界 ⇒ null（与 byte 同口径）")
     assert_eq("中".codepoint_at(0), 20013, "⑤字面量上也能调（模块式/实例式两条通道）")
+    assert_eq("abc".codepoint_at(), 97, "⑤省略 pos ⇒ 0（实例式；此前编译期报参数不足）")
+    assert_eq(strings.codepoint_at("abc"), 97, "⑤模块式同样可省略 pos")
     io.print("[5] codepoint_at ✓")
 
     // ⑥ to_codepoints：一趟扫全部（替代循环 codepoint_at 的 O(n²)）
