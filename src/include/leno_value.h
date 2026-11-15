@@ -1575,8 +1575,12 @@ static inline int value_payload_field_equal_depth(Value a, Value b, int depth) {
 // 快速路径覆盖 null/bool（bit-exact）、同指针对象
 // 跨类型支持 int<->float、int<->BigInt
 static inline int value_shallow_equal_depth(Value a, Value b, int depth) {
-    // 1. 快速路径：bit-exact 相等（涵盖 null, bool, 同指针对象, 相同 int/float）
-    if (a == b) return 1;
+    // 1. 快速路径：bit-exact 相等（涵盖 null, bool, 同指针对象, 相同的 int）
+    //   ★ 2026-11-15：**刻意排除 float** —— 与 `==`（vm.c 的 value_eq_depth，那里写着
+    //   "NaN == NaN 必须保持 false"）同一口径。此前这里没排除 ⇒ `nan == nan` 是 false，
+    //   而 `[nan].has(nan)` 是 **true**、`arr.index_of(nan)` 能命中 —— 同一个问题两个答案 ✗
+    //   （与本文件 1503 行"两条路对同一个问题给出同一个答案"的约定直接矛盾）。
+    if (a == b && !val_is_float(a)) return 1;
 
     // 2. 跨类型比较：int <-> float
     if (val_is_int(a) && val_is_float(b)) {

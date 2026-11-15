@@ -69,6 +69,22 @@ main() {
     x = x * 3.0
     if x != 6.0 { print("x=" + x); fail(6) }
 
+    // ---- 7) NaN 口径**两条路必须一致**（2026-11-15）----
+    //   `==` 早就按 IEEE 给 false（vm.c 的 value_eq_depth 显式排除 float 的 bit-exact 快速路径），
+    //   但 `Array.has / index_of / Dict 键` 走的 value_shallow_equal **没有**排除 ⇒
+    //   实测 `nan == nan` false、而 `[nan].has(nan)` **true**（同一个问题两个答案）。
+    var nan = _float("nan")
+    if nan == nan { print("nan==nan 应为 false"); fail(7) }
+    if not (nan != nan) { print("nan!=nan 应为 true"); fail(7) }
+    Array[float] nanArr = [nan]
+    if nanArr.has(nan) { print("has(nan) 应为 false"); fail(7) }
+    if nanArr.index_of(nan) != -1 { print("index_of(nan) 应为 -1"); fail(7) }
+    // 对照：普通浮点（含 -0.0 与 0.0 这类位型不同的）照常命中
+    Array[float] fArr = [0.0, 1.5]
+    if not fArr.has(0.0) { print("has(0.0) 应为 true"); fail(7) }
+    if fArr.index_of(1.5) != 1 { print("index_of(1.5) 应为 1"); fail(7) }
+    if fArr.has(-0.0) == false { print("has(-0.0) 应为 true（数值相等）"); fail(7) }
+
     if bad > 0 {
         print("test_float_cmp FAILED: " + bad + " 处")
         _exit(1)
