@@ -1,0 +1,71 @@
+// test_jsons_fill_dict_types.leno —— `jsons.fill` 按 Dict[K,V] 的声明类型转换（2026-11-15）
+//
+// 背景（压测实录）：`Dict[string, string]` 字段被 `{"a": 1}` 填充时，值 1 被**原样**塞进字典
+//   ⇒ 字段静态类型说是 string、运行期躺着一个 int。表现要到很远的地方才炸：
+//     `meta["a"].len()` ⇒ 「类型 object 上不存在方法 'len'」；打印/拼接时还看着正常 ✗
+//   `Dict[int, string]` 同理 —— JSON 对象的键**永远是字符串**，不转就是"键说谎"。
+//
+// 口径（与 `Array[T]` 完全一致）：
+//   · 能转就转（"7"→7、2.9→2、true→1、"1"→true）；
+//   · 转不了 ⇒ **值**存 null（保持键对齐，与数组元素同一取舍）；**键**转不了 ⇒ 丢掉该项
+//     （字典不允许 null 键）。
+//   · 声明成 `Dict[string, any]` / 未记录类型 ⇒ 原样（不误伤）。
+import jsons
+
+struct InnerT {
+    string tag = "def"
+    int n = -1
+}
+
+struct Bag {
+    Dict[string, string] strs = {}
+    Dict[string, int] nums = {}
+    Dict[int, string] byId = {}
+    Dict[string, InnerT] items = {}
+    Dict[string, any] loose = {}
+}
+
+main() {
+    Bag b = new Bag()
+    assert_eq(jsons.fill(b,
+        "{\"strs\":{\"a\":1,\"b\":\"ok\",\"c\":true},"
+        + "\"nums\":{\"x\":\"7\",\"y\":2.9,\"z\":true},"
+        + "\"byId\":{\"1\":\"one\",\"abc\":\"bad\",\"2\":\"two\"},"
+        + "\"items\":{\"k\":{\"tag\":\"t\",\"n\":9}},"
+        + "\"loose\":{\"free\":123}}"), true, "fill 成功")
+
+    // ---- ① Dict[string, string]：非字符串 ⇒ null（不静默塞 int/bool）----
+    assert_eq(b.strs.len(), 3, "①键都保留（与数组元素同一取舍：值转不了存 null）")
+    assert_eq(b.strs["a"], null, "①数字不能隐式变字符串")
+    assert_eq(b.strs["b"], "ok", "①字符串原样")
+    assert_eq(b.strs["c"], null, "①bool 也不能变字符串")
+    assert_eq(type(b.strs["a"]), "null", "①值的运行期类型必须是 null，不是 int")
+
+    // ---- ② Dict[string, int]：字符串数字 / 浮点截断 / bool 互转 ----
+    assert_eq(b.nums["x"], 7, "②\"7\" ⇒ 7")
+    assert_eq(b.nums["y"], 2, "②2.9 ⇒ 2（向零截断，与标量字段同口径）")
+    assert_eq(b.nums["z"], 1, "②true ⇒ 1")
+
+    // ---- ③ Dict[int, string]：JSON 的键是字符串 ⇒ 必须转成 int；转不了的键丢掉 ----
+    assert_eq(b.byId.len(), 2, "③\"abc\" 转不成 int ⇒ 该项丢弃")
+    assert_eq(b.byId[1], "one", "③键 \"1\" ⇒ int 1（能按 int 下标取到）")
+    assert_eq(b.byId[2], "two", "③键 \"2\" ⇒ int 2")
+
+    // ---- ④ Dict[string, InnerT]：值是 struct ⇒ 造实例并递归填 ----
+    assert_eq(b.items.len(), 1, "④有一个键")
+    var it = b.items["k"]
+    assert_eq(it.tag, "t", "④嵌套 struct 的字段")
+    assert_eq(it.n, 9, "④嵌套 struct 的字段")
+
+    // ---- ⑤ Dict[string, any]：原样（123 仍是 int）----
+    assert_eq(b.loose["free"], 123, "⑤any 值保持原样")
+    assert_eq(type(b.loose["free"]), "int", "⑤any 值不转换")
+
+    // ---- ⑥ 防误报：本来就对的字典照常（内容不变、键值都对）----
+    Bag ok = new Bag()
+    jsons.fill(ok, "{\"strs\":{\"a\":\"yes\"},\"nums\":{\"n\":5}}")
+    assert_eq(ok.strs["a"], "yes", "⑥正常字符串字典")
+    assert_eq(ok.nums["n"], 5, "⑥正常整数字典")
+
+    print("test_jsons_fill_dict_types passed（K/V 转换 + 嵌套 struct + any 原样）")
+}

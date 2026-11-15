@@ -104,6 +104,18 @@ static int scan_struct_def(const Chunk* c, int base, int checks, Cur* k) {
                 cur_u8(k);                            // ★ 2026-11-11：标量元素类型
             }
         }
+        // ★ 2026-11-15：`Dict[K,V]` 的 key/value 类型（+ V 是 struct 时的类型名常量索引）
+        if (ftype == TYPE_DICT) {
+            cur_u8(k);                                // K
+            int vk = cur_u8(k);                       // V
+            if (vk == TYPE_STRUCT) {
+                int has_vsn = cur_u8(k);
+                if (has_vsn) {
+                    int idx = cur_u16(k);
+                    if (checks) ck_const(k, idx);
+                }
+            }
+        }
         int has_default = cur_u8(k);
         if (has_default) {
             int idx = cur_u16(k);

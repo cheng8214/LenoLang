@@ -768,6 +768,16 @@ static int serialize_constant(WriteBuffer* wb, Value val) {
                     wb_write_u8(wb, 0);
                 }
                 wb_write_u8(wb, (uint8_t)f->nullable);
+                // ★ 2026-11-15：`Dict[K,V]` 的键/值类型（+ V 是 struct 时的类型名）
+                wb_write_u8(wb, (uint8_t)f->dict_key_type);
+                wb_write_u8(wb, (uint8_t)f->dict_value_type);
+                if (f->dict_value_struct_name) {
+                    wb_write_u8(wb, 1);
+                    wb_write_string(wb, f->dict_value_struct_name,
+                                    (uint32_t)strlen(f->dict_value_struct_name));
+                } else {
+                    wb_write_u8(wb, 0);
+                }
             }
             wb_write_u32(wb, (uint32_t)struct_def->method_count);
             for (int i = 0; i < struct_def->method_count; i++) {
@@ -1510,12 +1520,34 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
                 free(fname); free(struct_type_name); free(element_struct_name); return 0;
             }
 
+            // ★ 2026-11-15：`Dict[K,V]` 的键/值类型（与写侧对称）
+            uint8_t dict_key_type = TYPE_UNKNOWN;
+            uint8_t dict_value_type = TYPE_UNKNOWN;
+            char* dict_value_struct_name = NULL;
+            if (!ctx_read_u8(ctx, &dict_key_type) || !ctx_read_u8(ctx, &dict_value_type)) {
+                free(fname); free(struct_type_name); free(element_struct_name); return 0;
+            }
+            uint8_t has_dvsn = 0;
+            if (!ctx_read_u8(ctx, &has_dvsn)) {
+                free(fname); free(struct_type_name); free(element_struct_name); return 0;
+            }
+            if (has_dvsn) {
+                uint32_t dvsn_len;
+                dict_value_struct_name = ctx_read_string(ctx, &dvsn_len);
+                if (!dict_value_struct_name) {
+                    free(fname); free(struct_type_name); free(element_struct_name); return 0;
+                }
+            }
+
             struct_def_set_field(sdef, (int)i, fname, (TypeKind)type_kind,
                                  struct_type_name, default_val, has_default,
                                  (TypeKind)element_type, element_struct_name, is_nullable);
+            struct_def_set_field_dict_info(sdef, (int)i, (TypeKind)dict_key_type,
+                                           (TypeKind)dict_value_type, dict_value_struct_name);
             free(fname);
             free(struct_type_name);
             free(element_struct_name);
+            free(dict_value_struct_name);
         }
 
         uint32_t method_count;

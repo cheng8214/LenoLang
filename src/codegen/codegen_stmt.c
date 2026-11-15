@@ -2824,6 +2824,31 @@ static void gen_struct_def(CodeGen* gen, Ast* ast) {
             }
         }
 
+        // ★ 2026-11-15：`Dict[K, V]` 的键 / 值类型（`jsons.fill` 逐项转换要用）。
+        //   为什么必须：此前运行时的字段元数据里**完全没有**字典键值类型 ⇒
+        //   `Dict[string, string]` 字段被 `{"a": 1}` 填成"值是 int"的字典，
+        //   静态类型却说是 string（实测 `meta["a"].len()` 才在很远的地方报错 ✗）。
+        //   布局：key_kind(u8) + value_kind(u8) + [V 是 struct 时：has_name(u8) + u16 常量]。
+        //   ⚠ 读取侧必须同序：VM 的 11_struct_face_enum.inc、debug.c 的 decode_trailing、
+        //     bytecode_verify.c 的 scan_struct_def（漏改会让整条字节码流错位）。
+        //   ⚠ 布局变了 ⇒ LENO_BIN_VERSION / LENO_MODCACHE_VERSION 已同步 bump。
+        if (field_type == TYPE_DICT) {
+            TypeKind kk = (ft && ft->key_type) ? ft->key_type->kind : TYPE_UNKNOWN;
+            TypeKind vk = (ft && ft->value_type) ? ft->value_type->kind : TYPE_UNKNOWN;
+            cw_u8(gen, kk, ast->line);
+            cw_u8(gen, vk, ast->line);
+            if (vk == TYPE_STRUCT) {
+                const char* vsn = (ft && ft->value_type) ? ft->value_type->struct_name : NULL;
+                if (vsn) {
+                    ObjString* vn = str_copy(vsn, (int)strlen(vsn));
+                    cw_u8(gen, 1, ast->line);
+                    cw_u16(gen, make_constant(gen, val_obj((Object*)vn)), ast->line);
+                } else {
+                    cw_u8(gen, 0, ast->line);
+                }
+            }
+        }
+
         Ast* def_expr = ast->u.struct_def.field_defaults ? ast->u.struct_def.field_defaults[i] : NULL;
         if (def_expr) {
             Value dv = ast_default_to_value(def_expr);

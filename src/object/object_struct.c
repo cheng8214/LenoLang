@@ -140,6 +140,18 @@ void struct_def_set_field(ObjStructDef* def, int index, const char* name, TypeKi
     def->fields[index].nullable = nullable;
 }
 
+// 追加 `Dict[K, V]` 的键/值类型（2026-11-15）—— 见 leno_value.h 的同名声明。
+//   ⚠ 必须在 struct_def_set_field 之后调（它只改已有字段，不建字段）。
+void struct_def_set_field_dict_info(ObjStructDef* def, int index,
+                                    TypeKind key_type, TypeKind value_type,
+                                    const char* value_struct_name) {
+    if (!def || index < 0 || index >= def->field_count) return;
+    def->fields[index].dict_key_type = key_type;
+    def->fields[index].dict_value_type = value_type;
+    def->fields[index].dict_value_struct_name =
+        value_struct_name ? strdup(value_struct_name) : NULL;
+}
+
 // ============================================================================
 // 跨模块同名类型的冲突判定（四张定义表共用）
 // ----------------------------------------------------------------------------

@@ -622,6 +622,17 @@ typedef struct {
     //   → **字节码**（codegen_stmt.c 的 OP_STRUCT_DEF 元数据）→ 本字段。
     //   ⚠ 改了字节码布局 ⇒ LENO_BIN_VERSION / LENO_MODCACHE_VERSION 已同步 bump。
     char* element_struct_name;
+    // ★ 2026-11-15：`Dict[K, V]` 的键 / 值类型（供 `jsons.fill` 逐项转换用）。
+    //   为什么必须（实测**静默错类型** ✗）：`Dict[string, string] meta = {}` 填
+    //   `{"a": 1}` 时，运行时此前对字典整份"原样赋" ⇒ 字典里真的躺着一个 int，
+    //   而字段静态类型是 string ⇒ 之后 `meta["a"].len()` 报「类型 object 上不存在方法」
+    //   （离病因很远），更糟的是打印/拼接时看着像正常值。
+    //   取值：未记录/非 Dict 字段 = TYPE_UNKNOWN（⇒ fill 保持原样，不误伤）。
+    //   数据来源链与 element_type 完全同一条：AST `TypeInfo.key_type/value_type`
+    //   → 字节码 / 序列化 → 本结构。
+    TypeKind dict_key_type;
+    TypeKind dict_value_type;
+    char* dict_value_struct_name;   // V 是 struct 时的类型名（其余 NULL）
     int nullable;       // 可空字段标记：1=Type?，0=Type
 } StructFieldInfo;
 
@@ -1674,6 +1685,12 @@ ObjStructDef* struct_def_new(const char* name, int field_count, int method_count
 void struct_def_set_field(ObjStructDef* def, int index, const char* name, TypeKind type,
                           const char* struct_type_name, Value default_value, int has_default,
                           TypeKind element_type, const char* element_struct_name, int nullable);
+
+// 追加设置 `Dict[K, V]` 的键/值类型（2026-11-15；与 struct_def_set_field 分开是为了
+//   不给 5 个既有调用点各加 3 个实参）。key_type/value_type 传 TYPE_UNKNOWN = 未记录。
+void struct_def_set_field_dict_info(ObjStructDef* def, int index,
+                                    TypeKind key_type, TypeKind value_type,
+                                    const char* value_struct_name);
 
 // 创建结构体实例
 ObjStruct* struct_instance_new(ObjStructDef* def);

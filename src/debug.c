@@ -245,6 +245,14 @@ static int decode_trailing(Chunk* chunk, int offset, char* desc, size_t desc_siz
                     if (dbg_take_u8(chunk, base, &p, &over)) dbg_take_u16(chunk, base, &p, &over);
                     else dbg_take_u8(chunk, base, &p, &over);
                 }
+                // ★ 2026-11-15：`Dict[K,V]` 的 key/value 类型（+ V 是 struct 时的类型名常量）
+                if (ftype == TYPE_DICT) {
+                    dbg_take_u8(chunk, base, &p, &over);              // K
+                    int vk = dbg_take_u8(chunk, base, &p, &over);     // V
+                    if (vk == TYPE_STRUCT) {
+                        if (dbg_take_u8(chunk, base, &p, &over)) dbg_take_u16(chunk, base, &p, &over);
+                    }
+                }
                 if (dbg_take_u8(chunk, base, &p, &over)) dbg_take_u16(chunk, base, &p, &over);
             }
             for (int i = 0; i < methods; i++) {

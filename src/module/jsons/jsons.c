@@ -759,6 +759,22 @@ static Value json_coerce_to_elem(Value raw, TypeKind elem_type) {
     }
 }
 
+// ★ 2026-11-15：按**字典值声明类型**转一个值 —— 标量走 json_coerce_to_elem；
+//   值是 struct 时按类型名造实例再递归填（与 `Array[Item]` 那条路同口径）。
+static Value json_coerce_dict_value(Value raw, TypeKind vtype, const char* vstruct_name) {
+    if (vtype == TYPE_STRUCT && vstruct_name) {
+        if (!val_is_obj(raw) || val_as_obj(raw)->type != OBJ_DICT) return val_null();
+        ObjStruct* nested = native_struct_new(vstruct_name);
+        if (!nested) return val_null();
+        Value nv = val_obj((Object*)nested);
+        gc_push_root(&nv);                  // 递归里还会 gc_alloc
+        json_fill_struct(nested, (ObjDict*)val_as_obj(raw));
+        gc_pop_root();
+        return nv;
+    }
+    return json_coerce_to_elem(raw, vtype);
+}
+
 // 按字段**声明类型**把 JSON 值转成该字段可接受的值。
 //   转不了 ⇒ val_null()（调用方保留字段默认值，而不是塞个错类型进去）。
 static Value json_coerce_to_field(Value raw, StructFieldInfo* f) {
@@ -903,9 +919,56 @@ static Value json_coerce_to_field(Value raw, StructFieldInfo* f) {
             }
             return val_null();
         }
-        case TYPE_DICT:
-            if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_DICT) return raw;
-            return val_null();
+        case TYPE_DICT: {
+            if (!val_is_obj(raw) || val_as_obj(raw)->type != OBJ_DICT) return val_null();
+            // ★ 2026-11-15：按 `Dict[K, V]` 的 **V** 逐项转换。
+            //   此前整份"原样赋" ⇒ `Dict[string, string] meta` 被 `{"a": 1}` 填成
+            //   "值是 int"的字典，字段静态类型却说是 string（实测要到 `meta["a"].len()`
+            //   才在很远的地方报「类型 object 上不存在方法 'len'」，打印/拼接时还像正常值 ✗）。
+            //   取值口径与 `Array[T]` 完全一致：能转就转（字符串数字 / bool / 数值互转）、
+            //   转不了存 null（不做隐式 `_str` —— 那会把类型错误藏起来）。
+            TypeKind vk = f ? f->dict_value_type : TYPE_UNKNOWN;
+            const char* vstruct = f ? f->dict_value_struct_name : NULL;
+            if (vk == TYPE_UNKNOWN || vk == TYPE_INFER || vk == TYPE_ANY ||
+                vk == TYPE_NULL || vk == TYPE_PTR || vk == TYPE_DICT) {
+                return raw;                  // 未记录 / any / 容器值 ⇒ 保持既有行为
+            }
+            // ★ 键也要转：JSON 对象的键**永远是字符串** ⇒ `Dict[int, string]` 不转会留下
+            //   "键是 string"的字典（静态类型说 int）—— 与值同一条静默错类型 ✗。
+            TypeKind kk = f ? f->dict_key_type : TYPE_UNKNOWN;
+            int key_scalar = (kk == TYPE_INT || kk == TYPE_FLOAT || kk == TYPE_BOOL);
+            ObjDict* src = (ObjDict*)val_as_obj(raw);
+            // 先判"真的需要换对象吗"：类型本来就对 ⇒ 复用原对象（保持身份语义，与数组一致）
+            int need = 0;
+            for (int i = 0; i < src->order_count && !need; i++) {
+                Value k = src->order[i];
+                if (val_is_null(k)) continue;
+                Value v = dict_get(src, k);
+                if (key_scalar && json_coerce_to_elem(k, kk) != k) { need = 1; break; }
+                if (json_coerce_dict_value(v, vk, vstruct) != v) need = 1;
+            }
+            if (!need) return raw;
+
+            ObjDict* out = dict_new(src->order_count > 0 ? src->order_count : 1);
+            if (!out) return val_null();
+            Value ov = val_obj((Object*)out);
+            gc_push_root(&ov);
+            for (int i = 0; i < src->order_count; i++) {
+                Value k = src->order[i];
+                if (val_is_null(k)) continue;
+                Value ck = key_scalar ? json_coerce_to_elem(k, kk) : k;
+                if (val_is_null(ck)) continue;   // 键转不了（如 "abc" → int）⇒ 丢掉该项
+                Value v = dict_get(src, k);
+                Value c = json_coerce_dict_value(v, vk, vstruct);
+                gc_push_root(&ck);
+                gc_push_root(&c);
+                dict_set(out, ck, c);
+                gc_pop_root();
+                gc_pop_root();
+            }
+            gc_pop_root();
+            return ov;
+        }
         case TYPE_STRUCT: {
             if (!f->struct_type_name) return val_null();
             if (!val_is_obj(raw) || val_as_obj(raw)->type != OBJ_DICT) return val_null();

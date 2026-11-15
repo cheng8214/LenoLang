@@ -103,6 +103,27 @@
                 }
             }
 
+            // ★ 2026-11-15：`Dict[K, V]` 的键 / 值类型（与 codegen_stmt.c 的发射顺序对应）；
+            //   有了它 `jsons.fill` 才能按声明类型逐项转换字典值（见 leno_value.h 的说明）。
+            TypeKind dict_key_type = TYPE_UNKNOWN;
+            TypeKind dict_value_type = TYPE_UNKNOWN;
+            char* dict_value_struct_name = NULL;
+            if (field_type == TYPE_DICT) {
+                dict_key_type = (TypeKind)(*p++);
+                dict_value_type = (TypeKind)(*p++);
+                if (dict_value_type == TYPE_STRUCT) {
+                    uint8_t has_vsn = *p++;
+                    if (has_vsn) {
+                        int vsn_idx = ((int)p[0] << 8) | (int)p[1];
+                        p += 2;
+                        Value vv = frame->chunk->constants[vsn_idx];
+                        if (val_is_obj(vv) && val_as_obj(vv)->type == OBJ_STRING) {
+                            dict_value_struct_name = ((ObjString*)val_as_obj(vv))->chars;
+                        }
+                    }
+                }
+            }
+
             uint8_t has_default = *p++;
             Value field_name_val = frame->chunk->constants[field_name_idx];
             if (unlikely(!val_is_obj(field_name_val) || val_as_obj(field_name_val)->type != OBJ_STRING)) {
@@ -122,6 +143,10 @@
             struct_def_set_field(def, i, field_name->chars, (TypeKind)field_type,
                                  struct_type_name, default_value, has_default, element_type,
                                  element_struct_name, is_nullable);
+            if (field_type == TYPE_DICT) {
+                struct_def_set_field_dict_info(def, i, dict_key_type, dict_value_type,
+                                               dict_value_struct_name);
+            }
         }
 
         for (int i = 0; i < method_count; i++) {
