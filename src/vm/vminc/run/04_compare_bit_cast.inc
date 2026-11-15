@@ -104,33 +104,48 @@
     // ★ null 参与的有序比较一律 false（与通用 LT/GT/LE/GE 一致）：
     //   int 专用路径若不判 null，`val_as_int(null) == 0` 会让 `notFound.id >= 0`
     //   变成 true ✗（test_struct_edge 明确断言必须 false）
-    LABEL(OP_LT_INT): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value bv = R(b), cv = R(c);
-        R(a) = val_bool(!val_is_null(bv) && !val_is_null(cv) && VM_IO(bv) < VM_IO(cv));
-        DISPATCH();
+    // ★ 2026-11-15：**守卫**（与 03_arith.inc 的「两侧都是 int48」同口径）。
+    //   原先这里直接拿 `VM_IO` 的取值做顺序比较 ⇒ 自动提升成 bigint 的值
+    //   （**静态类型仍是 int**）会被 `vm_bigint_as_i64` 的 **64 位回绕**语义取值
+    //   （2^63 → i64min）⇒ `x > 0` 得 false、`x < 0` 得 true，而同一个值
+    //   `x == 2^63` 是 true、`x > 1e18` 也是 true（自相矛盾，静默错值）。
+    //   ⇒ 任一侧不是 int48（bigint / float / 其它）就退回通用比较：数值语义正确，
+    //     不可比较的类型还能报出「操作数类型不可比较」，不静默。
+#define CMP_INT_BODY(intcmp, kind_, opname)                                     \
+    {                                                                           \
+        int a = READ_A(), b = READ_B(), c = READ_C();                           \
+        Value bv = R(b), cv = R(c);                                             \
+        if (likely(val_is_int(bv) && val_is_int(cv))) {                         \
+            R(a) = val_bool(VM_IO(bv) intcmp VM_IO(cv));                        \
+            DISPATCH();                                                         \
+        }                                                                       \
+        int truthy_ = 0;                                                        \
+        if (!vm_int_cmp_cold(bv, cv, kind_, &truthy_)) {                        \
+            if (!throw_runtime_error_with_operands("比较运算: 操作数类型不可比较", \
+                                                   opname, bv, cv, GET_CURRENT_LINE())) \
+                return -1;                                                      \
+            frame = &vm.frames[vm.frame_cnt - 1];                               \
+        }                                                                       \
+        R(a) = val_bool(truthy_);                                               \
+        DISPATCH();                                                             \
     }
-    LABEL(OP_GT_INT): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value bv = R(b), cv = R(c);
-        R(a) = val_bool(!val_is_null(bv) && !val_is_null(cv) && VM_IO(bv) > VM_IO(cv));
-        DISPATCH();
-    }
-    LABEL(OP_LE_INT): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value bv = R(b), cv = R(c);
-        R(a) = val_bool(!val_is_null(bv) && !val_is_null(cv) && VM_IO(bv) <= VM_IO(cv));
-        DISPATCH();
-    }
-    LABEL(OP_GE_INT): {
-        int a = READ_A(), b = READ_B(), c = READ_C();
-        Value bv = R(b), cv = R(c);
-        R(a) = val_bool(!val_is_null(bv) && !val_is_null(cv) && VM_IO(bv) >= VM_IO(cv));
-        DISPATCH();
-    }
+    LABEL(OP_LT_INT): CMP_INT_BODY(<, 0, "LT (<)")
+    LABEL(OP_GT_INT): CMP_INT_BODY(>, 1, "GT (>)")
+    LABEL(OP_LE_INT): CMP_INT_BODY(<=, 2, "LE (<=)")
+    LABEL(OP_GE_INT): CMP_INT_BODY(>=, 3, "GE (>=)")
+#undef CMP_INT_BODY
     LABEL(OP_EQ_INT): {
         int a = READ_A(), b = READ_B(), c = READ_C();
-        R(a) = val_bool(VM_IO(R(b)) == VM_IO(R(c)));
+        Value bv = R(b), cv = R(c);
+        if (likely(val_is_int(bv) && val_is_int(cv))) {
+            R(a) = val_bool(VM_IO(bv) == VM_IO(cv));
+            DISPATCH();
+        }
+        // 慢路径：`bigint 2^63` 与 `int i64min` 的**位模式相同** ⇒ 必须按值比，
+        //   否则 `x == -9223372036854775807 - 1` 会误判为 true（静默错值）。
+        int truthy_ = 0;
+        (void)vm_int_cmp_cold(bv, cv, 4, &truthy_);
+        R(a) = val_bool(truthy_);
         DISPATCH();
     }
     // 立即数比较（右操作数是 -128..127 的整数字面量，编进 C 字段的 8 位有符号）。
@@ -154,7 +169,7 @@
     //   **后 2 字节**（原先只是填充 ✓）装 16 位立即数 ⇒ **指令仍是 8 字节**、跳转偏移仍在
     //   第二个字的前 2 字节 ⇒ 只多覆盖常量、不改任何既有语义 ✓
     //   ⚠ 宏体里**不能**写块注释（反斜杠续行会让 GCC 报 multi-line comment）⇒ 说明写在宏外 ✓
-#define CMPJMP_IMPL(int_cmp)                                                       \
+#define CMPJMP_IMPL(int_cmp, kind_)                                                \
     {                                                                              \
         int a = READ_A(), b = READ_B(), c = READ_C();                              \
         int want_imm = (c & 0x80) != 0;                                            \
@@ -164,12 +179,21 @@
         ADVANCE();                          /* 跳过携带偏移的第二个字 */           \
         Value bv = R(a);                                                           \
         int truthy;                                                                \
-        if (want_imm) {                                                            \
-            truthy = !val_is_null(bv) && (VM_IO(bv) int_cmp (int64_t)imm16);       \
+        /* 热路径与改动前**逐条等价**（两次 tag 检查、不构造任何 Value）；          \
+           null / bigint / float / 其它类型全部落到**out-of-line** 冷路径再分类     \
+           ⇒ dispatch 循环的 i-cache 不受影响（内联版实测 +2.4%）*/                 \
+        if (likely(val_is_int(bv) && (want_imm || val_is_int(R(b))))) {             \
+            truthy = (VM_IO(bv) int_cmp (want_imm ? (int64_t)imm16 : VM_IO(R(b)))); \
         } else {                                                                   \
-            Value cv = R(b);                                                       \
-            truthy = !val_is_null(bv) && !val_is_null(cv) &&                       \
-                     (VM_IO(bv) int_cmp VM_IO(cv));                                \
+            Value cv_ = want_imm ? val_int((int64_t)imm16) : R(b);                  \
+            if (!vm_int_cmp_cold(bv, cv_, kind_, &truthy)) {                        \
+                if (!throw_runtime_error_with_operands(                             \
+                        "比较运算: 操作数类型不可比较", "CMPJMP", bv, cv_,           \
+                        GET_CURRENT_LINE()))                                        \
+                    return -1;                                                      \
+                frame = &vm.frames[vm.frame_cnt - 1];                               \
+                truthy = 0;                                                         \
+            }                                                                       \
         }                                                                          \
         if (truthy == want_true) {                                                 \
             int off_ = (bx - 32768);                                               \
@@ -181,47 +205,45 @@
         }                                                                          \
         DISPATCH();                                                                \
     }
-    LABEL(OP_CMPJMP_LT): CMPJMP_IMPL(<)
-    LABEL(OP_CMPJMP_LE): CMPJMP_IMPL(<=)
-    LABEL(OP_CMPJMP_GT): CMPJMP_IMPL(>)
-    LABEL(OP_CMPJMP_GE): CMPJMP_IMPL(>=)
+    LABEL(OP_CMPJMP_LT): CMPJMP_IMPL(<, 0)
+    LABEL(OP_CMPJMP_LE): CMPJMP_IMPL(<=, 2)
+    LABEL(OP_CMPJMP_GT): CMPJMP_IMPL(>, 1)
+    LABEL(OP_CMPJMP_GE): CMPJMP_IMPL(>=, 3)
     // T31：等值比较也进融合族。`!=` **复用同一条**（codegen 翻转 C 的极性位）✓
     //   宏对任意 int 比较器都成立；安全性由 codegen 的判据保证（两侧静态类型都是 int
     //   ⇒ 不可能是 null ⇒ 与上面四条完全同口径）。
-    LABEL(OP_CMPJMP_EQ): CMPJMP_IMPL(==)
+    LABEL(OP_CMPJMP_EQ): CMPJMP_IMPL(==, 4)
 #undef CMPJMP_IMPL
 
     // 语义与 OP_*_INT 完全一致：左值为 null ⇒ 结果 false（立即数本身不可能为 null）。
     // 动机：`if n <= 1 {` 原先要 MOV + LOADI + LE_INT + JMP_IF_FALSE 四条，
     // 有立即数比较后右值那条 LOADI 直接省掉。
-    LABEL(OP_LT_INT_IMM): {
-        int a = READ_A(), b = READ_B();
-        int imm = (int)(int8_t)READ_C();
-        Value bv = R(b);
-        R(a) = val_bool(!val_is_null(bv) && VM_IO(bv) < (int64_t)imm);
-        DISPATCH();
+    // 立即数版同理（守卫见上面 CMP_INT_BODY 的说明）：bigint 走通用比较，
+    //   否则 `bigint 2^63 > 0` 会被读成 i64min 而判成 false。
+#define CMP_INT_IMM_BODY(intcmp, kind_, opname)                                 \
+    {                                                                           \
+        int a = READ_A(), b = READ_B();                                         \
+        int imm = (int)(int8_t)READ_C();                                        \
+        Value bv = R(b);                                                        \
+        if (likely(val_is_int(bv))) {                                           \
+            R(a) = val_bool(VM_IO(bv) intcmp (int64_t)imm);                     \
+            DISPATCH();                                                         \
+        }                                                                       \
+        int truthy_ = 0;                                                        \
+        if (!vm_int_cmp_cold(bv, val_int((int64_t)imm), kind_, &truthy_)) {      \
+            if (!throw_runtime_error_with_operand("比较运算: 操作数类型不可比较", \
+                                                  opname, bv, GET_CURRENT_LINE())) \
+                return -1;                                                      \
+            frame = &vm.frames[vm.frame_cnt - 1];                               \
+        }                                                                       \
+        R(a) = val_bool(truthy_);                                               \
+        DISPATCH();                                                             \
     }
-    LABEL(OP_GT_INT_IMM): {
-        int a = READ_A(), b = READ_B();
-        int imm = (int)(int8_t)READ_C();
-        Value bv = R(b);
-        R(a) = val_bool(!val_is_null(bv) && VM_IO(bv) > (int64_t)imm);
-        DISPATCH();
-    }
-    LABEL(OP_LE_INT_IMM): {
-        int a = READ_A(), b = READ_B();
-        int imm = (int)(int8_t)READ_C();
-        Value bv = R(b);
-        R(a) = val_bool(!val_is_null(bv) && VM_IO(bv) <= (int64_t)imm);
-        DISPATCH();
-    }
-    LABEL(OP_GE_INT_IMM): {
-        int a = READ_A(), b = READ_B();
-        int imm = (int)(int8_t)READ_C();
-        Value bv = R(b);
-        R(a) = val_bool(!val_is_null(bv) && VM_IO(bv) >= (int64_t)imm);
-        DISPATCH();
-    }
+    LABEL(OP_LT_INT_IMM): CMP_INT_IMM_BODY(<, 0, "LT (<)")
+    LABEL(OP_GT_INT_IMM): CMP_INT_IMM_BODY(>, 1, "GT (>)")
+    LABEL(OP_LE_INT_IMM): CMP_INT_IMM_BODY(<=, 2, "LE (<=)")
+    LABEL(OP_GE_INT_IMM): CMP_INT_IMM_BODY(>=, 3, "GE (>=)")
+#undef CMP_INT_IMM_BODY
 
     // --- 位运算 ---
     // 位运算：任一侧是 bigint（或移位/结果越界）⇒ 走 bigint 路径（无限精度补码语义）

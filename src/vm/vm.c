@@ -1528,6 +1528,64 @@ static inline int64_t vm_bigint_as_i64(Value v) {
 }
 
 // ============================================================================
+// int 特化比较的**冷路径**（2026-11-15）
+// ----------------------------------------------------------------------------
+// 为什么抽成 out-of-line：`OP_LT/GT/LE/GE_INT`、`*_INT_IMM`、`CMPJMP` 融合族一共要
+//   用 9 次，全都内联在 dispatch 循环里会让循环体膨胀 —— 实测 compare 密集的循环
+//   +2.4%（i-cache，不是算法）。抽出来之后热路径只剩「两次 tag 检查 + 比较」，
+//   与改动前（两次 null 检查）同量级。
+//
+// 谁需要走冷路径（`val_is_int` 判据不成立）：
+//   · null      ⇒ 有序/等值比较一律 false（与通用 OP_LT/GT/LE/GE 同口径）；
+//   · bigint    ⇒ **必须按数值比**：`VM_IO` 是 64 位回绕语义（2^63 → i64min），
+//                 拿它做顺序比较会把 `x > 0` 判成 false（实测，本函数存在的理由）；
+//   · float     ⇒ 同理走通用比较；
+//   · 其它类型  ⇒ 保持改动前行为（静态类型是 int 却拿到 struct/string，属**另一个**
+//                 既有问题：泛型 face 实参不做适配，见 docs/待办与路线图.md）。
+//
+// kind：0 `<`  1 `>`  2 `<=`  3 `>=`  4 `==`
+// 返回：1 = 已算出（写 *out）；0 = 不可比较（调用方按原有文案报错）
+// ============================================================================
+#if defined(_MSC_VER)
+#define VM_NOINLINE __declspec(noinline)
+#else
+#define VM_NOINLINE __attribute__((noinline))
+#endif
+
+static VM_NOINLINE int vm_int_cmp_cold(Value a, Value b, int kind, int* out) {
+    *out = 0;
+    if (val_is_null(a) || val_is_null(b)) return 1;
+
+    if (val_is_bigint(a) || val_is_float(a) || val_is_bigint(b) || val_is_float(b)) {
+        if (kind == 4) {
+            *out = value_eq_stdlib(a, b);
+            return 1;
+        }
+        int cmp = 0;
+        if (!value_compare_stdlib(a, b, &cmp)) return 0;
+        switch (kind) {
+            case 0: *out = (cmp < 0); break;
+            case 1: *out = (cmp > 0); break;
+            case 2: *out = (cmp <= 0); break;
+            default: *out = (cmp >= 0); break;
+        }
+        return 1;
+    }
+
+    // 非数值：保持改动前的位模式比较（不在本次修复范围内，见函数头说明）
+    int64_t x = val_is_bigint(a) ? vm_bigint_as_i64(a) : (int64_t)VAL_INT48_PAYLOAD(a);
+    int64_t y = val_is_bigint(b) ? vm_bigint_as_i64(b) : (int64_t)VAL_INT48_PAYLOAD(b);
+    switch (kind) {
+        case 0: *out = (x < y); break;
+        case 1: *out = (x > y); break;
+        case 2: *out = (x <= y); break;
+        case 3: *out = (x >= y); break;
+        default: *out = (x == y); break;
+    }
+    return 1;
+}
+
+// ============================================================================
 // 泛型类型名推断（与栈式 vm_call.inc 的两支口径一致）
 //   用于 instanceof 泛型替换：`new Holder[K](...)` 里 K 的实际类型
 //   要靠**运行时值**反推（int / float / string / bool / struct X）

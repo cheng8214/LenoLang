@@ -130,7 +130,7 @@ Array[User] out = rows.map(func(Dict r) {
 ## 2. 状态：`enum` 常量
 
 ```leno
-enum Page { HOME = 0, SEARCH = 1, LYRIC = 2 }
+enum Page { HOME = 0; SEARCH = 1; LYRIC = 2 }    // 成员之间用 `;`（或换行），**不是 `,`**
 
 int cur = Page.HOME
 if cur == Page.LYRIC { ... }     // ✅

@@ -1,0 +1,56 @@
+// test_bigint_cmp.leno —— `int` 自动提升成 bigint 后，比较必须按**数值**语义
+//
+// 背景（2026-11-15 压测发现，已修）：`int` 溢出会**自动提升为 bigint**（设计如此），
+//   但 VM 的 int 特化比较指令（OP_LT/GT/LE/GE_INT、*_INT_IMM、CMPJMP 融合族）
+//   原先直接拿 `VM_IO` 取值 —— 那是**64 位回绕**语义（2^63 → i64min）⇒
+//     x > 0  得 false、x < 0 得 true，而同一时刻 `x == 2^63` 却是 true。
+//   后果：`if` / `while` / `sort` 里只要出现提升后的值，就**静默走错分支**。
+//
+// 本用例钉四条路径：寄存器比较、立即数比较、CMPJMP 融合（if 与 while 回边）、EQ_INT。
+//   修法：任一侧不是 int48 ⇒ 退回通用比较（value_compare_stdlib / value_eq_stdlib）
+//   —— 与 03_arith.inc 的「两侧都是 int48」同口径。
+func addOne(int v): int { return v + 1 }
+
+main() {
+    int x = addOne(9223372036854775807)      // i64max + 1 ⇒ bigint 2^63
+
+    // ① 寄存器比较
+    assert_eq(x > 0, true, "①bigint(2^63) > 0 必须是 true")
+    assert_eq(x < 0, false, "①bigint(2^63) < 0 必须是 false")
+    int zero = 0
+    assert_eq(x > zero, true, "①与 int 变量比同样按数值")
+    assert_eq(x > 1, true, "①bigint(2^63) > 1")
+
+    // ② 立即数比较（int8 立即数编进指令）
+    assert_eq(x <= 1, false, "②bigint(2^63) <= 1 必须是 false")
+    assert_eq(x >= 1, true, "②bigint(2^63) >= 1 必须是 true")
+
+    // ③ CMPJMP 融合（if 条件）与 while 回边
+    int hit = 0
+    if x > 0 { hit = hit + 1 }
+    if x < 0 { hit = hit + 100 }
+    assert_eq(hit, 1, "③if 里的 bigint 比较走对分支")
+
+    int n = 0
+    while x > 0 {
+        n = n + 1
+        if n >= 3 { break }
+    }
+    assert_eq(n, 3, "③while 回边的 bigint 比较走对方向")
+
+    // ④ EQ_INT：2^63 与 i64min 的**位模式相同**，但数值不同 ⇒ 不能相等
+    int m = -9223372036854775807 - 1        // i64min
+    assert_eq(x == m, false, "④2^63 与 i64min 位模式相同，必须不等")
+    assert_eq(x == 9223372036854775808, true, "④与 bigint 字面量相等")
+
+    // ⑤ 负 bigint（比 i64min 还小）
+    var neg = addOne(-9223372036854775807) - 3     // 比 i64min 小 2
+    assert_eq(neg < 0, true, "⑤负 bigint < 0")
+    assert_eq(neg > 0, false, "⑤负 bigint 不 > 0")
+
+    // ⑥ 与 float 比（一直是好的，防回归）
+    assert_eq(x > 0.0, true, "⑥bigint 与 float 比较")
+    assert_eq(x > 1000000000000000000.0, true, "⑥bigint 与 1e18 比较")
+
+    print("test_bigint_cmp passed（寄存器 / 立即数 / CMPJMP / EQ_INT / 负 bigint / float）")
+}
