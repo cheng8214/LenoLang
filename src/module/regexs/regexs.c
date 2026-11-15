@@ -785,8 +785,12 @@ static const char* find_match(ReNode* pattern, const char* base, const char* fro
 // ==================== 核心方法实现 ====================
 
 // 展开替换串里的反向引用（2026-10-01 真支持，此前是"报错挡住" ✓）：
-//   `$0` = 整体匹配，`$1`..`$9` = 第 N 个捕获组，`$$` = 字面 `$`；
-//   其余 `$x`（后面不是数字/$）按字面 `$x` 原样保留 ✓；**超出组号**（如只有 2 组却写 `$5`）⇒ 展开成空串 ✓
+//   `$0` = 整体匹配，`$1`..`$9` = 第 N 个捕获组（**只认单个数字**：`$10` = `$1` + "0"），
+//   `$$` = 字面 `$`；其余 `$x`（后面不是数字/$）按字面 `$x` 原样保留 ✓；
+//   **组存在但本次未参与匹配**（可选组）⇒ 展开成空串 ✓。
+//   ★ 2026-11-15：**引用不存在的组**（如模式只有 2 组却写 `$5`）改为**报错**（返回 -1）——
+//     此前静默展开成空串，实测 `regexs.replace("cost: b", "b", "$100")` 得到 `"cost: 00"`
+//     （想写字面 `$100` 却被当成 `$1` + `"00"`，数据被静默吃掉 ✗）。字面 `$` 请写 `$$`。
 //   dst 传 NULL 时只算长度（`replace_all` 需要先知道总长 ✓）—— 一个函数两用，避免长度/填充两套逻辑漂移 ✓
 static int re_expand_replacement(const char* repl, ObjString* str, ReCtx* ctx, char* dst) {
     int n = 0;
@@ -807,6 +811,14 @@ static int re_expand_replacement(const char* repl, ObjString* str, ReCtx* ctx, c
             } else if (gi <= ctx->ngroup) {
                 s = ctx->gstart[gi];       // 未参与的组 ⇒ -1 ⇒ 展开成空串 ✓
                 e = ctx->gend[gi];
+            } else {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "替换串里的 $%d 引用了不存在的捕获组（模式只有 %d 个组）；"
+                         "要输出字面的 '$' 请写 $$（例如 $$%d）",
+                         gi, ctx->ngroup, gi);
+                native_throw_error(msg);
+                return -1;
             }
             if (s >= 0 && e >= s) {
                 if (dst) memcpy(dst + n, str->chars + s, (size_t)(e - s));
@@ -1094,6 +1106,7 @@ static Value regex_replace(int argc, Value* args) {
     int match_len = (int)(end - start);
     int after_len = str->len - before_len - match_len;
     int repl_len = re_expand_replacement(replacement->chars, str, &ctx, NULL);
+    if (repl_len < 0) return val_null();      // 引用了不存在的捕获组（已登记异常）
     int new_len = before_len + repl_len + after_len;
 
     char* result = (char*)malloc(new_len + 1);
@@ -1149,7 +1162,9 @@ static Value regex_replace_all(int argc, Value* args) {
         if (!start) break;
         match_count++;
         total_match_len += (int)(end - start);
-        total_repl_len += re_expand_replacement(replacement->chars, str, &ctx, NULL);
+        int rl = re_expand_replacement(replacement->chars, str, &ctx, NULL);
+        if (rl < 0) { re_free_all(); return val_null(); }   // 不存在的捕获组（已登记异常）
+        total_repl_len += rl;
         if (end == start) pos++;
         else pos = end;
     }

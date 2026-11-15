@@ -270,8 +270,17 @@ main() {
     assert_eq(regexs.replace_all("a1b2", "([a-z])([0-9])", "$1|$2"), "a|1b|2")
     assert_eq(regexs.replace("abc123", "[0-9]+", "<$0>"), "abc<123>")   // `$0` = 整体匹配 ✓
     assert_eq(regexs.replace("x", "x", "$$1"), "$1")                    // `$$` ⇒ 字面 `$` ✓
-    assert_eq(regexs.replace("a", "(a)", "$1-$5"), "a-")                // 超出组号 ⇒ 空串 ✓
+    assert_eq(regexs.replace("x", "x", "$$100"), "$100")                // 要写字面 $100 得写 $$100 ✓
     assert_eq(regexs.replace("x", "x", "a$b"), "a$b")                   // 单独 `$` 原样 ✓
+    // ★ 2026-11-15：**引用不存在的组**改为**运行时错误**（此前静默展开成空串 ⇒
+    //   `replace("cost: b","b","$100")` 得 "cost: 00"，写价格时静默丢数据 ✗）。
+    //   "组存在但本次没参与匹配"（可选组）仍按空串 ✓；`$N` 只认**单个数字** ⇒ `$10` = `$1` + "0"
+    int bad_ref = 0
+    try { var _r1 = regexs.replace("x", "x", "$100") } catch e1 { bad_ref += 1 }
+    try { var _r2 = regexs.replace("a", "(a)", "$1-$5") } catch e2 { bad_ref += 1 }
+    assert_eq(bad_ref, 2, "引用不存在的捕获组必须抛错（实抛 " + _str(bad_ref) + " 条）")
+    assert_eq(regexs.replace("a", "(a)(b)?", "$1-$2"), "a-", "组存在但未参与匹配 ⇒ 空串")
+    assert_eq(regexs.replace("ab", "(a)(b)", "$10"), "a0", "$10 = $1 + 字面 0（组号只认单个数字）")
 
     // ★ 捕获组（2026-10-01 匹配器重写后**真的可用**）：`groups()` 返回 `[整体, 组1, 组2, ...]`
     //   此前它只回 1 个元素（名不副实）—— 这条断言从"现状钉桩"升级成了"能力验证" ✓
