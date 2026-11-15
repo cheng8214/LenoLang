@@ -275,6 +275,31 @@ void event_loop_stop(EventLoop* loop) {
     loop->running = 0;
 }
 
+// 从"待抛错误"列表里移除一条**同一个错误值**（2026-11-16）
+//
+// 问题：协程失败时若**当刻没有等待者**（`task_future->waiter == NULL`），错误会被立刻
+//   收进 `loop->errors`（见 event_loop_run_for）。之后调用方才 `await` 这个已完成的
+//   Future（或在 `asyncs.all` 里拿到它）⇒ 那条错误其实**已被消费**，但列表里还留着
+//   ⇒ `asyncs.run()` 结尾**再抛一次同样的错误**。
+//   实测：`var bad = boom(); await ok; try { await bad } catch { }` 之后 run() 仍抛
+//   "炸"（boom 内部先 await sleep 再 throw ⇒ 失败发生在没人等的窗口里）。
+//   文档（module_asyncs.md 路径2）写的是"已通过 await 传播的异常不会被 run() 重复收集"✗
+//
+// 判据：同一个 Value（NaN-boxing 8 字节完全相同 ⇒ 同一个错误对象 / 同一个数字）。
+// `await` 与 `asyncs.all` 在把错误抛给调用方时各调一次 ⇒ 两处消费口径一致。
+void event_loop_consume_error(EventLoop* loop, Value err) {
+    if (!loop || loop->error_count <= 0) return;
+    for (int i = 0; i < loop->error_count; i++) {
+        if (memcmp(&loop->errors[i], &err, sizeof(Value)) == 0) {
+            for (int j = i + 1; j < loop->error_count; j++) {
+                loop->errors[j - 1] = loop->errors[j];
+            }
+            loop->error_count--;
+            return;
+        }
+    }
+}
+
 // 外部声明：执行一个协程直到它挂起或完成
 extern int vm_run_coroutine(ObjCoroutine* co);
 

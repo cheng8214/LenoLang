@@ -144,6 +144,10 @@
                 //   而另一条路走的是"原样抛出" ⇒ 同一件事两种文案，命中哪条还看调度时机 ✗
                 //   （实测 assert/test_async.leno 的 `await risky(-1)` 断言 e.msg == "negative"，
                 //   它走的是恢复路径；已完成的新建协程走这里，修前会得到另一种文案）
+                // ★ 2026-11-16：这条错误如果**在没人等的窗口里**失败，已经被收进
+                //   loop->errors（run 结尾会再抛一次）。这里既然要把它交给调用方（catch / 外层
+                //   传播），就从列表里消费掉 ⇒ 不重复抛（见 event_loop_consume_error 的注释）。
+                if (vm.event_loop) event_loop_consume_error(vm.event_loop, future->error);
                 if (!throw_existing_exception(future->error, line)) return -1;
                 frame = &vm.frames[vm.frame_cnt - 1];
                 DISPATCH();
@@ -154,7 +158,13 @@
 
         ObjCoroutine* current = vm.current_coroutine;
         if (unlikely(!current)) {
-            if (!throw_runtime_error("await 只能在 async 函数中使用", line)) return -1;
+            // ★ 2026-11-16：这条文案此前只说"只能在 async 函数中使用"—— 但**在 async 函数里
+            //   照样能撞上**：在协程内调用 `asyncs.run()` 会把 current_coroutine 清空，
+            //   run() 返回后的 `await` 就报这句 ⇒ 真因（事件循环嵌套）完全看不出来。
+            //   现在 run()/run_for() 会先拦下并报真因；这里补一句指路，防止别处再清空状态。
+            if (!throw_runtime_error("await 只能在 async 函数中使用"
+                                     "（若你确实在 async 函数里，请检查是不是在协程内调用了 "
+                                     "asyncs.run() / run_for() —— 事件循环不能嵌套）", line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }

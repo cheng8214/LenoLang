@@ -1,0 +1,69 @@
+// asyncs 的两处"真因要看得见"修复（2026-11-16）
+//
+// ① 事件循环不能嵌套 —— 文档一直这么写，但此前只是"跑坏"而不是"拦住"：
+//      在 `async func` 里调 `asyncs.run()`（此时 loop->running 已是 1）实测两种表现：
+//        · 0xC0000005 访问违例崩溃（重入 event_loop_run_for 会在本协程栈上再跑别的协程）
+//        · 不崩，但 run() 返回后 current_coroutine 被清空 ⇒ 后面的 `await` 报
+//          「await 只能在 async 函数中使用」—— **完全指错真因**（代码明明在 async 函数里）
+//    现在 run() / run_for() 一律抛错并说明原因。
+//
+// ② 失败 Future 的重复收集 —— 协程在"没人等的窗口"里失败 ⇒ 错误立刻进 loop->errors；
+//    之后调用方才 await 这个已完成的 Future ⇒ 错误已被消费，但列表里还留着
+//    ⇒ `asyncs.run()` 结尾**再抛一次同样的错误**（文档写的是"不会重复收集"✗）。
+//    现在 await / asyncs.all 把错误交给调用方时从列表里消费掉。
+import asyncs
+import strings
+
+async func nested_run() {
+    try {
+        asyncs.run()
+        print("① 不该走到这里")
+    } catch e {
+        assert_eq(strings.has(e.msg, "不能嵌套"), true, "① run() 在协程内必须报「不能嵌套」")
+    }
+}
+
+async func nested_run_for() {
+    try {
+        var _ok = asyncs.run_for(10)
+        print("② 不该走到这里")
+    } catch e {
+        assert_eq(strings.has(e.msg, "不能嵌套"), true, "② run_for() 在协程内必须报「不能嵌套」")
+    }
+}
+
+async func boom_late(): int {
+    await asyncs.sleep(1)
+    throw "LATE"
+}
+
+async func worker() {
+    var bad = boom_late()
+    // 让 boom_late 在**没人等**的窗口里失败（1ms 先到期，这里等 20ms）
+    await asyncs.sleep(20)
+    try {
+        var _v = await bad
+    } catch e {
+        assert_eq(e.msg, "LATE", "③ await 拿到的是原错误值")
+    }
+}
+
+main() {
+    // ①② 嵌套 run：各自在协程内 try/catch，不应该崩
+    nested_run()
+    nested_run_for()
+    asyncs.run()
+
+    // ③ 重复收集：worker 里的 await 已消费 ⇒ run() 不该再抛
+    worker()
+    int dup = 0
+    try {
+        asyncs.run()
+    } catch e {
+        dup = 1
+        print("③ 不应重复抛:", e)
+    }
+    assert_eq(dup, 0, "③ 已 await 消费过的错误不能被 run() 再抛一次")
+
+    print("test_asyncs_nested_run passed")
+}

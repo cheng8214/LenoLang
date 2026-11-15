@@ -107,6 +107,19 @@ static Value native_async_run(int arg_count, Value* args) {
         }
         return val_null();
     }
+
+    // ★ 2026-11-16：事件循环**不能嵌套**（文档一直这么写，但此前只是"跑坏"而不是"拦住"）。
+    //   实测在 `async func` 里调 run()（`loop->running` 已是 1）：
+    //     ① 有时 0xC0000005 访问违例崩溃（重入 event_loop_run_for 会在本协程栈上再跑别的协程）
+    //     ② 有时不崩，但 run() 返回后本协程的 current_coroutine 已被清空 ⇒ 后面的 `await`
+    //        报「await 只能在 async 函数中使用」——**完全指错真因**（它明明就在 async 函数里）
+    //   ⇒ 在这里拦住，并把真因写清楚。
+    if (target_vm->event_loop->running) {
+        native_throw_error("asyncs.run() 不能在协程内部调用：事件循环不能嵌套。"
+                           "请让当前协程先返回（用 await 拿结果），再在主线程 / main 里调用 run()；"
+                           "限时驱动用 asyncs.run_for(ms) 也受同一限制");
+        return val_null();
+    }
     
     event_loop_run(target_vm->event_loop);
 
@@ -141,6 +154,13 @@ static Value native_async_run_for(int arg_count, Value* args) {
         } else {
             native_throw_error("asyncs.run_for 需要在初始化事件循环后调用");
         }
+        return val_bool(false);
+    }
+
+    // 同一限制：协程内不能嵌套驱动事件循环（见 native_async_run 的说明）
+    if (target_vm->event_loop->running) {
+        native_throw_error("asyncs.run_for() 不能在协程内部调用：事件循环不能嵌套。"
+                           "请让当前协程先返回，再在主线程 / main 里驱动");
         return val_bool(false);
     }
 
@@ -228,6 +248,12 @@ static Value native_async_all(int arg_count, Value* args) {
             if (!val_is_null(future->error)) {
                 fail_count++;
                 if (fail_count == 1) first_err = future->error;
+                // ★ 2026-11-16：这个错误可能已在"没人等的窗口"里进了 loop->errors
+                //   ⇒ 已经交到这里要抛了，就从待抛列表消费掉（否则 run() 结尾再抛一次）
+                VM* err_vm = get_current_vm();
+                if (err_vm && err_vm->event_loop) {
+                    event_loop_consume_error(err_vm->event_loop, future->error);
+                }
                 if (agg_off < (int)sizeof(agg) - 64) {
                     char* err_str = value_to_string(future->error);
                     agg_off += snprintf(agg + agg_off, sizeof(agg) - (size_t)agg_off,

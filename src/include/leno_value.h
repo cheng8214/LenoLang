@@ -2032,6 +2032,11 @@ int event_loop_run_for(EventLoop* loop, uint64_t timeout_ms);
 // 停止事件循环
 void event_loop_stop(EventLoop* loop);
 
+// 从"待抛错误"列表里移除一条同一个错误值（2026-11-16）
+//   `await` 一个**已完成且失败**的 Future、或 `asyncs.all` 抛出某个 Future 的错误时调用
+//   ⇒ 那条错误已被消费，`asyncs.run()` 结尾不再重复抛（见 coroutine.c 的实现注释）
+void event_loop_consume_error(EventLoop* loop, Value err);
+
 // ★ 2026-11-14：async 调用的"静默丢活"兜底
 //   · coroutine_note_async_call：每次创建 async 协程时记一笔（没有事件循环时用来计数）
 //   · vm_warn_pending_async：程序退出前检查"还有协程没跑/没跑完"并向 stderr 打警告
