@@ -698,26 +698,11 @@ static int json_parse_float_text(const char* s, int len, double* out) {
     return 1;
 }
 
-// ★ 2026-11-15：JSON 的**浮点**装进 `int` 字段时的统一换算（两处 coerce 共用）。
+// ★ 2026-11-15：JSON 的**浮点**装进 `int` 字段时统一用 leno_value.h 的
+//   `val_int_from_double_trunc`（**唯一实现**：向零截断，`2.9 → 2`，与既有 fill 口径一致）。
 //   为什么不能直接 `(int64_t)double`：超出 int64 的转换是 **UB** —— 实测 `{"n":1e20}` 填
 //   `int n` 得到 **0**（静默错值 ✗）。口径：int48 内 ⇒ int；整数且更大 ⇒ bigint；
-//   带小数 ⇒ 截断（与 `_int(float)` 一致）；NaN / ±inf ⇒ null（调用方保留字段默认值）。
-//   ⚠ `%.0f` 只在 |d| < 1e21 内保证 Lua 串长度可控（超过就交给"转不了"路径，
-//     那一档 double 本身也没有 15 位以上的整数精度了）。
-static Value json_number_to_int_value(double d) {
-    if (d != d) return val_null();                       // NaN
-    if (d > 1.7976931348623157e308 || d < -1.7976931348623157e308) return val_null();
-    if (d >= -9223372036854775808.0 && d < 9223372036854775808.0) {
-        int64_t iv = (int64_t)d;                         // 范围已判 ⇒ 无 UB（小数截断）
-        return INT48_IN_RANGE(iv) ? val_int(iv) : val_bigint_from_int64(iv);
-    }
-    if (d > -1e21 && d < 1e21) {
-        char buf[40];
-        snprintf(buf, sizeof(buf), "%.0f", d);
-        return val_bigint_from_string(buf);
-    }
-    return val_null();                                   // 转不了 ⇒ 保留字段默认值
-}
+//   NaN / ±inf / 极端值 ⇒ null（调用方保留字段默认值）。
 
 
 // ★ 2026-11-11：按**数组元素声明类型**把 JSON 值转成该元素可接受的值（口径同标量字段）。
@@ -728,7 +713,7 @@ static Value json_coerce_to_elem(Value raw, TypeKind elem_type) {
         case TYPE_INT: {
             if (val_is_int(raw) || val_is_bigint(raw)) return raw;
             if (val_is_bool(raw)) return val_int(val_as_bool(raw) ? 1 : 0);
-            if (val_is_float(raw)) return json_number_to_int_value(val_as_num(raw));
+            if (val_is_float(raw)) return val_int_from_double_trunc(val_as_num(raw));
             if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) {
                 ObjString* t = (ObjString*)val_as_obj(raw);
                 Value iv = val_null();
@@ -784,7 +769,7 @@ static Value json_coerce_to_field(Value raw, StructFieldInfo* f) {
             // 大整数原样保留（转 double 会丢精度，见 encode 那边 bigint 的同类注释）
             if (val_is_int(raw) || val_is_bigint(raw)) return raw;
             if (val_is_bool(raw)) return val_int(val_as_bool(raw) ? 1 : 0);
-            if (val_is_float(raw)) return json_number_to_int_value(val_as_num(raw));
+            if (val_is_float(raw)) return val_int_from_double_trunc(val_as_num(raw));
             // 字符串 ⇒ 严格解析（DB / CSV 的列都是字符串）
             if (val_is_obj(raw) && val_as_obj(raw)->type == OBJ_STRING) {
                 ObjString* t = (ObjString*)val_as_obj(raw);

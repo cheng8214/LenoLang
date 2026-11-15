@@ -630,29 +630,61 @@
                 R(a) = val_float(leno_math_fract(x));
                 break;
             case MATHF_ROUNDI:
-                // int 实参直接取（精确，且省一次 double 往返）
-                R(a) = val_int(val_is_int(R(b)) ? val_as_int(R(b)) : leno_math_roundi(x));
+                // ★ 2026-11-15：走与 maths.c **同一份口径**（leno_value.h）——
+                //   bigint 原样返回、浮点四舍五入（超 int48 升 bigint）。
+                //   原实现 `val_int(leno_math_roundi(x))` 对 2^63 静默得 0 ✗
+                R(a) = val_to_int_value(R(b));
                 break;
-            case MATHF_CLAMPI:
-                R(a) = val_int(leno_math_clampi(MATHF_I(b), MATHF_I(b + 1), MATHF_I(b + 2)));
-                break;
-            case MATHF_ABSI:
-                R(a) = val_int(leno_math_absi(MATHF_I(b)));
-                break;
+            case MATHF_CLAMPI: {
+                Value x = val_to_int_value(R(b));
+                Value lo = val_to_int_value(R(b + 1));
+                Value hi = val_to_int_value(R(b + 2));
+                if (val_is_null(x) || val_is_null(lo) || val_is_null(hi)) {
+                    R(a) = val_null();
+                } else if (val_int_cmp(x, lo) < 0) {
+                    R(a) = lo;                       // 口径同 leno_math_clampi：lo > hi 收成 lo
+                } else if (val_int_cmp(x, hi) > 0) {
+                    R(a) = hi;
+                } else {
+                    R(a) = x;
+                }
+            } break;
+            case MATHF_ABSI: {
+                Value v = val_to_int_value(R(b));
+                if (val_is_null(v)) {
+                    R(a) = val_null();
+                } else if (val_is_bigint(v)) {
+                    ObjBigInt* bi = val_as_bigint(v);
+                    R(a) = bi->is_negative ? bigint_neg(bi) : v;
+                } else {
+                    R(a) = val_as_int(v) < 0 ? val_int(-val_as_int(v)) : v;
+                }
+            } break;
             case MATHF_MINI:
-                R(a) = val_int(leno_math_mini(MATHF_I(b), MATHF_I(b + 1)));
-                break;
-            case MATHF_MAXI:
-                R(a) = val_int(leno_math_maxi(MATHF_I(b), MATHF_I(b + 1)));
-                break;
+            case MATHF_MAXI: {
+                Value m = val_to_int_value(R(b));
+                Value o = val_to_int_value(R(b + 1));
+                if (val_is_null(m) || val_is_null(o)) {
+                    R(a) = val_null();
+                } else {
+                    int cmp = val_int_cmp(o, m);
+                    R(a) = (c == MATHF_MINI) ? (cmp < 0 ? o : m) : (cmp > 0 ? o : m);
+                }
+            } break;
             case MATHF_MOD: {
-                int64_t u = MATHF_I(b), v = MATHF_I(b + 1);
-                if (unlikely(v == 0)) {
+                int64_t u = 0, v2 = 0;
+                if (unlikely(!val_to_int64_exact(R(b), &u) || !val_to_int64_exact(R(b + 1), &v2))) {
+                    // ★ 2026-11-15：超出 int64 ⇒ **明确报错**（原实现静默退化成垃圾值）
+                    if (!throw_runtime_error("mod() 的实参超出 int 范围", GET_CURRENT_LINE())) return -1;
+                    frame = &vm.frames[vm.frame_cnt - 1];
+                    DISPATCH();
+                }
+                if (unlikely(v2 == 0)) {
                     if (!throw_runtime_error("mod() 除数不能为 0", GET_CURRENT_LINE())) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();
                 }
-                R(a) = val_int(leno_math_mod(u, v));
+                R(a) = val_int(leno_math_mod(u, v2));
             } break;
             default:
                 R(a) = val_null();

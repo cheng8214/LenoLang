@@ -2,6 +2,7 @@
 #define LENO_VALUE_H
 
 #include <stdio.h>
+#include <math.h>          // llround（val_int_from_double：maths.*i 家族的统一取值口径）
 #include "leno_types.h"
 #include "platform_thread.h"
 // maths 纯数值函数的**唯一实现**（native 与 OP_MATH_FAST 共用，见该文件头说明）
@@ -1285,6 +1286,92 @@ int bigint_compare(ObjBigInt* a, ObjBigInt* b);
 // BigInt 工具函数
 char* bigint_to_string(ObjBigInt* bigint);
 int bigint_is_zero(ObjBigInt* bigint);
+
+// ============================================================================
+// int 语义的取值/比较（maths.*i 家族的唯一口径，★ 2026-11-15）
+// ----------------------------------------------------------------------------
+// 为什么需要：原先 int 家族一律 `val_as_int(v)` 或 `(int64_t)llround(double)` ⇒
+//   **bigint 被当成 0 / 超出 int64 的 double 转换是 UB**，实测：
+//     maths.maxi(2^63, 1) = 1、maths.clampi(2^63, 0, 10) = 0、maths.roundi(2^63) = 0
+//   —— 全是静默错值 ✗。语言里 int 溢出本来就会升 bigint ⇒ 这批函数也应当**保留精确值**。
+// 口径：
+//   · int（int48）/ bigint ⇒ 原样参与比较，胜者原样返回（bigint 不丢精度）
+//   · float ⇒ 四舍五入成整数（与 math_to_i64 原语义一致），超 int48 走 bigint
+//   · NaN / ±inf ⇒ val_null()（调用方按"转不了"处理）
+// ============================================================================
+
+// 浮点 → 整数 Value：int48 内给 int；更大且整数值给 bigint；NaN/inf/超 1e38 给 null
+static inline Value val_int_from_double(double d) {
+    if (d != d) return val_null();                              // NaN
+    if (d > 1.7976931348623157e308 || d < -1.7976931348623157e308) return val_null();
+    if (d > -9223372036854775808.0 && d < 9223372036854775808.0) {
+        return val_int_safe((int64_t)llround(d));
+    }
+    if (d > -1e38 && d < 1e38) {                                // %.0f 在 40 字节内可控
+        char buf[48];
+        snprintf(buf, sizeof(buf), "%.0f", d);
+        return val_bigint_from_string(buf);
+    }
+    return val_null();
+}
+
+// 任意数值 Value → 整数 Value（bigint 原样、int 原样、float 见上）
+static inline Value val_to_int_value(Value v) {
+    if (val_is_int(v) || val_is_bigint(v)) return v;
+    if (val_is_bool(v)) return val_int(val_as_bool(v) ? 1 : 0);
+    if (val_is_float(v)) return val_int_from_double(val_as_num(v));
+    return val_null();
+}
+
+// 浮点 → 整数 Value，**向零截断**（JSON 字段填充的既有口径：`2.9 → 2`）。
+//   ⚠ 与 val_int_from_double（四舍五入，maths.roundi 口径）**别混用**：
+//     两者在 `2.5 / 2.9` 上结果不同，各自的既有测试都钉着（test_jsons_struct 的 172 行）。
+static inline Value val_int_from_double_trunc(double d) {
+    if (d != d) return val_null();
+    if (d > -9223372036854775808.0 && d < 9223372036854775808.0) {
+        return val_int_safe((int64_t)d);        // C 的 double→int64 就是向零截断
+    }
+    return val_int_from_double(d);              // 超 int64：这一档已无小数，两种口径一致
+}
+
+// bigint 与 int64 比大小（-1 / 0 / 1）
+static inline int bigint_cmp_int64(ObjBigInt* a, int64_t b) {
+    if (bigint_fits_in_int64(a)) {
+        int64_t av = bigint_to_int64(a);
+        return av < b ? -1 : (av > b ? 1 : 0);
+    }
+    // 超 int64 ⇒ 绝对值必然大于任何 int64（符号决定大小关系）
+    return a->is_negative ? -1 : 1;
+}
+
+// 两个**整数** Value（int / bigint）比大小；调用方保证类型
+static inline int val_int_cmp(Value a, Value b) {
+    int ab = val_is_bigint(a);
+    int bb = val_is_bigint(b);
+    if (!ab && !bb) {
+        int64_t x = val_as_int(a), y = val_as_int(b);
+        return x < y ? -1 : (x > y ? 1 : 0);
+    }
+    if (ab && bb) return bigint_compare(val_as_bigint(a), val_as_bigint(b));
+    if (ab) return bigint_cmp_int64(val_as_bigint(a), val_as_int(b));
+    return -bigint_cmp_int64(val_as_bigint(b), val_as_int(a));
+}
+
+// 任意数值 Value → int64（**精确**）：bigint 装得进就给真值；装不进 / NaN / ±inf ⇒ 0。
+//   用于"只能接受 int64"的入口（maths.mod）：装不下时由调用方**明确报错**，不静默截断。
+static inline int val_to_int64_exact(Value v, int64_t* out) {
+    Value iv = val_to_int_value(v);
+    if (val_is_null(iv)) return 0;
+    if (val_is_bigint(iv)) {
+        ObjBigInt* b = val_as_bigint(iv);
+        if (!bigint_fits_in_int64(b)) return 0;
+        *out = bigint_to_int64(b);
+        return 1;
+    }
+    *out = val_as_int(iv);
+    return 1;
+}
+
 
 // ============================================================================
 // 内联辅助函数（供VM外部模块使用）

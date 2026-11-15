@@ -308,19 +308,34 @@ static Value math_sign(int argc, Value* args) {
 //     （改返回类型会动到类型推断，风险远大于加新函数 ✓）。
 //   int 版接受任意数字实参：小数按**四舍五入**取整（与 roundi 一致，符合"像素边界"的直觉）。
 
+// ★ 2026-11-15：int 家族的取值/比较统一走 leno_value.h 的
+//   `val_to_int_value` / `val_int_cmp`（与 OP_MATH_FAST 内联路径**同一份口径**）。
+//   原实现 `(int64_t)llround(get_number(v))` 有两个静默错值：
+//     · bigint（如 2^63）过 double 再回来 ⇒ 溢出 UB，实测 maxi 得 1、clampi 得 0；
+//     · 落在 int48 外的整数被 `val_int(...)` **静默掩掉高位**。
+//   现在：bigint 原样参与比较并原样返回（不丢精度），浮点四舍五入、超 int48 升 bigint。
+
 static int64_t math_to_i64(Value v) {
     // ★ 整数快路径：GUI 控件的尺寸/行列号**全是 int**，先判类型再决定要不要走 double
     //   （实测：一律 get_number + llround 时 `clampi` 比手写 if 慢 2.5 倍；加这条快路径后
     //     降到与手写同量级 —— 见 tools/bench_maths_native.leno 的对比）
     if (val_is_int(v)) return val_as_int(v);
+    if (val_is_bigint(v)) {
+        ObjBigInt* b = val_as_bigint(v);
+        return bigint_fits_in_int64(b) ? bigint_to_int64(b) : INT64_MAX;   // 兜底饱和（超范围见调用方）
+    }
     return (int64_t)llround(get_number(v));
+}
+
+// 取 int64；装不进（bigint 超 int64 / NaN / ±inf）返回 0（公共实现见 leno_value.h）
+static int math_i64_or_fail(Value v, int64_t* out) {
+    return val_to_int64_exact(v, out);
 }
 
 static Value math_roundi(int argc, Value* args) {
     (void)argc;
-    // int 实参直接取：精确、且省一次 double 往返（>2^53 的整数过 double 会丢精度）
-    if (val_is_int(args[0])) return val_int(val_as_int(args[0]));
-    return val_int(leno_math_roundi(get_number(args[0])));
+    // int / bigint 原样返回（精确）；浮点四舍五入（超 int48 ⇒ bigint，不再静默截断）
+    return val_to_int_value(args[0]);
 }
 
 // int 版绝对值（2026-11-01 补）：`maths.abs` 返回 float，而 QR 的 `abs(pct-50)/5`、
@@ -328,26 +343,49 @@ static Value math_roundi(int argc, Value* args) {
 //   赋回 int 还要再套 `_int(...)`，比手写 `if x < 0 then -x else x` 还长 ✗
 static Value math_absi(int argc, Value* args) {
     (void)argc;
-    return val_int(leno_math_absi(math_to_i64(args[0])));
+    Value v = val_to_int_value(args[0]);
+    if (val_is_null(v)) return val_null();
+    if (val_is_bigint(v)) {
+        ObjBigInt* b = val_as_bigint(v);
+        return b->is_negative ? bigint_neg(b) : v;
+    }
+    return val_as_int(v) < 0 ? val_int(-val_as_int(v)) : v;
 }
 
 static Value math_mini(int argc, Value* args) {
     (void)argc;
-    int64_t m = math_to_i64(args[0]);
-    for (int i = 1; i < argc; i++) m = leno_math_mini(m, math_to_i64(args[i]));
-    return val_int(m);
+    Value m = val_to_int_value(args[0]);
+    if (val_is_null(m)) return val_null();
+    for (int i = 1; i < argc; i++) {
+        Value x = val_to_int_value(args[i]);
+        if (val_is_null(x)) return val_null();
+        if (val_int_cmp(x, m) < 0) m = x;          // 胜者**原样**返回（bigint 不丢精度）
+    }
+    return m;
 }
 
 static Value math_maxi(int argc, Value* args) {
     (void)argc;
-    int64_t m = math_to_i64(args[0]);
-    for (int i = 1; i < argc; i++) m = leno_math_maxi(m, math_to_i64(args[i]));
-    return val_int(m);
+    Value m = val_to_int_value(args[0]);
+    if (val_is_null(m)) return val_null();
+    for (int i = 1; i < argc; i++) {
+        Value x = val_to_int_value(args[i]);
+        if (val_is_null(x)) return val_null();
+        if (val_int_cmp(x, m) > 0) m = x;
+    }
+    return m;
 }
 
 static Value math_clampi(int argc, Value* args) {
     (void)argc;
-    return val_int(leno_math_clampi(math_to_i64(args[0]), math_to_i64(args[1]), math_to_i64(args[2])));
+    Value x = val_to_int_value(args[0]);
+    Value lo = val_to_int_value(args[1]);
+    Value hi = val_to_int_value(args[2]);
+    if (val_is_null(x) || val_is_null(lo) || val_is_null(hi)) return val_null();
+    // 口径与 leno_math_clampi 一致：lo > hi 时收成 lo（先判下界）
+    if (val_int_cmp(x, lo) < 0) return lo;
+    if (val_int_cmp(x, hi) > 0) return hi;
+    return x;
 }
 
 // 正取模：结余符号跟**除数**走（b > 0 时返回 0..b-1）
@@ -355,12 +393,18 @@ static Value math_clampi(int argc, Value* args) {
 //   （LenoSDL3 的 sdl_calendar.leno:226 就是 `(firstDow - weekStart + 7) % 7`）
 static Value math_mod(int argc, Value* args) {
     (void)argc;
-    int64_t b = math_to_i64(args[1]);
+    int64_t u = 0, b = 0;
+    if (!math_i64_or_fail(args[0], &u) || !math_i64_or_fail(args[1], &b)) {
+        // ★ 2026-11-15：超出 int64 时**明确报错**，不再退化成垃圾值（原先 math_to_i64
+        //   会把 bigint 过 double 再 llround ⇒ 静默错值 ✗）
+        native_throw_error("mod() 的实参超出 int 范围（请用 pow_mod 或先自行取模）");
+        return val_null();
+    }
     if (b == 0) {
         native_throw_error("mod() 除数不能为 0");
         return val_null();
     }
-    return val_int(leno_math_mod(math_to_i64(args[0]), b));
+    return val_int(leno_math_mod(u, b));
 }
 
 // ==================== 模幂：pow_mod(base, exp, m) ====================

@@ -1,0 +1,55 @@
+// test_maths_int_bigint.leno —— maths 的 int 家族（maxi/mini/clampi/roundi/absi/mod）
+//                               不能把 bigint / int48 外的值静默算错
+//
+// 背景（2026-11-15 压测）：这批函数原来一律 `val_as_int(v)` 或 `(int64_t)llround(double)`：
+//   · bigint（如 2^63）过 double 回来时溢出，实测 `maxi(2^63, 1)` 得 **1**、
+//     `clampi(2^63, 0, 10)` 得 **0**、`roundi(2^63)` 得 **0**  ✗
+//   · 落在 int48 外的整数再被 `val_int(...)` 静默掩掉高位 ✗
+// 现在两条路径（OP_MATH_FAST 内联 / maths.c 的 native）共用 leno_value.h 的
+// `val_to_int_value` / `val_int_cmp` ⇒ bigint 原样参与比较并原样返回。
+//
+// 判据：bigint 精确；int48 边界两侧精确；浮点大值升 bigint；mod 超范围**报错**；
+//      普通 int / float 的老语义不变（含 lo>hi 收成 lo、roundi 半值远离零）。
+import maths
+
+main() {
+    var big = 9223372036854775808            // 2^63
+
+    // ① bigint 参与比较：胜者必须精确
+    assert_eq(maths.maxi(big, 1) == 9223372036854775808, true, "①maxi 取 bigint")
+    assert_eq(maths.mini(big, 1), 1, "①mini 取小的那个")
+    assert_eq(maths.maxi(0 - big, 0 - 1), -1, "①负数 bigint 比较")
+    assert_eq(maths.absi(0 - big) == 9223372036854775808, true, "①absi 对 bigint 取绝对值")
+
+    // ② clampi：bigint 上界 / 下界
+    assert_eq(maths.clampi(big, 0, 10), 10, "②clampi 收成上界")
+    assert_eq(maths.clampi(1, big, big + 10) == 9223372036854775808, true, "②clampi 收成 bigint 下界")
+
+    // ③ int48 边界两侧（2^47-1 / 2^47）
+    assert_eq(maths.maxi(140737488355327, 1), 140737488355327, "③2^47-1 精确")
+    assert_eq(maths.maxi(140737488355328, 1) == 140737488355328, true, "③2^47 精确（升 bigint）")
+
+    // ④ 浮点大值：roundi 升 bigint（不再静默 0）
+    assert_eq(maths.roundi(1e20) == 100000000000000000000, true, "④roundi(1e20) 精确")
+
+    // ⑤ mod：超出 int 范围必须报错（不能静默给垃圾）
+    var caught = ""
+    try {
+        maths.mod(big * 10, 3)
+    } catch e {
+        caught = e.msg
+    }
+    assert_true(caught.len() > 0, "⑤mod 超范围要抛错")
+    assert_true(caught.find("超出 int 范围") >= 0, "⑤报错要点名超出 int 范围；实际=" + caught)
+
+    // ⑥ 老语义不变
+    assert_eq(maths.maxi(3, 5), 5, "⑥普通 int 的 maxi")
+    assert_eq(maths.clampi(5, 0, 10), 5, "⑥普通 int 的 clampi")
+    assert_eq(maths.clampi(5, 10, 0), 10, "⑥lo > hi 收成 lo（既有口径）")
+    assert_eq(maths.roundi(2.5), 3, "⑥roundi 半值远离零")
+    assert_eq(maths.roundi(-2.5), -3, "⑥roundi 负半值远离零")
+    assert_eq(maths.absi(-7), 7, "⑥absi 普通 int")
+    assert_eq(maths.mod(10, 3), 1, "⑥mod 正常值")
+
+    print("test_maths_int_bigint passed（bigint / int48 边界 / 浮点 / mod 报错 / 老语义）")
+}
