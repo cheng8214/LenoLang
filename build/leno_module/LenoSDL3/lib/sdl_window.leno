@@ -782,6 +782,16 @@ export struct Window {
         return _lib.SDL_SetWindowOpacity(handle, v)
     }
 
+    // ★ 2026-11-16：窗口当前位置 x, y（**虚拟桌面**坐标 ⇒ 多屏时副屏可能是负值 ✓）
+    //   为什么要补：悬浮窗（桌面歌词）要按"主窗口在哪块屏"决定自己的落点，
+    //   之前框架只包了 setPosition、没包读回位置 ⇒ 应用只能猜（写死坐标 ⇒ 换屏就跑到屏幕外 ✗）
+    //   ⚠ 保留"先解构再 return"：直接 `return core.getWindowPos(handle)` 在老版 leno.exe 上
+    //     会报假的「期望 [int,int]，实际 [int,int]」（2026-11-16 已在语言侧修好）✓
+    func getPosition(): [int, int] {
+        var[int, int](px, py) = core.getWindowPos(handle)
+        return px, py
+    }
+
     // ★ 2026-10-21：整窗**鼠标穿透**（桌面宠物 / 悬浮挂件用）
     //   true ⇒ 点击、悬停、滚轮全部穿到下层窗口，窗口本身照常渲染
     //   返回 false = 本平台还没实现（当前只有 Windows）/ 拿不到原生句柄（如 dummy 视频驱动）

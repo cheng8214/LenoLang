@@ -169,6 +169,8 @@ clib sdl3 {
     u32  SDL_GetWindowFlags(Ptr[u8] window)
     u32  SDL_GetPrimaryDisplay()
     bool SDL_GetDisplayUsableBounds(u32 displayID, Ptr[u8] rect)   // 扣掉任务栏的可用区（弹菜单夹紧用 ✓）
+    // ★ 2026-11-16：某个**点**落在哪块显示器上（多屏布局必需：副屏坐标可能是负的 ✓）
+    u32  SDL_GetDisplayForPoint(Ptr[u8] point)   // const SDL_Point*
     bool SDL_SetWindowResizable(Ptr[u8] window, bool resizable)
     bool SDL_SetWindowBordered(Ptr[u8] window, bool bordered)
     bool SDL_GetWindowSize(Ptr[u8] window, Ptr[i32] w, Ptr[i32] h)
@@ -596,6 +598,34 @@ export func getWindowSize(Ptr[u8] window): [int, int] {
     lib().SDL_GetWindowSize(window, &pt.x, &pt.y)
     int w = pt.x; int h = pt.y; pt.free()
     return w, h
+}
+// ★ 2026-11-16：**某块显示器的可用区**（已扣任务栏；任务栏在上下左右都算对 ✓）
+//   返回 x, y, w, h（**虚拟桌面**坐标：副屏在主屏左边/上边时是负值 ⇒ 别假设 ≥ 0 ✓）
+//   取不到（dummy 视频驱动 / 显示器刚拔掉）⇒ w/h 返回 0，调用方自己兜底 ✓
+export func displayUsable(int id): [int, int, int, int] {
+    var rc = SDL_Rect.malloc()
+    bool ok = lib().SDL_GetDisplayUsableBounds(id, &rc.x)
+    int x = rc.x; int y = rc.y; int w = rc.w; int h = rc.h
+    rc.free()
+    if not ok { return 0, 0, 0, 0 }
+    return x, y, w, h
+}
+// ★ 2026-11-16：**某个点所在那块显示器**的可用区 —— 多屏下摆悬浮窗（桌面歌词等）就用它：
+//   "主窗口在副屏" ⇒ 传主窗口中心，拿到的是副屏的可用区（不是主屏的 ✗）
+//   ⚠ 这里**刻意写成"先解构再逐个 return"**，不是啰嗦：
+//     2026-11-16 之前编译器**不支持直接转发**（`return 另一个多返回函数()`），会报
+//     「返回类型不匹配：期望 [int,int,int,int]，实际 [int,int,int,int]」（两端打印一模一样，
+//     根本看不出真因 —— 根因是 type_is_compatible 的"退化成第一个值"规则排在前面）。
+//     该 bug 已在语言侧修掉（Leno: src/type.c + codegen_stmt.c），但**旧版 leno.exe**
+//     （LenoVersion 里那几份）仍然会报 ⇒ 框架这里保持显式解构，谁拿旧 VM 都能编过 ✓
+export func displayUsableAt(int x, int y): [int, int, int, int] {
+    var pt = SDL_Point.malloc()
+    pt.x = x; pt.y = y
+    int id = _int(lib().SDL_GetDisplayForPoint(&pt.x))
+    pt.free()
+    if id == 0 { id = _int(lib().SDL_GetPrimaryDisplay()) }   // 点不在任何屏（理论上不会）⇒ 主屏兜底 ✓
+    var[int, int, int, int](ux, uy, uw, uh) = displayUsable(id)
+    return ux, uy, uw, uh
 }
 // 查询窗口状态标志（SDL_GetWindowFlags）
 // SDL_WINDOW_MAXIMIZED = 0x80, SDL_WINDOW_MINIMIZED = 0x40, SDL_WINDOW_FULLSCREEN = 0x01

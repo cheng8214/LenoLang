@@ -77,9 +77,51 @@
                                 "（函数类型按**完整签名**比较：`func(int)` 与 `func(int):int` 是两个不同类型 —— "
                                 "返回闭包时括号右边那截返回类型也要写全）");
                         }
+                        // ★ 2026-11-16：多返回值按**位置**逐项比较 —— 个数不一样时把个数说出来。
+                        //   不然 `[int, int]` vs `[int, int, int]` 只能靠眼睛数逗号（而且两串很像 ✗）
+                        if (expected_type->kind == TYPE_MULTI_RET &&
+                            return_type_info->kind == TYPE_MULTI_RET) {
+                            if (expected_type->param_count != return_type_info->param_count) {
+                                snprintf(fn_hint, sizeof(fn_hint),
+                                    "（多返回值按**位置**逐项比较：声明 %d 个，实际 %d 个）",
+                                    expected_type->param_count, return_type_info->param_count);
+                            } else {
+                                // 个数一样 ⇒ 逐项找出**第几个**不同，别让人对着两串相似的
+                                // `[int, string]` / `[int, int]` 用眼睛数位置 ✓
+                                int bad = -1;
+                                for (int i = 0; i < expected_type->param_count; i++) {
+                                    if (!type_is_compatible(expected_type->param_types ? expected_type->param_types[i] : NULL,
+                                                            return_type_info->param_types ? return_type_info->param_types[i] : NULL)) {
+                                        bad = i;
+                                        break;
+                                    }
+                                }
+                                if (bad >= 0) {
+                                    snprintf(fn_hint, sizeof(fn_hint),
+                                        "（多返回值按**位置**逐项比较：第 %d 个不同）", bad + 1);
+                                }
+                            }
+                        }
                         error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
                                  "返回类型不匹配：期望 %s，实际 %s%s",
                                  expected_buf, actual_str, fn_hint);
+                    } else if (expected_type->kind != TYPE_MULTI_RET &&
+                               return_type_info->kind == TYPE_MULTI_RET &&
+                               return_type_info->param_count > 1) {
+                        // ★ 2026-11-16：**静默截断** —— `func f(): int { return two() }`
+                        //   （two 声明返回 [int,int]）走的是 type_is_compatible 的
+                        //   "非解构上下文退化成首元素"规则 ⇒ 只交出第 1 个值，其余**默默丢掉**。
+                        //   这条规则本身要保留（`int a = two()` 取首值是合法写法），但在 return
+                        //   处把**别的函数的多返回值**当单值交出去，几乎必然是漏写/抄错
+                        //   ⇒ 补一条警告（不改语义：仍是取首值，运行结果与以前逐位一致 ✓）
+                        //   ⚠ 只在"声明了具体单值返回类型"时报：声明成 any / 省略返回类型
+                        //     那种写法太随意，逐个报就是噪音 ✗
+                        warning_add_at_fmt(WARN_MULTI_RET_DEGRADE, ast->line, ast->column,
+                            "`return` 拿到 %d 个返回值，但函数声明返回 %s ⇒ 只取**第 1 个**，"
+                            "其余 %d 个被静默丢掉（要全部交出去：把返回类型写成多返回值"
+                            "`[T1, T2]`，或先解构 `var[T1, T2](a, b) = …` 再用 a/b）",
+                            return_type_info->param_count, type_to_string(expected_type),
+                            return_type_info->param_count - 1);
                     }
                     type_free(return_type_info);
                 }

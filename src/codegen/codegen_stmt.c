@@ -1422,6 +1422,45 @@ static int return_cast_needed(CodeGen* gen, Ast* ret_ast) {
 }
 
 static void gen_return(CodeGen* gen, Ast* ast) {
+    // ★ 2026-11-16：**多返回值转发** —— `return 另一个多返回函数()`（`fwd` 只是把 `src` 的结果交出去）。
+    //   语义层此前把它拦下了（详见 type.c 里两侧 TYPE_MULTI_RET 的分支）；
+    //   这里补生成：与 var 解构声明**同一套准备函数**（AST_CALL → gen_call_multi，
+    //   跨模块 AST_MODULE_CALL → gen_module_call_prep + emit_call）⇒ 结果落在连续寄存器，
+    //   再发 RETURN_MULTI（B = 个数）。这样转发和手写 `return a, b, c` 是**同一形态**的字节码 ✓
+    //   ⚠ 必须排在"带析构"分支之前：多返回值没有"单个返回值寄存器"可存 ✓
+    {
+        TypeInfo* mrt = ast->u.ret ? ast->u.ret->cached_type : NULL;
+        TypeInfo* frt = NULL;                        // 本函数**声明**的返回类型
+        if (gen->current_func_ast && gen->current_func_ast->kind == AST_FUNC_DEF) {
+            frt = gen->current_func_ast->u.func.return_type;
+        }
+        // ⚠ 只有"**声明也是多返回值**"才走这条路 ✗ 否则会把 `int f() { return two() }`
+        //   也生成成返回两个值（语义层的规定是"非解构上下文退化成第一个值"）✓
+        if (mrt && mrt->kind == TYPE_MULTI_RET && mrt->param_count > 0 &&
+            frt && frt->kind == TYPE_MULTI_RET && frt->param_count == mrt->param_count &&
+            (ast->u.ret->kind == AST_CALL || ast->u.ret->kind == AST_MODULE_CALL)) {
+            int n = mrt->param_count;
+            int base = -1;
+            if (ast->u.ret->kind == AST_CALL) {
+                base = gen_call_multi(gen, ast->u.ret, n, ast->line);
+            } else {
+                int expected = 0;
+                base = gen_module_call_prep(gen, ast->u.ret, n, &expected);
+                emit_call(gen, base, expected, n, ast->line);
+            }
+            if (base >= 0) {
+                int count_reg = reg_alloc(gen);
+                emit_loadi_to(gen, count_reg, n, ast->line);
+                // 有析构的局部变量：结果已经在连续寄存器里（不涉及局部槽位）⇒ 直接析构再交值 ✓
+                if (gen->dtor_count > 0) emit_dtors_from(gen, 0, ast->line, -1);
+                emit_return_multi(gen, base, count_reg, ast->line);
+                reg_free(gen, count_reg);
+                reg_free_block(gen, base);
+                return;
+            }
+        }
+    }
+
     // 有带析构的局部变量：先把返回值存进临时寄存器 → 逆序析构 → 再 RETURN。
     //   （先析构会把返回值本身销毁 ✗）
     if (gen->dtor_count > 0) {

@@ -1,0 +1,60 @@
+// ============================================================
+// 多返回值**转发**（2026-11-16 修）—— `return 另一个多返回函数()`
+// ------------------------------------------------------------
+// 曾经的 bug：`func fwd(): [int, int] { return two() }` 报
+//   「返回类型不匹配：期望 [int, int]，实际 [int, int]」
+//   两端打印**完全一样**，看不出真因。
+// 根因（两层）：
+//   ① 语义：type_is_compatible 里"多返回值退化成第一个值"的规则排在前面 ⇒
+//      实际类型被降成首元素（int），再拿 `[int,int]` 去比 int ⇒ 必然不匹配
+//   ② 代码生成：gen_return 只会生成"单返回值"，多值转发没有对应字节码
+// 现在：两侧都是多返回值时按**位置逐项**比较；转发按 RETURN_MULTI 生成。
+// ============================================================
+import "./multi_ret_mod.leno" as mrm
+
+// ---------- 1. 两值转发 ----------
+func two(): [int, int] { return 11, 22 }
+func fwd_two(): [int, int] { return two() }
+var[int, int](a1, a2) = fwd_two()
+assert_eq(a1, 11)
+assert_eq(a2, 22)
+
+// ---------- 2. 三值转发（个数不同也要对） ----------
+func three(): [int, string, float] { return 3, "tri", 1.5 }
+func fwd_three(): [int, string, float] { return three() }
+var[int, string, float](b1, b2, b3) = fwd_three()
+assert_eq(b1, 3)
+assert_eq(b2, "tri")
+assert_eq(b3, 1.5)
+
+// ---------- 3. 链式转发（fwd → fwd → 源头）----------
+func fwd_chain(): [int, int] { return fwd_two() }
+var[int, int](c1, c2) = fwd_chain()
+assert_eq(c1, 11)
+assert_eq(c2, 22)
+
+// ---------- 4. **跨模块**转发（AST_MODULE_CALL 分支）----------
+func fwd_mod(): [int, int] { return mrm.get_coords() }
+var[int, int](d1, d2) = fwd_mod()
+assert_eq(d1, 100)
+assert_eq(d2, 200)
+
+// ---------- 5. 带参数 + 跨模块三值 ----------
+func fwd_mod3(int n): [int, string, float] {
+    var[int, string, float](x, y, z) = mrm.get_user_info()
+    return x + n, y, z        // 先解构再拼（混用两种写法都要能用 ✓）
+}
+var[int, string, float](e1, e2, e3) = fwd_mod3(9)
+assert_eq(e1, 10)
+assert_eq(e2, "admin")
+assert_eq(e3, 99.9)
+
+// ---------- 6. 非解构上下文仍**退化**成第一个值（旧规则不能带坏）----------
+//   ⚠ 这条**故意**会报一条 WARN_MULTI_RET_DEGRADE（"多返回值被截断"）警告：
+//     语义不变（还是取第一个值），只是让这种写法不再静默 ✓
+//     要消掉警告就写 `var[int,int](a, b) = two()` 再 return a ✓
+func first_only(): int { return two() }
+assert_eq(first_only(), 11)
+
+// ---------- 7. 转发结果可以直接进表达式 ----------
+assert_eq(fwd_two() + 1, 12)

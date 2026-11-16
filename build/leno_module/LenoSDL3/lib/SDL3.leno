@@ -475,6 +475,23 @@ export func setTextInputArea(Ptr[u8] w, Ptr[u8] rect, int cursor): bool {
 
 export func getMouseState(): int         { return core.getMouseState() }
 export func getGlobalMouseState(): int   { return core.getGlobalMouseState() }
+
+// ==================== 显示器 / 屏幕可用区（★ 2026-11-16）====================
+// 场景：桌面歌词 / 悬浮挂件 / 贴边面板要"居中贴任务栏上方"，而且**多屏**时要落在对的那块屏上。
+//   · `getDisplayUsableAt(x, y)`：先查这个点在哪块显示器（副屏坐标可能是负的 ✓），再拿它的可用区
+//   · 可用区 = **扣掉任务栏**之后的矩形（任务栏在上/下/左/右都算对 ✓）
+//   · 取不到（dummy 驱动 / 显示器刚拔）⇒ w、h 返回 0 ⇒ 调用方**自己兜底**，别硬算 ✓
+//   ⚠ 全走 SDL（SDL_GetDisplayForPoint / SDL_GetDisplayUsableBounds），没有 Win32 依赖 ⇒ 跨平台 ✓
+//   ⚠ 这里同样"先解构再 return"：直接转发在老版 leno.exe 上会报假的"类型不匹配"
+//     （2026-11-16 已在语言侧修好，详见 sdl_core.leno 里那段说明）⇒ 保留显式解构以兼容旧 VM ✓
+export func getDisplayUsableAt(int x, int y): [int, int, int, int] {
+    var[int, int, int, int](ux, uy, uw, uh) = core.displayUsableAt(x, y)
+    return ux, uy, uw, uh
+}
+export func getDisplayUsable(int displayId): [int, int, int, int] {
+    var[int, int, int, int](ux, uy, uw, uh) = core.displayUsable(displayId)
+    return ux, uy, uw, uh
+}
 export func showCursor(): bool           { return core.showCursor() }
 export func hideCursor(): bool           { return core.hideCursor() }
 export func cursorVisible(): bool        { return core.cursorVisible() }

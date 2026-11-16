@@ -1075,7 +1075,24 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         return kind_accepts_null_ref(target->kind);
     }
 
+    // ★ 2026-11-16：**两侧都是多返回值**时逐项（按位置）比较。
+    //   ⚠ 这段**必须排在下面"退化成第一个值"之前** —— 否则 `return 另一个多返回函数()`
+    //     （函数转发）会先把实际类型降成首元素（int），再拿 `[int,int]` 去比 int ⇒
+    //     报「返回类型不匹配：期望 [int, int]，实际 [int, int]」：两端打印**一模一样**，
+    //     谁也看不出真因（实测 2026-11-16，用户在 Aria 的 LenoSDL3 里踩到 ✗）
+    //   语义：`[int, string]` 与 `[int, int]` 是不同类型（第 2 位不同）；个数也要相等。
+    if (target->kind == TYPE_MULTI_RET && source->kind == TYPE_MULTI_RET) {
+        if (target->param_count != source->param_count) return 0;
+        if (!target->param_types || !source->param_types) return 1;   // 没带明细 ⇒ 只能放行
+        for (int i = 0; i < target->param_count; i++) {
+            if (!type_is_compatible(target->param_types[i], source->param_types[i])) return 0;
+        }
+        return 1;
+    }
+
     // 多返回值类型在非解构上下文中自动退化为第一个返回值类型
+    //   （只在 target **不是**多返回值时走到这里：`int a = two()` 取第一个 ✓；
+    //     两侧都是多返回值的已在上面逐项比过 ✓）
     if (source->kind == TYPE_MULTI_RET && source->param_count > 0 && source->param_types) {
         return type_is_compatible(target, source->param_types[0]);
     }
