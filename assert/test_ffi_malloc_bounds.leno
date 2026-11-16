@@ -1,0 +1,73 @@
+// ffi 内存分配的参数边界（2026-11-16）
+//
+// 修前实测（build\leno.exe）：
+//   · `ffi.malloc(-1)`  ⇒ `(size_t)-1 = SIZE_MAX` ⇒ `malloc(SIZE_MAX+8)` 回绕成 7 字节、
+//     随后 `memset(ptr, 0, SIZE_MAX)` 写穿地址空间 ⇒ **0xC0000005 崩溃**（try/catch 接不住）
+//   · `ffi.calloc(-2, 4)` ⇒ 同样崩（负数经 (size_t) 变巨大值）
+//   · `ffi.realloc(p, -1)` ⇒ 同上
+// 现在负数 / 乘积溢出一律报错。malloc(0) 仍允许（C 语义：返回一个不可解引用的唯一指针）。
+//
+// 另外核对（本就正确，这里钉住）：
+//   · 越界读 / 越界写 / 负偏移 ⇒ 「内存访问越界」
+//   · free 之后读 / 写 ⇒ 「空指针引用或指针已释放」
+//   · `dlsym` 找不到符号 ⇒ null（文档明确的设计："用于检查符号是否存在"）
+import ffi
+
+main() {
+    // ① 负数 / 溢出 ⇒ 报错
+    int e1 = 0
+    try { var _a = ffi.malloc(-1) } catch e { e1 += 1; assert_true(e.msg.has("不能为负数")) }
+    assert_eq(e1, 1, "malloc(-1) 必须报错（修前崩溃）")
+
+    int e2 = 0
+    try { var _b = ffi.calloc(-2, 4) } catch e { e2 += 1; assert_true(e.msg.has("不能为负数")) }
+    assert_eq(e2, 1, "calloc(-2,4) 必须报错（修前崩溃）")
+
+    int e3 = 0
+    var p3 = ffi.malloc(8)
+    try { p3 = ffi.realloc(p3, -1) } catch e { e3 += 1 }
+    assert_eq(e3, 1, "realloc(_, -1) 必须报错")
+    ffi.free(p3)
+
+    // ② malloc(0) 允许（C 语义）
+    var z = ffi.malloc(0)
+    assert_ne(z, null, "malloc(0) 返回可释放的指针")
+    assert_eq(ffi.sizeof(z), 0, "malloc(0) 的 sizeof 是 0")
+    ffi.free(z)
+
+    // ③ 正常读写 + sizeof + realloc 保数据
+    var buf = ffi.malloc(16)
+    assert_eq(ffi.sizeof(buf), 16)
+    ffi.write_int(buf, 0, 12345)
+    ffi.write_double(buf, 8, 3.5)
+    assert_eq(ffi.read_int(buf, 0), 12345)
+    assert_eq(ffi.read_double(buf, 8), 3.5)
+
+    buf = ffi.realloc(buf, 32)
+    assert_eq(ffi.sizeof(buf), 32, "realloc 后大小")
+    assert_eq(ffi.read_int(buf, 0), 12345, "realloc 保留原数据")
+
+    // ④ 越界 / 负偏移 ⇒ 「内存访问越界」
+    int oob_w = 0
+    try { ffi.write_int(buf, 30, 1) } catch e { oob_w += 1; assert_true(e.msg.has("越界")) }
+    assert_eq(oob_w, 1, "越界写必须报错")
+
+    int oob_r = 0
+    try { var _c = ffi.read_int(buf, 100) } catch e { oob_r += 1; assert_true(e.msg.has("越界")) }
+    assert_eq(oob_r, 1, "越界读必须报错")
+
+    int neg = 0
+    try { ffi.write_int(buf, -4, 1) } catch e { neg += 1 }
+    assert_eq(neg, 1, "负偏移必须报错")
+
+    // ⑤ free 之后读写
+    ffi.free(buf)
+    int u1 = 0
+    try { var _d = ffi.read_int(buf, 0) } catch e { u1 += 1; assert_true(e.msg.has("释放")) }
+    assert_eq(u1, 1, "free 后读必须报错")
+    int u2 = 0
+    try { ffi.write_int(buf, 0, 1) } catch e { u2 += 1 }
+    assert_eq(u2, 1, "free 后写必须报错")
+
+    print("test_ffi_malloc_bounds passed")
+}

@@ -1154,7 +1154,16 @@ static Value ffi_last_error_func(int argc, Value* args) {
 /* ffi.malloc(size) - 分配指定大小的内存 */
 static Value ffi_malloc_func(int argc, Value* args) {
     (void)argc;
-    size_t size = (size_t)val_as_int(args[0]);
+    // ★ 2026-11-16：负数/溢出此前**直接落到 malloc 与 memset**
+    //   实测 `ffi.malloc(-1)` ⇒ `(size_t)-1 = SIZE_MAX` ⇒ `malloc(SIZE_MAX + 8)` 回绕成 7 字节、
+    //   随后 `memset(ptr, 0, SIZE_MAX)` 写穿整片地址空间 ⇒ 0xC0000005 崩溃（try/catch 接不住）。
+    //   参数写错要当场说，别让它变成"野指针崩溃"。
+    int64_t req_size = val_as_int(args[0]);
+    if (req_size < 0) {
+        native_throw_error("malloc: 大小不能为负数");
+        return val_null();
+    }
+    size_t size = (size_t)req_size;
 
     // 多分配 8 字节放哨兵值，用于 free 时检测堆溢出
     void* ptr = malloc(size + 8);
@@ -1185,9 +1194,21 @@ static Value ffi_malloc_func(int argc, Value* args) {
 /* ffi.calloc(count, size) - 分配并清零内存 */
 static Value ffi_calloc_func(int argc, Value* args) {
     (void)argc;
-    size_t count = (size_t)val_as_int(args[0]);
-    size_t size  = (size_t)val_as_int(args[1]);
-    size_t total  = count * size;
+    // 同 malloc：负数 / 乘积溢出都要拦住（`calloc(-2, 4)` 与 `calloc(2^32, 2^32)` 都会走到
+    // `malloc(total + 8)` + `memset` ⇒ 崩溃 / 写穿）
+    int64_t req_count = val_as_int(args[0]);
+    int64_t req_elem  = val_as_int(args[1]);
+    if (req_count < 0 || req_elem < 0) {
+        native_throw_error("calloc: 元素数量与元素大小都不能为负数");
+        return val_null();
+    }
+    if (req_count != 0 && (uint64_t)req_elem > (uint64_t)SIZE_MAX / (uint64_t)req_count) {
+        native_throw_error("calloc: 元素数量 × 元素大小 超出可分配上限");
+        return val_null();
+    }
+    size_t count = (size_t)req_count;
+    size_t size  = (size_t)req_elem;
+    size_t total = count * size;
 
     void* ptr = malloc(total + 8);
     if (!ptr) {
@@ -1223,7 +1244,13 @@ static Value ffi_realloc_func(int argc, Value* args) {
         return val_null();
     }
 
-    size_t new_size = (size_t)val_as_int(args[1]);
+    // 同 malloc：负数会经 (size_t) 变成巨大值
+    int64_t req_new = val_as_int(args[1]);
+    if (req_new < 0) {
+        native_throw_error("realloc: 大小不能为负数");
+        return val_null();
+    }
+    size_t new_size = (size_t)req_new;
 
     void* new_ptr = realloc(ffi_ptr->ptr, new_size + 8);
     if (!new_ptr && new_size > 0) {

@@ -775,6 +775,11 @@ var buf = ffi.malloc(256)  // 分配 256 字节
 ffi.free(buf)
 ```
 
+> ⚠ **负数 ⇒ 报错**（2026-11-16 起）。此前 `ffi.malloc(-1)` 会经 `(size_t)` 变成 `SIZE_MAX`
+> ⇒ `malloc(SIZE_MAX+8)` 回绕成 7 字节、随后 `memset(... SIZE_MAX)` **写穿地址空间**，
+> 直接 0xC0000005 崩溃（try/catch 接不住）。`malloc(0)` 仍允许（C 语义：返回一个
+> 不可解引用的唯一指针，`sizeof` 为 0）。
+
 ---
 
 ### `calloc(count, size)`
@@ -794,6 +799,8 @@ ffi.write_int(arr, 0, 100)
 print(ffi.read_int(arr, 0))  // 100
 ffi.free(arr)
 ```
+
+> ⚠ 任一参数为负 ⇒ 报错；`count × size` 溢出可分配上限 ⇒ 报错（2026-11-16 起）。
 
 ---
 
@@ -815,6 +822,8 @@ buf = ffi.realloc(buf, 64)  // 扩展到 64 字节
 print(ffi.read_int(buf, 0))  // 42，原数据仍保留
 ffi.free(buf)
 ```
+
+> ⚠ 新大小为负 ⇒ 报错（2026-11-16 起，同 `malloc`）。
 
 ---
 
