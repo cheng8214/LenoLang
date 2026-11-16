@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "测试搜索路径导入的包"
 authors = "Leno Dev"
 license = "Apache-2.0"
-leno_version = ">=1.0.0"
+# ★ 2026-11-17（F5）：这个字段现在**真的会被校验**（原来只解析、只写进 lock）。
+#   这里原来写 ">=1.0.0"（当时的占位值）⇒ 0.2.4 编译器编这个示例会直接报
+#   「本项目要求 leno >=1.0.0，当前编译器是 0.2.4」✗ ⇒ 改成实际要求。
+leno_version = ">=0.2.0"
 
 [dependencies]
 

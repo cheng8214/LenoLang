@@ -1,0 +1,55 @@
+// ============================================================
+// `any as func(...)`（2026-11-17 修，F1）
+// ------------------------------------------------------------
+// 修前：不论零参还是带参，cast 结果**恒为 null**，而且不报错 ⇒ "回调永远不触发"：
+//   · Aria 桌面歌词配色：`opts.get("onPick") as func(Color):void` ⇒ 点确定没反应
+//   · LenoSDL3 `sdl_menu.leno:70` 的 Dict 菜单项 `action:` ⇒ 菜单能弹、点了没反应
+//   根因：`vm_as_cast()` 的 switch 里**没有 TYPE_FUNCTION 分支** ⇒ 落 default ⇒ matches=0。
+// 修后：
+//   ① 签名匹配 ⇒ **透传原闭包**（保留捕获环境，不复制）；
+//   ② 形参**个数**不符 ⇒ null + 一条带行号的警告（形参类型不在指令里，本轮只校验个数）；
+//   ③ 非函数值 ⇒ 仍是 null（`as` 的既有契约，不抛）。
+// ============================================================
+
+func give_any(): any { return 5 }
+
+Dict sink = {}
+sink.set("calls", 0)
+sink.set("arg", -1)
+sink.set("zero", 0)
+
+// ---------- ① 带参闭包：签名匹配 ⇒ 真的能调用 ----------
+Dict box = {}
+box.set("one", func(int n) {
+    sink.set("calls", _int(sink.get("calls", 0)) + 1)
+    sink.set("arg", n)
+})
+
+var raw1 = box.get("one", null)
+assert_eq(type(raw1), "func", "Dict 里存的确实是个函数值")
+assert_eq(raw1 == null, false, "取出来不是 null")
+
+var f1 = raw1 as func(int):void
+assert_eq(f1 == null, false, "签名匹配的 as func 不能给 null")
+f1(7)
+assert_eq(_int(sink.get("calls", 0)), 1, "cast 后的闭包必须真的执行")
+assert_eq(_int(sink.get("arg", 0)), 7, "实参要原样传到闭包里")
+assert_eq(raw1 is func, true, "is func 判定与 as 同一口径")
+
+// ---------- ② 形参个数不符 ⇒ null（并打警告） ----------
+var f2 = raw1 as func():void
+assert_eq(f2 == null, true, "1 参闭包当 0 参签名 ⇒ null，不许静默给出错签名的闭包")
+
+// ---------- ③ 零参往返 ----------
+Dict box0 = {}
+box0.set("cb", func() { sink.set("zero", 1) })
+var f3 = box0.get("cb", null) as func():void
+assert_eq(f3 == null, false, "零参 as func():void 同样成立")
+f3()
+assert_eq(_int(sink.get("zero", 0)), 1, "零参闭包要真的执行")
+
+// ---------- ④ 非函数值 ⇒ 仍是 null（不抛） ----------
+var f4 = give_any() as func():void
+assert_eq(f4 == null, true, "整数 as func ⇒ null（as 不抛的既定契约）")
+
+print("test_as_func_cast passed\n")

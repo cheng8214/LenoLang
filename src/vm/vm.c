@@ -788,6 +788,31 @@ Value vm_as_cast(Value value, TypeKind expected_type, TypeKind elem_type, Value 
         case TYPE_CLIB:
             matches = (val_is_obj(value) && val_as_obj(value)->type == OBJ_FFI_LIBRARY);
             break;
+        // ★ 2026-11-17：函数类型的 `as` —— 缺这一条时 `x as func(int):void` **恒为 null**
+        //   （落 default ⇒ matches=0），而且**不报错**。症状是"回调永远不触发"：
+        //     · Aria 桌面歌词配色：`opts.get("onPick", null) as func(Color):void` ⇒ 点确定没反应
+        //     · LenoSDL3 `sdl_menu.leno:70` 的 Dict 菜单项 `action:` ⇒ 菜单能弹、点了没反应
+        //   两个都是"沉默死代码"，靠肉眼查不出来（2026-11-17 实测复现）。
+        //   ⚠ 这里**不做签名核对**：OP_AS_CAST 只带 TypeKind（形参类型不在指令里，
+        //     要带就得升字节码格式）。签名不符由**调用点**报（参数个数 / 实参类型）；
+        //     等 F1 第二步（rt_as_fn + sig_hash）再补运行期的精确报文。
+        case TYPE_FUNCTION: {
+            matches = value_matches_kind(value, TYPE_FUNCTION);
+            // elem_type 对函数类型是**形参个数**（255 = 不检查，见 codegen 的 emit_type_op）。
+            //   个数不符 ⇒ 判不匹配（返回 null，保持 `as` 不抛的契约）；调用点因此拿到 null
+            //   而不是"缺参数的闭包"，不会再静默打出一半参数。
+            if (matches && (int)elem_type != 255) {
+                int have = -1;
+                Object* o = val_as_obj(value);
+                if (o->type == OBJ_CLOSURE) {
+                    have = ((ObjClosure*)o)->function ? ((ObjClosure*)o)->function->arity : -1;
+                } else if (o->type == OBJ_NATIVE) {
+                    have = ((ObjNative*)o)->arity;
+                }
+                if (have >= 0 && have != (int)elem_type) matches = 0;
+            }
+            break;
+        }
         case TYPE_PTR:
             if (val_is_obj(value) &&
                 (val_as_obj(value)->type == OBJ_FFI_POINTER ||

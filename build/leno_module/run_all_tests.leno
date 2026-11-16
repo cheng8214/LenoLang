@@ -25,6 +25,26 @@ func fail_usage(string msg) {
     _exit(2)
 }
 
+// ★ 2026-11-17（F6）：与 assert/run_tests.leno 同口径的收尾断言 —— **跑完仓库根不该多出东西**。
+//   现实事故：模块/断言测试把临时文件写进了相对路径（cwd = 仓库根），句柄没关还删不掉，
+//   三条都静默 ⇒ 只在 `git status` 里露个 `??`。排除点开头（.lenocache…）与 dist。
+func top_snapshot(string root): Array[string] {
+    Array[string] out = []
+    var names = dirs.listdir(root)
+    if names == null { return out }
+    for names to n {
+        if strings.starts_with(n, ".") { continue }
+        if n == "dist" { continue }
+        out.add(n)
+    }
+    out.sort(func(string a, string b) {
+        if a < b { return -1 }
+        if a > b { return 1 }
+        return 0
+    })
+    return out
+}
+
 // 取一行里所有 "..." 的内容
 func quoted(string line): Array[string] {
     Array[string] out = []
@@ -151,6 +171,7 @@ main() {
     var skipped = 0
     Array[string] failures = []
 
+    var snap_before = top_snapshot(dirs.cwd())   // F6：收尾对比用
     for 0:testPaths.len()-1 to k {
         string path = testPaths[k]
         string modDir = dirs.join(modRoot, testMods[k])
@@ -174,6 +195,19 @@ main() {
             print("[FAIL] " + rel + "（exit=" + _str(code) + "）")
             print(tail(_str(r.output), 8, 1200))
         }
+    }
+
+    // F6：跑完对比快照 —— 仓库根多出来的东西算一次失败（测试不该在盘上留垃圾）
+    var snap_after = top_snapshot(dirs.cwd())
+    Array[string] leaked = []
+    for snap_after to n {
+        if not snap_before.has(n) { leaked.add(n) }
+    }
+    if leaked.len() > 0 {
+        print("")
+        print("[FAIL] 跑完模块测试后仓库根多出 " + _str(leaked.len()) + " 项（测试不该在盘上留垃圾）:")
+        for leaked to n { print("         " + n) }
+        failed = failed + 1
     }
 
     print("")

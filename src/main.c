@@ -2704,6 +2704,18 @@ static int main_logic(int argc, char** argv) {
         free(joined_path);
         return 0;
     } else {
+        // ★ 2026-11-17（F5）：项目在 leno.toml 里声明的 leno_version 现在**真的校验**。
+        //   此前它只被解析、只写进 leno.lock，全仓没有一处拿它跟 LENO_VERSION 比较 ⇒
+        //   用旧发行包的 leno.exe 编新代码时，报的是**已经修掉的假错**（实测：多返回值转发
+        //   报"期望 [int, int]，实际 [int, int]"），而用户完全看不出"编译器太旧"。
+        {
+            char ver_msg[1024];
+            if (!package_check_leno_version(filePath, LENO_VERSION, ver_msg, (int)sizeof(ver_msg))) {
+                fprintf(stderr, "[错误] %s\n", ver_msg);
+                free(joined_path);
+                return 1;
+            }
+        }
         // 文件模式
         int result = lenolang_run_file(filePath);
         free(joined_path);

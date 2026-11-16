@@ -26,7 +26,26 @@
                 name_val = frame->chunk->constants[nidx];
             }
         }
+        Value before_cast = R(a);
         R(a) = vm_as_cast(R(a), expected, elem, name_val);
+        // ★ 2026-11-17（F1）：函数值**签名（形参个数）不符**时 `as` 给 null —— 按契约不抛，
+        //   但**不能一声不吭**：缺参数的闭包被当目标签名调用时，缺的实参静默变 null
+        //   （实测 `func(int n)` 当 `func():void` 调 ⇒ 打印 "cb" + 空值）。这里补一条带行号的警告。
+        if (expected == TYPE_FUNCTION && (int)elem != 255 &&
+            val_is_null(R(a)) && !val_is_null(before_cast) && val_is_obj(before_cast)) {
+            Object* fn_obj = val_as_obj(before_cast);
+            int have = -1;
+            if (fn_obj->type == OBJ_CLOSURE && ((ObjClosure*)fn_obj)->function) {
+                have = ((ObjClosure*)fn_obj)->function->arity;
+            } else if (fn_obj->type == OBJ_NATIVE) {
+                have = ((ObjNative*)fn_obj)->arity;
+            }
+            if (have >= 0 && have != (int)elem) {
+                fprintf(stderr,
+                        "警告: as func(...) 签名不符（第 %d 行）：闭包有 %d 个参数，目标签名有 %d 个 ⇒ 结果是 null\n",
+                        GET_CURRENT_LINE(), have, (int)elem);
+            }
+        }
         DISPATCH();
     }
     // OP_TYPE_CHECK_SPEC A B C: R[A] = (R[A] is <类型规格>)（规格紧随 4 字节头，格式见 leno_vm.h）

@@ -1521,6 +1521,11 @@ static int sem_expr_maybe_null(Semantic* s, Ast* e, int depth) {
             if (!sym->decl_init) return 1;   // 形参 / 无初值 ⇒ 上游可以传 null
             return sem_expr_maybe_null(s, sym->decl_init, depth + 1);
         }
+        // ★ 2026-11-17（F2）：初值**就是 `null` 字面量**的变量，比较 null 当然有意义
+        //   （`P g = null` 之后 `g == null` 运行期是 true）。此前 AST_NULL 落 default ⇒
+        //   被判成"不为 null" ⇒ WARN_STRUCT_EQ_NULL 在**本来正确**的代码上报警告（实测误报）。
+        case AST_NULL:
+            return 1;
         default:
             return 0;   // new X() / struct 字面量 / 字段访问：按"不为 null"处理（保持原判据）
     }

@@ -186,7 +186,36 @@ strings.lines("a\nb\r\nc")       // 按行切，认 \r\n
 
 ---
 
-## 6. 一句话
+## 6. 资源：`open` / 纹理 / 字体，一律 `defer` 释放
+
+```leno
+var f = files.open(path, "r")
+defer f.close()                  // 块退出时执行（抛异常也执行 ✓）
+
+var tex = img.loadTexture(ren, path)
+defer tex.destroy()
+
+var font = SDL3.createFontAuto(16)
+defer font.close()
+```
+
+**为什么必须写**：Windows 上「句柄没关 ⇒ 文件删不掉」，而 `files.delete()` 失败只是
+返回 `false` —— 没人看返回值就彻底静默。实测事故：`assert/test_files.leno` 在仓库根
+永久留下了一个 `test_temp_file.txt`，几个月没人发现（修法：落系统临时目录 +
+读取后显式 `close()` + 结尾**断言删除成功**）。
+
+三条规矩：
+
+1. **先 defer 再做事** —— 拿到句柄的第二行就写 defer；
+2. `defer` 之后**别再给那个变量重新赋值** —— defer 是块退出时求值，会释放**新值**
+   （编译器有 `WARN_DEFER_LATE_WRITE` 提醒，见 §五）；
+3. 收尾的删除/清理**断言成功**：`assert_eq(files.delete(p), true, "…")` ——
+   否则"删不掉"永远只是一个没人看的 `false`。
+
+> 两个测试 runner（`assert/run_tests.leno`、`build/leno_module/run_all_tests.leno`）
+> 跑完会对比仓库根的目录快照，多出东西直接判失败 —— 这条就是上面那个事故的护栏。
+
+## 7. 一句话
 
 四个项目里被统计出来的那些“样板”，绝大多数**不是语言写不出来**，而是：
 

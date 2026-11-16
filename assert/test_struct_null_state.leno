@@ -1,0 +1,45 @@
+// ============================================================
+// struct 与 null 的三种形态（2026-11-17 锁住语义）
+// ------------------------------------------------------------
+// 背景（F2）：`WARN_STRUCT_EQ_NULL` 原来按**声明形态**判，把"初值就是 null"的变量也当成
+//   "默认被立即分配（不为 null）"⇒ 在本来是正确写法的代码上报警告 ✗。
+//   根因是 `sem_expr_maybe_null()` 的 switch 里缺 AST_NULL 分支。
+// 这里锁住**运行期真相**（实测，v0.2.4 + 今天）：
+//   · `P p = null`            ⇒ 真的是 null
+//   · `P p`（局部/模块级不写初值）⇒ **也是 null**（不自动分配）
+//   · `struct Box { P inner }` ⇒ **字段**才会自动分配（不为 null）
+//   · `new P()`               ⇒ 不为 null
+//   ⇒ 所以"默认被立即分配"这句只对**struct 字段**成立；警告的文案在变量形态上是错的
+//     （这也是误报的另一半原因，见 docs/待修_2026-11-17_实测发现.md 的 F2）。
+// ============================================================
+
+struct P { int x = 0 }
+
+struct Box { P inner_noinit }
+
+P g = null
+
+P g_noinit
+
+main() {
+    // ① 显式 null ⇒ 比较有意义（正是原警告误报的那种写法）
+    assert_eq(g == null, true, "P g = null 之后 g 真的是 null")
+    assert_eq(g != null, false, "同上，取反也一致")
+
+    // ② 不写初值 ⇒ **仍然是 null**（自动分配只发生在 struct **字段**上，见文件头）
+    assert_eq(g_noinit == null, true, "P g_noinit（不写初值）仍是 null")
+
+    // ②-b 字段才自动分配
+    Box bx = new Box()
+    assert_eq(bx.inner_noinit == null, false, "struct 字段不写初值会被自动分配")
+
+    // ③ new 出来的当然不为 null
+    P made = new P()
+    assert_eq(made == null, false, "new P() 不为 null")
+
+    // ④ 可空类型：显式声明才算"可能没有"
+    P? maybe = null
+    assert_eq(maybe == null, true, "P? 才允许显式的'没有内容'")
+
+    print("test_struct_null_state passed\n")
+}

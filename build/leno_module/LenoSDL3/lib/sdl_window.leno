@@ -653,6 +653,13 @@ export struct Window {
         return _lib.SDL_GetWindowID(handle)
     }
 
+    // ★ 2026-11-17（F4）：只让**这个**窗口重绘（其余窗口这一帧整个跳过）。
+    //   用途：浮窗 / 桌宠 / 桌面歌词这类独立小窗自己的定时器里调它，
+    //   而不是全局 `markFrameRedraw()` —— 后者会把主窗口一起拖着重绘。
+    func redraw() {
+        core.requestRedrawWindow(getID())
+    }
+
     func getHandle(): Ptr[u8] { return handle }
 
     // 设置窗口标题
@@ -2062,11 +2069,18 @@ export struct Window {
             //   全量重绘（即使画面无任何变化）。新方案仅在延迟到期时（tipRemainingMs()==0）
             //   触发一次重绘以显示 tooltip，等待期间通过 poll 超时挂起，CPU 降至接近 0。
             if _hadEvent { _needRedraw = true }
-            if core.consumeRedrawRequest() { _needRedraw = true }
-            if tip.tipRemainingMs() == 0 { _needRedraw = true }
+            // ★ 2026-11-17（F4）：`_fullFrame` 决定这一帧是"所有窗口都画"还是"只画被点名的窗口"。
+            //   初值取 `_needRedraw`（之前就欠一帧的原因：首帧、渲染中 requestRedraw）⇒ 全脏；
+            //   只有 `requestRedrawWindow(wid)` 这一条**不**置全脏 —— 这正是浮窗不拖累主窗口的关键。
+            bool _fullFrame = _needRedraw
+            if _hadEvent { _fullFrame = true }
+            if core.consumeRedrawRequest() { _needRedraw = true; _fullFrame = true }
+            if core.hasWindowRedraw() { _needRedraw = true }
+            if tip.tipRemainingMs() == 0 { _needRedraw = true; _fullFrame = true }
             // ★ Toast 动画期（淡入/淡出）必须连续出帧，否则会"卡两下再出现" ✗
             //   停留期不在这里——交给上面的 poll 超时按时刻唤醒 ✓
-            if tst.toastAnimating() { _needRedraw = true }
+            if tst.toastAnimating() { _needRedraw = true; _fullFrame = true }
+            if _sizeSyncRemaining > 0 { _fullFrame = true }
             if _needRedraw {
                 int now = core.getTicks()
                 // ★ 输入类事件（滚轮/点击/键盘/resize）**不等节流**，立刻出一帧：
@@ -2109,6 +2123,13 @@ export struct Window {
                         }
                     }
                     for _runWids.len() to i {
+                    // ★ 2026-11-17（F4）：这一帧只有"某个窗口欠一帧"时，其余窗口**整个跳过**
+                    //   （不清屏、不 relayout、不 present）—— 浮窗的 20fps 不再拖着主窗口重绘。
+                    //   `_fullFrame` 为真时照旧全画：事件、全局 requestRedraw、toast/tooltip、
+                    //   尺寸同步这些路径都可能是"任何窗口都受影响"的 ✓
+                    if not _fullFrame {
+                        if not core.takeWindowRedraw(_runWids[i]) { continue }
+                    }
                     // 每帧清屏：用 fillRect 打满整个窗口代替 SDL_RenderClear
                     // SDL_RenderClear 在 Win/D3D 后端可能不走 back buffer 缓冲，导致短暂黑闪
                     // 透明窗口跳过背景填充，保留 alpha=0 区域透明
@@ -2227,6 +2248,8 @@ export struct Window {
                         _runDialogHidden[i] = false
                     }
                 }
+                    // 全脏的一帧已经把每个窗口都画过 ⇒ 窗口级标记一并作废（否则下一轮还会再画一次）
+                    if _fullFrame { core.clearWindowRedraws() }
                 }              // 闭合节流 if
             }
             // 动画控件可能在 render 中调用了 requestRedraw() → 标记快速轮询

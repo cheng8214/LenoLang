@@ -102,9 +102,29 @@
                                 }
                             }
                         }
+                        // ★ 2026-11-17（F7）：给"实际类型"补**出处**。
+                        //   两端字符串一模一样时（`期望 [int, int]，实际 [int, int]`），读者分不清
+                        //   是"个数不同 / 元素不同"还是"根本没取到多返回值"；点名来源
+                        //   （`two() 的返回值`）能直接把视线引到那个函数上 —— 这是最难查的一类报文。
+                        char src_hint[160];
+                        src_hint[0] = '\0';
+                        if (ast->u.ret && ast->u.ret->kind == AST_CALL) {
+                            Ast* callee = ast->u.ret->u.call.callee;
+                            const char* cname = NULL;
+                            if (callee) {
+                                if (callee->kind == AST_VAR && callee->u.var.name) {
+                                    cname = callee->u.var.name;
+                                } else if (callee->kind == AST_FIELD_ACCESS && callee->u.field_access.field_name) {
+                                    cname = callee->u.field_access.field_name;
+                                } else if (callee->kind == AST_MODULE_ACCESS && callee->u.module_access.member_name) {
+                                    cname = callee->u.module_access.member_name;
+                                }
+                            }
+                            if (cname) snprintf(src_hint, sizeof(src_hint), "（%s() 的返回值）", cname);
+                        }
                         error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
-                                 "返回类型不匹配：期望 %s，实际 %s%s",
-                                 expected_buf, actual_str, fn_hint);
+                                 "返回类型不匹配：期望 %s，实际 %s%s%s",
+                                 expected_buf, actual_str, src_hint, fn_hint);
                     } else if (expected_type->kind != TYPE_MULTI_RET &&
                                return_type_info->kind == TYPE_MULTI_RET &&
                                return_type_info->param_count > 1) {
@@ -195,6 +215,14 @@
         }
             
         case AST_EXPR_STMT:
+            // ★ 2026-11-17（F6）：这里**故意不报**"返回值被丢弃"。
+            //   试做过一版"内置 must-use 清单"（files.delete / dirs.delete / dirs.mkdir_p …）：
+            //   在**本仓库自己的**代码上就命中 30+ 处，绝大多数是测试里的**收尾清理**
+            //   （删临时文件失败本来就可以不管）⇒ 全员挨警告，等于训练用户忽略警告 ✗。
+            //   更合适的形态是**按函数 opt-in** 的 `@must_use` 注解（要跨模块登记进符号表，
+            //   牵动 .lenosymc 版本），等真有第三方库需要再做。
+            //   这一类的真问题是"跑完在盘上留垃圾"⇒ 改由两个 runner 的**收尾快照断言**兜住
+            //   （见 assert/run_tests.leno 与 build/leno_module/run_all_tests.leno 的 top_snapshot）。
             visit(s, ast->u.expr_stmt.expr);
             break;
 

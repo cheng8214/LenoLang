@@ -826,6 +826,71 @@ int package_check_module_version(const char* resolved_path, char* out_msg, int o
     return 1;
 }
 
+/* ============================================================================
+ * 项目声明的最低编译器版本（leno.toml 的 [package] leno_version）
+ * ----------------------------------------------------------------------------
+ * ★ 2026-11-17（F5）修：这个字段一直**只解析、只写进 lock**，全仓没有任何一处拿它跟
+ *   `LENO_VERSION` 比较 ⇒ 用 `LenoVersion/v0.2.3/leno.exe` 编新代码时，会报**已经修掉**的假错
+ *   （实测：`func fwd(): [int, int] { return two() }` 报"期望 [int, int]，实际 [int, int]"），
+ *   而用户得不到任何"你的编译器太旧"的提示 —— 只能去怀疑自己写错了。
+ * 现在：编译入口先查一遍，不满足就明确报"需要 leno ≥ X（当前 Y）"并给出两条修法。
+ *   ⚠ 只查**项目自己的** leno.toml（从入口文件向上找最近那份）；模块包的 [requires] 走
+ *     `package_check_module_version`，两套口径分开（那边比的是被 import 的包版本）。
+ * 返回值：1 = 通过（含"没声明 / 没找到 leno.toml"），0 = 不满足（out_msg 有内容）。
+ * ============================================================================ */
+int package_check_leno_version(const char* source_file, const char* current_version,
+                               char* out_msg, int out_len) {
+    if (!out_msg || out_len <= 0) return 1;
+    out_msg[0] = '\0';
+    if (!source_file || !current_version) return 1;
+
+    char toml[REQ_PATH_MAX + 16];
+    if (!req_find_package_toml(source_file, toml, (int)sizeof(toml))) return 1;
+
+    PackageConfig* pkg = package_config_parse(toml);
+    if (!pkg) return 1;
+    if (!pkg->leno_version || !pkg->leno_version[0]) {
+        package_config_free(pkg);
+        return 1;
+    }
+
+    SemVer cur;
+    memset(&cur, 0, sizeof(cur));
+    if (semver_parse(current_version, &cur) != 0) {
+        /* 当前版本号本身解析不了：不是用户的错，放行（别把编译器自己的问题甩给项目） */
+        package_config_free(pkg);
+        return 1;
+    }
+
+    VersionReq req;
+    memset(&req, 0, sizeof(req));
+    version_req_parse(pkg->leno_version, &req);
+
+    int ok = (req.type == VER_INVALID) ? 1 : version_satisfies(&cur, &req);
+
+    free(cur.prerelease);
+    free(cur.build);
+    free(req.version.prerelease);
+    free(req.version.build);
+    free(req.version_upper.prerelease);
+    free(req.version_upper.build);
+
+    if (!ok) {
+        snprintf(out_msg, (size_t)out_len,
+                 "本项目要求 leno %s，当前编译器是 %s\n"
+                 "  提示 1: 换用满足要求的编译器（仓库的 build\\leno.exe，或新版发行包里的 leno.exe）\n"
+                 "  提示 2: 确认没用到新语法后，下调 leno.toml 的 [package] leno_version\n"
+                 "  ⚠ 用旧编译器编新代码时，报出的类型错可能是**已经修掉的假错**"
+                 "（如多返回值转发）",
+                 pkg->leno_version, current_version);
+        package_config_free(pkg);
+        return 0;
+    }
+
+    package_config_free(pkg);
+    return 1;
+}
+
 /* ================================================================
  * 打包资源配置：解析 resource.toml（与 leno.toml 同在包根，可选）
  * ----------------------------------------------------------------

@@ -210,6 +210,20 @@ static void emit_type_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int with
     TypeKind kind = t ? t->kind : TYPE_ANY;
     TypeKind elem = (t && t->element_type) ? t->element_type->kind : TYPE_ANY;
 
+    // ★ 2026-11-17（F1 第二步）：目标类型是**函数类型**时，C 操作数改记「形参个数」
+    //   （255 = 不检查：裸 `func` / 超过 254 个参数）。
+    //   为什么需要：`as func(...)` 此前恒为 null（见 vm.c 的 vm_as_cast 注释），补成"透传"之后
+    //   仍有一个坑 —— **签名不符的闭包会被当成目标签名调用**，缺的参数静默变成 null：
+    //     实测 `func(int n)` 被 `as func():void` 后调 `bad()` ⇒ 打出 "cb" + 空值、不报错。
+    //   形参**类型**不在指令里（要带就得升字节码格式），所以这一步只校验**个数**；
+    //   个数不符 ⇒ `as` 返回 null（保持"as 不抛"的既定契约），并在 VM 侧打一条带行号的警告。
+    if (kind == TYPE_FUNCTION) {
+        int bare = (!t->return_type && !t->param_types && t->param_count == 0);
+        int arity = bare ? 255 : t->param_count;
+        if (arity > 254) arity = 255;
+        elem = (TypeKind)arity;
+    }
+
     if (type_needs_spec(t)) {
         emit_type_spec_op(gen, (op == OP_TYPE_CHECK) ? OP_TYPE_CHECK_SPEC : OP_AS_CAST_SPEC,
                           reg, t, line);

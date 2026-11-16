@@ -743,6 +743,37 @@ bool _redrawRequested = false
 int _frameId = 0
 
 export func requestRedraw() { _redrawRequested = true }
+
+// ★ 2026-11-17（F4）：**按窗口**请求重绘。
+//   原来只有一个进程级的 `_redrawRequested` ⇒ run 循环里 consume 一次就把**所有**窗口
+//   整窗重绘一遍。实测后果（Aria 桌面歌词 20fps）：小浮窗每帧都在拖着卡片墙那个重窗口
+//   一起重绘 —— CPU 3% → 10%，而且主窗口一帧要 ~28ms，浮窗还会被拖慢（"有些歌平顺
+//   有些不平顺"的一半原因）。
+//   现在的口径：
+//     · `requestRedrawWindow(wid)`：只脏这一个窗口（应用/定时器知道自己在哪个窗口时用它）；
+//     · `requestRedraw()`：保持原义 = **所有**窗口脏（控件内部没有窗口上下文，只能这样）；
+//     · 两者同时存在时以"全脏"为准（保守：宁可多画，不可漏画）。
+Array[int] _redrawWids = []
+
+export func requestRedrawWindow(int wid) {
+    if wid <= 0 { _redrawRequested = true; return }   // 拿不到窗口 id ⇒ 退化成全脏
+    if not _redrawWids.has(wid) { _redrawWids.add(wid) }
+}
+
+// run 循环入口用：有没有"某个窗口欠一帧"
+export func hasWindowRedraw(): bool { return _redrawWids.len() > 0 }
+
+// run 循环逐窗口用：这个窗口这一帧要不要画（画完就把它的标记消掉）
+export func takeWindowRedraw(int wid): bool {
+    if _redrawRequested { return true }               // 全脏：不清标记，帧末统一清
+    int idx = _redrawWids.index_of(wid)
+    if idx < 0 { return false }
+    _redrawWids.remove(idx)
+    return true
+}
+
+// 帧末：本帧已经按"全脏"画过 ⇒ 窗口级标记也一并作废（它们已经被覆盖）
+export func clearWindowRedraws() { _redrawWids = [] }
 export func consumeRedrawRequest(): bool {
     if _redrawRequested { _redrawRequested = false; return true }
     return false

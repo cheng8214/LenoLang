@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "示例包 - 演示包导入"
 authors = "Leno Dev"
 license = "Apache-2.0"
-leno_version = ">=1.0.0"
+# ★ 2026-11-17（F5）：同 ../leno.toml —— 该字段现在真的会被校验，原来的 ">=1.0.0"
+#   是占位值，会让 0.2.4 编这个示例时直接报"编译器太旧"✗
+leno_version = ">=0.2.0"
 
 [dependencies]
 

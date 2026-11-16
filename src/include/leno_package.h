@@ -201,6 +201,12 @@ void package_requirements_clear(void);
  */
 int package_check_module_version(const char* resolved_path, char* out_msg, int out_len);
 
+/* 项目自己在 leno.toml 里声明的最低编译器版本（[package] leno_version）。
+ * 返回 1 = 通过（含未声明 / 没有 leno.toml），0 = 不满足（out_msg 已填好可执行的提示）。
+ * ★ 2026-11-17（F5）：此前该字段只解析不校验 ⇒ 旧编译器编新代码时报"已修掉的假错"。 */
+int package_check_leno_version(const char* source_file, const char* current_version,
+                               char* out_msg, int out_len);
+
 /* ============================================================================
  * init 命令
  * ============================================================================ */

@@ -277,10 +277,17 @@
                         if (sem_expr_maybe_null(s, other, 0)) struct_vs_null = 0;
                     }
                     if (struct_vs_null) {
+                        // ★ 2026-11-17（F2）：文案跟着判据一起改准。
+                        //   旧文案说"struct 值类型默认被立即分配" —— 这句只对 **struct 字段**
+                        //   成立：实测 `P p`（局部/模块级不写初值）**仍是 null**，只有字段才自动分配。
+                        //   现在能走到这里的都是"确定不为 null"的形态（`new X()` / `x as P` 已排除），
+                        //   所以直接说比较恒为什么，并给出可空写法 ✓
                         warning_add_at_fmt(WARN_STRUCT_EQ_NULL, ast->line, ast->column,
-                            "struct 值类型默认被立即分配（不为 null），%s null 仅在显式赋 null 后才成立；"
-                            "懒初始化请使用 Type? 可空类型",
-                            (op == TOK_EQEQ) ? "==" : "!=");
+                            "这个操作数确定不为 null（`new X()` / struct 字面量 / 不写初值的 struct 字段）"
+                            "⇒ `%s null` 恒为 %s；"
+                            "要表达「可能没有」请用 `Type?` 可空类型",
+                            (op == TOK_EQEQ) ? "==" : "!=",
+                            (op == TOK_EQEQ) ? "false" : "true");
                     }
                 }
             }
