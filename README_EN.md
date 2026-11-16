@@ -21,10 +21,10 @@ Leno was born from a love of and exploration into programming language design; i
 
 | | |
 | --- | --- |
-| Version | 0.2.3 |
+| Version | 0.2.4 |
 | License | Apache 2.0 |
 | Build script | Windows `build.bat` / Linux · macOS `build.sh` |
-| Repo size | 20 built-in modules · 46 SDL3 source files · 469 test files · 1016 example files · 67 docs |
+| Repo size | 20 built-in modules · 21 extension modules · 58 SDL3 source files · 814 test files · 813 example files · 91 docs |
 
 ---
 
@@ -407,7 +407,7 @@ main() {
 
 ```
 Leno/
-├── src/                        # compiler + VM (C implementation, 89 .c files)
+├── src/                        # compiler + VM (C implementation, 91 .c files)
 │   ├── parser/ semantic/ codegen/ optimize/ serialize/
 │   ├── vm/                     # virtual machine
 │   ├── module/                 # 20 built-in modules (io / maths / strings / ffi / threads / asyncs …)
@@ -415,15 +415,16 @@ Leno/
 │   └── gc.c  debug.c  module_compiler.c  module_loader.c  module_dispatch.c
 ├── build/                      # build artifacts
 │   ├── leno.exe  leno_vm.exe  leno_vm_gui.exe
-│   └── leno_module/            # ★ extension module sources live here (checked in)
-│       ├── LenoSDL3/           #   cross-platform GUI (46 sdl_*.leno + docs/ + examples/)
-│       ├── LenoWeb/  LenoSqlite/  LenoWin32/
-│       └── LenoMusic/  LenoCrypto/  LenoHack/
+│   └── leno_module/            # ★ extension module sources live here (21 packages, checked in)
+│       ├── LenoSDL3/           #   cross-platform GUI (58 sdl_*.leno + docs/ + examples/)
+│       ├── LenoHTTP/  LenoWeb/  LenoSqlite/  LenoWin32/
+│       ├── LenoZip/  LenoCompress/  LenoCSV/  LenoXLSX/  LenoQR/
+│       └── LenoMusic/  LenoCrypto/  LenoHack/  LenoSys/  LenoResult/ …
 ├── leno_gui/                   # GUI demos and apps (14 widget categories / 9 apps / 6 games / effects)
 ├── leno_lsp/                   # LSP language server (C implementation + .vsix plugin)
-├── assert/                     # assertion tests (469 files, entry point run_tests.leno)
-├── examples/                   # example code (1016 files)
-├── docs/                       # documentation (68 .md + 4 screenshots; see docs/INDEX.md)
+├── assert/                     # assertion tests (814 .leno files, entry point run_tests.leno)
+├── examples/                   # example code (813 .leno files)
+├── docs/                       # documentation (91 .md + 4 screenshots; see docs/INDEX.md)
 ├── resources/leno.rc           # Windows resources (icon / version info)
 ├── sources_core.txt  sources_vm.txt  sources_compiler.txt   # build source file lists
 └── build.sh  build.bat  build_vm.sh  build_vm.bat

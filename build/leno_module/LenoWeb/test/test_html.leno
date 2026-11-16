@@ -24,6 +24,13 @@ func eqInt(int got, int want, string tag) {
     if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
 }
 
+// ★ 2026-11-16：bool 要单独一条比较函数 —— `is` 的结果是 bool，塞进 eqInt 会拿 bool 去和
+//   int 比，v0.2.4 起"int 特化比较收到非数值操作数"是**运行期错误**（原来静默按位比较）；
+//   这里原来写的是 `eqInt(web.selectOne(...) is HtmlNode, 0, ...)` ⇒ 本版直接炸 ✓
+func eqBool(bool got, bool want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
 main() {
     // ==================== ① 基础解析 ====================
     string html = "<div id='root' class='box main'>"
@@ -90,7 +97,7 @@ main() {
     eqInt(web.select(empty, "p").len(), 0, "空 HTML 选不到任何元素")
     eqInt(web.select(r, "nonexist").len(), 0, "无匹配返回空数组（不崩）")
     eqInt(web.select(r, ".nope").len(), 0, "无匹配的类选择器")
-    eqInt(web.selectOne(r, "nonexist") is HtmlNode, 0, "selectOne 无匹配返回 null")
+    eqBool(web.selectOne(r, "nonexist") is HtmlNode, false, "selectOne 无匹配返回 null")
 
     print("[PASS] html\n")
 }

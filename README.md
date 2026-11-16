@@ -21,10 +21,10 @@ Leno 诞生于对编程语言设计的热爱与探索，虽非完美，但乐在
 
 | | |
 | --- | --- |
-| 版本 | 0.2.3 |
+| 版本 | 0.2.4 |
 | 许可 | Apache 2.0 |
 | 构建脚本 | Windows `build.bat` / Linux · macOS `build.sh` |
-| 仓库规模 | 内置模块 20 个 · SDL3 源文件 46 个 · 测试 469 文件 · 示例 1016 文件 · 文档 67 篇 |
+| 仓库规模 | 内置模块 20 个 · 扩展模块 21 个 · SDL3 源文件 58 个 · 测试 814 文件 · 示例 813 文件 · 文档 91 篇 |
 
 ---
 
@@ -408,7 +408,7 @@ main() {
 
 ```
 Leno/
-├── src/                        # 编译器 + VM（C 实现，89 个 .c）
+├── src/                        # 编译器 + VM（C 实现，91 个 .c）
 │   ├── parser/ semantic/ codegen/ optimize/ serialize/
 │   ├── vm/                     # 虚拟机
 │   ├── module/                 # 20 个内置模块（io / maths / strings / ffi / threads / asyncs …）
@@ -416,15 +416,16 @@ Leno/
 │   └── gc.c  debug.c  module_compiler.c  module_loader.c  module_dispatch.c
 ├── build/                      # 构建产物
 │   ├── leno.exe  leno_vm.exe  leno_vm_gui.exe
-│   └── leno_module/            # ★ 扩展模块源码在这里（已入库）
-│       ├── LenoSDL3/           #   跨平台 GUI（46 个 sdl_*.leno + docs/ + examples/）
-│       ├── LenoWeb/  LenoSqlite/  LenoWin32/
-│       └── LenoMusic/  LenoCrypto/  LenoHack/
+│   └── leno_module/            # ★ 扩展模块源码在这里（已入库，21 个包）
+│       ├── LenoSDL3/           #   跨平台 GUI（58 个 sdl_*.leno + docs/ + examples/）
+│       ├── LenoHTTP/  LenoWeb/  LenoSqlite/  LenoWin32/
+│       ├── LenoZip/  LenoCompress/  LenoCSV/  LenoXLSX/  LenoQR/
+│       └── LenoMusic/  LenoCrypto/  LenoHack/  LenoSys/  LenoResult/ …
 ├── leno_gui/                   # GUI 演示与应用（控件 14 类 / 应用 9 个 / 游戏 6 个 / 特效）
 ├── leno_lsp/                   # LSP 语言服务器（C 实现 + .vsix 插件）
-├── assert/                     # 断言测试（469 个文件，入口 run_tests.leno）
-├── examples/                   # 示例代码（1016 个文件）
-├── docs/                       # 文档（68 篇 .md + 4 张截图；索引见 docs/INDEX.md）
+├── assert/                     # 断言测试（814 个 .leno，入口 run_tests.leno）
+├── examples/                   # 示例代码（813 个 .leno）
+├── docs/                       # 文档（91 篇 .md + 4 张截图；索引见 docs/INDEX.md）
 ├── resources/leno.rc           # Windows 资源（图标 / 版本信息）
 ├── sources_core.txt  sources_vm.txt  sources_compiler.txt   # 构建源文件清单
 └── build.sh  build.bat  build_vm.sh  build_vm.bat
