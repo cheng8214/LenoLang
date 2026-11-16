@@ -36,7 +36,11 @@ main()
 {
     // 测试1: 文件写入和读取
     var test_content = "Hello, Leno!\n这是一行中文。"
-    var filename = "test_temp_file.txt"
+    // ★ 2026-11-16：路径要落在**系统临时目录**里，不能写相对路径 ✗
+    //   原来写的是 `"test_temp_file.txt"` ⇒ 相对**运行时的 cwd** ⇒ 跑断言时就在仓库根
+    //   留下一份（`git status` 里那个 `?? test_temp_file.txt`）；一旦中途断言失败/异常退出，
+    //   连清理都跑不到 ✓（同文件其它用例早就统一走 `_tmpdir()` 了，这一处是漏网的 ✓）
+    var filename = dirs.join(_tmpdir(), "test_temp_file.txt")
 
     // 写入文件
     files.write(filename, test_content)
@@ -78,6 +82,13 @@ main()
     // 获取文件大小
     var file_size = f.len()
     assert_eq(file_size > 0, true)
+
+    // ★ 2026-11-16：**必须显式关掉**这个"r"句柄 —— 它一直开到函数结尾，
+    //   而 Windows 上"文件还开着"是删不掉的 ⇒ 结尾那句 `files.delete(filename)`
+    //   **静默返回 false**（没人看返回值），文件就永久留在盘上 ✗
+    //   （实测现场：仓库根一直有个 `test_temp_file.txt`，内容正是下面写进去的
+    //    "rewritten-by-contract" ⇒ 说明执行到了结尾，就是删不掉 ✓）
+    f.close()
 
     // ---- 类型契约（v3.2.6，编译期把关）----
     //   `f.readlines()` 返回 `Array[string]`（实现逐行 str_copy）、`f.writeln()` / `f.close()` 返回 `null`。
@@ -201,8 +212,9 @@ main()
     // 清理
     dirs.delete(work)
 
-    // 清理
-    files.delete(filename)
+    // 清理 —— **断言删除成功**：这样"又忘了关句柄 / 路径写错"会当场失败，
+    //   而不是悄悄在盘上留一份垃圾（旧写法就是没人看返回值 ⇒ 藏了很久 ✓）
+    assert_eq(files.delete(filename), true, "临时文件必须删得掉（删不掉说明还有句柄没关）")
 
     print("test_files passed")
 }
