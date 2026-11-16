@@ -11,8 +11,13 @@
 // 为什么需要它（而不是 `setOpacity(0)`）：
 //   那是"**看不见**"，这是"**看得见但不挡鼠标**"——桌面宠物、悬浮挂件、屏幕取色器都靠这个。
 //   实现细节：`SDL_SetWindowHitTest` 只有 NORMAL/DRAGGABLE/RESIZE_*，没有"穿透"返回值；
-//   Windows 上必须改扩展样式 `WS_EX_TRANSPARENT` ⇒ 封装在 `sdl_clickthrough.leno`，
-//   应用层只调 `win.setClickThrough()`，不碰 Win32。
+//   Windows 上必须改扩展样式 **`WS_EX_LAYERED | WS_EX_TRANSPARENT`** ⇒ 封装在
+//   `sdl_clickthrough.leno`，应用层只调 `win.setClickThrough()`，不碰 Win32。
+//
+// ⚠ 本用例只钉**API 契约**（开关返回值 + 读回状态），**不能**证明"鼠标真的穿过去了"：
+//   2026-11-16 就是"读回 true 但鼠标没穿"骗了一轮（只设 TRANSPARENT、缺 LAYERED ✗）。
+//   真要验穿透，得用**外部**工具量：`WindowFromPoint(窗口中心)` 是否还命中本窗口
+//   （做法见 sdl_clickthrough.leno 文件头的实测记录 ✓）。
 import "SDL3" as SDL3
 
 main() {

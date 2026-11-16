@@ -1,0 +1,266 @@
+// sdl_colorpicker.leno — **颜色选择对话框**（★ 2026-11-16）
+// ----------------------------------------------------------------------------
+// 为什么有这个文件：Aria 的桌面歌词要让用户改配色，结果发现整库**没有**任何颜色选择控件
+//   —— 既没有 color picker 控件，也没封装系统色板。而系统色板本身不跨平台：
+//     Windows → ChooseColor（comdlg32，模态 Win32 对话框）
+//     Linux   → GTK/Qt 色板（额外依赖，还要跟 SDL 抢事件循环）
+//     macOS   → NSColorPanel（要调 ObjC 运行时）
+//   ⇒ 三条路都保不住"一个库三平台一致"这条底线 ⇒ **自己画一个**：全部用框架自带控件
+//     （Panel 预览 + Slider 滑杆 + Button 色板），**零平台相关代码** ✓
+//
+// 用法（模态；结果走回调）：
+//   SDL3.pickColor({color: 现有颜色, title: "选个颜色",
+//                   onPick: func(Color c) { ... }})
+//   · color 省略 ⇒ 白色；onPick 省略 ⇒ 只是看看（点确定什么都不做）
+//   · 面板里：8 个常用色板 + R/G/B/A 四条滑杆 + 实时预览 + 十六进制值
+//   · 点「确定」才回调；「取消」/ ESC / ✕ 不回调（调用方状态不变 ✓）
+//
+// ⚠ 主循环已在跑时 `runModal` **只注册不阻塞**（框架约定，见 sdl_dialog.runModal 的注释）
+//   ⇒ 结果一律走 onPick，别写成"runModal 返回后读变量" ✗
+import "sdl_dialog.leno" as dlg
+import "sdl_window.leno" as wnd; use wnd.Window
+import "sdl_event.leno" as evt; use evt.Event
+import "sdl_renderer.leno" as ren; use ren.Renderer
+import "sdl_core.leno" as core; use core.Scancode
+import "sdl_layout.leno" as lay; use lay.(HBox, VBox)
+import "sdl_label.leno" as lbl; use lbl.Label
+import "sdl_button.leno" as btn; use btn.Button
+import "sdl_slider.leno" as sld; use sld.Slider
+import "sdl_panel.leno" as pnl; use pnl.Panel
+import "sdl_titlebar.leno" as tbar; use tbar.TitleBar
+import "sdl_theme.leno" as theme; use theme.(Theme, Color)
+
+const string HEXDIG = "0123456789ABCDEF"
+
+// 常用色板：**结构体 + 数组**（照 AGENTS.md：数据用 struct，别用平行数组/魔法下标 ✓）
+//   8 个"压在深浅背景上都读得清"的亮色；加色只加一条 ✓
+struct Palette {
+    string name = ""
+    Color  c = 0xFFFFFFFF
+}
+
+Array[Palette] PAL = [
+    new Palette(name = "白", c = 0xFFFFFFFF),
+    new Palette(name = "黑", c = 0xFF000000),
+    new Palette(name = "灰", c = 0xFFA8A8A8),
+    new Palette(name = "粉", c = 0xFFFF9EC4),
+    new Palette(name = "黄", c = 0xFFFFD84A),
+    new Palette(name = "青", c = 0xFF6FE3FF),
+    new Palette(name = "绿", c = 0xFF7CE38B),
+    new Palette(name = "紫", c = 0xFFC79BFF)
+]
+
+func palName(int i): string {
+    if i < 0 or i >= PAL.len() { return "" }
+    return PAL[i].name
+}
+
+func palColor(int i): Color {
+    if i < 0 or i >= PAL.len() { return 0xFFFFFFFF }
+    return PAL[i].c
+}
+
+// 0..255 → 两位大写十六进制（框架里没有 int→hex 的 native，手写两行比引依赖划算 ✓）
+func hex2(int v): string {
+    int a = v / 16
+    int b = v % 16
+    if a < 0 { a = 0 }
+    if a > 15 { a = 15 }
+    if b < 0 { b = 0 }
+    if b > 15 { b = 15 }
+    return HEXDIG[a] + HEXDIG[b]
+}
+
+func hexOf(Color c): string {
+    return "#" + hex2(theme.colorR(c)) + hex2(theme.colorG(c)) +
+           hex2(theme.colorB(c)) + hex2(theme.colorA(c))
+}
+
+// 把当前色同步到"预览块 + 十六进制文字 + A 滑杆的渐变"
+//   ⚠ A 通道的渐变要**跟着当前颜色走**（透明 → 不透明的"这个色"）：
+//     写成固定的"透明白 → 不变白"在白底对话框上根本看不出来 ✗（2026-11-16 实测）
+func refresh(Color cur, Panel prev, Label hexl, Array[Slider] sl) {
+    prev.set_bg_color(cur)
+    hexl.set_text(hexOf(cur))
+    if sl.len() >= 4 {
+        sl[3].set_track_gradient(theme.withAlpha(cur, 0), theme.withAlpha(cur, 255))
+    }
+    core.markFrameRedraw()
+}
+
+// 一条通道行：`R [滑杆]`（滑杆自带数值显示 ✓）
+//   idx：0=R / 1=G / 2=B / 3=A；c 是**引用**（Array 语义）⇒ 滑杆改的是同一份状态 ✓
+func chanRow(string nm, int idx, Array[int] c, Array[Slider] sl, Panel prev, Label hexl, Array[Label] vl): HBox {
+    Theme th = theme.getTheme()
+    HBox row = lay.createHBox({x: 0, y: 0, w: 1, h: 26, pad_x: 0, pad_y: 0, spacing: 10})
+    Label tag = dlg.dialogLabel(nm, 12)
+    // ⚠ `show_value` 关掉：Slider 自带的是 `255.0` 这种浮点格式，做 RGB 通道看着别扭 ✗
+    //   ⇒ 右边自己放一个整数标签（色板回写时也要同步，见 swatchBtn ✓）
+    // 渐变轨道（用户要求：R 从黑到纯红、G 到纯绿、B 到纯蓝、A 从全透明到不透明 ✓）
+    //   ⇒ 一眼看出"往右更深"；比单色轨道 + 一小截填充清楚得多 ✓
+    Color gFrom = 0xFF000000
+    Color gTo = 0xFFFF0000
+    if idx == 1 { gTo = 0xFF00FF00 }
+    if idx == 2 { gTo = 0xFF0000FF }
+    if idx == 3 {
+        // A：透明 → 不透明的**当前颜色**（用固定白色在白底上等于看不见 ✗）
+        Color cur = theme.packColor(c[0], c[1], c[2], c[3])
+        gFrom = theme.withAlpha(cur, 0)
+        gTo = theme.withAlpha(cur, 255)
+    }
+    Slider s = sld.createSlider({w: 300, h: 18, min: 0, max: 255, value: c[idx], step: 1,
+                                 show_value: false, track_color: th.bgAlt, fill_color: th.accent,
+                                 track_from: gFrom, track_to: gTo})
+    sl.add(s)                       // 收进数组：色板点下去要能**回写滑杆位置** ✓
+    Label v = dlg.dialogLabel(_str(c[idx]), 12)
+    vl.add(v)                       // 同上：色板回写时同步数字 ✓
+    s.on_change(func(float fv) {
+        c[idx] = _int(fv)
+        v.set_text(_str(c[idx]))
+        refresh(theme.packColor(c[0], c[1], c[2], c[3]), prev, hexl, sl)
+    })
+    row.add(tag, {grow: 0, shrink: 0, basis: 16, align: 1})
+    row.add(s, {grow: 1, shrink: 1, align: 1})
+    row.add(v, {grow: 0, shrink: 0, basis: 34, align: 1})
+    return row
+}
+
+// 一颗色板按钮：点了把 RGB 一起换成该色（A 保持；若现在是全透明则顺手给 255）
+func swatchBtn(int idx, Array[int] c, Array[Slider] sl, Array[Label] vl, Panel prev, Label hexl): Button {
+    Color pc = palColor(idx)
+    // 边框要**够深**：白色色板压在白色对话框上时，浅边框根本看不见 ✗（实测）
+    //   ⚠ 这里必须写 `#RRGGBBAA` **字面量**：内部格式是 0xAARRGGBB，
+    //     手写 `0x00000088` 的 alpha 是 00（= 全透明）⇒ 边框等于没画，白块彻底消失 ✗
+    Button b = btn.createButton({w: 32, h: 32, radius: 8, padding: 0.0, shadow: false,
+                                bg_color: pc, hover_color: theme.brighten(pc, 26),
+                                border: true, border_color: #00000088})
+    b.set_tip("用「" + palName(idx) + "」")
+    b.on_click(func() {
+        c[0] = theme.colorR(pc)
+        c[1] = theme.colorG(pc)
+        c[2] = theme.colorB(pc)
+        if c[3] == 0 { c[3] = 255 }
+        // 滑杆位置 + 右边数字都要跟着走，否则"点了色板但滑杆还停在旧值"看着像没生效 ✗
+        if sl.len() >= 4 {
+            sl[0].set_value(_float(c[0]))
+            sl[1].set_value(_float(c[1]))
+            sl[2].set_value(_float(c[2]))
+            sl[3].set_value(_float(c[3]))
+        }
+        if _env("LENO_CPK_TRACE") != null {
+            print("[colorpicker] 色板点选：" + palName(idx) + " → rgb " +
+                  _str(c[0]) + "," + _str(c[1]) + "," + _str(c[2]) + "\n")
+        }
+        if vl.len() >= 4 {
+            vl[0].set_text(_str(c[0]))
+            vl[1].set_text(_str(c[1]))
+            vl[2].set_text(_str(c[2]))
+            vl[3].set_text(_str(c[3]))
+        }
+        refresh(theme.packColor(c[0], c[1], c[2], c[3]), prev, hexl, sl)
+    })
+    return b
+}
+
+// 自测用：最近一次打开的对话框窗口 id（0 = 没开过）
+//   为什么要暴露：无头自检只能用 `testClickAt(wid, ...)` 往**指定窗口**投点击，
+//   而对话框的窗口 id 是内部创建的 ⇒ 不给就拿不到，验不了"点确定真的回调" ✓
+int _lastWid = 0
+export func lastWindowId(): int { return _lastWid }
+
+// ==================== 对外入口 ====================
+// opts：{ color: Color（可选）, title: string（可选） }
+// onPick：**单独一个形参**，不塞进 Dict ——
+//   ⚠ 2026-11-16 实测：`opts.get("onPick", null) as func(Color):void` **恒为 null**
+//     （带参数的闭包从 `any` 转换不成功；零参数的 `func():void` 才行，
+//       `sdl_menu` 那条就是零参数所以一直没事 ⇒ 这里踩了同一条路的变体 ✗）
+//     表现就是用户报的"选择了没用"：点确定毫无反应、也不报错。
+//   ⇒ 回调一律走**强类型形参**，别用 Dict + as 转换 ✓
+export func pickColor(Dict opts, func(Color):void onPick) {
+    Theme th = theme.getTheme()
+    Color init = opts.get("color", 0xFFFFFFFF)
+    string ttl = opts.get("title", "选择颜色")
+
+    // 当前通道值（闭包要按引用改 ⇒ 单元素数组；这是本库的既有约定 ✓）
+    Array[int] c = [theme.colorR(init), theme.colorG(init), theme.colorB(init), theme.colorA(init)]
+    Array[Slider] sl = []
+    Array[Label] vl = []            // 四条通道右侧的整数值标签（跟着滑杆 / 色板走 ✓）
+
+    int dw = 430
+    int dh = 336
+    var w = dlg.createDialogWindow({title: ttl, w: dw, h: dlg.DIALOG_TB_H + dh})
+    TitleBar tb = dlg.dialogTitleBar(w, ttl)
+    var root = lay.createVBox({x: 0, y: 0, w: dw, h: dh, pad_x: 18, pad_y: 12, spacing: 8})
+    w.setRootAt(root, 0, tb.get_h())
+    _lastWid = w.getID()
+
+    root.add(dlg.dialogLabel("点色板选常用色，或用滑杆细调（RGB + 不透明度）", 11), {grow: 0, shrink: 0, align: 0})
+
+    // 预览块 + 十六进制
+    Panel prev = pnl.createPanel({x: 0, y: 0, w: 108, h: 52, radius: 10,
+                                  bg_color: init, border: true, border_color: th.border})
+    Label hexl = dlg.dialogLabel(hexOf(init), 13)
+    HBox prow = lay.createHBox({x: 0, y: 0, w: 1, h: 54, pad_x: 0, pad_y: 0, spacing: 12})
+    prow.add(prev, {grow: 0, shrink: 0, basis: 108, align: 1})
+    prow.add(hexl, {grow: 0, shrink: 0, align: 1})
+    root.add(prow, {grow: 0, shrink: 0, align: 3})
+
+    // 四条通道滑杆（先建，色板要用它们同步位置 ✓）
+    //   ⚠ 这些行必须 `align: 3`（stretch）交给 VBox 撑满：
+    //     写成 align:0（左对齐）时 HBox 只有 1px 宽 ⇒ 滑杆被压成一个点 ✗（2026-11-16 实测）
+    HBox rR = chanRow("R", 0, c, sl, prev, hexl, vl)
+    HBox rG = chanRow("G", 1, c, sl, prev, hexl, vl)
+    HBox rB = chanRow("B", 2, c, sl, prev, hexl, vl)
+    HBox rA = chanRow("A", 3, c, sl, prev, hexl, vl)
+
+    // 8 个常用色板
+    HBox pal = lay.createHBox({x: 0, y: 0, w: 1, h: 34, pad_x: 0, pad_y: 0, spacing: 8})
+    Button s0 = swatchBtn(0, c, sl, vl, prev, hexl)
+    Button s1 = swatchBtn(1, c, sl, vl, prev, hexl)
+    Button s2 = swatchBtn(2, c, sl, vl, prev, hexl)
+    Button s3 = swatchBtn(3, c, sl, vl, prev, hexl)
+    Button s4 = swatchBtn(4, c, sl, vl, prev, hexl)
+    Button s5 = swatchBtn(5, c, sl, vl, prev, hexl)
+    Button s6 = swatchBtn(6, c, sl, vl, prev, hexl)
+    Button s7 = swatchBtn(7, c, sl, vl, prev, hexl)
+    pal.add(s0, {grow: 0, shrink: 0, basis: 32})
+    pal.add(s1, {grow: 0, shrink: 0, basis: 32})
+    pal.add(s2, {grow: 0, shrink: 0, basis: 32})
+    pal.add(s3, {grow: 0, shrink: 0, basis: 32})
+    pal.add(s4, {grow: 0, shrink: 0, basis: 32})
+    pal.add(s5, {grow: 0, shrink: 0, basis: 32})
+    pal.add(s6, {grow: 0, shrink: 0, basis: 32})
+    pal.add(s7, {grow: 0, shrink: 0, basis: 32})
+    root.add(pal, {grow: 0, shrink: 0, align: 3})
+
+    root.add(rR, {grow: 0, shrink: 0, align: 3})
+    root.add(rG, {grow: 0, shrink: 0, align: 3})
+    root.add(rB, {grow: 0, shrink: 0, align: 3})
+    root.add(rA, {grow: 0, shrink: 0, align: 3})
+
+    root.add(dlg.dialogSpacer(), {grow: 1, shrink: 1, align: 3})
+
+    Button cancel = btn.createButton({w: 90, h: 30, text: "取消", type: "dark", font_size: 13})
+    Button ok = btn.createButton({w: 90, h: 30, text: "确定", type: "primary", font_size: 13})
+    cancel.on_click(func() { w.requestClose() })
+    ok.on_click(func() {
+        Color out = theme.packColor(c[0], c[1], c[2], c[3])
+        if _env("LENO_CPK_TRACE") != null {
+            print("[colorpicker] 确定 out=" + _str(out) + " onPick空=" + _str(onPick == null) + "\n")
+        }
+        w.requestClose()
+        // 先关窗再回调：回调里很可能接着开下一个对话框（"换完已唱色再换未唱色"）⇒ 别嵌套模态 ✓
+        if onPick != null { onPick(out) }
+    })
+    root.add(dlg.dialogButtonRow([cancel, ok], 10), {grow: 0, shrink: 0, align: 3})
+    tb.on_close(func() { w.requestClose() })
+
+    dlg.runModal(w,
+        func(Event ev): bool {
+            if ev.isQuit() { return false }
+            if ev.isWindowClose() { return false }
+            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            return true
+        },
+        func(Renderer r) { })
+}

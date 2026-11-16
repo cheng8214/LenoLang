@@ -7,7 +7,15 @@
 // 为什么不能只用 SDL：
 //   `SDL_SetWindowHitTest` 的回调只有 NORMAL / DRAGGABLE / RESIZE_* 这几种结果，
 //   **没有"穿透"** —— 它解决的是"无边框窗口怎么拖动/缩放"，不是输入穿透 ✗
-//   ⇒ Windows 必须给窗口加扩展样式 `WS_EX_TRANSPARENT`。
+//   ⇒ Windows 必须给窗口加扩展样式 **`WS_EX_LAYERED | WS_EX_TRANSPARENT`**。
+//
+// ★★ 2026-11-16 修（用户实测"上锁后还能拖、事件也没穿下去"）：
+//   原实现只加了 `WS_EX_TRANSPARENT` —— **它只影响绘制顺序，不影响命中测试** ✗。
+//   实测证据（本机用外部 `WindowFromPoint(窗口中心)` 量的，不是信自己读回的样式位）：
+//     · 只加 TRANSPARENT：命中仍是自己的 SDL_app 窗口，exstyle 0x188 → 0x1A8（没有 0x80000）
+//     · 补上 LAYERED    ：命中变成**下层的别的程序窗口**（Chrome），关掉后又回到自己 ✓
+//   ⇒ 现在两个位一起设；关的时候**按开之前的原始样式原样恢复**（不给我们加的位留尾巴 ✓）
+//   ⚠ 教训：`isClickThrough()` 读回 true **不等于**鼠标真的穿过去了 —— 要验就用外部工具量 ✓
 //
 // 设计：封装在这一层，**应用只写 `win.setClickThrough(true)`**，不碰 Win32。
 //   · Windows  → 真实现（GetWindowLongPtrW / SetWindowLongPtrW 改 GWL_EXSTYLE）
@@ -17,20 +25,64 @@ import ffi
 import "sdl_core.leno" as core
 use core.sdl3                    // 调 clib 函数必须先 use 该 clib 类型（Leno 规则）
 
-// ── 只声明本文件用到的两个（与 sdl_tray.leno 的 clib 块是**两个独立类型**，互不干扰）──
+// ── 只声明本文件用到的几个（与 sdl_tray.leno 的 clib 块是**两个独立类型**，互不干扰）──
 clib user32ex {
     i64 GetWindowLongPtrW(Ptr[u8] hwnd, i32 index)
     i64 SetWindowLongPtrW(Ptr[u8] hwnd, i32 index, i64 val)
+    bool SetWindowPos(Ptr[u8] hwnd, Ptr[u8] after, i32 x, i32 y, i32 cx, i32 cy, u32 flags)
 }
 
 const GWL_EXSTYLE       = -20
 const WS_EX_TRANSPARENT = 0x00000020
+// ★★ 2026-11-16（实测）：光设 `WS_EX_TRANSPARENT` **不能让鼠标穿透** ——
+//   它只影响"绘制顺序"，命中测试照样命中本窗口 ⇒ 窗口还是能点、能拖，事件也不会下传 ✗。
+//   标准做法是 **`WS_EX_LAYERED | WS_EX_TRANSPARENT`** 一起设（分层窗口的命中测试才会放行）✓
+//   现场证据（本机 1920x1080）：开"穿透"前后 `WindowFromPoint(窗口中心)` 都命中自己那个
+//   `SDL_app` 窗口，扩展样式从 0x188 变成 0x1A8（只多了 0x20），**没有** 0x80000 ✓
+const WS_EX_LAYERED     = 0x00080000
+// SetWindowPos 的 flags：不移动 / 不改尺寸 / 不改 z 序 / 不激活 / 让新样式立刻生效
+const SWP_NOSIZE        = 0x0001
+const SWP_NOMOVE        = 0x0002
+const SWP_NOZORDER      = 0x0004
+const SWP_NOACTIVATE    = 0x0010
+const SWP_FRAMECHANGED  = 0x0020
 
 user32ex? _u32ex = null
 
 func _lib32(): user32ex? {
     if _u32ex == null { _u32ex = ffi.load("user32.dll") }
     return _u32ex
+}
+
+// 开穿透前的**原始扩展样式**：按窗口句柄各存一份（同一进程可能有好几个悬浮窗 ✓）
+//   存下来的意义：关穿透时**原样恢复** —— 否则我们自己加的 LAYERED 会留在窗口上
+//   （改了分层属性可能影响后续渲染/合成 ✓ 这种"改完不还原"最容易变成诡异 bug ✗）
+Array[int] _ctHwnds = []
+Array[int] _ctSaved = []
+
+func _ctRemember(Ptr[u8] hwnd, int style) {
+    int key = _int(hwnd)
+    for 0 : _ctHwnds.len() - 1 to i {
+        if _ctHwnds[i] == key { _ctSaved[i] = style; return }
+    }
+    _ctHwnds.add(key)
+    _ctSaved.add(style)
+}
+
+func _ctRecall(Ptr[u8] hwnd): int {
+    int key = _int(hwnd)
+    for 0 : _ctHwnds.len() - 1 to i {
+        if _ctHwnds[i] == key { return _ctSaved[i] }
+    }
+    return -1
+}
+
+// 让刚改的扩展样式立刻生效（框架里改 EXSTYLE 的通用做法）
+func _ctFlush(Ptr[u8] hwnd) {
+    var u = _lib32()
+    if u == null { return }
+    u.SetWindowPos(hwnd, null, 0, 0, 0, 0,
+                   SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED)
 }
 
 // SDL 窗口 → 原生句柄（Windows: HWND；其他平台: null）
@@ -45,6 +97,9 @@ export func nativeHandle(Ptr[u8] window): Ptr[u8] {
 }
 
 // 开/关整窗穿透；返回 false = 本平台不支持或拿不到句柄（**不是异常**）
+//   ⚠ 判"有没有真穿透"别只看 `isClickThrough()`（那只是把样式位读回来）：
+//     2026-11-16 就是它"读回 true 但鼠标根本没穿过去"骗了一轮 ✓
+//     真判据：外部 `WindowFromPoint(窗口中心)` 是否仍命中本窗口（见本文件头的实测记录）
 export func setClickThrough(Ptr[u8] window, bool on): bool {
     Ptr[u8] hwnd = nativeHandle(window)
     if hwnd == null { return false }
@@ -53,13 +108,19 @@ export func setClickThrough(Ptr[u8] window, bool on): bool {
 
     int style = _int(u.GetWindowLongPtrW(hwnd, GWL_EXSTYLE))
     if on {
-        style = style | WS_EX_TRANSPARENT
+        _ctRemember(hwnd, style)                 // 记原始样式，关的时候原样还回去 ✓
+        // LAYERED 是关键（见文件头），TRANSPARENT 一起去掉重绘顺序的干扰 ✓
+        u.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT)
     } else {
-        // 清掉那一位（`~` 是 int 按位取反 ✓）
-        style = style & ~WS_EX_TRANSPARENT
+        int base = _ctRecall(hwnd)
+        int want = if base >= 0 then base else (style & ~(WS_EX_LAYERED | WS_EX_TRANSPARENT))
+        u.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, want)
     }
-    u.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style)
-    return true
+    _ctFlush(hwnd)
+    // 清掉那句"最后一次读回 true"的缓存语义：这里如实再读一次返回给调用方 ✓
+    int now = _int(u.GetWindowLongPtrW(hwnd, GWL_EXSTYLE))
+    if on { return (now & WS_EX_LAYERED) != 0 and (now & WS_EX_TRANSPARENT) != 0 }
+    return (now & WS_EX_TRANSPARENT) == 0
 }
 
 // 当前是否处于穿透状态（自检 / 托盘菜单打勾用）
@@ -69,5 +130,6 @@ export func isClickThrough(Ptr[u8] window): bool {
     var u = _lib32()
     if u == null { return false }
     int style = _int(u.GetWindowLongPtrW(hwnd, GWL_EXSTYLE))
-    return (style & WS_EX_TRANSPARENT) != 0
+    // 两个位都要有才算"已穿透"（2026-11-16：只有 TRANSPARENT 是**无效**状态 ✓）
+    return (style & WS_EX_TRANSPARENT) != 0 and (style & WS_EX_LAYERED) != 0
 }

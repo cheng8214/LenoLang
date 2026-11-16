@@ -374,6 +374,7 @@ export func createVBox(Dict opts): VBox          { return lay.createVBox(opts) }
           "spacing:num", "justify", "bg_color", "bg_radius:float", "clip:bool", "visible:bool", "enabled:bool"])
 export func createAnchorBox(Dict opts): AnchorBox { return lay.createAnchorBox(opts) }
 import "sdl_dialog.leno" as dlg
+import "sdl_colorpicker.leno" as cpk      // 颜色选择对话框（★ 2026-11-16 补，见下面的 pickColor）
 export func createDialogWindow(Dict style): Window { return dlg.createDialogWindow(style) }
 export func createModelessDialog(Dict style): Window { return dlg.createModelessDialog(style) }
 // ⚠ `runModal` **不保证阻塞到窗口关闭**：主循环已在跑时它只注册窗口就返回（见
@@ -422,6 +423,15 @@ export func dialogFramePaint(Renderer r, int w, int h) { dlg.dialogFramePaint(r,
 //   ★ 回调式：onOk 在用户点主按钮之后触发（**不要**写成 `if msgBox(...) {}` —— 主循环已跑时
 //     runModal 立即返回 ⇒ 那样恒判 false、点确认毫无反应 ✗，这是实测踩过的坑 ✓）
 export func msgBox(string title, Array[string] lines, string okText, string cancelText, bool danger, func():void onOk) { dlg.msgBox(title, lines, okText, cancelText, danger, onOk) }
+
+// ==================== 颜色选择对话框（★ 2026-11-16）====================
+// 为什么要补：整库此前**没有**任何颜色选择控件，而系统色板（Win32 ChooseColor /
+//   GTK 色板 / macOS NSColorPanel）都不跨平台 ⇒ 用框架自带控件**自己画**了一个。
+// 用法（模态，结果走**第二个形参**的回调 —— 主循环已跑时 runModal 只注册不阻塞，别读返回值 ✗）：
+//   pickColor({color: 现有色, title: "选个颜色"}, func(Color c) { ... })
+//   ⚠ 别把回调塞进 Dict：`opts.get(...) as func(Color):void` 实测恒为 null（见 sdl_colorpicker 的注释）
+//   面板：8 个常用色板 + R/G/B/A 滑杆 + 实时预览 + 十六进制值；取消 / ESC / ✕ 不回调 ✓
+export func pickColor(Dict opts, func(Color):void onPick) { cpk.pickColor(opts, onPick) }
 
 
 // ==================== 重新导出类型别名 ====================
