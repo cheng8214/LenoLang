@@ -228,6 +228,19 @@ int _profDrawUs = 0
 int _profDrawFrames = 0
 int _profPresentUs = 0
 int _profCbUs = 0
+// 其余分段（2026-11-17 第二轮：打开展帧里的"黑箱"）
+int _profEvUs = 0        // 事件轮询/派发
+int _profBeginUs = 0     // beginFrame + 清屏
+int _profTimerUs = 0     // tickAllTimers
+int _profCursorUs = 0    // applyFrameCursor
+int _profLoopFrames = 0
+int _profWaitUs = 0      // ev.waitTimeout（**睡眠**，不是 CPU —— 会大幅抬高 us_per_frame）
+int _profIters = 0       // 循环迭代次数（与 frames 不同：有的迭代不渲染）
+int _profBodyUs = 0      // 整个循环体耗时（从帧标志计算到帧末）
+
+func _profAdd(int t0): int {
+    return _int(_float(core.getPerfCounter() - t0) * 1000000.0 / _float(core.getPerfFrequency()))
+}
 
 // ==================== 控件级「模态浮层」/「点外部」状态（**按窗口 ID 归属**）====================
 // ★ 2026-11-13（Aria 实测反哺，重要）：
@@ -1777,12 +1790,26 @@ export struct Window {
                 if timeoutMs < 1 { timeoutMs = 1 }
             }
             int _t0 = core.getTicks()
+            int _profW0 = core.getPerfCounter()
             ev.waitTimeout(timeoutMs)
+            if _benchFrames > 0 {
+                _profWaitUs = _profWaitUs + _profAdd(_profW0)
+                _profIters = _profIters + 1
+            }
             // 兜底：若 waitTimeout 提前返回（实际等待 < 5ms 且无事件），
             // 强制 Sleep 补足，防止事件循环高频空转→CPU 占用异常
             int _wakeTick = core.getTicks()
             int _wakeWait = _wakeTick - _t0
-            if not ev.has and _wakeWait < 5 { core.delay(5 - _wakeWait) }
+            // ★★ 2026-11-17（实测出的大头）：**有活要干时绝不补睡**。
+            //   原来不管有没有欠帧都补足 5ms，代价是：
+            //     · 基准模式每次迭代白睡 ~5ms ⇒ us_per_frame 被抬高近一倍
+            //       （实测 9962µs/帧 → 补睡去掉后 ~4700µs，其中"循环体外"那 5.3ms 全是这个 Sleep ✗）
+            //     · 正常模式里动画/定时器欠帧时也被推迟最多 5ms：30fps 的 33ms 预算白扔 15%，
+            //       表现为"动画偶发跳一下"（一直查不出的那类抖动 ✓）
+            //   只在**真的没事干**（不欠帧、也不在跑基准）时才补，保留原来"防事件循环空转"的意图 ✓
+            if not ev.has and _wakeWait < 5 and not _needRedraw and _benchFrames <= 0 {
+                core.delay(5 - _wakeWait)
+            }
             // ★ Motion 事件合并：鼠标快速移动时 SDL 队列中会堆积大量连续 motion 事件，
             //   每个都触发全控件 process()。弱 CPU 上导致 CPU 占用飙升。
             //   合并策略：只保留同窗口的最后一个 motion 事件，丢弃中间的。
@@ -1790,6 +1817,8 @@ export struct Window {
             Ptr[u8] _motionBuf = ffi.malloc(128)
             Ptr[u8] _deferredBuf = ffi.malloc(128)
             bool _hasDeferred = false
+            int _profBody0 = core.getPerfCounter()
+            int _profEv0 = core.getPerfCounter()
             while ev.has {
                 // 鼠标移动(motion)不强制整窗重绘：光标为 OS 级、hover 变化已由控件
                 // markFrameRedraw() 请求重绘；否则每次移动都触发全窗清屏+全控件重绘，
@@ -2047,7 +2076,9 @@ export struct Window {
                 }
             }
             ffi.free(_motionBuf); ffi.free(_deferredBuf)
+            int _profCur0 = core.getPerfCounter()
             core.applyFrameCursor()    // 帧末：按本帧各控件的请求统一设置一次光标（避免互相覆盖）
+            int _profCursorTmp = _profAdd(_profCur0)
             if _runWids.len() == 0 {
                 ev.uninit()
                 if _windowCount <= 0 { core.quit() }
@@ -2055,7 +2086,9 @@ export struct Window {
                 return true          // 窗口全关，循环结束 ✓
             }
             // 驱动所有定时器（在事件轮询外，确保 idle 期间也能触发定时器与自动重绘）
+            int _profTmr0 = core.getPerfCounter()
             timer.tickAllTimers()
+            int _profTimerTmp = _profAdd(_profTmr0)
             // ★ 程序化退出请求（requestExit()：托盘菜单/定时器等非 onEvent 上下文发起）：
             //   与 SDL_QUIT 事件同款收尾（控件 dispose → 渲染器/窗口销毁 → 事件反初始化）
             if _exitRequested {
@@ -2087,6 +2120,13 @@ export struct Window {
             // ★ Tooltip 优化：旧方案 tipWaiting() 在等待延迟期间恒返回 true，导致每帧 60fps
             //   全量重绘（即使画面无任何变化）。新方案仅在延迟到期时（tipRemainingMs()==0）
             //   触发一次重绘以显示 tooltip，等待期间通过 poll 超时挂起，CPU 降至接近 0。
+            // [诊断] 本帧"事件轮询 + 派发"耗时
+            _profLoopFrames = _profLoopFrames + 1
+            if _benchFrames > 0 {
+                _profEvUs = _profEvUs + _profAdd(_profEv0)
+                _profCursorUs = _profCursorUs + _profCursorTmp
+                _profTimerUs = _profTimerUs + _profTimerTmp
+            }
             if _hadEvent { _needRedraw = true }
             // ★ 2026-11-17（F4）：`_fullFrame` 决定这一帧是"所有窗口都画"还是"只画被点名的窗口"。
             //   初值取 `_needRedraw`（之前就欠一帧的原因：首帧、渲染中 requestRedraw）⇒ 全脏；
@@ -2183,12 +2223,14 @@ export struct Window {
                     // ★ SSAA：每帧渲染前重新设置渲染目标到离屏高分辨率纹理 + 缩放
                     // present() 每帧执行后会重置渲染目标为窗口、缩放为 1.0，
                     // 必须在此切回 SSAA 纹理，否则后续 fillRect/控件绘制全部直接画到窗口、SSAA 失效
+                    int _profB0 = core.getPerfCounter()
                     ren.beginFrame()
                     if not _runTransparent[i] {
                         Theme th = theme.getTheme()
                         ren.setColor(th.bg)
                         ren.fillRect(0, 0, _float(_runW[i]), _float(_runH[i]))
                     }
+                    if _benchFrames > 0 { _profBeginUs = _profBeginUs + _profAdd(_profB0) }
                     int _profC0 = core.getPerfCounter()
                     try {
                         _runRends[i](_runRens[i])
@@ -2327,6 +2369,8 @@ export struct Window {
             // 摘要里的 `sum`（批处理计数之和）是**负载一致性判据**：两次运行的 sum 相同
             // 才说明渲染工作量相同，此时比 us_per_frame 才有意义。
             if _benchFrames > 0 {
+                // [诊断] 整个循环体的耗时（与 us_per_frame 对照，判断"未计入"的部分在体内还是体外）
+                _profBodyUs = _profBodyUs + _profAdd(_profBody0)
                 _benchDone = _benchDone + 1
                 if _benchDone >= _benchFrames {
                     int _bus = _int(_float(core.getPerfCounter() - _benchT0) * 1000000.0
@@ -2344,6 +2388,14 @@ export struct Window {
                           + " draw_us_avg=" + _int(_float(_profDrawUs) / _float(_profDrawFrames))
                           + " present_us_avg=" + _int(_float(_profPresentUs) / _float(_profDrawFrames))
                           + " cb_us_avg=" + _int(_float(_profCbUs) / _float(_profDrawFrames))
+                          // 每帧（非每窗口）的分段：事件轮询 / 清屏 / 定时器 / 光标
+                          + " ev_us=" + _int(_float(_profEvUs) / _float(_profLoopFrames))
+                          + " begin_us=" + _int(_float(_profBeginUs) / _float(_profDrawFrames))
+                          + " timer_us=" + _int(_float(_profTimerUs) / _float(_profLoopFrames))
+                          + " cursor_us=" + _int(_float(_profCursorUs) / _float(_profLoopFrames))
+                          + " wait_us=" + _int(_float(_profWaitUs) / _float(_profIters))
+                          + " iters=" + _profIters
+                          + " body_us=" + _int(_float(_profBodyUs) / _float(_benchDone))
                           + "\n")
                     // 收尾：与 isQuit 路径一致（控件 dispose → 渲染器/窗口销毁 → 事件反初始化）
                     for _runWids.len() to i {
