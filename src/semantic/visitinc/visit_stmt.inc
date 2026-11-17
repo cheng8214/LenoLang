@@ -20,6 +20,13 @@
                 s->expected_type = saved_expected;
             }
 
+            // ★ 2026-11-18（F2·L1）：`return null` 而返回类型非可空且非句柄 ⇒ 警告
+            //   （`func f(): P { return null }` 此前零诊断 ⇒ 调用点拿到 null 还以为它是对象 ✗）
+            if (ast->u.ret && s->current_func) {
+                warn_null_literal(ast->u.ret, s->current_func->u.func.return_type,
+                                  "返回值", s->current_func->u.func.name);
+            }
+
             // ★ 2026-11-15：**裸 return（不返回值）** 在声明了返回类型的函数里要定向报错。
             //   此前走下面的 infer_expr_type(NULL) ⇒ 报「期望 int，实际 any」——
             //   文案既没说"你没写返回值"，也看不出是 return 少写了值 ✗

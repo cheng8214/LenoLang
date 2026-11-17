@@ -160,6 +160,11 @@
                 // 递归解析变量声明类型中的 alias（如 Array[EventHandler] 中 EventHandler = func(Event):bool）
                 resolve_alias_in_type(s, &ast->u.var_decl.type, ast->line);
 
+                // ★ 2026-11-18（F2·L1）：`非可空类型 x = null` ⇒ 警告（判据见 warn_null_literal）
+                //   必须在 alias 解析**之后**：`alias Color = int` 这类要先展开成实际类型再判 ✓
+                warn_null_literal(ast->u.var_decl.init, ast->u.var_decl.type,
+                                  "变量", ast->u.var_decl.name);
+
                 // 检查 var 是否被用作类型参数（如 Array[var]、Dict[string, var]）
                 // var 只能用于变量声明的顶层类型（var x = ...），不能作为复合类型的类型参数
                 int infer_as_param = 0;
@@ -563,6 +568,27 @@
             // 先访问右侧值
             visit(s, ast->u.assign.value);
             s->expected_type = saved_expected;
+
+            // ★ 2026-11-18（F2·L1）：`x = null` 而 x 声明的类型非可空且非句柄 ⇒ 警告
+            //   只判单一变量目标（`a, b = null, 1` / `arr[i] = null` / `obj.f = null` 先不判 ——
+            //   宁漏勿误报；字段写入那一路等 L2 再统一做 ✓）
+            //   ⚠ 目标名要从 **names[] 或 targets[]** 取：简单赋值 `x = null` 的 targets 可能是
+            //     NULL（只有 names），实测漏过一版 ⇒ 两个都看 ✓
+            if (left_count == 1 && ast->u.assign.value && ast->u.assign.value->kind == AST_NULL) {
+                const char* tn0 = NULL;
+                if (ast->u.assign.targets && ast->u.assign.targets[0] &&
+                    ast->u.assign.targets[0]->kind == AST_VAR) {
+                    tn0 = ast->u.assign.targets[0]->u.var.name;
+                } else if (ast->u.assign.names && ast->u.assign.names[0]) {
+                    tn0 = ast->u.assign.names[0];
+                }
+                if (tn0) {
+                    Symbol* wsym = scope_resolve(s->current, tn0);
+                    if (wsym && wsym->type) {
+                        warn_null_literal(ast->u.assign.value, wsym->type, "变量", tn0);
+                    }
+                }
+            }
             
             // 检查右侧值数量
             // 只有当左侧有多个变量且右侧是数组时，才展开数组作为并行赋值

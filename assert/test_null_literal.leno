@@ -1,0 +1,111 @@
+// ============================================================
+// F2·L1（2026-11-18）：**非可空类型 ← `null` 字面量** ⇒ 警告
+// ------------------------------------------------------------
+// 现场：`Window dlWin = null` 之后 `dlWin != null` 走 false（值就是 null），
+//   "有没有"只能靠人手维护 `bool dlOpen` 伴生字段 —— 忘同步就静默错
+//   （Aria 桌面歌词 / 托盘两个真 bug 都是它）。
+// 口径（宁漏勿误报）：
+//   ① 只认 **`null` 字面量**（变量 / 调用结果不判）；
+//   ② `T?` / `any` / 未标注 / 泛型形参 ⇒ 放行；
+//   ③ **句柄类天然可空**（Ptr / cLib / Channel / Thread / Future / File / Socket / func /
+//      cstruct 指针）⇒ 放行（实测这类存量 82 处，判红是错的）；
+//   ④ 值类型 / string / Array / Dict / struct / face / enum ⇒ 报。
+// 判据：⑥ 是**误报守卫**（一条都不许报），①~⑤ 是五个位置各报一条。
+// ============================================================
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+func write_case(string work, string name, string body): string {
+    var f = dirs.join(work, name)
+    files.write(f, body)
+    return f
+}
+
+// ① 变量声明 / ② 赋值 / ③ 实参 / ④ return
+func case_positions(string work) {
+    var f = write_case(work, "pos.leno",
+        "struct P { int x = 0 }\n" +
+        "\n" +
+        "func take(P p) { }\n" +
+        "func give(): P { return null }\n" +
+        "\n" +
+        "P g = null\n" +
+        "\n" +
+        "main() {\n" +
+        "    P a = null\n" +
+        "    a = null\n" +
+        "    take(null)\n" +
+        "    print(\"TAG=done\")\n" +
+        "}\n")
+    var out = ce.expect_ok(f, "五个位置都必须编译通过（只是警告）", "TAG=done")
+    assert_true(strings.has(out, "变量 'g' 是 P"), "① 变量声明要报；实际=" + out)
+    assert_true(strings.has(out, "变量 'a' 是 P"), "① 局部声明要报；实际=" + out)
+    assert_true(strings.has(out, "形参 'p' 是 P"), "③ 实参要报；实际=" + out)
+    assert_true(strings.has(out, "返回值 'give' 是 P"), "④ return 要报；实际=" + out)
+    assert_true(strings.has(out, "Node?") == false, "不该出现无关类型名")
+}
+
+// ⑤ struct 字段默认值
+func case_field_default(string work) {
+    var f = write_case(work, "field.leno",
+        "struct P { int x = 0 }\n" +
+        "struct B { P inner = null }\n" +
+        "\n" +
+        "main() { var b = new B()\n    print(\"TAG=done\") }\n")
+    var out = ce.expect_ok(f, "字段默认值 = null 也必须编译通过", "TAG=done")
+    assert_true(strings.has(out, "字段 'inner' 是 P"), "⑤ 字段默认值要报；实际=" + out)
+}
+
+// ⑥ 误报守卫：四类豁免一条都不许报
+func case_exempt(string work) {
+    var f = write_case(work, "exempt.leno",
+        "struct P { int x = 0 }\n" +
+        "struct C[T] { T data = null }\n" +
+        "\n" +
+        "func takePtr(Ptr[u8] p) { }\n" +
+        "\n" +
+        "main() {\n" +
+        "    P?  q  = null\n" +
+        "    Ptr[u8] p = null\n" +
+        "    Channel c = null\n" +
+        "    var v = null\n" +
+        "    takePtr(null)\n" +
+        "    print(\"TAG=done\")\n" +
+        "}\n")
+    var out = ce.expect_ok(f, "豁免清单必须静默", "TAG=done")
+    assert_true(not strings.has(out, "非可空类型赋了 null"),
+        "T? / Ptr / Channel / var / 泛型形参 / Ptr 形参 都不该报；实际=" + out)
+}
+
+// ⑦ 漏报侧确认：变量里的 null **不该**报（判不了来源，宁漏勿误报）
+func case_var_not_literal(string work) {
+    var f = write_case(work, "var_null.leno",
+        "struct P { int x = 0 }\n" +
+        "\n" +
+        "func maybe(): any { return null }\n" +
+        "\n" +
+        "main() {\n" +
+        "    P a = maybe() as P\n" +
+        "    print(\"TAG=done\")\n" +
+        "}\n")
+    var out = ce.expect_ok(f, "变量/调用结果不判", "TAG=done")
+    assert_true(not strings.has(out, "非可空类型赋了 null"),
+        "`P a = maybe()`（来源是调用）不该报；实际=" + out)
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_null_literal")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    case_positions(work)
+    case_field_default(work)
+    case_exempt(work)
+    case_var_not_literal(work)
+
+    dirs.delete(work)
+    print("test_null_literal passed\n")
+}

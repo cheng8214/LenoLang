@@ -2213,6 +2213,14 @@
                             TypeInfo* expected_type = func_def->u.func.param_types[i];
                             if (!expected_type || expected_type->kind == TYPE_INFER) continue; // 类型推断模式，跳过检查
 
+                            // ★ 2026-11-18（F2·L1）：`f(null)` 而形参非可空且非句柄 ⇒ 警告
+                            //   （放在类型兼容检查**之前**：兼容检查认为 null 对引用类型合法，
+                            //     所以我们这条是"语义提醒"，不改变它的结论 ✓）
+                            if (func_def->u.func.params && func_def->u.func.pcnt > i) {
+                                warn_null_literal(ast->u.call.args.items[i], expected_type,
+                                                  "形参", func_def->u.func.params[i]);
+                            }
+
                             // 泛型函数：用推断的类型替换泛型参数
                             TypeInfo* check_type = expected_type;
                             if (is_generic && inferred_types) {

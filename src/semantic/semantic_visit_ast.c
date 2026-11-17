@@ -1531,6 +1531,80 @@ static int sem_expr_maybe_null(Semantic* s, Ast* e, int depth) {
     }
 }
 
+// ============================================================================
+// F2·L1（2026-11-18）：**非可空类型 ← `null` 字面量** ⇒ 警告
+// ----------------------------------------------------------------------------
+// 现场：`Window dlWin = null` 之后 `dlWin != null` 走 false（值就是 null），
+//   "有没有"只能靠人手维护一个 `bool dlOpen` 伴生字段 —— 忘同步就静默错
+//   （Aria 桌面歌词 / 托盘两个真 bug 都是它）。
+// 判据（宁漏勿误报，命中才报）：
+//   ① 值的形态必须是 **`null` 字面量**（AST_NULL）：变量 / 调用结果 / `x as T` 一律不判；
+//   ② 目标类型必须**显式可判定**且**不天然可空**：
+//        · `T?`（TypeInfo.nullable）/ `any` / 未标注 ⇒ 放行
+//        · **句柄类**（Ptr / Ptr[T] / cstruct 指针 / cLib / Channel / Thread / Future /
+//          File / Socket / func）⇒ 放行 —— 它们的存在意义就是"可能还没准备"，
+//          实测这类存量 82 处（`kernel32 _krnl = null` / `sdl3 g_lib = null` …），判红是错的 ✗
+//        · 值类型（int/float/bool/bigint）/ string / Array / Dict / struct / face / enum ⇒ 报
+//   ③ 本版只报**警告**（L1）；升错误是 L3 的事，期间用户照文案改成 `T?` 即可 ✓
+// ============================================================================
+static int type_null_literal_ok(TypeInfo* t) {
+    if (!t) return 1;                       // 没标注 ⇒ 不判
+    if (t->nullable) return 1;              // T?
+    switch (t->kind) {
+        case TYPE_ANY:
+        case TYPE_UNKNOWN:
+        case TYPE_INFER:
+        // ★ 泛型形参（`struct Container[T] { T data = null }`）：T 可能是 int，判不了 ⇒ 放行
+        //   （实测这类写法在 examples 里有 16 处，且都配着 `bool hasData` 伴生字段 ——
+        //    属于"泛型容器 + 哨兵"，L2 的收窄也管不到，宁漏勿误报 ✓）
+        case TYPE_GENERIC_PARAM:
+            return 1;
+        // 句柄类：天然可空（见上面 ②）
+        case TYPE_PTR:
+        case TYPE_PTR_GENERIC:
+        case TYPE_CSTRUCT:
+        case TYPE_STR8:
+        case TYPE_STR16:
+        case TYPE_CLIB:
+        case TYPE_FUNCTION:
+        case TYPE_CHANNEL:
+        case TYPE_THREAD:
+        case TYPE_FUTURE:
+        case TYPE_SOCKET:
+        case TYPE_FILE:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+// 报错文案里的类型名：有 struct_name 就用它（`Window` / `Tray`），否则用 kind 名
+static const char* type_show_name(TypeInfo* t, char* buf, size_t n) {
+    if (!t) return "?";
+    if (t->struct_name && t->struct_name[0]) return t->struct_name;
+    snprintf(buf, n, "%s", type_kind_to_string(t->kind));
+    return buf;
+}
+
+// what：位置描述（"变量" / "形参" / "返回值" / "字段"）；name：实体名（可空）
+static void warn_null_literal(Ast* null_ast, TypeInfo* target, const char* what, const char* name) {
+    if (!null_ast || null_ast->kind != AST_NULL) return;
+    if (type_null_literal_ok(target)) return;
+    char kbuf[32];
+    const char* tn = type_show_name(target, kbuf, sizeof(kbuf));
+    char subj[192];
+    if (name && name[0]) snprintf(subj, sizeof(subj), "%s '%s'", what, name);
+    else snprintf(subj, sizeof(subj), "%s", what);
+    const char* var = (name && name[0]) ? name : "x";
+    warning_add_at_fmt(WARN_NULL_LITERAL, null_ast->line, null_ast->column,
+        "%s 是 %s（非可空），却赋了 null\n"
+        "  提示: 刚赋 null 时 `%s != null` 为 false（值就是 null），赋过之后才为真 —— "
+        "\"有没有\"靠人手维护另一个 bool 很容易忘同步 ✗\n"
+        "  提示: 要表达「可能没有」请写 `%s? %s`，用 `if %s != null { … }` 收窄后再取字段\n"
+        "  提示: 句柄类（Ptr / cLib / Channel / File / Socket / func …）天然可空，不受此限",
+        subj, tn, var, tn, var, var);
+}
+
 static void visit_node(Semantic* s, Ast* ast) {
     if (!ast) return;
 
