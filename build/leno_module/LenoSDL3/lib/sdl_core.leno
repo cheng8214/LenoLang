@@ -716,6 +716,48 @@ export func markFrameRedraw() {
     }
 }
 
+// ==================== 脏矩形（2026-11-17）====================
+// 目的：控件状态变化（hover / 文本 / 颜色…）时，run 循环只重绘**变化的那一块**，
+//   而不是整窗重画。悬停扫动的实测代价是 ~6ms/帧（整窗 1080p），而真正变化的只有一张卡片 ✓
+// 用法：控件在"视觉状态确实变了"时调 `markRectDirty(x, y, w, h)`（会自动请求重绘）；
+//   窗口循环把它合并成一个包围盒，用 `pushClipRect` 限定绘制范围 —— 容器里的
+//   `renderCulled` 会顺着裁剪区把不相交的子项整个跳过（等于"局部重绘" ✓）
+// ⚠ 只在**非透明窗口**且"脏区占比不大"时才走局部重绘（透明窗口局部清屏会留残影 ✗，
+//   见 sdl_window 里那段判断）
+Array[float] _dirtyRects = []      // 每 4 个一组：x, y, w, h
+bool _dirtySeen = false
+
+export func markRectDirty(float x, float y, float w, float h) {
+    if w > 0.0 and h > 0.0 {
+        _dirtyRects.add(x); _dirtyRects.add(y); _dirtyRects.add(w); _dirtyRects.add(h)
+        _dirtySeen = true
+    }
+    markFrameRedraw()
+}
+
+export func hasDirty(): bool { return _dirtySeen and _dirtyRects.len() >= 4 }
+
+// 取**合并包围盒**（单块矩形，够用且便宜：一次 clip 就够，不必逐块重画）
+export func dirtyBounds(): [float, float, float, float] {
+    int n = _dirtyRects.len()
+    if n < 4 { return 0.0, 0.0, 0.0, 0.0 }
+    float x0 = _dirtyRects[0]; float y0 = _dirtyRects[1]
+    float x1 = x0 + _dirtyRects[2]; float y1 = y0 + _dirtyRects[3]
+    int i = 4
+    while i + 3 < n {
+        float bx = _dirtyRects[i]; float by = _dirtyRects[i + 1]
+        float bx2 = bx + _dirtyRects[i + 2]; float by2 = by + _dirtyRects[i + 3]
+        if bx < x0 { x0 = bx }
+        if by < y0 { y0 = by }
+        if bx2 > x1 { x1 = bx2 }
+        if by2 > y1 { y1 = by2 }
+        i = i + 4
+    }
+    return x0, y0, x1 - x0, y1 - y0
+}
+
+export func clearDirty() { _dirtyRects = []; _dirtySeen = false }
+
 // 控件命中自身敏感区域时调用：请求使用某种光标（取较大 kind）
 //   ★ 2026-10-13：请求**自己**置 seen ⇒ "只在拖拽里请求"的控件（如 Table 列宽分割线）
 //     不依赖 motion 也能被应用 ✓

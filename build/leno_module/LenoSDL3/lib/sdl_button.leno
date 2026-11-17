@@ -440,7 +440,8 @@ export struct Button impl Widget, Themeable {
             hover = contains(mx, my)
             // hover 状态变化需请求重绘：run 循环已优化为 motion 不整窗重绘，
             // 由控件在视觉状态变化时自行 markFrameRedraw()（对齐 table/edit 等控件）
-            if hover != wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
+            // ★ 2026-11-17：hover 变化只脏**自己这块**（外扩 6px 容阴影/焦点环）⇒ 悬停不再整窗重绘 ✓
+        if hover != wasHover { core.markRectDirty(x - 6.0, y - 6.0, w + 12.0, h + 12.0) } else { core.markFrameMotion() }
             // 鼠标样式切换（集中式：仅请求，帧末 applyFrameCursor 统一应用）
             if cursor >= 0 {
                 if hover { core.requestCursor(cursor) }

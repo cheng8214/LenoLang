@@ -708,7 +708,10 @@ export struct Card impl Widget, Themeable {
         if ev.isMouseMotion() {
             wasHover = hover
             hover = inside
-            if hover != wasHover { core.markFrameRedraw() } else { core.markFrameMotion() }
+            // ★ 2026-11-17：hover 只脏**自己这块**（卡片会 hoverLift 上浮 ⇒ 纵向多让一点 ✓）
+            if hover != wasHover {
+                core.markRectDirty(x - 8.0, y - 8.0 - hoverLift, _w + 16.0, _h + 16.0 + hoverLift)
+            } else { core.markFrameMotion() }
             if cursor >= 0 and hover { core.requestCursor(cursor) }
             if hover and tipText != "" { tip.tipReport(tipText, mx, my) }
         }
