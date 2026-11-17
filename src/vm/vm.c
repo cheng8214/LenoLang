@@ -462,59 +462,130 @@ static int kind_name_matches(Value value, TypeKind kind, const char* name) {
 
 // 递归走一遍规格。返回占用的字节数；非法/越界返回 0（strict）或已走的字节数（lenient）。
 //   strict = 0：字节码已通过校验器 ⇒ 相信它，只算长度（被截断时返回已走部分，供反汇编兜底）
-//   strict = 1：kind 越界 / 名字常量索引越界 / 被截断 ⇒ 直接 0
+//   strict = 1：kind 越界 / 名字常量索引越界 / 被截断 / 嵌套过深 ⇒ 直接 0
 //   chunk 只在 strict 时用（常量表边界），NULL = 跳过名字索引检查
-static int type_spec_size_impl(const uint8_t* spec, const uint8_t* end, const Chunk* chunk,
-                               int depth, int strict) {
-    if (!spec || depth > 64) return 0;
-    if (strict && end && spec >= end) return 0;
+//   root  = 规格起点（只为把"第几字节出错"算出来）；err 非空时回填原因与规格内偏移
+typedef struct {
+    int off;              // 出错处相对规格起点的字节偏移
+    const char* reason;   // 静态字符串（不拥有）
+} SpecErr;
+
+static int spec_scan_rec(const uint8_t* root, const uint8_t* spec, const uint8_t* end,
+                         const Chunk* chunk, int depth, int strict, SpecErr* err) {
+    // 嵌套深度：严格模式用 TYPE_SPEC_MAX_DEPTH（与 type_spec_match 同一上限 ——
+    //   以前这里用 64、判定用 32 ⇒ 33~64 层的规格"能过校验却在 as/is 时静默判不匹配"，
+    //   现在校验期就 fail-closed）；宽松模式仍是 64（反汇编兜底，只求不越界）。
+    int max_depth = strict ? TYPE_SPEC_MAX_DEPTH : 64;
+    if (!spec || depth > max_depth) {
+        if (err && !err->reason) { err->off = (int)(spec - root); err->reason = "嵌套层数超限"; }
+        return 0;
+    }
+    if (strict && end && spec >= end) {
+        if (err && !err->reason) { err->off = (int)(spec - root); err->reason = "越过 chunk 末尾（截断）"; }
+        return 0;
+    }
     TypeKind k = (TypeKind)spec[0];
-    if (strict && (int)k >= (int)TYPE_KIND_COUNT) return 0;
+    if (strict && (int)k >= (int)TYPE_KIND_COUNT) {
+        if (err && !err->reason) {
+            err->off = (int)(spec - root);
+            err->reason = "类型 kind 非法（超出 TypeKind 范围）";
+        }
+        return 0;
+    }
     int n = 1;
     if (k == TYPE_STRUCT || k == TYPE_FACE || k == TYPE_ENUM) {
-        if (end && spec + 3 > end) return strict ? 0 : n;   // 名字常量索引（大端 16 位）被截断
+        if (end && spec + 3 > end) {   // 名字常量索引（大端 16 位）被截断
+            if (strict && err && !err->reason) {
+                err->off = (int)(spec - root);
+                err->reason = "struct/face/enum 的名字常量索引被截断";
+            }
+            return strict ? 0 : n;
+        }
         if (strict && chunk) {
             int idx = ((int)spec[1] << 8) | (int)spec[2];
-            if (idx < 0 || idx >= chunk->const_cnt) return 0;
+            if (idx < 0 || idx >= chunk->const_cnt) {
+                if (err && !err->reason) {
+                    err->off = (int)(spec - root);
+                    err->reason = "struct/face/enum 的名字常量索引越界";
+                }
+                return 0;
+            }
         }
         n += 2;
     } else if (k == TYPE_ARRAY) {
-        n += type_spec_size_impl(spec + n, end, chunk, depth + 1, strict);
+        int c = spec_scan_rec(root, spec + n, end, chunk, depth + 1, strict, err);
+        if (strict && c <= 0) return 0;
+        n += c;
     } else if (k == TYPE_DICT) {
-        n += type_spec_size_impl(spec + n, end, chunk, depth + 1, strict);   // K
-        n += type_spec_size_impl(spec + n, end, chunk, depth + 1, strict);   // V
+        int c = spec_scan_rec(root, spec + n, end, chunk, depth + 1, strict, err);   // K
+        if (strict && c <= 0) return 0;
+        n += c;
+        c = spec_scan_rec(root, spec + n, end, chunk, depth + 1, strict, err);       // V
+        if (strict && c <= 0) return 0;
+        n += c;
     } else if (k == TYPE_PTR_GENERIC) {
-        n += type_spec_size_impl(spec + n, end, chunk, depth + 1, strict);
+        int c = spec_scan_rec(root, spec + n, end, chunk, depth + 1, strict, err);
+        if (strict && c <= 0) return 0;
+        n += c;
     } else if (k == TYPE_FUNCTION) {
         // ★ 2026-11-17（F1 第二步）：函数签名规格 = 形参个数(u8) + 各形参规格 + 返回类型规格。
         //   255 = 不校验形参（裸 `func`）⇒ 此时只跟一个返回类型规格（与发射端同构，
         //   见 codegen_expr.c 的 emit_type_spec）。
-        if (end && spec + n + 1 > end) return strict ? 0 : n;
+        if (end && spec + n + 1 > end) {
+            if (strict && err && !err->reason) {
+                err->off = (int)(spec - root);
+                err->reason = "函数签名的形参个数被截断";
+            }
+            return strict ? 0 : n;
+        }
         int pc = spec[n];
         n += 1;
         if (pc != 255) {
             for (int i = 0; i < pc; i++) {
-                n += type_spec_size_impl(spec + n, end, chunk, depth + 1, strict);
+                int c = spec_scan_rec(root, spec + n, end, chunk, depth + 1, strict, err);
+                if (strict && c <= 0) return 0;
+                n += c;
             }
         }
-        n += type_spec_size_impl(spec + n, end, chunk, depth + 1, strict);
+        int c = spec_scan_rec(root, spec + n, end, chunk, depth + 1, strict, err);
+        if (strict && c <= 0) return 0;
+        n += c;
     }
     return n;
 }
 
 int type_spec_size(const uint8_t* spec) {
-    return type_spec_size_impl(spec, NULL, NULL, 0, 0);
+    return spec_scan_rec(spec, spec, NULL, NULL, 0, 0, NULL);
 }
 
 // 带上界版本（debug.c 的反汇编用）：解析不越过 end，避免损坏的 chunk 把越界读带进来。
 int type_spec_size_bounded(const uint8_t* spec, const uint8_t* end) {
-    return type_spec_size_impl(spec, end, NULL, 0, 0);
+    return spec_scan_rec(spec, spec, end, NULL, 0, 0, NULL);
 }
 
 // 严格校验（bytecode_verify.c 用）：返回占用的字节数，0 = 非法。
 //   chunk 非空时校验 struct/face/enum 的名字常量索引；end 为 chunk 末尾，越界即非法。
 int type_spec_verify(const uint8_t* spec, const uint8_t* end, const Chunk* chunk) {
-    return type_spec_size_impl(spec, end, chunk, 0, 1);
+    return spec_scan_rec(spec, spec, end, chunk, 0, 1, NULL);
+}
+
+// ★ 2026-11-17：带原因版本 —— 校验失败时把"规格内第几字节 + 为什么"报出来。
+//   为什么要：`.lenb` 损坏时旧报文只有"结构损坏（错误码 6）"，不知道坏在哪条指令，
+//   只能靠猜（实测踩过：手工改一个 kind 字节，光看报文无法定位）。
+int type_spec_verify_ex(const uint8_t* spec, const uint8_t* end, const Chunk* chunk,
+                        int* out_bad_off, const char** out_reason) {
+    SpecErr err;
+    err.off = -1;
+    err.reason = NULL;
+    int n = spec_scan_rec(spec, spec, end, chunk, 0, 1, &err);
+    if (n <= 0) {
+        if (out_bad_off) *out_bad_off = err.off;
+        if (out_reason) *out_reason = err.reason ? err.reason : "类型规格非法";
+        return 0;
+    }
+    if (out_bad_off) *out_bad_off = -1;
+    if (out_reason) *out_reason = NULL;
+    return n;
 }
 
 // 把类型规格渲染成可读文本（反汇编摘要用）。**与解析同源**地写在这里：

@@ -64,8 +64,13 @@ static int ck_const_direct(const Chunk* c, int idx) {
 // ----------------------------------------------------------------------------
 
 // 类型规格扫描（定义在下面；scan_struct_def 的 ARRAY/DICT 字段元数据要用）
-//   只是 vm.c `type_spec_verify()` 的指针薄壳 —— 格式认知不再有第二份（见函数处注释）
-static int spec_scan(const Chunk* c, int p, int end, int checks, int* out);
+//   只是 vm.c `type_spec_verify_ex()` 的指针薄壳 —— 格式认知不再有第二份（见函数处注释）
+//   reason 非空时把"规格内第几字节 + 原因"写成一句人话（诊断用）。
+static int spec_scan_ex(const Chunk* c, int p, int end, int checks, int* out,
+                        char* reason, int reason_cap);
+static int spec_scan(const Chunk* c, int p, int end, int checks, int* out) {
+    return spec_scan_ex(c, p, end, checks, out, NULL, 0);
+}
 
 // OP_STRUCT_DEF：字段/方法/impl/泛型参数/关联常量表
 static int scan_struct_def(const Chunk* c, int base, int checks, Cur* k) {
@@ -267,10 +272,23 @@ static int scan_cfunc_callback(const Chunk* c, int base, Cur* k) {
 //   TYPE_FUNCTION 变体时这里漏改，合法字节码被判成"字节码校验失败"；再早还有"长度表漂移"
 //   把 dump 后半段变成 OP_NOP 的记录。现在只保留**指针推进**这层薄壳。
 //   checks = 0 时把 chunk 传 NULL ⇒ 跳过名字常量索引检查（只算长度）。
-static int spec_scan(const Chunk* c, int p, int end, int checks, int* out) {
-    if (!c || p < 0 || p >= end) return 0;
-    int n = type_spec_verify(c->code + p, c->code + end, checks ? c : NULL);
-    if (n <= 0) return 0;
+static int spec_scan_ex(const Chunk* c, int p, int end, int checks, int* out,
+                        char* reason, int reason_cap) {
+    if (!c || p < 0 || p >= end) {
+        if (reason && reason_cap > 0) snprintf(reason, (size_t)reason_cap, "规格起点越界（偏移 %d）", p);
+        return 0;
+    }
+    int bad_off = -1;
+    const char* why = NULL;
+    int n = type_spec_verify_ex(c->code + p, c->code + end, checks ? c : NULL, &bad_off, &why);
+    if (n <= 0) {
+        if (reason && reason_cap > 0) {
+            snprintf(reason, (size_t)reason_cap,
+                     "类型规格非法（指令区偏移 %d 起的规格，第 %d 字节）—— %s",
+                     p, bad_off < 0 ? 0 : bad_off, why ? why : "未知原因");
+        }
+        return 0;
+    }
     *out = p + n;
     return 1;
 }
@@ -280,8 +298,10 @@ static int spec_scan(const Chunk* c, int p, int end, int checks, int* out) {
 // ----------------------------------------------------------------------------
 // 返回该指令占用的总字节数；0 = 非法（*bad 记录位置）。
 // starts 非空时（且 checks=1）同时校验跳转目标必须落在合法指令起点。
+// reason/reason_cap 非空时写一句"哪儿不对"（诊断用；`_ex` 入口才会传）。
 static int verify_one(const Chunk* c, int pos, int cap,
-                      const uint8_t* starts, int checks, int* bad) {
+                      const uint8_t* starts, int checks, int* bad,
+                      char* reason, int reason_cap) {
     int len = c->len;
     if (pos < 0 || pos + 4 > len) goto bad;
 
@@ -294,7 +314,11 @@ static int verify_one(const Chunk* c, int pos, int cap,
     int size = 4;
     int bx = (b << 8) | cc;
 
-    #define FAIL_AT() do { if (bad) *bad = pos; return 0; } while (0)
+    // 具体原因由各分支自己写（spec 那三处有更精确的话）；这里只兜底一句带位置的
+    #define FAIL_AT() do { if (bad) *bad = pos; \
+        if (reason && reason_cap > 0 && !reason[0]) \
+            snprintf(reason, (size_t)reason_cap, "指令区偏移 %d 处的指令或操作数非法（opcode=%u）", pos, (unsigned)op); \
+        return 0; } while (0)
     #define REG_CHK(r) do { if (checks && (r) < 0) FAIL_AT(); \
                             if (checks && (r) >= cap) FAIL_AT(); } while (0)
     #define SPAN_CHK(base, n) do { \
@@ -673,7 +697,7 @@ static int verify_one(const Chunk* c, int pos, int cap,
         case OP_AS_CAST_SPEC: {
             REG_CHK(a);
             int endp = 0;
-            if (!spec_scan(c, pos + 4, len, checks, &endp)) goto bad;
+            if (!spec_scan_ex(c, pos + 4, len, checks, &endp, reason, reason_cap)) goto bad;
             size = endp - pos;
             break;
         }
@@ -681,7 +705,7 @@ static int verify_one(const Chunk* c, int pos, int cap,
         case OP_SET_PTR_SPEC: {
             REG_CHK(a);
             int endp = 0;
-            if (!spec_scan(c, pos + 4, len, checks, &endp)) goto bad;
+            if (!spec_scan_ex(c, pos + 4, len, checks, &endp, reason, reason_cap)) goto bad;
             size = endp - pos;
             break;
         }
@@ -913,7 +937,18 @@ static int reg_capacity(int local_count) {
 }
 
 int bytecode_verify_chunk(const Chunk* chunk, int local_count, int* bad_offset) {
+    return bytecode_verify_chunk_ex(chunk, local_count, bad_offset, NULL, 0);
+}
+
+// ★ 2026-11-17：带原因的版本（诊断用）。失败时 reason 是一句人话，例如
+//   `偏移 1293 处的指令或操作数非法（opcode=…）` /
+//   `类型规格非法：偏移 1289 起的规格，第 0 字节 —— 类型 kind 非法（超出 TypeKind 范围）`
+// 为什么加：`.lenb` 损坏时旧报文只有"结构损坏（错误码 6）"，不知道坏在哪条指令，
+//   只能靠猜（实测手工改一个 kind 字节，光看报文无法定位）。
+int bytecode_verify_chunk_ex(const Chunk* chunk, int local_count, int* bad_offset,
+                             char* reason, int reason_cap) {
     if (bad_offset) *bad_offset = -1;
+    if (reason && reason_cap > 0) reason[0] = '\0';
     if (!chunk) return 0;
     if (chunk->len < 0) return 0;
     if (chunk->len > 0 && !chunk->code) return 0;
@@ -934,7 +969,7 @@ int bytecode_verify_chunk(const Chunk* chunk, int local_count, int* bad_offset) 
     // ---- pass 1：指令边界 ----
     int pos = 0;
     while (pos < len) {
-        int sz = verify_one(chunk, pos, cap, NULL, 0, bad_offset);
+        int sz = verify_one(chunk, pos, cap, NULL, 0, bad_offset, reason, reason_cap);
         if (sz <= 0 || pos + sz > len) {
             free(starts);
             return 0;
@@ -950,7 +985,7 @@ int bytecode_verify_chunk(const Chunk* chunk, int local_count, int* bad_offset) 
     // ---- pass 2：跳转目标 / 常量 / 寄存器 ----
     pos = 0;
     while (pos < len) {
-        int sz = verify_one(chunk, pos, cap, starts, 1, bad_offset);
+        int sz = verify_one(chunk, pos, cap, starts, 1, bad_offset, reason, reason_cap);
         if (sz <= 0 || pos + sz > len) {
             free(starts);
             return 0;

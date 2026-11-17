@@ -25,4 +25,12 @@
 // ============================================================================
 int bytecode_verify_chunk(const Chunk* chunk, int local_count, int* bad_offset);
 
+// ★ 2026-11-17：带原因版本（诊断用）。失败时 reason 里写一句人话，例如
+//   `偏移 1293 处的指令或操作数非法（opcode=…）`
+//   `类型规格非法：偏移 1289 起的规格，第 0 字节 —— 类型 kind 非法（超出 TypeKind 范围）`
+// 旧版只有"结构损坏（错误码 6）"，损坏的 .lenb 根本没法定位（实测手工改一个 kind 字节，
+// 光看报文只能猜）。成功时 reason 置空字符串。
+int bytecode_verify_chunk_ex(const Chunk* chunk, int local_count, int* bad_offset,
+                             char* reason, int reason_cap);
+
 #endif  // LENO_BYTECODE_VERIFY_H

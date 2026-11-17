@@ -798,6 +798,11 @@ int type_spec_size_bounded(const uint8_t* spec, const uint8_t* end);
 //   格式的**唯一认知**在 vm.c 的 type_spec_size_impl（长度 / 校验 / 渲染三处共用同一次遍历）。
 int type_spec_verify(const uint8_t* spec, const uint8_t* end, const Chunk* chunk);
 
+// 同上，但失败时回填「规格内第几字节 + 静态原因字符串」（诊断用；成功时 off=-1、reason=NULL）。
+//   用途：.lenb 校验失败时别只说"结构损坏（错误码 6）"，要能指到具体那条指令的规格。
+int type_spec_verify_ex(const uint8_t* spec, const uint8_t* end, const Chunk* chunk,
+                        int* out_bad_off, const char** out_reason);
+
 // 把类型规格渲染成可读文本（如 "Dict[string, Array[int]]"），供反汇编摘要用。
 //   与解析同源写在 vm.c ⇒ 调试端不再自己解析一遍规格（避免第三份格式认知）。
 void type_spec_render(Chunk* chunk, const uint8_t* spec, char* out, int out_size);

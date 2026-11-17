@@ -728,6 +728,14 @@ static void report_lenb_failure(const char* path, SerializeResult r, int from_me
         fprintf(stderr, "[错误] 无法加载 .lenb：%s（错误码 %d）\n  文件: %s\n",
                 serialize_err_name(r), (int)r, path ? path : "(null)");
     }
+    // ★ 2026-11-17：字节码**校验**失败时把具体位置与原因打出来（错误码 6 本身说不出这些）。
+    //   例：类型规格非法：偏移 1289 起的规格，第 0 字节 —— 类型 kind 非法（超出 TypeKind 范围）
+    {
+        const char* why = serialize_last_verify_error();
+        if (why && why[0] != '\0') {
+            fprintf(stderr, "  [定位] %s\n", why);
+        }
+    }
     switch (r) {
         case SERIALIZE_ERR_FILE:
             fprintf(stderr,

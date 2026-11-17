@@ -9,6 +9,32 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+// ============================================================================
+// 字节码校验失败的**原因**（2026-11-17，诊断用）
+// ----------------------------------------------------------------------------
+// deserialize 的四条路径都只返回 SerializeResult（错误码），而错误码表达不了
+// "偏移 1289 起的类型规格 kind 非法"这种信息 ⇒ 损坏的 .lenb 只能靠猜（实测手工改一个
+// kind 字节，报文只有"结构损坏（错误码 6）"）。
+// 做法：留一份文件级静态缓冲 + 访问器，调用方（vm_main 的 report_lenb_failure）多打一行。
+// ⚠ 加载是串行路径；万一多线程同时加载，最坏情况是"原因串被后一次覆盖"，不影响正确性。
+// ============================================================================
+static char g_verify_err[256];
+
+const char* serialize_last_verify_error(void) { return g_verify_err; }
+
+// 校验一个 chunk；失败时把原因写进 g_verify_err
+static int verify_chunk_report(const Chunk* chunk, int local_count) {
+    int bad = -1;
+    if (bytecode_verify_chunk_ex(chunk, local_count, &bad, g_verify_err, (int)sizeof(g_verify_err))) {
+        return 1;
+    }
+    if (g_verify_err[0] == '\0') {
+        snprintf(g_verify_err, sizeof(g_verify_err),
+                 "字节码校验失败（首个可疑位置：偏移 %d）", bad);
+    }
+    return 0;
+}
+
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -1428,7 +1454,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
         chunk_init(func->chunk);
         if (!deserialize_chunk_data(ctx, func->chunk)) return 0;
         // 函数 chunk 的寄存器容量在 func->local_count（chunk->local_count 恒为 0）
-        if (!bytecode_verify_chunk(func->chunk, func->local_count, NULL)) return 0;
+        if (!verify_chunk_report(func->chunk, func->local_count)) return 0;
 
         *out_val = val_obj((Object*)func);
         return 1;
@@ -1919,7 +1945,7 @@ static int deserialize_constant(DeserializeCtx* ctx, Value* out_val) {
                     free(chunk);
                     return 0;
                 }
-                if (!bytecode_verify_chunk(chunk, chunk->local_count, NULL)) {
+                if (!verify_chunk_report(chunk, chunk->local_count)) {
                     chunk_free(chunk);
                     free(chunk);
                     return 0;
@@ -2429,7 +2455,7 @@ SerializeResult chunk_deserialize(const char* path, Chunk* out_chunk, Scope** ou
         free(data);
         return SERIALIZE_ERR_FORMAT;
     }
-    if (!bytecode_verify_chunk(out_chunk, out_chunk->local_count, NULL)) {
+    if (!verify_chunk_report(out_chunk, out_chunk->local_count)) {
         scope_free(scope);
         chunk_free(out_chunk);
         free(data);
@@ -2539,7 +2565,7 @@ SerializeResult chunk_deserialize_from_memory(uint8_t* data, size_t size,
         chunk_free(out_chunk);
         return SERIALIZE_ERR_FORMAT;
     }
-    if (!bytecode_verify_chunk(out_chunk, out_chunk->local_count, NULL)) {
+    if (!verify_chunk_report(out_chunk, out_chunk->local_count)) {
         scope_free(scope);
         chunk_free(out_chunk);
         return SERIALIZE_ERR_FORMAT;

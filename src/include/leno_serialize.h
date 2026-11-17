@@ -665,6 +665,11 @@ SerializeResult chunk_serialize(const char* path, Chunk* chunk, Scope* global_sc
 // 从文件反序列化 Chunk + Scope
 SerializeResult chunk_deserialize(const char* path, Chunk* out_chunk, Scope** out_scope);
 
+// ★ 2026-11-17：最近一次**字节码校验失败**的原因（诊断用，空字符串 = 没有记录）。
+//   deserialize 只返回错误码，错误码说不出"偏移 1289 起的类型规格 kind 非法"——
+//   `.lenb` 损坏时调用方可以在报错后多打一行定位（见 vm_main.c 的 report_lenb_failure）。
+const char* serialize_last_verify_error(void);
+
 // 序列化到内存：返回 malloc 的缓冲（调用方负责 free），不落盘
 // 返回值 SERIALIZE_OK 时 *out_data / *out_size 有效
 SerializeResult chunk_serialize_to_memory(Chunk* chunk, Scope* global_scope,
