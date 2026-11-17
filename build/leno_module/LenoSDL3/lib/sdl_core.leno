@@ -692,7 +692,29 @@ export func markFrameMotion() { _frameCursorSeen = true }
 
 // 控件在视觉状态变化时调用：**只**请求下一帧重绘 ✓
 //   ★ 2026-10-13：**不再**顺带标记"鼠标动过"（那正是 光标帧语义 的病根 ✗ —— 见上面 `_frameCursorSeen` ✓）
-export func markFrameRedraw() { requestRedraw() }
+//   ★★ 2026-11-17：**按窗口归属** —— 有上下文时只脏"当前窗口"，不再一律全脏。
+//     背景：控件内部 100+ 处调用它（按钮 hover、TitleBar、菜单、表格…），原来一律 `requestRedraw()`
+//     ⇒ 鼠标在主窗口上挪一下、标题栏亮一下，**所有**窗口（含桌面歌词浮窗）都要整窗重绘 ✗
+//     上下文从哪来：run 循环在"派发事件给某窗口"/"渲染某窗口"前后调 `setDispatchWindow`
+//     （同一个 `_capWid`，弹层捕获区也在用），用完 `clearDispatchWindow` ✓
+//     · 有上下文（`_capWid > 0`）⇒ `requestRedrawWindow(_capWid)`：只画那个窗口 ✓
+//     · 无上下文（定时器回调 / worker 回信 / 应用在 tick 里直接调）⇒ 全局，**行为不变**（保守）
+//     · `LENO_GLOBAL_MARK=1` ⇒ 强制退回全局（线上出问题时的逃生阀；缓存一次，不每次查环境）
+int _globalMarkCached = -1
+export func globalMarkForced(): bool {
+    if _globalMarkCached < 0 {
+        _globalMarkCached = if _env("LENO_GLOBAL_MARK") != null then 1 else 0
+    }
+    return _globalMarkCached == 1
+}
+
+export func markFrameRedraw() {
+    if _capWid > 0 and not globalMarkForced() {
+        requestRedrawWindow(_capWid)
+    } else {
+        requestRedraw()
+    }
+}
 
 // 控件命中自身敏感区域时调用：请求使用某种光标（取较大 kind）
 //   ★ 2026-10-13：请求**自己**置 seen ⇒ "只在拖拽里请求"的控件（如 Table 列宽分割线）
@@ -743,6 +765,10 @@ bool _redrawRequested = false
 int _frameId = 0
 
 export func requestRedraw() { _redrawRequested = true }
+
+// 只看不消费：本帧有没有"全脏"请求（run 循环用 —— **必须等真出帧了才 consume**，
+//   否则这次请求会被帧率节流吞掉：`consume` 把标志清了、帧却没画 ⇒ 那次重绘永久丢失 ✗）
+export func hasGlobalRedraw(): bool { return _redrawRequested }
 
 // ★ 2026-11-17（F4）：**按窗口**请求重绘。
 //   原来只有一个进程级的 `_redrawRequested` ⇒ run 循环里 consume 一次就把**所有**窗口
@@ -801,6 +827,8 @@ int _capWid = -1                      // 当前派发/渲染上下文窗口（-1
 // 由窗口主循环在"派发/渲染某个窗口"前后设置（框架内部用 ✓；自检也可用 ⇒ 故一并转出 ✓）
 export func setDispatchWindow(int wid) { _capWid = wid }
 export func clearDispatchWindow() { _capWid = -1 }
+// 自测/诊断用：当前"派发/渲染上下文窗口"（-1 = 不在任何窗口上下文里）
+export func dispatchWid(): int { return _capWid }
 
 // 登记本窗口的弹层矩形（同窗口旧登记先撤 ⇒ 每窗口同时只认一块 ✓）
 export func setPopupCapture(float x, float y, float w, float h) {

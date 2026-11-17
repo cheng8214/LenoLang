@@ -1,0 +1,80 @@
+// test_mark_attribution.leno — 控件/事件触发的重绘按**窗口归属**（2026-11-17）
+//
+// 跑法：
+//   build\leno.exe build\leno_module\LenoSDL3\examples\基础示例\窗口管理\test_mark_attribution.leno
+//
+// 判据（两窗口，启动期过后量 300ms）：
+//   ① 往 A 注入一次点击（事件上下文 = A）⇒ **只有 A 重绘**，B 一帧都不该有
+//      （修前：事件一律 `_fullFrame = true` ⇒ A/B 都重绘 ✗）
+//   ② 定时器回调里直接 `markFrameRedraw()`（`dispatchWid() == -1`，无窗口上下文）
+//      ⇒ 仍应**两边都画**（保守路径，行为与以前一致 ✓）
+//   ③ `LENO_GLOBAL_MARK=1` ⇒ ① 也退回两边都画（线上逃生阀 ✓，另跑一遍验）
+//
+// 为什么要有这条：控件的 hover / 标题栏 / 菜单内部共 100+ 处调 `markFrameRedraw()`，
+//   原来它一律 `requestRedraw()`（全脏）⇒ 鼠标在主窗口上挪一下，桌面歌词浮窗也跟着整窗重绘 ✗
+//   现在 `markFrameRedraw()` 读 run 循环设置的"派发/渲染上下文窗口"（`core._capWid`），
+//   有上下文就只脏那个窗口；没有（定时器 / worker 回信 / 应用在 tick 里直接调）才退回全局。
+import "SDL3" as SDL3
+use SDL3.(Window, Event, Renderer)
+
+int nA = 0
+int nB = 0
+int sA = 0
+int sB = 0
+int fails = 0
+Window a = null
+Window b = null
+
+func ck(bool cond, string what) {
+    print(if cond then "OK   " + what + "\n" else "FAIL " + what + "\n")
+    if not cond { fails = fails + 1 }
+}
+
+main() {
+    a = SDL3.createWindow({title: "A-click-target", w: 300, h: 160})
+    b = SDL3.createWindow({title: "B-static", w: 240, h: 140})
+    if not a.ok or not b.ok {
+        print("[SKIP] 建窗失败（无显示器 / 视频驱动不可用）⇒ 跳过本用例")
+        return
+    }
+    a.setPosition(120, 120)
+    b.setPosition(560, 120)
+
+    a.addTimerOnce(1, func() {
+        b.run(func(Event ev): bool { return true },
+              func(Renderer r) { nB = nB + 1 })
+    })
+    // A 持续出帧：①把启动期的 sizeSync（10 帧全脏兜底）排空 ②给"只有 A 重绘"一个持续对照
+    a.addTimer(30, func() { })
+
+    a.addTimerOnce(1200, func() { nA = 0; nB = 0 })
+    a.addTimerOnce(1300, func() { sA = nA; sB = nB })
+
+    // ① 事件归属
+    a.addTimerOnce(1400, func() { SDL3.testClickAt(a.getID(), 60.0, 60.0) })
+    a.addTimerOnce(1700, func() {
+        int dA = nA - sA
+        int dB = nB - sB
+        print("[mark] ① 点击 A：ΔA=" + _str(dA) + " ΔB=" + _str(dB) + "\n")
+        ck(dA >= 1 and dB == 0, "只有事件所属窗口 A 重绘（B 应为 0 帧）")
+        sA = nA
+        sB = nB
+    })
+
+    // ② 无上下文 ⇒ 保守全局
+    a.addTimerOnce(1900, func() {
+        ck(SDL3.dispatchWid() == -1, "定时器回调里没有窗口上下文（dispatchWid == -1）")
+        SDL3.markFrameRedraw()
+    })
+    a.addTimerOnce(2200, func() {
+        int dA = nA - sA
+        int dB = nB - sB
+        print("[mark] ② 无上下文 markFrameRedraw：ΔA=" + _str(dA) + " ΔB=" + _str(dB) + "\n")
+        ck(dA >= 1 and dB >= 1, "无上下文 ⇒ 两边都重绘（保守，行为不变）")
+        print("test_mark_attribution " + (if fails == 0 then "passed" else "FAILED " + _str(fails) + " 项"))
+        _exit(if fails == 0 then 0 else 1)
+    })
+
+    a.run(func(Event ev): bool { return true },
+          func(Renderer r) { nA = nA + 1 })
+}

@@ -839,6 +839,9 @@ export struct Window {
         if ok {
             // ★ 2026-11-08：先注销本窗口的定时器（必须在 DestroyWindow 之前取 ID）
             timer.unregisterByWindow(getID())
+            // ★ 2026-11-17：窗口消失是"全局事件" —— 别的窗口可能画着蒙版 / 弹层 / 引用它的东西
+            //   ⇒ 必须请求**全脏**（重绘归属按窗口之后，这里不显式置全局就会留下残影 ✗）
+            core.requestRedraw()
             // 根销毁：先释放所有控件资源，沿父子树递归清理
             for widgets to w { w.dispose() }
             root?.dispose()
@@ -1729,7 +1732,13 @@ export struct Window {
             core.advanceFrame()       // 帧计数器递增（供控件做帧内去重）
             // 基准模式：每轮都请求重绘 ⇒ "帧数"与"渲染次数"一一对应（负载可重复）
             if _benchFrames > 0 { _needRedraw = true }
+            // ★ 2026-11-17：**欠一次全脏帧**（跨轮次保留）。全局 requestRedraw / 渲染中再请求
+            //   都记在这里 ⇒ 不会被 per-window 请求或帧率节流吞掉 ✓
+            bool _pendingFull = false
             bool _hadEvent = false
+            // ★ 2026-11-17：这个事件**属于哪个窗口** —— 事件触发的重绘只脏它（见下面的 `_fullFrame`）
+            //   `<= 0`（SDL 的全局事件，如显示器变化/剪贴板）= 不归属任何窗口 ⇒ 退回全脏 ✓
+            int _hadEventWid = 0
             // ★ 本帧是否有"输入类"非 motion 事件（滚轮 / 点击 / 键盘 / resize）。
             //   这类事件**不受帧率节流**：否则滚动/点击的响应最多被拖 1/30 秒，且连续滚动时
             //   多个滚轮增量会被攒进同一帧 ⇒ 画面一顿一顿、像"跳一下" ✗（"滚动不利索"的根因 ✓）
@@ -1780,7 +1789,7 @@ export struct Window {
                 // markFrameRedraw() 请求重绘；否则每次移动都触发全窗清屏+全控件重绘，
                 // 偶发呈现异常会让控件（如表）整块露出背景而“闪一下”。
                 // 滚轮/点击/resize/键盘等非 motion 事件仍强制重绘。
-                if not ev.isMouseMotion() { _hadEvent = true; _inputEvent = true }
+                if not ev.isMouseMotion() { _inputEvent = true }   // wid 还没取（下面 1798 才取）⇒ 那里再记归属
                 if ev.isQuit() {
                     for _runWids.len() to i {
                         // 根销毁：退出前先释放所有控件资源（字体等），沿父子树递归清理
@@ -1796,6 +1805,10 @@ export struct Window {
                     return true          // 本调用真的跑完了整个循环 ✓
                 }
                 int wid = ev.windowID()
+                // ★ 2026-11-17：非 motion 事件 ⇒ 记"需要重绘"，并把**归属窗口**记下来
+                //   （原来只置 `_hadEvent`，渲染时一律 `_fullFrame = true` ⇒ 一个窗口的点击
+                //    会把所有窗口整窗重画，浮窗/对话框跟着白烧 CPU ✗）
+                if not ev.isMouseMotion() { _hadEvent = true; _hadEventWid = wid }
                 // 模态：仅栈顶窗口接收事件，其余全部跳过（含主窗口 + 下层模态）
                 // 注意：必须继续 poll 前进事件队列，否则 ev.has 恒为 true 导致 while 死循环（窗口假死）
                 if _isModal() and wid != _modalTop() {
@@ -2072,15 +2085,34 @@ export struct Window {
             // ★ 2026-11-17（F4）：`_fullFrame` 决定这一帧是"所有窗口都画"还是"只画被点名的窗口"。
             //   初值取 `_needRedraw`（之前就欠一帧的原因：首帧、渲染中 requestRedraw）⇒ 全脏；
             //   只有 `requestRedrawWindow(wid)` 这一条**不**置全脏 —— 这正是浮窗不拖累主窗口的关键。
-            bool _fullFrame = _needRedraw
-            if _hadEvent { _fullFrame = true }
-            if core.consumeRedrawRequest() { _needRedraw = true; _fullFrame = true }
+            // ⚠ 初值**不能**取 `_needRedraw`：`_needRedraw` 只表示"欠一帧"，可能只是**某个窗口**
+            //   的请求（per-window）或因节流攒下来的 carry ⇒ 一律当"全脏"就把分窗收益漏回去了 ✗
+            //   真正的兜底在下面：欠一帧但**没有任何窗口被点名**时才全画（首帧 / 渲染中又被请求）✓
+            bool _fullFrame = false
+            // ★ 2026-11-17：事件触发的重绘**按事件所属窗口**归属（不再一律全脏）。
+            //   · 有归属（`_hadEventWid > 0`）⇒ 只脏那个窗口；
+            //   · 无归属（SDL 全局事件 / `windowID()==0`）或 `LENO_GLOBAL_MARK=1` ⇒ 全脏（保守 / 逃生阀）。
+            if _hadEvent {
+                if _hadEventWid > 0 and not core.globalMarkForced() {
+                    core.requestRedrawWindow(_hadEventWid)
+                } else {
+                    _fullFrame = true
+                }
+            }
+            // ⚠ 这里**只查看、不消费**：消费放到"确认真要出帧"之后（见下面的渲染分支）——
+            //   提前 consume 会被帧率节流吞掉（标志清了、帧没画 ⇒ 那次重绘永久丢失 ✗ 实测踩到）
+            if _pendingFull or core.hasGlobalRedraw() { _needRedraw = true; _fullFrame = true }
             if core.hasWindowRedraw() { _needRedraw = true }
             if tip.tipRemainingMs() == 0 { _needRedraw = true; _fullFrame = true }
             // ★ Toast 动画期（淡入/淡出）必须连续出帧，否则会"卡两下再出现" ✗
             //   停留期不在这里——交给上面的 poll 超时按时刻唤醒 ✓
             if tst.toastAnimating() { _needRedraw = true; _fullFrame = true }
             if _sizeSyncRemaining > 0 { _fullFrame = true }
+            // 兜底：欠一帧，但**没有任何窗口被点名**（首帧 / 渲染过程中又请求 / 节流攒下的 carry）
+            //   ⇒ 全画一次。否则"只画被点名的窗口"会把首帧和这类请求整个漏掉 ✗
+            if _needRedraw and not _fullFrame and not core.hasWindowRedraw() {
+                _fullFrame = true
+            }
             if _needRedraw {
                 int now = core.getTicks()
                 // ★ 输入类事件（滚轮/点击/键盘/resize）**不等节流**，立刻出一帧：
@@ -2089,6 +2121,13 @@ export struct Window {
                 if _inputEvent or now - _lastRenderTicks >= _throttleMs {   // 节流：距上次渲染不足节流间隔则跳过
                     _lastRenderTicks = now
                     _needRedraw = false   // 清除标记；动画控件在 render 时可调用 requestRedraw() 请求下一帧
+                    // ★ 2026-11-17：**确认真要出这一帧了**才消费"全脏"标志 ——
+                    //   全脏帧把两个窗口都画了，窗口级标记也随之作废（见 clearWindowRedraws 的注释 ✓）
+                    if _fullFrame {
+                        _pendingFull = false
+                        core.consumeRedrawRequest()
+                        core.clearWindowRedraws()
+                    }
                     // ★ 安全网尺寸同步：SDL_SyncWindow 已在 registerOnly 中阻塞等待 OS 完成最大化，
                     //   正常情况下首帧 getSize() 已返回正确尺寸。此多帧检查仅作为极端时序下的
                     //   兜底（如某些 Windows 版本 SyncWindow 返回后仍有微小延迟），检测到变化
@@ -2252,8 +2291,11 @@ export struct Window {
                     if _fullFrame { core.clearWindowRedraws() }
                 }              // 闭合节流 if
             }
-            // 动画控件可能在 render 中调用了 requestRedraw() → 标记快速轮询
-            if core.consumeRedrawRequest() { _needRedraw = true }
+            // 动画控件可能在 render 中调用了 requestRedraw() → 下一轮**必须全脏**出帧
+            //   ⚠ 2026-11-17：不能只置 `_needRedraw` —— 那只表示"欠一帧"，下一轮会被
+            //     per-window 请求或帧率节流"顶掉"，全脏的意图就丢了 ⇒ 记到 `_pendingFull`，
+            //     等**真的画出全脏帧**再清（消费点见渲染分支 ✓）
+            if core.consumeRedrawRequest() { _needRedraw = true; _pendingFull = true }
 
             // ---- 确定性 GUI 基准：跑满 _benchFrames 帧后收尾 ----
             // 摘要里的 `sum`（批处理计数之和）是**负载一致性判据**：两次运行的 sum 相同

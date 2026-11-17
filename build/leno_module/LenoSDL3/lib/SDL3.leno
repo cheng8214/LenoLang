@@ -528,6 +528,10 @@ export func inPopupCapture(float mx, float my): bool { return core.inPopupCaptur
 // 派发/渲染上下文（框架内部用；自检也用它来模拟"某个窗口"的判定 ✓）
 export func setDispatchWindow(int wid) { core.setDispatchWindow(wid) }
 export func clearDispatchWindow() { core.clearDispatchWindow() }
+// 当前"派发/渲染上下文窗口"（-1 = 不在窗口上下文里）。
+//   ★ 2026-11-17：`markFrameRedraw()` 的归属就是看它 —— 有上下文 ⇒ 只脏那个窗口。
+//     自测/诊断可用（断言"定时器回调里应当 -1 ⇒ 退回全局重绘" ✓）
+export func dispatchWid(): int { return core.dispatchWid() }
 
 export func markFrameRedraw() { core.markFrameRedraw() }
 export func requestRedraw()   { core.requestRedraw() }
