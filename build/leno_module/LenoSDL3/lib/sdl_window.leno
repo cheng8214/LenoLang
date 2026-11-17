@@ -240,6 +240,13 @@ Array[int] _drawnWids = []
 // [诊断] `LENO_SKIP_RENDER=1` ⇒ 只跑事件/定时器，**完全不绘制**。
 //   用来把"交互开销"拆成「事件分发」与「绘制」两半（2026-11-17 实测用 ✓）
 bool _skipRender = _env("LENO_SKIP_RENDER") != null
+// ★★ 2026-11-17（用户实测"鼠标一动就整窗闪烁"）：**局部重绘默认关闭**。
+//   原因不止"后台缓冲不保留"一条：即使给了 1x 离屏缓冲，局部帧只改脏区，
+//   而 tooltip / toast / 焦点环 / 滚动条 / 弹层这些**画在脏区之外**的东西会留下旧像素，
+//   再叠加"多窗口 + 每窗口各自 present"，观感就会明显闪烁 ✗
+//   ⇒ 只有把 overlay 也纳入脏区、并且确认缓冲真的跨帧保留，才敢开。
+//   现在留成**实验开关**：`LENO_PARTIAL_REDRAW=1` 才走局部路径（默认全窗重绘，绝不闪）。
+bool _partialEnabled = _env("LENO_PARTIAL_REDRAW") != null
 int _pPart = 0
 int _pFull = 0
 int _profWaitUs = 0      // ev.waitTimeout（**睡眠**，不是 CPU —— 会大幅抬高 us_per_frame）
@@ -1615,6 +1622,18 @@ export struct Window {
         _w = actualSz.w; _h = actualSz.h
         Renderer ren = renderer.createRenderer(handle)
         if aaScale > 0.0 { ren.enableSSAA(actualSz.w, actualSz.h, aaScale) }
+        // ★★ 2026-11-17（用户实测"整窗闪烁很厉害"）：**局部重绘必须先有持久离屏缓冲**。
+        //   直接画到窗口后台缓冲时，present() 之后旧内容不保证保留（双缓冲轮换）⇒
+        //   只刷脏区会让其它区域闪上一帧/垃圾 ✗
+        //   ⇒ 非透明窗口只要没开 SSAA（也就没有离屏纹理），就补一张 **1x** 的：
+        //     整帧画在纹理上、present 整张贴回（1:1 贴图，像素完全一致）；
+        //     局部帧只改脏区，其余区域保持纹理里的旧内容 ✓
+        //   透明窗口不建：桌面歌词那种小窗成本低，且透明合成对离屏 1x 没好处
+        //   只在**开了实验开关**时才建这张纹理：默认（全窗重绘）不需要，
+        //   多一次整屏贴图纯属白烧（present 成本 +~0.3ms/帧 ✗）
+        if _partialEnabled and not ren.hasOffscreen() and not transparent {
+            ren.enableSSAA(actualSz.w, actualSz.h, 1.0)
+        }
         // ★ 同步根布局到实际窗口尺寸（setRootAt 在 run() 前调用，此时窗口可能已被系统改变尺寸）
         if root != null {
             root.set_pos(rootX, rootY)
@@ -2233,7 +2252,8 @@ export struct Window {
                     float _dqy = 0.0
                     float _dqw = 0.0
                     float _dqh = 0.0
-                    if not _fullFrame and _drawnWids.has(_runWids[i]) and not _runTransparent[i] {
+                    if _partialEnabled and not _fullFrame and _drawnWids.has(_runWids[i])
+                       and not _runTransparent[i] and _runRens[i].hasOffscreen() {
                         var[float, float, float, float](bx, by, bw, bh) = core.dirtyBounds()
                         if bw > 0.0 and bh > 0.0 {
                             float cov = bw * bh / (_float(_runW[i]) * _float(_runH[i]))
