@@ -79,47 +79,6 @@ export const LAYOUT_STRETCH = 3   // 撑满交叉轴
 // ============================================================
 // HBox — 子控件沿水平方向依次排列
 // ============================================================
-// ==================== 视口裁剪（2026-11-17）====================
-// 背景：窗口内一直是**整窗全量重绘** —— 不管子项在不在可视区，每帧都调它的 render。
-//   海报墙那种「80+ 张卡、只看得到 ~25 张」的页面，一帧里一半以上的绘制是白做的 ✗
-// 做法：容器在 relayout 时把**子项实摆放矩形**记下来（`_bx/_by/_bw/_bh`），render 时按
-//   **当前裁剪区**（`Renderer.clipBounds()` —— 只有 ScrollView 滚动时才存在）剔除完全不可见的子项。
-// ⚠ 只在**真有裁剪区**时才裁：没有裁剪区说明容器没被限制尺寸，此时"超出容器"的子项是
-//   **能看见的**（内容溢出）⇒ 裁了会少画 ✗
-// ⚠ 留 M 的余量：卡片阴影 / 选中边框 / 角标会画到 bounds 之外一点
-// ⚠ 逃生阀 `LENO_NO_CULL=1` ⇒ 退回"画全部"（线上出问题时用；缓存一次，别每帧查环境）
-int _cullOffCached = -1
-func _cullDisabled(): bool {
-    if _cullOffCached < 0 {
-        _cullOffCached = if _env("LENO_NO_CULL") != null then 1 else 0
-    }
-    return _cullOffCached == 1
-}
-
-export func renderCulled(Renderer r, Array[Widget] cs, Array[float] bxs, Array[float] bys,
-                         Array[float] bws, Array[float] bhs) {
-    var[float, float, float, float](cx, cy, cw, ch) = r.clipBounds()
-    if cx < 0.0 or cw <= 0.0 or ch <= 0.0 or _cullDisabled() {
-        for cs to c { c.render(r) }
-        return
-    }
-    const float M = 16.0
-    float x2 = cx + cw
-    float y2 = cy + ch
-    int n = cs.len()
-    for n to i {
-        if i < bxs.len() {
-            float bx = bxs[i]; float by = bys[i]
-            float bw = bws[i]; float bh = bhs[i]
-            if bw > 0.0 and bh > 0.0 {
-                if bx + bw + M < cx or bx - M > x2 { continue }
-                if by + bh + M < cy or by - M > y2 { continue }
-            }
-        }
-        cs[i].render(r)
-    }
-}
-
 export struct HBox impl Widget {
     // ==================== 关联常量 ====================
     const JUSTIFY_START        = 0   // 靠起始边
@@ -141,18 +100,6 @@ export struct HBox impl Widget {
     Array[Dict]    _opt = []
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
     Array[float]  _natH = []
-    // ★ 2026-11-17：relayout 时记下的**子项实摆放矩形** ⇒ render 做视口裁剪（见 renderCulled ✓）
-    Array[float]  _bx = []
-    Array[float]  _by = []
-    Array[float]  _bw = []
-    Array[float]  _bh = []
-    // ★ 2026-11-17：**本帧已排过**就跳过 relayout（渲染与事件各调一次，一帧要算好几遍 ✗）
-    //   自校验式缓存：只要 w / h / 子项数变了就重排 ⇒ 不需要在 set_size/add 里逐处失效，
-    //   也不会因为"忘了失效"而算错（子项自然尺寸是 add 时捕获的，之后不会变 ✓）
-    pri int   _laidFrame = -1
-    pri float _layW = -1.0
-    pri float _layH = -1.0
-    pri int   _layN = -1
     bool _loaded = false
     // ★ 2026-10-30 反哺：布局容器原来**没有** visible（同 AnchorBox 2026-10-29 那次补齐 ✓）
     //   典型场景：列表底部的"加载中…"行要**常驻**、按状态切换显隐 —— 没有 set_visible 就只能
@@ -266,11 +213,6 @@ export struct HBox impl Widget {
 
     pri func relayout() {
         if not _loaded { return }
-        // ★ 2026-11-17：**本帧已排过就不再算**（process 与 render 各调一次 ⇒ 一帧算两遍以上）
-        //   自校验：w/h/子项数任一变化 ⇒ 照旧重排（见 `_laidFrame` 字段注释 ✓）
-        int _fid = core.frameId()
-        if _laidFrame == _fid and _layW == w and _layH == h and _layN == _c.len() { return }
-        _laidFrame = _fid; _layW = w; _layH = h; _layN = _c.len()
         int n = _c.len()
         if n == 0 { return }
         float pl = if padLeft >= 0.0 then padLeft else padX
@@ -325,7 +267,6 @@ export struct HBox impl Widget {
             else if justify == JUSTIFY_SPACE_AROUND { extraGap = free / n; lead = extraGap / 2.0 }
             else if justify == JUSTIFY_SPACE_EVENLY { extraGap = free / (n + 1); lead = extraGap }
         }
-        _bx = []; _by = []; _bw = []; _bh = []      // 本帧重记摆放矩形（供视口裁剪 ✓）
         float cx = x + pl + lead
         for n to i {
             Widget c = _c[i]
@@ -347,7 +288,6 @@ export struct HBox impl Widget {
             float mxh = o.get("maxH", -1.0); if mxh >= 0.0 and ch > mxh { ch = mxh }
             c.set_pos(cx, cy)
             c.set_size(cw, ch)
-            if _bx.len() == i { _bx.add(cx); _by.add(cy); _bw.add(cw); _bh.add(ch) }   // 供视口裁剪 ✓
             cx = cx + cw + spacing + extraGap
         }
     }
@@ -370,10 +310,10 @@ export struct HBox impl Widget {
             _clipR.x = _int(x); _clipR.y = _int(y)
             _clipR.w = _int(w) + 1; _clipR.h = _int(h) + 1
             r.pushClipRect(_clipR.to_ptr())
-            renderCulled(r, _c, _bx, _by, _bw, _bh)     // ★ 2026-11-17：视口外的子项整个跳过 ✓
+            for _c to c { c.render(r) }
             r.popClipRect()
         } else {
-            renderCulled(r, _c, _bx, _by, _bw, _bh)
+            for _c to c { c.render(r) }
         }
     }
     // 通用控件状态（2026-10-30 反哺：与 Panel/Card/AnchorBox 保持同一套叫法 ✓）
@@ -407,18 +347,6 @@ export struct VBox impl Widget {
     Array[Dict]    _opt = []
     Array[float]  _natW = []   // 子项自然尺寸（add 时捕获，不被 set_size 改写，作为 flex basis 基准）
     Array[float]  _natH = []
-    // ★ 2026-11-17：relayout 时记下的**子项实摆放矩形** ⇒ render 做视口裁剪（见 renderCulled ✓）
-    Array[float]  _bx = []
-    Array[float]  _by = []
-    Array[float]  _bw = []
-    Array[float]  _bh = []
-    // ★ 2026-11-17：**本帧已排过**就跳过 relayout（渲染与事件各调一次，一帧要算好几遍 ✗）
-    //   自校验式缓存：只要 w / h / 子项数变了就重排 ⇒ 不需要在 set_size/add 里逐处失效，
-    //   也不会因为"忘了失效"而算错（子项自然尺寸是 add 时捕获的，之后不会变 ✓）
-    pri int   _laidFrame = -1
-    pri float _layW = -1.0
-    pri float _layH = -1.0
-    pri int   _layN = -1
     bool _loaded = false
     bool visible = true        // ★ 2026-10-30 反哺：同 HBox.set_visible（隐藏只是不画，仍占布局位 ✓）
     pri Ptr[u8] hwnd       // 绑定的窗口句柄，下发给需要的子控件
@@ -527,11 +455,6 @@ export struct VBox impl Widget {
 
     pri func relayout() {
         if not _loaded { return }
-        // ★ 2026-11-17：**本帧已排过就不再算**（process 与 render 各调一次 ⇒ 一帧算两遍以上）
-        //   自校验：w/h/子项数任一变化 ⇒ 照旧重排（见 `_laidFrame` 字段注释 ✓）
-        int _fid = core.frameId()
-        if _laidFrame == _fid and _layW == w and _layH == h and _layN == _c.len() { return }
-        _laidFrame = _fid; _layW = w; _layH = h; _layN = _c.len()
         int n = _c.len()
         if n == 0 { return }
         // 有效内边距：分立值 >=0 时优先，否则回退 padX/padY
@@ -594,7 +517,6 @@ export struct VBox impl Widget {
             else if justify == JUSTIFY_SPACE_EVENLY { extraGap = free / (n + 1); lead = extraGap }
         }
 
-        _bx = []; _by = []; _bw = []; _bh = []      // 本帧重记摆放矩形（供视口裁剪 ✓）
         float cy = y + pt + lead
         for n to i {
             Widget c = _c[i]
@@ -617,7 +539,6 @@ export struct VBox impl Widget {
             float mxh = o.get("maxH", -1.0); if mxh >= 0.0 and ch > mxh { ch = mxh }
             c.set_pos(cx, cy)
             c.set_size(cw, ch)
-            if _bx.len() == i { _bx.add(cx); _by.add(cy); _bw.add(cw); _bh.add(ch) }   // 供视口裁剪 ✓
             cy = cy + ch + spacing + extraGap
         }
     }
@@ -640,10 +561,10 @@ export struct VBox impl Widget {
             _clipR.x = _int(x); _clipR.y = _int(y)
             _clipR.w = _int(w) + 1; _clipR.h = _int(h) + 1
             r.pushClipRect(_clipR.to_ptr())
-            renderCulled(r, _c, _bx, _by, _bw, _bh)     // ★ 2026-11-17：视口外的子项整个跳过 ✓
+            for _c to c { c.render(r) }
             r.popClipRect()
         } else {
-            renderCulled(r, _c, _bx, _by, _bw, _bh)
+            for _c to c { c.render(r) }
         }
     }
     // 通用控件状态（2026-10-30 反哺：与 Panel/Card/AnchorBox 保持同一套叫法 ✓）
