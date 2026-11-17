@@ -102,7 +102,7 @@ export struct Slider impl Widget, Themeable {
         float nv = quantize(v)
         if nv != value {
             value = nv
-            core.markRectDirty(x - 6.0, y - 6.0, w + 12.0, h + 12.0)
+            core.markFrameRedraw()      // 值变了才画（局部重绘已删除 ⇒ 整窗 ✓）
             if onChange != null { onChange(value) }
         }
     }

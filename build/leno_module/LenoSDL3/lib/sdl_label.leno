@@ -196,7 +196,7 @@ export struct Label impl Widget, Themeable {
         //   应用每拍都全窗重绘，哪怕标签根本没变 ✗）。有了这一句，应用才能把定时器的
         //   `autoRedraw` 关掉，做到"变了才画" ✓
         if t == text { return }
-        core.markRectDirty(x, y, _w, _h)      // 只脏自己这块（局部重绘 ✓）
+        core.markFrameRedraw()                // 变才画；局部重绘已删除 ⇒ 这里请求整窗 ✓
         text = t
         fullText = t
         scrollOffset = 0.0

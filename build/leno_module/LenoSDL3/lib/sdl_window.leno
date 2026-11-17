@@ -234,21 +234,17 @@ int _profBeginUs = 0     // beginFrame + 清屏
 int _profTimerUs = 0     // tickAllTimers
 int _profCursorUs = 0    // applyFrameCursor
 int _profLoopFrames = 0
-// 局部重绘：脏矩形临时对象（复用，别每帧 malloc）+ 已经画过至少一帧的窗口
-core.SDL_Rect? _dirtyClip = null
-Array[int] _drawnWids = []
 // [诊断] `LENO_SKIP_RENDER=1` ⇒ 只跑事件/定时器，**完全不绘制**。
 //   用来把"交互开销"拆成「事件分发」与「绘制」两半（2026-11-17 实测用 ✓）
 bool _skipRender = _env("LENO_SKIP_RENDER") != null
-// ★★ 2026-11-17（用户实测"鼠标一动就整窗闪烁"）：**局部重绘默认关闭**。
-//   原因不止"后台缓冲不保留"一条：即使给了 1x 离屏缓冲，局部帧只改脏区，
-//   而 tooltip / toast / 焦点环 / 滚动条 / 弹层这些**画在脏区之外**的东西会留下旧像素，
-//   再叠加"多窗口 + 每窗口各自 present"，观感就会明显闪烁 ✗
-//   ⇒ 只有把 overlay 也纳入脏区、并且确认缓冲真的跨帧保留，才敢开。
-//   现在留成**实验开关**：`LENO_PARTIAL_REDRAW=1` 才走局部路径（默认全窗重绘，绝不闪）。
-bool _partialEnabled = _env("LENO_PARTIAL_REDRAW") != null
-int _pPart = 0
-int _pFull = 0
+// ★ 2026-11-17 晚：**局部重绘（脏矩形）整段删除** —— 连同 `LENO_PARTIAL_REDRAW` 开关、
+//   `_dirtyClip` / `_drawnWids` / `_pPart` / `_pFull` 与 core 里的 markRectDirty 全家。
+//   为什么删而不是留着当开关（详见 sdl_core.leno 同一段注释）：
+//     · 窗口后台缓冲不保证跨帧保留 ⇒ 只刷脏区会让其它区域闪上一帧（实测"鼠标一动整窗闪烁"）；
+//     · tooltip / toast / 焦点环 / 弹层都画在脏区之外 ⇒ 补 1x 离屏纹理也救不了；
+//     · 脏区是全局一份，多窗口下先渲染的窗口会把别人的清掉。
+//   要真做是一整轮独立工作（离屏缓冲 + overlay 纳入 + 按窗口脏区 + 控件树剔除），
+//   不是"加个开关"——现在的收益由**分窗重绘**（F4）承担，整窗重绘本身不再拖别的窗口 ✓
 int _profWaitUs = 0      // ev.waitTimeout（**睡眠**，不是 CPU —— 会大幅抬高 us_per_frame）
 int _profIters = 0       // 循环迭代次数（与 frames 不同：有的迭代不渲染）
 int _profBodyUs = 0      // 整个循环体耗时（从帧标志计算到帧末）
@@ -1622,18 +1618,6 @@ export struct Window {
         _w = actualSz.w; _h = actualSz.h
         Renderer ren = renderer.createRenderer(handle)
         if aaScale > 0.0 { ren.enableSSAA(actualSz.w, actualSz.h, aaScale) }
-        // ★★ 2026-11-17（用户实测"整窗闪烁很厉害"）：**局部重绘必须先有持久离屏缓冲**。
-        //   直接画到窗口后台缓冲时，present() 之后旧内容不保证保留（双缓冲轮换）⇒
-        //   只刷脏区会让其它区域闪上一帧/垃圾 ✗
-        //   ⇒ 非透明窗口只要没开 SSAA（也就没有离屏纹理），就补一张 **1x** 的：
-        //     整帧画在纹理上、present 整张贴回（1:1 贴图，像素完全一致）；
-        //     局部帧只改脏区，其余区域保持纹理里的旧内容 ✓
-        //   透明窗口不建：桌面歌词那种小窗成本低，且透明合成对离屏 1x 没好处
-        //   只在**开了实验开关**时才建这张纹理：默认（全窗重绘）不需要，
-        //   多一次整屏贴图纯属白烧（present 成本 +~0.3ms/帧 ✗）
-        if _partialEnabled and not ren.hasOffscreen() and not transparent {
-            ren.enableSSAA(actualSz.w, actualSz.h, 1.0)
-        }
         // ★ 同步根布局到实际窗口尺寸（setRootAt 在 run() 前调用，此时窗口可能已被系统改变尺寸）
         if root != null {
             root.set_pos(rootX, rootY)
@@ -2250,34 +2234,7 @@ export struct Window {
                     if not _fullFrame {
                         if not core.takeWindowRedraw(_runWids[i]) { continue }
                     }
-                    // ★★ 2026-11-17：**局部重绘**（脏矩形）——
-                    //   触发条件：不是全脏帧 + 这个窗口画过至少一帧 + 不是透明窗口 + 脏区占比不大。
-                    //   为什么排除透明窗口：局部清屏后原地重画，边缘 alpha 会残留旧像素（残影 ✗）；
-                    //   为什么限 60%：脏区太大时"局部"反而不如整窗干净利落（还要多一次 clip 状态切换）。
-                    if _skipRender { core.clearDirty(); continue }
-                    bool _partial = false
-                    float _dqx = 0.0
-                    float _dqy = 0.0
-                    float _dqw = 0.0
-                    float _dqh = 0.0
-                    if _partialEnabled and not _fullFrame and _drawnWids.has(_runWids[i])
-                       and not _runTransparent[i] and _runRens[i].hasOffscreen() {
-                        var[float, float, float, float](bx, by, bw, bh) = core.dirtyBounds()
-                        if bw > 0.0 and bh > 0.0 {
-                            float cov = bw * bh / (_float(_runW[i]) * _float(_runH[i]))
-                            if cov < 0.6 { _partial = true; _dqx = bx; _dqy = by; _dqw = bw; _dqh = bh }
-                        }
-                    }
-                    core.clearDirty()
-                    if _env("LENO_PARTIAL_TRACE") != null {
-                        _pPart = _pPart + (if _partial then 1 else 0)
-                        if _partial == false { _pFull = _pFull + 1 }
-                        int _pt = _pPart + _pFull
-                        if _pt % 60 == 0 {
-                            print("[partial] 累计=" + _str(_pt) + " 局部=" + _str(_pPart) +
-                                  " 整窗=" + _str(_pFull) + "（脏矩形=" + _str(_dqw) + "x" + _str(_dqh) + "）\n")
-                        }
-                    }
+                    if _skipRender { continue }
                     // 每帧清屏：用 fillRect 打满整个窗口代替 SDL_RenderClear
                     // SDL_RenderClear 在 Win/D3D 后端可能不走 back buffer 缓冲，导致短暂黑闪
                     // 透明窗口跳过背景填充，保留 alpha=0 区域透明
@@ -2288,23 +2245,6 @@ export struct Window {
                     // 必须在此切回 SSAA 纹理，否则后续 fillRect/控件绘制全部直接画到窗口、SSAA 失效
                     int _profB0 = core.getPerfCounter()
                     ren.beginFrame()
-                    // 局部重绘：把绘制**限定在脏矩形**（外扩 8px 容阴影/焦点环）内。
-                    //   ⚠ 只是裁剪绘制范围，**没有**"跳过不相交子项"的剔除（那版视口裁剪已撤回，
-                    //     见 63c35229 —— 搜索/移动时会闪）；且本路径默认关闭（`_partialEnabled`）✓
-                    if _partial {
-                        if _dirtyClip == null { _dirtyClip = core.SDL_Rect.malloc() }
-                        _dirtyClip.x = _int(_dqx - 8.0)
-                        _dirtyClip.y = _int(_dqy - 8.0)
-                        _dirtyClip.w = _int(_dqw + 16.0) + 2
-                        _dirtyClip.h = _int(_dqh + 16.0) + 2
-                        if _dirtyClip.x < 0 { _dirtyClip.w = _dirtyClip.w + _dirtyClip.x; _dirtyClip.x = 0 }
-                        if _dirtyClip.y < 0 { _dirtyClip.h = _dirtyClip.h + _dirtyClip.y; _dirtyClip.y = 0 }
-                        if _dirtyClip.w > 0 and _dirtyClip.h > 0 {
-                            ren.pushClipRect(_dirtyClip.to_ptr())
-                        } else {
-                            _partial = false
-                        }
-                    }
                     if not _runTransparent[i] {
                         Theme th = theme.getTheme()
                         ren.setColor(th.bg)
@@ -2420,10 +2360,8 @@ export struct Window {
                                                          / _float(core.getPerfFrequency()))
                         _profDrawFrames = _profDrawFrames + 1
                     }
-                    if _partial { _runRens[i].popClipRect() }   // present 前必须退出裁剪（见 pushClipRect 的说明 ✓）
                     int _profP0 = core.getPerfCounter()
                     _runRens[i].present()
-                    if not _drawnWids.has(_runWids[i]) { _drawnWids.add(_runWids[i]) }   // 下一帧起可以走局部 ✓
                     if _benchFrames > 0 {
                         _profPresentUs = _profPresentUs + _int(_float(core.getPerfCounter() - _profP0) * 1000000.0
                                                                / _float(core.getPerfFrequency()))
