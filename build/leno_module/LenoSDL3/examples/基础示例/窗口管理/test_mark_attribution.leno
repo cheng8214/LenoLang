@@ -37,6 +37,14 @@ main() {
         print("[SKIP] 建窗失败（无显示器 / 视频驱动不可用）⇒ 跳过本用例")
         return
     }
+    // ★ 2026-11-17（复审）：**dummy 驱动下本用例会假失败**（实测 ① ΔA=16 ΔB=15）。
+    //   dummy 会持续吐窗口事件（1s ≈ 17 个，全带 windowID）⇒ 两个窗口都被自己的事件带着画，
+    //   "只有 A 重绘"的前提不成立。headless / CI 直接跳过 ✓
+    var _vd = _env("SDL_VIDEODRIVER")
+    if _vd != null and _str(_vd) == "dummy" {
+        print("[SKIP] SDL_VIDEODRIVER=dummy（没有真实窗口事件源）⇒ 跳过本用例")
+        return
+    }
     a.setPosition(120, 120)
     b.setPosition(560, 120)
 

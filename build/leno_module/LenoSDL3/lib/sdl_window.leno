@@ -1750,6 +1750,15 @@ export struct Window {
 
         Event ev = event.createEvent()
         bool _needRedraw = true       // 初始绘制一次
+        // ★★ 2026-11-17（复审修正）：**跨轮次**的"欠一次全脏帧"标记。
+        //   原来它声明在 `while true` **里面** ⇒ 每轮开头重置成 false，而末尾
+        //   `if core.consumeRedrawRequest() { … _pendingFull = true }` 写的是同一个局部量 ⇒
+        //   "跨轮次保留"根本没生效 ✗。真实后果（静默丢一次重绘）：
+        //     渲染中应用回调调了 requestRedraw()（全局）⇒ 帧末被 consume 掉 ⇒ 下一轮若恰好
+        //     还有**别的窗口**的 requestRedrawWindow 挂着，`hasWindowRedraw()` 非空使得
+        //     "兜底全脏"不触发 ⇒ 只画了那个窗口，**这次全局重绘永久丢失**（不报错、不闪，
+        //     就是那一帧该更新没更新）。提到循环外即可 ✓
+        bool _pendingFull = false     // 有"欠一次全脏帧"的请求尚未兑现（跨轮次）
         int  _lastRenderTicks = core.getTicks()   // 上次渲染时刻，用于帧率节流
         int  _throttleMs = if maxFPS > 0 then 1000 / maxFPS else 1
         int _sizeSyncRemaining = 10   // 安全网：前 N 帧持续检查窗口尺寸（SDL_SyncWindow 已解决主问题）
@@ -1778,9 +1787,8 @@ export struct Window {
             core.advanceFrame()       // 帧计数器递增（供控件做帧内去重）
             // 基准模式：每轮都请求重绘 ⇒ "帧数"与"渲染次数"一一对应（负载可重复）
             if _benchFrames > 0 { _needRedraw = true }
-            // ★ 2026-11-17：**欠一次全脏帧**（跨轮次保留）。全局 requestRedraw / 渲染中再请求
-            //   都记在这里 ⇒ 不会被 per-window 请求或帧率节流吞掉 ✓
-            bool _pendingFull = false
+            // ★ 2026-11-17：**欠一次全脏帧**的标记在循环外声明（`_pendingFull`）——
+            //   放在这里面就成了每轮重置的局部量，跨轮次保留不成立（见循环前那段注释）。
             bool _hadEvent = false
             // ★ 2026-11-17：这个事件**属于哪个窗口** —— 事件触发的重绘只脏它（见下面的 `_fullFrame`）
             //   `<= 0`（SDL 的全局事件，如显示器变化/剪贴板）= 不归属任何窗口 ⇒ 退回全脏 ✓
@@ -2281,7 +2289,8 @@ export struct Window {
                     int _profB0 = core.getPerfCounter()
                     ren.beginFrame()
                     // 局部重绘：把绘制**限定在脏矩形**（外扩 8px 容阴影/焦点环）内。
-                    //   容器里的 `renderCulled` 会顺着裁剪区把不相交的子项整个跳过 ⇒ 真正的"只画变的那块" ✓
+                    //   ⚠ 只是裁剪绘制范围，**没有**"跳过不相交子项"的剔除（那版视口裁剪已撤回，
+                    //     见 63c35229 —— 搜索/移动时会闪）；且本路径默认关闭（`_partialEnabled`）✓
                     if _partial {
                         if _dirtyClip == null { _dirtyClip = core.SDL_Rect.malloc() }
                         _dirtyClip.x = _int(_dqx - 8.0)
