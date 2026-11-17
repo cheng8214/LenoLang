@@ -50,6 +50,13 @@ export struct GridLayout impl Widget {
     Array[Dict]   _opt = []     // 每个子项的布局选项（align 等）
     Array[float]  _natW = []    // 子项添加时的自然宽度
     Array[float]  _natH = []    // 子项添加时的自然高度
+    // ★ 2026-11-17：relayout 时记下每个子项的**实摆放矩形** ⇒ render 里做视口裁剪（剔除）
+    //   为什么记而不是读：`Widget` 接口只有 get_w/get_h，**没有 get_x/get_y**（加它会逼
+    //   40+ 个控件各补一对方法）；而这里的位置本来就是 relayout 自己算的，顺手记一份最省 ✓
+    Array[float]  _bx = []
+    Array[float]  _by = []
+    Array[float]  _bw = []
+    Array[float]  _bh = []
     bool _loaded = false, visible = true, enabled = true
     pri bool hover = false         // ★ 2026-10-29 反哺：见 process 里的 hover 追踪
     pri Ptr[u8] hwnd
@@ -180,6 +187,7 @@ export struct GridLayout impl Widget {
         if not _loaded { return }
         int n = _c.len()
         if n == 0 { return }
+        _bx = []; _by = []; _bw = []; _bh = []      // 本帧重记摆放矩形（见字段注释 ✓）
         // ★ 2026-10-25：**自适应列数**（`min_col_width`）——
         //   以前列数只能由应用自己算好再 `set_cols()`（海报墙的 sync_cols、Aria 的手工分行
         //   都是这么写的 ⇒ 每个界面各算一遍、窗口缩放还得各自监听 resize ✗）。
@@ -259,6 +267,10 @@ export struct GridLayout impl Widget {
                     }
                     c.set_pos(ix, iy)
                     c.set_size(iw, ih)
+                    // 记下实摆放矩形（供 render 视口裁剪；按 idx 顺序追加 ⇒ 下标一一对应 ✓）
+                    if _bx.len() == idx {
+                        _bx.add(ix); _by.add(iy); _bw.add(iw); _bh.add(ih)
+                    }
                 }
                 startX = startX + colW[ci] + cs
             }
@@ -277,10 +289,38 @@ export struct GridLayout impl Widget {
         relayout()
         for _c to c { c.process(ev) }
     }
+    // ★ 2026-11-17：**视口裁剪** —— 有裁剪区（= 在 ScrollView 里滚动）时，
+    //   完全落在可视区之外的子项**连 render 都不调**（省掉整棵子树的绘制：
+    //   海报墙 80+ 张卡只画看得见的 ~25 张 ✓）。
+    //   ⚠ 只在**真存在裁剪区**时才裁：没有裁剪区说明容器没被限制尺寸，
+    //     此时"超出的子项"是**能看见的**（内容溢出容器）⇒ 裁了会少画 ✗
+    //   ⚠ 留 M 的余量：卡片阴影 / 选中边框 / 角标会画到 bounds 之外一点
+    //   逃生阀：`LENO_NO_CULL=1` 一键关掉（线上出问题时用 ✓）
     func render(Renderer r) {
         if not _loaded or not visible { return }
         relayout()
-        for _c to c { c.render(r) }
+        var[float, float, float, float](cx, cy, cw, chh) = r.clipBounds()
+        bool hasClip = cx >= 0.0 and cw > 0.0 and chh > 0.0
+        bool noCull = _env("LENO_NO_CULL") != null
+        if not hasClip or noCull {
+            for _c to c { c.render(r) }
+            return
+        }
+        const float M = 16.0                     // 余量（阴影/边框/角标）
+        float vx2 = cx + cw
+        float vy2 = cy + chh
+        int n = _c.len()
+        for n to i {
+            if i < _bx.len() {
+                float bx = _bx[i]; float by = _by[i]
+                float bw = _bw[i]; float bh = _bh[i]
+                if bw > 0.0 and bh > 0.0 {
+                    if bx + bw + M < cx or bx - M > vx2 { continue }
+                    if by + bh + M < cy or by - M > vy2 { continue }
+                }
+            }
+            _c[i].render(r)
+        }
     }
     func dispose() { for _c to c { c.dispose() } }
 }

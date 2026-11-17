@@ -223,6 +223,12 @@ Array[Array[Shortcut]]  _runShortcuts = []    // 各窗口快捷键列表
 Array[func():bool]       _runShortcutGuards = [] // 各窗口快捷键守卫回调
 var _runLoopActive = false    // 主循环是否已在运行
 
+// [诊断] 控件树绘制（含 Canvas/图片/文字）累计微秒 + 累计帧数 —— 只在基准模式打印
+int _profDrawUs = 0
+int _profDrawFrames = 0
+int _profPresentUs = 0
+int _profCbUs = 0
+
 // ==================== 控件级「模态浮层」/「点外部」状态（**按窗口 ID 归属**）====================
 // ★ 2026-11-13（Aria 实测反哺，重要）：
 //   这两组状态原来是 **Window 的实例字段**（`pri Widget? _modalW` / `pri bool _outArmed` …），
@@ -2183,6 +2189,7 @@ export struct Window {
                         ren.setColor(th.bg)
                         ren.fillRect(0, 0, _float(_runW[i]), _float(_runH[i]))
                     }
+                    int _profC0 = core.getPerfCounter()
                     try {
                         _runRends[i](_runRens[i])
                     } catch e {
@@ -2206,6 +2213,13 @@ export struct Window {
                     core.clearPopupCapture()
                     // 先渲染根布局控件（背景层），再渲染 _widgets（按 z 值排序后层叠）
                     var rootWid = _runRoots[i]
+                    // [诊断] 应用自己的 render 回调（背景/自绘叠加层）耗时
+                    if _benchFrames > 0 {
+                        _profCbUs = _profCbUs + _int(_float(core.getPerfCounter() - _profC0) * 1000000.0
+                                                     / _float(core.getPerfFrequency()))
+                    }
+                    // [诊断] 本窗口"控件树绘制"耗时（present 之前那段）；基准模式下打印均值
+                    int _profT0 = core.getPerfCounter()
                     rootWid?.render(_runRens[i])
                     // 自动渲染该窗口的所有控件（z 值小的先画，大的后画；同 z 值保持添加顺序）
                     // ★ 跳过已作为 root 渲染的控件，避免双重渲染导致闪烁
@@ -2277,7 +2291,19 @@ export struct Window {
                     // 叠加层：在所有控件/弹层/Tooltip 之上绘制（拖拽浮动框等），present 之前最后一遍
                     var _ovl = _runOverlays[i]
                     if _ovl != null { _ovl(_runRens[i]) }
+                    // [诊断] present 之前的"控件树绘制"耗时（含 toast/tooltip/叠加层）
+                    //   只在基准模式累计 ⇒ 正常跑图零开销（两个整数加法都不做 ✓）
+                    if _benchFrames > 0 {
+                        _profDrawUs = _profDrawUs + _int(_float(core.getPerfCounter() - _profT0) * 1000000.0
+                                                         / _float(core.getPerfFrequency()))
+                        _profDrawFrames = _profDrawFrames + 1
+                    }
+                    int _profP0 = core.getPerfCounter()
                     _runRens[i].present()
+                    if _benchFrames > 0 {
+                        _profPresentUs = _profPresentUs + _int(_float(core.getPerfCounter() - _profP0) * 1000000.0
+                                                               / _float(core.getPerfFrequency()))
+                    }
                     _frameTotal = _frameTotal + 1      // ★ 诊断：累计渲染帧数（供 frameTotal() 查）
                     // 对话框窗口：首帧渲染完后显示（避免创建时闪现默认背景）
                     // show 后立即 raise，确保对话框在主窗口前面
@@ -2313,7 +2339,12 @@ export struct Window {
                           + " total_us=" + _bus
                           + " us_per_frame=" + _int(_float(_bus) / _float(_benchDone))
                           + " fill=" + _bfill + " line=" + _bline + " out=" + _bout
-                          + " sum=" + _bsum + "\n")
+                          + " sum=" + _bsum
+                          // [诊断] 每帧里"控件树绘制"占多少微秒（其余 = 清屏/提交/事件/present）
+                          + " draw_us_avg=" + _int(_float(_profDrawUs) / _float(_profDrawFrames))
+                          + " present_us_avg=" + _int(_float(_profPresentUs) / _float(_profDrawFrames))
+                          + " cb_us_avg=" + _int(_float(_profCbUs) / _float(_profDrawFrames))
+                          + "\n")
                     // 收尾：与 isQuit 路径一致（控件 dispose → 渲染器/窗口销毁 → 事件反初始化）
                     for _runWids.len() to i {
                         var benWs = _runWidgets[i]

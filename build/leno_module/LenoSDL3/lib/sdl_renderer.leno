@@ -858,6 +858,17 @@ const BX_TEX    = 4   // 批处理文字纹理
         return _lib.SDL_SetRenderClipRect(handle, rect)
     }
 
+    // ★ 2026-11-17：当前裁剪区的只读快照 —— 给**视口裁剪/剔除**用。
+    //   为什么不直接暴露 bxClipPtr：它是 pri 字段，且有效位在 bxClip 里（两者要一起看）。
+    //   返回 [x, y, w, h]；**没有裁剪区**时返回 [-1, -1, 0, 0]（= \"无裁剪，可视区就是整个窗口\"）
+    //   典型用法（GridLayout / VBox 之类容器）：
+    //     在 ScrollView 里滚动时，裁剪区 = 视口 ⇒ 屏幕外的子项可以整个跳过 render ✓
+    func clipBounds(): [float, float, float, float] {
+        if not bxClip or bxClipPtr == null { return -1.0, -1.0, 0.0, 0.0 }
+        SDL_Rect rc = SDL_Rect.from_ptr(bxClipPtr)
+        return _float(rc.x), _float(rc.y), _float(rc.w), _float(rc.h)
+    }
+
     func popClipRect(): bool {
         if clipStack.len() == 0 {
             if not bxClip and bxClipPtr == null { return true }
