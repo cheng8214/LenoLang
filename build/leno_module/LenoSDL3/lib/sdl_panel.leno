@@ -83,7 +83,12 @@ export struct Panel impl Widget, Themeable {
     func setLayout(Widget c) { _layoutChild = c; layPad = 0.0 }
     func setLayoutPadded(Widget c, float pad) { _layoutChild = c; layPad = pad }
 
-    func set_bg_color(Color color) { bgColor = color }
+    // ★ 2026-11-17：颜色真变了才重绘（见 sdl_label.set_text 的注释 ✓）
+    func set_bg_color(Color color) {
+        if color == bgColor { return }
+        bgColor = color
+        core.markFrameRedraw()
+    }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }

@@ -192,6 +192,11 @@ export struct Label impl Widget, Themeable {
 
     // ==================== 设置方法 ====================
     func set_text(string t)        {
+        // ★ 2026-11-17：**内容真变了才请求重绘**（原来不 mark，全靠应用挂定时器 autoRedraw 兜底 ⇒
+        //   应用每拍都全窗重绘，哪怕标签根本没变 ✗）。有了这一句，应用才能把定时器的
+        //   `autoRedraw` 关掉，做到"变了才画" ✓
+        if t == text { return }
+        core.markFrameRedraw()
         text = t
         fullText = t
         scrollOffset = 0.0

@@ -133,6 +133,9 @@ export struct ImageView impl Widget, Themeable {
     func set_spin(float degPerSec) {
         if degPerSec == spinDeg { return }
         spinDeg = degPerSec
+        // ★ 2026-11-17：**起停自转要请求一帧** —— render 里只在"已经在转"时才续帧，
+        //   没人起第一帧的话就永远转不起来（原来靠应用定时器 autoRedraw 兜底 ✗）
+        core.markFrameRedraw()
         rotBase = rotDeg
         rotStartMs = -1.0
     }

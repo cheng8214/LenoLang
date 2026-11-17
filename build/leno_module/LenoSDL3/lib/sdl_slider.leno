@@ -97,7 +97,15 @@ export struct Slider impl Widget, Themeable {
     }
 
     // ==================== 设置方法 ====================
-    func set_value(float v)    { float nv = quantize(v); if nv != value { value = nv; if onChange != null { onChange(value) } } }
+    // ★ 2026-11-17：值真变了才重绘（见 sdl_label.set_text 的注释 ✓ —— 应用才能关掉定时器 autoRedraw）
+    func set_value(float v)    {
+        float nv = quantize(v)
+        if nv != value {
+            value = nv
+            core.markFrameRedraw()
+            if onChange != null { onChange(value) }
+        }
+    }
     func set_tip(string t)      { _tip = t }
     func get_value(): float     { return value }
     func set_range(float lo, float hi) { minV = lo; maxV = hi; value = maths.max(minV, maths.min(value, maxV)) }
