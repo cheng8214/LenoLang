@@ -1,0 +1,56 @@
+// test_timer_redraw.leno — 定时器触发的重绘只影响**注册它的那个窗口**（2026-11-17）
+//
+// 跑法：
+//   build\leno.exe build\leno_module\LenoSDL3\examples\基础示例\窗口管理\test_timer_redraw.leno
+//
+// 判据（稳态 1.5s，两窗口）：
+//   A = 静态窗口（没人改它、也没有定时器）  → 帧数应当**接近 0**
+//   B = 挂 60ms 定时器的窗口（autoRedraw 默认 true）→ 帧数应当 ≈ 25（1.5s / 60ms）
+//   改前（定时器 ⇒ 全局 requestRedraw）：A 与 B 都是 26 ✗
+//   改后（定时器 ⇒ requestRedrawWindow(ownerWid)）：A=1 / B=25 ✓
+//
+// 为什么要有这条用例：`tickAllTimers()` 原来把"任意定时器触发"当成"所有窗口都要重绘"，
+//   于是**任何一个**短周期定时器（浮窗心跳、对话框轮询）都会拖着主窗口全量重绘 ——
+//   Aria 实测：桌面歌词 33ms 心跳把主窗口顶到 60fps，CPU 4.72s/21.6s（≈22%）吃掉一半是本值 ✗
+//   F4 分窗重绘上线后这条仍然是隐形杀手（定时器那条路径没走 per-window）⇒ 本用例钉住它。
+import "SDL3" as SDL3
+use SDL3.(Window, Event, Renderer)
+
+int nA = 0
+int nB = 0
+Window a = null
+Window b = null
+
+main() {
+    a = SDL3.createWindow({title: "A-static", w: 300, h: 160})
+    b = SDL3.createWindow({title: "B-timer", w: 220, h: 120})
+    if not a.ok or not b.ok {
+        print("[SKIP] 建窗失败（无显示器 / 视频驱动不可用）⇒ 跳过本用例")
+        return
+    }
+    a.setPosition(120, 120)
+    b.setPosition(560, 120)
+
+    // 主循环起来之后再注册 B（registerOnly：只登记、不抢循环 ✓）
+    a.addTimerOnce(1, func() {
+        b.addTimer(60, func() { })        // 空回调：重绘完全靠 autoRedraw 那一拍
+        b.run(func(Event ev): bool { return true },
+              func(Renderer r) { nB = nB + 1 })
+    })
+
+    // 先跑 1.5s 让启动期（首帧 / size-sync / 焦点事件）过去，然后**清零再量 1.5s 稳态**
+    a.addTimerOnce(1500, func() {
+        nA = 0
+        nB = 0
+        a.addTimerOnce(1500, func() {
+            print("[timer-redraw] 稳态 A(静态)=" + _str(nA) + "  B(60ms)=" + _str(nB))
+            assert_true(nB >= 15, "B 应当被自己的定时器持续重绘（≈25 帧 / 1.5s）")
+            assert_true(nA <= 3, "A 没有定时器 ⇒ 不应被 B 的重绘带着画（改前是 26 帧 ✗）")
+            print("test_timer_redraw passed")
+            _exit(0)
+        })
+    })
+
+    a.run(func(Event ev): bool { return true },
+          func(Renderer r) { nA = nA + 1 })
+}

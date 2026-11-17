@@ -72,7 +72,6 @@ export func debugDump(): string {
 //     刚开始 len=3、中途变成 2，走到 i=2 就**越界崩掉** ✗
 //   正解：先**拷贝一份快照**再遍历；每项 tick 前确认它还在注册表里（快照里的已被移除就跳过）
 export func tickAllTimers() {
-    bool anyFired = false
     Array[Timer] snap = []                     // 快照：遍历期间 _timers 怎么增删都不影响下标 ✓
     for _timers.len() to i { snap.add(_timers[i]) }
     for snap.len() to i {
@@ -84,9 +83,19 @@ export func tickAllTimers() {
         }
         // ★ 2026-11-08：只有 `autoRedraw` 的定时器触发才自动重绘。
         //   关掉的那些（高频心跳 + 回调内部自己按需请求）不再拖着整窗以 30fps 空转 ✓
-        if alive and t.tick() and t.autoRedraw { anyFired = true }
+        if alive and t.tick() and t.autoRedraw {
+            // ★★ 2026-11-17：重绘**按"注册它的窗口"归属**，不再一律全局。
+            //   为什么改：定时器的语义本来就是"某个窗口的心跳"（注册/注销都按窗口，
+            //   见 addTimer 里填 ownerWid、unregisterByWindow），它引起的重绘理应只影响那个窗口。
+            //   原来一律 `requestRedraw()`（全局）⇒ 任何应用只要有一个短周期定时器，
+            //   主窗口就被迫全量重绘：Aria 实测浮窗 33ms 心跳把主窗口顶到 60fps、
+            //   CPU 4.72s→（改成 per-window 后仍）5.8~6.8s，F4 的分窗重绘收益被完全吃掉 ✗
+            //   `ownerWid == 0`（用 registerTimer 直接注册、没有窗口上下文，如 Edit 的光标闪烁）
+            //   ⇒ 退回全局，行为与以前一致 ✓
+            if t.ownerWid != 0 { core.requestRedrawWindow(t.ownerWid) }
+            else { core.requestRedraw() }
+        }
     }
-    if anyFired { core.requestRedraw() }
 }
 
 // 返回所有运行中定时器的最近触发时刻（getTicks 毫秒），用于主循环动态计算 waitTimeout；
