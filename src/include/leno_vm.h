@@ -791,6 +791,13 @@ Value type_spec_cast(Value value, Chunk* chunk, const uint8_t* spec, int* out_by
 int type_spec_size(const uint8_t* spec);
 int type_spec_size_bounded(const uint8_t* spec, const uint8_t* end);
 
+// ★ 2026-11-17（单源化）：**严格**校验并返回字节数，0 = 非法（kind 越界 / 名字常量索引越界 /
+//   被 end 截断）。字节码校验器（bytecode_verify.c）就用这一个 —— 历史上它自己实现了一份
+//   spec 扫描，加 TYPE_FUNCTION 变体时漏改 ⇒ 合法字节码被判成"字节码校验失败"。
+//   chunk 非空时校验 STRUCT/FACE/ENUM 的名字常量索引落在常量表内（NULL = 跳过该检查）。
+//   格式的**唯一认知**在 vm.c 的 type_spec_size_impl（长度 / 校验 / 渲染三处共用同一次遍历）。
+int type_spec_verify(const uint8_t* spec, const uint8_t* end, const Chunk* chunk);
+
 // 把类型规格渲染成可读文本（如 "Dict[string, Array[int]]"），供反汇编摘要用。
 //   与解析同源写在 vm.c ⇒ 调试端不再自己解析一遍规格（避免第三份格式认知）。
 void type_spec_render(Chunk* chunk, const uint8_t* spec, char* out, int out_size);

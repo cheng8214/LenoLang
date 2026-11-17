@@ -445,45 +445,76 @@ static int kind_name_matches(Value value, TypeKind kind, const char* name) {
 // 嵌套深度上限：自引用容器（`a.add(a)`）会让递归判定无限下行 ⇒ 到顶即 fail-closed。
 #define TYPE_SPEC_MAX_DEPTH 32
 
-// 类型规格的**字节长度**（递归、自定界，不需要长度前缀）—— 只算长度、不判定。
-//   反汇编（debug.c）也调它算指令总长 ⇒ 发射端/判定端/反汇编端对格式的认知只有这一份。
-//   end 非空时按"不得越过 end"解析（反汇编遇到被截断/损坏的 chunk 时用，防越界读）。
-static int type_spec_size_impl(const uint8_t* spec, const uint8_t* end, int depth) {
+// ============================================================================
+// 类型规格的**唯一格式认知**（2026-11-17 单源化）
+// ----------------------------------------------------------------------------
+// 历史上这个格式有三份独立实现：发射端（codegen_expr.c 的 emit_type_spec）、
+// 执行端（这里）、**校验器**（bytecode_verify.c 的 spec_scan）—— 改格式要记得三处一起改，
+// 漏一处就会出现"合法字节码被判成损坏"或"签名被当成下一条指令"。2026-11-17 补 TYPE_FUNCTION
+// 时又踩了一次（校验器不认识新变体）⇒ 现在把**读侧**收敛到这里：
+//   · `type_spec_size*`：只算长度（运行期要推进 ip、反汇编要算指令总长）；
+//   · `type_spec_verify`：严格模式 —— 算长度的同时校验 kind 合法 + struct/face/enum 的
+//     名字常量索引在 chunk 常量表内（字节码校验器用）；
+//   · `type_spec_render`：渲染成可读文本（反汇编 + `as` 失败警告用）。
+// 发射端仍是"写侧"，但 codegen 每发完一条规格都会调 `type_spec_verify` **自检**
+// （见 emit_type_spec_op）⇒ 两侧一旦不一致，编译当场报内部错误，不会拖到运行期。
+// ============================================================================
+
+// 递归走一遍规格。返回占用的字节数；非法/越界返回 0（strict）或已走的字节数（lenient）。
+//   strict = 0：字节码已通过校验器 ⇒ 相信它，只算长度（被截断时返回已走部分，供反汇编兜底）
+//   strict = 1：kind 越界 / 名字常量索引越界 / 被截断 ⇒ 直接 0
+//   chunk 只在 strict 时用（常量表边界），NULL = 跳过名字索引检查
+static int type_spec_size_impl(const uint8_t* spec, const uint8_t* end, const Chunk* chunk,
+                               int depth, int strict) {
     if (!spec || depth > 64) return 0;
+    if (strict && end && spec >= end) return 0;
     TypeKind k = (TypeKind)spec[0];
+    if (strict && (int)k >= (int)TYPE_KIND_COUNT) return 0;
     int n = 1;
     if (k == TYPE_STRUCT || k == TYPE_FACE || k == TYPE_ENUM) {
-        if (end && spec + 3 > end) return n;   // 名字常量索引（大端 16 位）被截断
+        if (end && spec + 3 > end) return strict ? 0 : n;   // 名字常量索引（大端 16 位）被截断
+        if (strict && chunk) {
+            int idx = ((int)spec[1] << 8) | (int)spec[2];
+            if (idx < 0 || idx >= chunk->const_cnt) return 0;
+        }
         n += 2;
     } else if (k == TYPE_ARRAY) {
-        n += type_spec_size_impl(spec + n, end, depth + 1);
+        n += type_spec_size_impl(spec + n, end, chunk, depth + 1, strict);
     } else if (k == TYPE_DICT) {
-        n += type_spec_size_impl(spec + n, end, depth + 1);   // K
-        n += type_spec_size_impl(spec + n, end, depth + 1);   // V
+        n += type_spec_size_impl(spec + n, end, chunk, depth + 1, strict);   // K
+        n += type_spec_size_impl(spec + n, end, chunk, depth + 1, strict);   // V
     } else if (k == TYPE_PTR_GENERIC) {
-        n += type_spec_size_impl(spec + n, end, depth + 1);
+        n += type_spec_size_impl(spec + n, end, chunk, depth + 1, strict);
     } else if (k == TYPE_FUNCTION) {
         // ★ 2026-11-17（F1 第二步）：函数签名规格 = 形参个数(u8) + 各形参规格 + 返回类型规格。
         //   255 = 不校验形参（裸 `func`）⇒ 此时只跟一个返回类型规格（与发射端同构，
         //   见 codegen_expr.c 的 emit_type_spec）。
-        if (end && spec + n + 1 > end) return n;
+        if (end && spec + n + 1 > end) return strict ? 0 : n;
         int pc = spec[n];
         n += 1;
         if (pc != 255) {
-            for (int i = 0; i < pc; i++) n += type_spec_size_impl(spec + n, end, depth + 1);
+            for (int i = 0; i < pc; i++) {
+                n += type_spec_size_impl(spec + n, end, chunk, depth + 1, strict);
+            }
         }
-        n += type_spec_size_impl(spec + n, end, depth + 1);
+        n += type_spec_size_impl(spec + n, end, chunk, depth + 1, strict);
     }
     return n;
 }
 
 int type_spec_size(const uint8_t* spec) {
-    return type_spec_size_impl(spec, NULL, 0);
+    return type_spec_size_impl(spec, NULL, NULL, 0, 0);
 }
 
 // 带上界版本（debug.c 的反汇编用）：解析不越过 end，避免损坏的 chunk 把越界读带进来。
 int type_spec_size_bounded(const uint8_t* spec, const uint8_t* end) {
-    return type_spec_size_impl(spec, end, 0);
+    return type_spec_size_impl(spec, end, NULL, 0, 0);
+}
+
+// 严格校验（bytecode_verify.c 用）：返回占用的字节数，0 = 非法。
+//   chunk 非空时校验 struct/face/enum 的名字常量索引；end 为 chunk 末尾，越界即非法。
+int type_spec_verify(const uint8_t* spec, const uint8_t* end, const Chunk* chunk) {
+    return type_spec_size_impl(spec, end, chunk, 0, 1);
 }
 
 // 把类型规格渲染成可读文本（反汇编摘要用）。**与解析同源**地写在这里：

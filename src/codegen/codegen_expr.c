@@ -82,13 +82,16 @@ static void gen_default_value_from_text_to(CodeGen* gen, int dst, const char* te
 //   没有通道、`Array[Array[int]]` 只能看一层、`Array[Rect]` 丢掉 struct 名字。
 //   带实参的类型改走 OP_TYPE_CHECK_SPEC / OP_AS_CAST_SPEC：把整棵类型树写进指令尾随
 //   字节（格式见 leno_vm.h 的 OP_TYPE_CHECK_SPEC 说明；长度由 vm.c 的 type_spec_size 算）。
-// 判据（type_needs_spec）：只有**泛型实参带约束**时才走规格版 ——
-//   `Array[int]` / `Dict[string,string]` / `Array[Array[int]]` / `Array[Rect]` / `Ptr[u8]`
-//   走规格版；裸 `Array` / `Dict` / `Ptr` 与带名字的 struct·face·enum **顶层**仍走紧凑版
-//   ⇒ 热路径（`case is Rect` 之类）与旧版**逐字节一致**，零额外开销。
+// 判据（type_needs_spec）：**泛型实参带约束**或**目标类型是函数**时才走规格版 ——
+//   `Array[int]` / `Dict[string,string]` / `Array[Array[int]]` / `Array[Rect]` / `Ptr[u8]` /
+//   `func(int):void`… 走规格版；裸 `Array` / `Dict` / `Ptr` 与带名字的 struct·face·enum
+//   **顶层**仍走紧凑版 ⇒ 热路径（`case is Rect` 之类）与旧版**逐字节一致**，零额外开销。
 //   `Array[any]` / `Dict[any,any]` 的实参没有约束 ⇒ 同样走紧凑版（语义等价且更省）。
-// ⚠ 三个地方必须同构：这里的 emit_type_spec、vm.c 的 type_spec_match / type_spec_size。
-//   （反汇编端不自己解析，直接调 type_spec_size 算长度 ⇒ 不会再出现长度表漂移。）
+// ⚠ **格式的唯一认知在读侧**（vm.c 的 type_spec_size_impl / type_spec_verify /
+//   type_spec_render 共用同一次遍历）。这里只是**写侧**，每发完一条规格都会调
+//   `type_spec_verify` 自检（见 emit_type_spec_op）⇒ 两侧一旦不一致，编译当场报内部错误，
+//   不会拖到运行期变成"内存反序列化失败(6)"。2026-11-17 之前这里有"三处必须同构"的说法，
+//   而校验器确实藏了第三份实现（加 TYPE_FUNCTION 时漏改）⇒ 已收敛。
 // ============================================================================
 
 // 该类型作为**嵌套成员**时是否带来约束（ANY/UNKNOWN/INFER = "没有要求"）
@@ -162,7 +165,23 @@ static void emit_type_spec(CodeGen* gen, TypeInfo* t, int line) {
 //   （非 static：`emit_decl_runtime_type` 也要用它发 OP_SET_PTR_SPEC，见 codegen_stmt.c）
 void emit_type_spec_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int line) {
     reg_encode_iABC(gen->chunk, op, reg, 0, 0, line);
+    int spec_start = gen->chunk->len;
     emit_type_spec(gen, t, line);
+    // ★ 2026-11-17（单源化自检）：**发射端写完就让读侧校验一遍**。
+    //   为什么：规格是自定界的变长尾随字节，写错一个字节不会当场报错 —— 而是运行期把签名/
+    //   元素类型当成下一条指令（"内存反序列化失败(6)"，`--check` 却是绿的 ✗）。
+    //   历史上发射端/执行端/校验器各有一份格式认知，2026-11-17 加 TYPE_FUNCTION 时校验器那份
+    //   漏改 ⇒ 合法字节码被判损坏。现在读侧只有 vm.c 一处，这里再兜一道"两侧是否一致"。
+    int wrote = gen->chunk->len - spec_start;
+    int read_back = type_spec_verify(gen->chunk->code + spec_start,
+                                     gen->chunk->code + gen->chunk->len,
+                                     gen->chunk);
+    if (read_back <= 0 || read_back != wrote) {
+        error_add_at_fmt(ERR_SEMANTIC, line, 1,
+            "内部错误：类型规格自检失败（写入 %d 字节，校验器读出 %d 字节）"
+            "—— codegen 与 vm.c 的规格格式不一致，请同时修改两处",
+            wrote, read_back);
+    }
 }
 
 // ★ 2026-11-15：只写规格本身（不带指令头）。OP_STRUCT_DEF 的 ARRAY/DICT 字段用，

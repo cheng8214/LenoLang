@@ -26,7 +26,8 @@
 #define VERIFY_MAX_REG 256               // 与 codegen 的 MAX_REG 同口径（寄存器号 8 位）
 #define VERIFY_CLIB_MAX_ARGS 12          // codegen 的 CLIB_CALL_MAX_ARGS
 #define VERIFY_CFUNC_MAX_ARGS 12         // VM OP_CFUNC_CALLBACK 的上限
-#define VERIFY_SPEC_MAX_DEPTH 64         // 与 vm.c 的 type_spec_size_impl 同口径
+// （原来的 VERIFY_SPEC_MAX_DEPTH 已删：类型规格的深度上限现在只有 vm.c 的 type_spec_verify
+//   一处 —— 2026-11-17 单源化，见 spec_scan 的注释）
 
 typedef struct {
     const Chunk* c;
@@ -63,7 +64,8 @@ static int ck_const_direct(const Chunk* c, int idx) {
 // ----------------------------------------------------------------------------
 
 // 类型规格扫描（定义在下面；scan_struct_def 的 ARRAY/DICT 字段元数据要用）
-static int spec_scan(const Chunk* c, int p, int end, int checks, int depth, int* out);
+//   只是 vm.c `type_spec_verify()` 的指针薄壳 —— 格式认知不再有第二份（见函数处注释）
+static int spec_scan(const Chunk* c, int p, int end, int checks, int* out);
 
 // OP_STRUCT_DEF：字段/方法/impl/泛型参数/关联常量表
 static int scan_struct_def(const Chunk* c, int base, int checks, Cur* k) {
@@ -123,7 +125,7 @@ static int scan_struct_def(const Chunk* c, int base, int checks, Cur* k) {
         //   ⚠ 漏改会让整条字节码流从下一个字段起错位（症状是"内存反序列化失败(6)"）。
         if (ftype == TYPE_ARRAY || ftype == TYPE_DICT) {
             int after = 0;
-            if (!spec_scan(c, k->p, c->len, checks, 0, &after)) { k->bad = 1; break; }
+            if (!spec_scan(c, k->p, c->len, checks, &after)) { k->bad = 1; break; }
             k->p = after;
         }
         int has_default = cur_u8(k);
@@ -258,40 +260,18 @@ static int scan_cfunc_callback(const Chunk* c, int base, Cur* k) {
     return !k->bad;
 }
 
-// 类型规格（OP_TYPE_CHECK_SPEC / OP_AS_CAST_SPEC 的尾随数据）
-//   前缀、自定界；格式见 leno_vm.h。这里校验 kind 合法、名字常量索引在范围内。
-static int spec_scan(const Chunk* c, int p, int end, int checks, int depth, int* out) {
-    if (depth > VERIFY_SPEC_MAX_DEPTH) return 0;
-    if (p < 0 || p >= end) return 0;
-    int kind = (int)c->code[p++];
-    if (kind < 0 || kind >= (int)TYPE_KIND_COUNT) return 0;
-    if (kind == TYPE_STRUCT || kind == TYPE_FACE || kind == TYPE_ENUM) {
-        if (p + 2 > end) return 0;
-        int idx = ((int)c->code[p] << 8) | (int)c->code[p + 1];
-        p += 2;
-        if (checks && !ck_const_direct(c, idx)) return 0;
-    } else if (kind == TYPE_ARRAY) {
-        if (!spec_scan(c, p, end, checks, depth + 1, &p)) return 0;
-    } else if (kind == TYPE_DICT) {
-        if (!spec_scan(c, p, end, checks, depth + 1, &p)) return 0;
-        if (!spec_scan(c, p, end, checks, depth + 1, &p)) return 0;
-    } else if (kind == TYPE_PTR_GENERIC) {
-        if (!spec_scan(c, p, end, checks, depth + 1, &p)) return 0;
-    } else if (kind == TYPE_FUNCTION) {
-        // ★ 2026-11-17（v3.2.43）：函数签名规格 = 形参个数(u8) + 各形参规格 + 返回类型规格。
-        //   255 = 不校验形参（裸 `func`）⇒ 后面只跟返回类型规格。
-        //   ⚠ 这是**第二份**格式认知（发射端 codegen_expr.c / 执行端 vm.c 各一份），
-        //     改格式必须三处一起改；漏这里 ⇒ 校验器会把合法字节码判成损坏（"字节码校验失败"）。
-        if (p >= end) return 0;
-        int pc = (int)c->code[p++];
-        if (pc != 255) {
-            for (int i = 0; i < pc; i++) {
-                if (!spec_scan(c, p, end, checks, depth + 1, &p)) return 0;
-            }
-        }
-        if (!spec_scan(c, p, end, checks, depth + 1, &p)) return 0;
-    }
-    *out = p;
+// 类型规格（OP_TYPE_CHECK_SPEC / OP_AS_CAST_SPEC / OP_SET_PTR_SPEC / struct 字段元数据的尾随数据）
+// ----------------------------------------------------------------------------
+// ★ 2026-11-17 **单源化**：这里**不再自己实现格式**，长度与合法性一律问 vm.c 的
+//   `type_spec_verify()` —— 历史教训：这段原本是一份独立实现，2026-11-17 给规格加
+//   TYPE_FUNCTION 变体时这里漏改，合法字节码被判成"字节码校验失败"；再早还有"长度表漂移"
+//   把 dump 后半段变成 OP_NOP 的记录。现在只保留**指针推进**这层薄壳。
+//   checks = 0 时把 chunk 传 NULL ⇒ 跳过名字常量索引检查（只算长度）。
+static int spec_scan(const Chunk* c, int p, int end, int checks, int* out) {
+    if (!c || p < 0 || p >= end) return 0;
+    int n = type_spec_verify(c->code + p, c->code + end, checks ? c : NULL);
+    if (n <= 0) return 0;
+    *out = p + n;
     return 1;
 }
 
@@ -693,7 +673,7 @@ static int verify_one(const Chunk* c, int pos, int cap,
         case OP_AS_CAST_SPEC: {
             REG_CHK(a);
             int endp = 0;
-            if (!spec_scan(c, pos + 4, len, checks, 0, &endp)) goto bad;
+            if (!spec_scan(c, pos + 4, len, checks, &endp)) goto bad;
             size = endp - pos;
             break;
         }
@@ -701,7 +681,7 @@ static int verify_one(const Chunk* c, int pos, int cap,
         case OP_SET_PTR_SPEC: {
             REG_CHK(a);
             int endp = 0;
-            if (!spec_scan(c, pos + 4, len, checks, 0, &endp)) goto bad;
+            if (!spec_scan(c, pos + 4, len, checks, &endp)) goto bad;
             size = endp - pos;
             break;
         }
