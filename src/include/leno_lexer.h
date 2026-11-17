@@ -18,6 +18,13 @@ typedef struct {
     int is_bigint;      // 标记是否是大整数
     char* bigint_str;   // 大整数字符串（当 is_bigint 为 1 时有效）
     int is_float;       // 标记是否是浮点数（有小数点）
+    // ★ 2026-11-17（F3 阶段一）：**这个数字字面量是 `#RRGGBBAA` 颜色字面量**。
+    //   为什么要留这个身份：`read_color()` 把颜色直接转成 int（0xAARRGGBB）后产出的仍是
+    //   `TOK_NUM` ⇒ AST 里 `#00000088` 和 `0x00000088` **完全无法区分**，于是
+    //   `@optkeys("border_color:color")` 判不了"你写的是颜色还是裸 int"（实测事故：
+    //   想写 53% 黑却写成 0x00000088，alpha 变成 00 ⇒ 白底对话框上白色色板彻底消失）。
+    //   运行期语义不变（仍是 int），只是**编译期**多一份可判别的信息 ✓
+    int is_color;
 } Token;
 
 // 大整数 token 的字符串登记池（见 lexer.c read_number / lexer_free 的说明）

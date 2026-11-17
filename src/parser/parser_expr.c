@@ -205,6 +205,7 @@ Ast* parse_number(Parser* p) {
     ast->u.num.value = p->lex.current.num_val;
     ast->u.num.is_bigint = p->lex.current.is_bigint;
     ast->u.num.is_float = p->lex.current.is_float;
+    ast->u.num.is_color = p->lex.current.is_color;   // `#RRGGBBAA` 的身份（见 Token.is_color）
     if (p->lex.current.is_bigint && p->lex.current.bigint_str) {
         ast->u.num.bigint_str = copy_string(p->lex.current.bigint_str, strlen(p->lex.current.bigint_str));
     } else {

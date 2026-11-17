@@ -553,7 +553,23 @@ createXxx({visible: "false"})    // 多了一对引号
 | `bool` | `true` / `false` |
 | `string` | 字符串 |
 | `Array` | 数组 |
+| `color` | **颜色字面量** `#RRGGBBAA`（`#RGB` / `#RRGGBB` 也收）—— 见下面的精度说明 |
 | 不写 | 不查（默认，占绝大多数） |
+
+**`color` 的特殊之处（2026-11-17 加）**：它不按"类型兼容"判，因为颜色在语言里**仍然是 int**
+（运行期零开销），与 int 的差别在**写法**而不在类型 ⇒ 判据是"这个字面量是不是颜色字面量"
+（`AST_NUM.is_color`，lexer 的 `read_color` 置位）。
+精度刻意收窄（**宁漏勿误报**）：只有 `alpha 字节 == 0 且颜色分量 != 0` 的裸 int 才告警 ——
+`bg_color: 0`（要透明底色）与 `hover_color: 0xCCFFFFFF`（本来就写对的 ARGB）一律不报；
+变量 / 函数调用 / props 也不报（判不出用法）。
+```leno
+@optkeys(["border_color:color", "bg_color:color"])
+func box(Dict opts) { }
+
+box({border_color: #00000088})    // ✅ 53% 黑
+box({border_color: 0x00000088})   // ⚠️ 这是"全透明 + 0x88 的蓝"，不是半透明黑
+box({bg_color: 0})                // ✅ 既有"不要底色"写法，不报
+```
 
 - 大小写不敏感（`Bool` / `BOOL` 都认），文档写规范形式
 - **`num` 与 `float` 的检查行为完全一样**（float 本来就收 int），差别只在语义表达：

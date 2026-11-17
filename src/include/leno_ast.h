@@ -167,7 +167,9 @@ struct Ast {
     //   由 parser.c 的 `case TOK_LBRACE:`（独立的块语句）置位，其余保持 calloc 的 0 ✓
     int lexical_scope;
     union {
-        struct { double value; int is_bigint; char* bigint_str; int is_float; } num;
+        // is_color（2026-11-17，F3 阶段一）：这个数字字面量写的是 `#RRGGBBAA`。
+        //   运行期表示与普通 int 完全相同，只是给编译期诊断留个身份（见 Token.is_color）
+        struct { double value; int is_bigint; char* bigint_str; int is_float; int is_color; } num;
         struct { char* value; int len; } string;
         int boolean;
         AstList array;

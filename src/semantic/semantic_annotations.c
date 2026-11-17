@@ -70,6 +70,8 @@ static TypeKind anno_type_word_to_kind(const char* w, size_t len) {
     if (anno_word_eq(tmp, "bool"))   return TYPE_BOOL;
     if (anno_word_eq(tmp, "string")) return TYPE_STRING;
     if (anno_word_eq(tmp, "Array"))  return TYPE_ARRAY;
+    // ⚠ `color` **不在这里**：它不是 TypeKind，判据是"字面量是不是 `#RRGGBBAA`"，
+    //   在 anno_check_value 里单独处理（见那里的注释）
     return TYPE_ANY;
 }
 
@@ -121,6 +123,42 @@ static const char* anno_dict_key(Ast* k) {
 static void anno_check_value(Semantic* s, Ast* value, const char* want_word, size_t want_len,
                              const char* key, const char* fn_show, const char* where) {
     if (!s || !value || !want_word || want_len == 0) return;
+
+    // ★ 2026-11-17（F3 阶段一）：**`:color` 键类型** —— 只认 `#RRGGBBAA` 字面量。
+    //   为什么单独一条而不是并进 anno_type_word_to_kind：颜色在语言里**仍是 int**（运行期零开销），
+    //   它与 int 的差别在**写法**而不在类型 ⇒ 判据是"这个字面量是不是颜色字面量"
+    //   （`AST_NUM.is_color`，由 lexer 的 read_color 置位），不是类型兼容性。
+    //   覆盖范围刻意只有**字面量**：变量 / 调用 / props 一律放行（宁漏勿误报 ——
+    //   存量代码里 `theme.bg` 这类变量占绝大多数，它们本来就该走 Color 的构造/取用路径）。
+    //   现场（真事故）：`border_color: 0x00000088` 想表达"53% 黑"，而内部是 0xAARRGGBB
+    //   ⇒ alpha = 0x00（全透明）⇒ 白色色板在白底对话框上彻底消失，查了半天 ✗
+    // 精度（2026-11-17 二次收口）：**只在 alpha 字节为 0 且颜色分量非 0 时**告警。
+    //   为什么不能见 null 就报：真实代码里两种**故意**的裸 int 很常见 ——
+    //     · `bg_color: 0`      = 全透明黑（"不要底色"的既有写法，Aria 里到处都是）
+    //     · `hover_color: 0xCCFFFFFF` = **合法的** ARGB（alpha=0xCC），本来就写对了
+    //   这两类一旦也报，"警告"立刻变成噪声，用户就会开始忽略它 ✗
+    //   而 `0x00000088`（想写 53% 黑）恰好落在"alpha=0 但 R/G/B 有值"上 ⇒ 这正是事故形态，
+    //   也是唯一**几乎不可能是故意**的写法 ✓
+    if (want_len == 5 && strncmp(want_word, "color", 5) == 0) {
+        if (value->kind == AST_NUM && !value->u.num.is_color) {
+            unsigned int v = (unsigned int)(long long)value->u.num.value;
+            unsigned int a = (v >> 24) & 0xFFu;
+            if (a == 0 && v != 0) {
+                const char* file = error_get_filename();
+                fprintf(stderr,
+                        "%s:%d: [警告] %s 的 opts 键 '%s' 期望颜色字面量 `#RRGGBBAA`，"
+                        "实际写的是普通整数 0x%08X\n"
+                        "        提示: 颜色内部是 **0xAARRGGBB**（alpha 在**最高**字节）—— "
+                        "这个值的 alpha 是 0x00（全透明 ⇒ 画上去什么都看不见）\n"
+                        "        提示: 半透明请写 `#RRGGBBAA`（53%% 黑 = `#00000088`）；"
+                        "`0` 是**全透明黑**，不是\"自动\"\n",
+                        file ? file : "?", value->line, fn_show, key, v);
+                fflush(stderr);
+            }
+        }
+        return;
+    }
+
     TypeKind want = anno_type_word_to_kind(want_word, want_len);
     if (want == TYPE_ANY) return;          // 认不出的类型词 ⇒ 不查
     // 只对"字面量 / 变量"推断：函数调用这类先放行，避免在检查阶段提前触发别处的推断

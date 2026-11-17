@@ -226,6 +226,7 @@ static Token make_token(Lexer* lex, LenoTokenType type) {
     tok.is_bigint = 0;
     tok.bigint_str = NULL;
     tok.is_float = 0;
+    tok.is_color = 0;      // 只有 read_color 会置 1（见 Token.is_color 的注释）
     return tok;
 }
 
@@ -431,6 +432,7 @@ static Token read_color(Lexer* lex) {
         tok.is_bigint = 0;
         tok.bigint_str = NULL;
         tok.is_float = 0;
+        tok.is_color = 0;      // 格式错误：别把半成品当成颜色字面量 ✓
         return tok;
     }
 
@@ -468,6 +470,7 @@ static Token read_color(Lexer* lex) {
     tok.is_bigint = 0;
     tok.bigint_str = NULL;
     tok.is_float = 0;
+    tok.is_color = 1;      // 留身份：`@optkeys(...:color)` 靠它判"这是颜色还是裸 int" ✓
 
     return tok;
 }

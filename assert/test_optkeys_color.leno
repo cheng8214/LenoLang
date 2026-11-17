@@ -1,0 +1,88 @@
+// ============================================================
+// `@optkeys(...:color)`（2026-11-17，F3 阶段一）
+// ------------------------------------------------------------
+// 现场（真事故）：`border_color: 0x00000088` 想表达"53% 黑"，而颜色内部是 **0xAARRGGBB**
+//   ⇒ 这个值的 alpha 是 0x00（全透明）⇒ 白色色板在白底对话框上彻底消失，查了半天 ✗
+// 做法：
+//   ① lexer 的 read_color 给 `#RRGGBBAA` 打身份（Token / AST 上的 is_color）——
+//      此前它直接产出普通 TOK_NUM，AST 里和 `0x…` 完全无法区分；
+//   ② `@optkeys` 的键类型新增 `color`：值必须是颜色字面量；
+//   ③ **精度**：只在"alpha 字节 = 0 且颜色分量 ≠ 0"时告警。`bg_color: 0`（要透明底色）与
+//      `hover_color: 0xCCFFFFFF`（本来就写对的 ARGB）一律不报 —— 否则警告立刻变噪声。
+// 判据：③④⑤ 是**误报守卫**，① 是正向放行，② 是事故形态必须报。
+// ============================================================
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+// 造一份"同模块 + @optkeys"的最小源码；opts_body 用**无引号键**（与 Aria 的写法一致）
+func make_case(string work, string name, string opts_body): string {
+    var f = dirs.join(work, name)
+    var src = "@optkeys([\"bg_color:color\", \"border_color:color\", \"w:int\"])\n" +
+              "func box(Dict opts) { }\n" +
+              "\n" +
+              "main() {\n" +
+              "    box({" + opts_body + "})\n" +
+              "    print(\"TAG=done\")\n" +
+              "}\n"
+    files.write(f, src)
+    return f
+}
+
+// ① 颜色字面量 ⇒ 放行，且**不许**出现颜色告警
+func case_literal_ok(string work) {
+    var f = make_case(work, "c_ok.leno", "bg_color: #00000088, border_color: #F00, w: 1")
+    var out = ce.expect_ok(f, "颜色字面量必须通过", "TAG=done")
+    assert_true(not strings.has(out, "期望颜色字面量"),
+        "颜色字面量不该告警；实际输出=" + out)
+}
+
+// ② 裸 int 且 alpha=0、颜色分量非 0 ⇒ 告警（这就是事故形态）
+func case_plain_int_warns(string work) {
+    var f = make_case(work, "c_bad.leno", "border_color: 0x00000088")
+    var out = ce.expect_ok(f, "裸 int 当颜色：编译仍通过（只是警告）", "TAG=done")
+    assert_true(strings.has(out, "期望颜色字面量"), "必须报颜色字面量告警；实际=" + out)
+    assert_true(strings.has(out, "alpha 是 0x00"), "告警要说明 alpha 是 0x00；实际=" + out)
+    assert_true(strings.has(out, "#00000088"), "告警要给出正确写法示例；实际=" + out)
+}
+
+// ③ 误报守卫：`0`（= 全透明黑，既有"不要底色"写法）⇒ 不告警
+func case_zero_silent(string work) {
+    var f = make_case(work, "c_zero.leno", "bg_color: 0")
+    var out = ce.expect_ok(f, "bg_color: 0 必须放行", "TAG=done")
+    assert_true(not strings.has(out, "期望颜色字面量"),
+        "bg_color: 0 是既有写法（要透明底色），不该告警；实际=" + out)
+}
+
+// ④ 误报守卫：本来就写对的 ARGB（alpha 非 0）⇒ 不告警
+func case_argb_silent(string work) {
+    var f = make_case(work, "c_argb.leno", "bg_color: 0xCCFFFFFF")
+    var out = ce.expect_ok(f, "合法 ARGB（alpha=0xCC）必须放行", "TAG=done")
+    assert_true(not strings.has(out, "期望颜色字面量"),
+        "0xCCFFFFFF 是合法 ARGB（80% 白），不该告警；实际=" + out)
+}
+
+// ⑤ 误报守卫：非颜色键（`:int`）里的普通整数照旧
+func case_other_key_silent(string work) {
+    var f = make_case(work, "c_int.leno", "w: 30")
+    var out = ce.expect_ok(f, "普通 int 键不受影响", "TAG=done")
+    assert_true(not strings.has(out, "期望颜色字面量"),
+        "w:int 不该被当成颜色；实际=" + out)
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_optkeys_color")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    case_literal_ok(work)
+    case_plain_int_warns(work)
+    case_zero_silent(work)
+    case_argb_silent(work)
+    case_other_key_silent(work)
+
+    dirs.delete(work)
+    print("test_optkeys_color passed\n")
+}
