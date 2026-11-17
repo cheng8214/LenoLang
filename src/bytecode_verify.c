@@ -277,6 +277,19 @@ static int spec_scan(const Chunk* c, int p, int end, int checks, int depth, int*
         if (!spec_scan(c, p, end, checks, depth + 1, &p)) return 0;
     } else if (kind == TYPE_PTR_GENERIC) {
         if (!spec_scan(c, p, end, checks, depth + 1, &p)) return 0;
+    } else if (kind == TYPE_FUNCTION) {
+        // ★ 2026-11-17（v3.2.43）：函数签名规格 = 形参个数(u8) + 各形参规格 + 返回类型规格。
+        //   255 = 不校验形参（裸 `func`）⇒ 后面只跟返回类型规格。
+        //   ⚠ 这是**第二份**格式认知（发射端 codegen_expr.c / 执行端 vm.c 各一份），
+        //     改格式必须三处一起改；漏这里 ⇒ 校验器会把合法字节码判成损坏（"字节码校验失败"）。
+        if (p >= end) return 0;
+        int pc = (int)c->code[p++];
+        if (pc != 255) {
+            for (int i = 0; i < pc; i++) {
+                if (!spec_scan(c, p, end, checks, depth + 1, &p)) return 0;
+            }
+        }
+        if (!spec_scan(c, p, end, checks, depth + 1, &p)) return 0;
     }
     *out = p;
     return 1;

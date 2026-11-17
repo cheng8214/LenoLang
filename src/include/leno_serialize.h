@@ -210,7 +210,15 @@
 //   用途：`jsons.fill` 按内层类型递归转换（此前 `Dict[string,Array[int]]` 的内层不转换、
 //   `Dict[string,Dict[...]]` 连外层都不校验 ⇒ 静态类型说谎）。
 //   ⇒ LENO_MODCACHE_VERSION 同步升；serialize.c 的 struct 字段表也多了递归树 ⇒ 旧缓存重编。
-#define LENO_BIN_VERSION    0x0003022A  // v3.2.42（2026-11-15）—— OP_STRUCT_DEF 字段元数据
+// v3.2.43（2026-11-17）：**类型规格新增 TYPE_FUNCTION 变体** —— 函数签名 = 形参个数(u8) +
+//   各形参的类型规格 + 返回类型规格。用途：`as func(int):void` / `is func(…):bool` 现在带
+//   **形参类型**，不再只校验个数（此前 `as func(...)` 恒 null；只比个数时缺参数的闭包会被
+//   当目标签名调用、缺的实参静默变 null）。
+//   为什么必须 bump：规格是**变长尾随字节** —— 旧 VM 不认识 TYPE_FUNCTION 规格 ⇒ 会把后面的
+//   签名当成下一条指令（整条字节码流错位），所以旧 .lenb / .lenomc 必须整体失效重编。
+#define LENO_BIN_VERSION    0x0003022B  // v3.2.43（2026-11-17）—— 类型规格新增 TYPE_FUNCTION
+                                        //   （函数签名：形参个数 + 各形参规格 + 返回类型）
+                                        // v3.2.42（2026-11-15）—— OP_STRUCT_DEF 字段元数据
                                         //   追加 ARRAY/DICT 的递归类型规格（布局变了）
                                         // v3.2.41（2026-11-15）—— OP_STRUCT_DEF 字段元数据
                                         //   追加 Dict 键/值类型（布局变了）
@@ -457,8 +465,10 @@
 // v45（2026-11-09）：OP_STRUCT_DEF 的字段元数据多一个 `element_struct_name`
 //   （见 LENO_BIN_VERSION v3.2.29）。模块字节码里是同一份布局 ⇒ 必须同步升，
 //   否则旧 .lenomc 会被当成新格式读，字段定义整体错位。
-#define LENO_MODCACHE_VERSION  0x0000003A  // v57 - 同 LENO_BIN_VERSION v3.2.42（OP_STRUCT_DEF
-                                            //   字段元数据追加 ARRAY/DICT 的递归类型规格）
+#define LENO_MODCACHE_VERSION  0x0000003B  // v58 - 同 LENO_BIN_VERSION v3.2.43（类型规格新增
+                                            //   TYPE_FUNCTION：函数签名随指令尾随字节走）
+                                            // v57 - 同 v3.2.42（OP_STRUCT_DEF 字段元数据追加
+                                            //   ARRAY/DICT 的递归类型规格）
                                             // v56 - 同 LENO_BIN_VERSION v3.2.41（OP_STRUCT_DEF
                                             //   字段元数据追加 Dict 键/值类型 ⇒ 布局变了）
                                             // v55 - 同 LENO_BIN_VERSION v3.2.40（新增 opcode

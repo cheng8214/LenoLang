@@ -400,14 +400,21 @@ typedef enum {
     //             [TYPE_ARRAY]       spec(元素)
     //             [TYPE_DICT]        spec(键) spec(值)
     //             [TYPE_PTR_GENERIC] spec(元素)
+    //             [TYPE_FUNCTION]    param_count(1) + spec(形参)* + spec(返回)   ★ v3.2.43
+    //                               param_count == 255 ⇒ 不校验形参（裸 `func`），后面只跟返回类型
     //     其余 kind 无附加字节；发射端把 TYPE_UNKNOWN / TYPE_INFER 归一为 TYPE_ANY（无约束）。
+    //   ⚠ 函数签名的判据（vm.c 的 fn_params_match）：只比**形参个数 + 标量形参类型**；
+    //     复合 / struct / face / enum 在运行期只有 kind、没有名字与元素类型 ⇒ 不判（宁漏勿误报）；
+    //     返回类型不比（`func():int` 可以当 `func():void` 用，与静态侧一致）。
     //   判定口径（vm.c 的 value_matches_kind + type_spec_match，**唯一来源**）：
     //     · 叶子（int/float/string/bool/null/…）与容器（array/dict/struct/face/enum/…）比类型；
     //     · Array 的**每个元素**、Dict 的**每个键与值**递归过子规格；
     //     · Ptr[T] 只校验顶层（FFI 指针里没有"元素值"可递归；`as` 会把叶子元素类型回填）；
     //     · 嵌套深度上限 TYPE_SPEC_MAX_DEPTH（防自引用容器无限递归）⇒ 超限 fail-closed。
-    //   ⚠ codegen 只在「泛型实参**带约束**」时才发这两条（见 codegen_expr.c 的 type_needs_spec）：
-    //     `Array[int]` / `Dict[string,string]` / `Array[Array[int]]` / `Array[Rect]` / `Ptr[u8]` …
+    //   ⚠ codegen 只在「泛型实参**带约束**」或「目标类型是**函数**」时才发这两条
+    //     （见 codegen_expr.c 的 type_needs_spec）：
+    //     `Array[int]` / `Dict[string,string]` / `Array[Array[int]]` / `Array[Rect]` / `Ptr[u8]` /
+    //     `func(int):void`（含裸 `func`，用 param_count=255 表达"任意签名"）…
     //     裸 `Array` / `Dict` / `Ptr` / 带名字的 struct·face·enum 顶层仍走紧凑版 ——
     //     热路径（`case is Rect` 等）与旧版**逐字节一致**，零额外开销。
     //   追加在末尾 ⇒ 既有 opcode 编号不动。

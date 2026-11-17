@@ -18,6 +18,10 @@ sink.set("calls", 0)
 sink.set("arg", -1)
 sink.set("zero", 0)
 
+// 字符串单独一个 Dict：裸 Dict 的元素类型会被**第一次写入**定死（这里先写 0 ⇒ 只能装 int）
+Dict texts = {}
+texts.set("last", "")
+
 // ---------- ① 带参闭包：签名匹配 ⇒ 真的能调用 ----------
 Dict box = {}
 box.set("one", func(int n) {
@@ -51,5 +55,31 @@ assert_eq(_int(sink.get("zero", 0)), 1, "零参闭包要真的执行")
 // ---------- ④ 非函数值 ⇒ 仍是 null（不抛） ----------
 var f4 = give_any() as func():void
 assert_eq(f4 == null, true, "整数 as func ⇒ null（as 不抛的既定契约）")
+
+// ---------- ⑤ 形参**类型**不符 ⇒ null（v3.2.43 起带类型，不再只比个数） ----------
+Dict boxS = {}
+boxS.set("s", func(string s) { texts.set("last", s) })
+var f5 = boxS.get("s", null) as func(int):void
+assert_eq(f5 == null, true, "func(string) 当 func(int):void ⇒ null（个数一样、类型不符）")
+
+// 类型对得上 ⇒ 透传
+var f6 = boxS.get("s", null) as func(string):void
+assert_eq(f6 == null, false, "func(string) 当 func(string):void ⇒ 可用")
+f6("ok")
+assert_eq(_str(texts.get("last", "")), "ok", "透传后实参要真的进来")
+
+// ---------- ⑥ 复合形参（Array[T]）只比个数，不误杀 ----------
+Dict boxA = {}
+boxA.set("a", func(Array[int] xs) { sink.set("n", xs.len()) })
+var f7 = boxA.get("a", null) as func(Array[int]):void
+assert_eq(f7 == null, false, "Array[int] 形参：只比个数 ⇒ 不误杀")
+f7([1, 2, 3])
+assert_eq(_int(sink.get("n", 0)), 3, "复合形参闭包要能正常调用")
+
+// ---------- ⑦ 裸 `func`（不写签名）⇒ 任意签名都收 ----------
+Dict boxB = {}
+boxB.set("b", func(int x, string y) { texts.set("pair", _str(x) + y) })
+var f8 = boxB.get("b", null) as func
+assert_eq(f8 == null, false, "裸 func 不约束签名（2 参闭包也收）")
 
 print("test_as_func_cast passed\n")

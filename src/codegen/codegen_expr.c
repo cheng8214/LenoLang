@@ -102,6 +102,11 @@ static int type_is_constraining(TypeInfo* t) {
 static int type_needs_spec(TypeInfo* t) {
     if (!t) return 0;
     switch (t->kind) {
+        // ★ 2026-11-17（F1 第二步）：函数类型的 `as` / `is` 一律走规格版 —— 形参**类型**
+        //   才带得动（紧凑版只有一个 C 字节，装不下签名）。
+        //   裸 `func`（无返回类型、无形参表）也走规格版，用 "255 = 不校验" 表达"任意函数"。
+        case TYPE_FUNCTION:
+            return 1;
         case TYPE_ARRAY:
             return type_is_constraining(t->element_type);
         case TYPE_DICT:
@@ -133,6 +138,23 @@ static void emit_type_spec(CodeGen* gen, TypeInfo* t, int line) {
         emit_type_spec(gen, t ? t->value_type : NULL, line);   // V（紧跟 K）
     } else if (kind == TYPE_PTR_GENERIC) {
         emit_type_spec(gen, t ? t->element_type : NULL, line);
+    } else if (kind == TYPE_FUNCTION) {
+        // ★ 2026-11-17（F1 第二步）：函数签名规格 —— 形参个数(u8) + 每个形参的类型规格 + 返回类型规格。
+        //   255 = **不校验形参**（裸 `func` / 形参超过 254 个）：此时不写任何形参规格，
+        //   紧接着写返回类型规格 ⇒ 长度仍然自定界（读侧同源，见 vm.c 的 type_spec_size_impl）。
+        //   返回类型：`func():void` 是 TYPE_NULL，无标注（`func()`）是 NULL ⇒ 归一成 ANY（不校验）。
+        int pc = 0;
+        int bare = 1;
+        if (t) {
+            if (t->param_types && t->param_count > 0) { pc = t->param_count; bare = 0; }
+            if (t->return_type) bare = 0;
+        }
+        if (bare || pc > 254) pc = 255;
+        chunk_write(gen->chunk, (uint8_t)pc, line);
+        if (pc != 255) {
+            for (int i = 0; i < pc; i++) emit_type_spec(gen, t->param_types[i], line);
+        }
+        emit_type_spec(gen, t ? t->return_type : NULL, line);
     }
 }
 
@@ -210,20 +232,8 @@ static void emit_type_op(CodeGen* gen, OpCode op, int reg, TypeInfo* t, int with
     TypeKind kind = t ? t->kind : TYPE_ANY;
     TypeKind elem = (t && t->element_type) ? t->element_type->kind : TYPE_ANY;
 
-    // ★ 2026-11-17（F1 第二步）：目标类型是**函数类型**时，C 操作数改记「形参个数」
-    //   （255 = 不检查：裸 `func` / 超过 254 个参数）。
-    //   为什么需要：`as func(...)` 此前恒为 null（见 vm.c 的 vm_as_cast 注释），补成"透传"之后
-    //   仍有一个坑 —— **签名不符的闭包会被当成目标签名调用**，缺的参数静默变成 null：
-    //     实测 `func(int n)` 被 `as func():void` 后调 `bad()` ⇒ 打出 "cb" + 空值、不报错。
-    //   形参**类型**不在指令里（要带就得升字节码格式），所以这一步只校验**个数**；
-    //   个数不符 ⇒ `as` 返回 null（保持"as 不抛"的既定契约），并在 VM 侧打一条带行号的警告。
-    if (kind == TYPE_FUNCTION) {
-        int bare = (!t->return_type && !t->param_types && t->param_count == 0);
-        int arity = bare ? 255 : t->param_count;
-        if (arity > 254) arity = 255;
-        elem = (TypeKind)arity;
-    }
-
+    // ★ 2026-11-17（F1 第二步）：函数类型走**规格版**（下面 type_needs_spec 那一支），
+    //   签名（形参类型）随指令尾随字节走；紧凑版不再承载函数签名 ⇒ 这里不做特殊处理。
     if (type_needs_spec(t)) {
         emit_type_spec_op(gen, (op == OP_TYPE_CHECK) ? OP_TYPE_CHECK_SPEC : OP_AS_CAST_SPEC,
                           reg, t, line);

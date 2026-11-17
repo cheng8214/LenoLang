@@ -462,6 +462,17 @@ static int type_spec_size_impl(const uint8_t* spec, const uint8_t* end, int dept
         n += type_spec_size_impl(spec + n, end, depth + 1);   // V
     } else if (k == TYPE_PTR_GENERIC) {
         n += type_spec_size_impl(spec + n, end, depth + 1);
+    } else if (k == TYPE_FUNCTION) {
+        // ★ 2026-11-17（F1 第二步）：函数签名规格 = 形参个数(u8) + 各形参规格 + 返回类型规格。
+        //   255 = 不校验形参（裸 `func`）⇒ 此时只跟一个返回类型规格（与发射端同构，
+        //   见 codegen_expr.c 的 emit_type_spec）。
+        if (end && spec + n + 1 > end) return n;
+        int pc = spec[n];
+        n += 1;
+        if (pc != 255) {
+            for (int i = 0; i < pc; i++) n += type_spec_size_impl(spec + n, end, depth + 1);
+        }
+        n += type_spec_size_impl(spec + n, end, depth + 1);
     }
     return n;
 }
@@ -528,6 +539,26 @@ static void sr_render(SpecRender* r, const uint8_t* spec, int depth) {
         sr_append(r, "]");
         return;
     }
+    if (k == TYPE_FUNCTION) {
+        // ★ 2026-11-17（F1 第二步）：反汇编与 `as` 失败警告都靠这里渲染 `func(int, string):void`
+        int pc = p[0];
+        const uint8_t* q = p + 1;
+        sr_append(r, "func(");
+        if (pc == 255) {
+            sr_append(r, "…");       // 裸 func：不约束签名
+        } else {
+            for (int i = 0; i < pc; i++) {
+                if (i > 0) sr_append(r, ", ");
+                sr_render(r, q, depth + 1);
+                q += type_spec_size(q);
+            }
+        }
+        sr_append(r, "):");
+        // 返回类型：TYPE_NULL 在源码里写的是 `void`（`func():void`），渲染成 void 更贴近写法
+        if (q && (TypeKind)q[0] == TYPE_NULL) sr_append(r, "void");
+        else sr_render(r, q, depth + 1);
+        return;
+    }
     sr_append(r, type_kind_to_string(k));
 }
 
@@ -542,6 +573,87 @@ void type_spec_render(Chunk* chunk, const uint8_t* spec, char* out, int out_size
     r.size = (size_t)out_size;
     r.used = 0;
     sr_render(&r, spec, 0);
+}
+
+// ============================================================================
+// 函数签名比较（2026-11-17，F1 第二步）
+// ----------------------------------------------------------------------------
+// 规格里的签名是**编译期**写下来的（形参个数 + 每个形参的类型规格）；运行期这边能拿到的是
+// 闭包的 `ObjFunction->param_types`（TypeKind 数组，可能为 NULL）与 `arity`。
+// 判据刻意窄（宁漏勿误报）：
+//   · 裸 `func`（规格 count == 255）⇒ 任意签名都收；
+//   · 原生函数 / ffi callback 没有类型信息 ⇒ 只比个数（native）/ 直接放行（callback）；
+//   · 闭包没记 param_types ⇒ 只比个数；
+//   · 形参**类型**只比标量（int/float/string/bool）—— 复合（Array/Dict/Ptr）、
+//     struct/face/enum 在 param_types 里只有一个 kind、没有名字与元素类型，硬比会误杀；
+//   · 返回类型**不比**（`func():int` 能当 `func():void` 用，与静态侧口径一致）。
+// ============================================================================
+static int fn_params_match(Value value, const uint8_t* pspec, int pc) {
+    if (!value_matches_kind(value, TYPE_FUNCTION)) return 0;
+    if (pc == 255) return 1;
+    Object* o = val_as_obj(value);
+    if (o->type == OBJ_NATIVE) return ((ObjNative*)o)->arity == pc;
+    if (o->type != OBJ_CLOSURE) return 1;          // ffi callback 等：判不了 ⇒ 放行
+    ObjFunction* f = ((ObjClosure*)o)->function;
+    if (!f) return 1;
+    if (f->arity != pc) return 0;
+    if (!f->param_types) return 1;
+    const uint8_t* p = pspec;
+    for (int i = 0; i < pc; i++) {
+        TypeKind want = (TypeKind)p[0];
+        TypeKind have = f->param_types[i];
+        if (have != TYPE_ANY && want != TYPE_ANY && want != TYPE_UNKNOWN && want != TYPE_INFER) {
+            switch (want) {
+                case TYPE_INT:
+                    if (have != TYPE_INT && have != TYPE_BIGINT) return 0;
+                    break;
+                case TYPE_FLOAT:
+                    if (have != TYPE_FLOAT) return 0;
+                    break;
+                case TYPE_STRING:
+                    if (have != TYPE_STRING) return 0;
+                    break;
+                case TYPE_BOOL:
+                    if (have != TYPE_BOOL) return 0;
+                    break;
+                default:
+                    break;      // 复合 / struct / face / enum：缺名字信息，不判
+            }
+        }
+        p += type_spec_size(p);
+    }
+    return 1;
+}
+
+// 把一个函数值渲染成 `func(int, string)`（`as` 失败警告用）
+static void fn_value_to_str(Value v, char* out, size_t n) {
+    if (!out || n == 0) return;
+    out[0] = '\0';
+    if (!value_matches_kind(v, TYPE_FUNCTION)) {
+        snprintf(out, n, "非函数值");
+        return;
+    }
+    Object* o = val_as_obj(v);
+    if (o->type == OBJ_CLOSURE && ((ObjClosure*)o)->function) {
+        ObjFunction* f = ((ObjClosure*)o)->function;
+        size_t used = (size_t)snprintf(out, n, "func(");
+        for (int i = 0; i < f->arity; i++) {
+            TypeKind k = (f->param_types && i < f->arity) ? f->param_types[i] : TYPE_ANY;
+            if (i > 0 && used + 1 < n) { out[used++] = ','; out[used++] = ' '; out[used] = '\0'; }
+            const char* nm = (k == TYPE_ANY || k == TYPE_UNKNOWN) ? "any" : type_kind_to_string(k);
+            used += (size_t)snprintf(out + used, n - used, "%s", nm);
+            if (used + 1 >= n) break;
+        }
+        // 返回类型运行期拿不到（ObjFunction.return_types 只由编译期统计填）⇒ 只渲染形参，
+        // 警告文案里说明"形参不符"即可，避免写出一个假的返回类型。
+        snprintf(out + used, n - used, ")");
+        return;
+    }
+    if (o->type == OBJ_NATIVE) {
+        snprintf(out, n, "原生函数（%d 个参数）", ((ObjNative*)o)->arity);
+        return;
+    }
+    snprintf(out, n, "func(…)");
 }
 
 // 判定 value 是否符合 spec（**递归**：Array 的每个元素、Dict 的每个键/值都要过子规格）。
@@ -586,6 +698,12 @@ static int type_spec_match(Value value, const uint8_t* spec, Chunk* chunk, int d
             if (!type_spec_match(dict->entries[i].value, vspec, chunk, depth + 1)) return 0;
         }
         return 1;
+    }
+
+    // ★ 2026-11-17（F1 第二步）：函数签名 —— 形参个数 + 标量形参类型（判据见 fn_params_match）
+    //   ⚠ p 指向 param_count 那一字节，形参规格从 **p + 1** 开始（踩过一次：把 pc 当成类型）。
+    if (kind == TYPE_FUNCTION) {
+        return fn_params_match(value, p + 1, (int)p[0]);
     }
 
     // Ptr[T]：FFI 指针里没有"元素值"可递归 ⇒ 只校验顶层（元素类型在 as 里回填，见下）
@@ -796,23 +914,13 @@ Value vm_as_cast(Value value, TypeKind expected_type, TypeKind elem_type, Value 
         //   ⚠ 这里**不做签名核对**：OP_AS_CAST 只带 TypeKind（形参类型不在指令里，
         //     要带就得升字节码格式）。签名不符由**调用点**报（参数个数 / 实参类型）；
         //     等 F1 第二步（rt_as_fn + sig_hash）再补运行期的精确报文。
-        case TYPE_FUNCTION: {
+        case TYPE_FUNCTION:
+            // ★ 2026-11-17（F1）：值确实是闭包 / 原生函数 ⇒ 透传（不复制、保留 upvalue）。
+            //   ⚠ 带签名的函数类型现在走 **OP_AS_CAST_SPEC**（签名在尾随字节里，见
+            //     fn_params_match）；这里只兜"紧凑版"（理论上已不会有函数类型走到这，
+            //     留着是为了 fail-open：判不了就当能转，好过给出 null）。
             matches = value_matches_kind(value, TYPE_FUNCTION);
-            // elem_type 对函数类型是**形参个数**（255 = 不检查，见 codegen 的 emit_type_op）。
-            //   个数不符 ⇒ 判不匹配（返回 null，保持 `as` 不抛的契约）；调用点因此拿到 null
-            //   而不是"缺参数的闭包"，不会再静默打出一半参数。
-            if (matches && (int)elem_type != 255) {
-                int have = -1;
-                Object* o = val_as_obj(value);
-                if (o->type == OBJ_CLOSURE) {
-                    have = ((ObjClosure*)o)->function ? ((ObjClosure*)o)->function->arity : -1;
-                } else if (o->type == OBJ_NATIVE) {
-                    have = ((ObjNative*)o)->arity;
-                }
-                if (have >= 0 && have != (int)elem_type) matches = 0;
-            }
             break;
-        }
         case TYPE_PTR:
             if (val_is_obj(value) &&
                 (val_as_obj(value)->type == OBJ_FFI_POINTER ||

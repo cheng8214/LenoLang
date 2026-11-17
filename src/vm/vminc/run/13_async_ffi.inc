@@ -26,26 +26,7 @@
                 name_val = frame->chunk->constants[nidx];
             }
         }
-        Value before_cast = R(a);
         R(a) = vm_as_cast(R(a), expected, elem, name_val);
-        // ★ 2026-11-17（F1）：函数值**签名（形参个数）不符**时 `as` 给 null —— 按契约不抛，
-        //   但**不能一声不吭**：缺参数的闭包被当目标签名调用时，缺的实参静默变 null
-        //   （实测 `func(int n)` 当 `func():void` 调 ⇒ 打印 "cb" + 空值）。这里补一条带行号的警告。
-        if (expected == TYPE_FUNCTION && (int)elem != 255 &&
-            val_is_null(R(a)) && !val_is_null(before_cast) && val_is_obj(before_cast)) {
-            Object* fn_obj = val_as_obj(before_cast);
-            int have = -1;
-            if (fn_obj->type == OBJ_CLOSURE && ((ObjClosure*)fn_obj)->function) {
-                have = ((ObjClosure*)fn_obj)->function->arity;
-            } else if (fn_obj->type == OBJ_NATIVE) {
-                have = ((ObjNative*)fn_obj)->arity;
-            }
-            if (have >= 0 && have != (int)elem) {
-                fprintf(stderr,
-                        "警告: as func(...) 签名不符（第 %d 行）：闭包有 %d 个参数，目标签名有 %d 个 ⇒ 结果是 null\n",
-                        GET_CURRENT_LINE(), have, (int)elem);
-            }
-        }
         DISPATCH();
     }
     // OP_TYPE_CHECK_SPEC A B C: R[A] = (R[A] is <类型规格>)（规格紧随 4 字节头，格式见 leno_vm.h）
@@ -63,7 +44,23 @@
     LABEL(OP_AS_CAST_SPEC): {
         int a = READ_A();
         int consumed = 0;
+        Value before_cast = R(a);
         R(a) = type_spec_cast(R(a), frame->chunk, frame->ip, &consumed);
+        // ★ 2026-11-17（F1 第二步）：函数签名不符时 `as` 按契约给 null（不抛），但**不能一声不吭** ——
+        //   缺参数 / 形参类型不符的闭包被当目标签名调用，症状就是"回调永远不触发"。
+        //   这里把**期望签名**（规格渲染）与**实际签名**（闭包的 param_types）一起打出来：
+        //     `警告: as func():void 失败（第 5 行）：func(int) ⇒ 结果是 null`
+        //   只在"值**本来是函数**、但签名不符"时提示 —— 非函数值 as func 给 null 是 `as` 的
+        //   正常语义（调用方本来就该判空），打警告只会把噪声加到正常代码上。
+        if (val_is_null(R(a)) && value_matches_kind(before_cast, TYPE_FUNCTION) &&
+            frame->chunk && frame->ip[0] == TYPE_FUNCTION) {
+            char want[192];
+            char have[192];
+            type_spec_render(frame->chunk, frame->ip, want, (int)sizeof(want));
+            fn_value_to_str(before_cast, have, sizeof(have));
+            fprintf(stderr, "警告: as %s 失败（第 %d 行）：实际拿到 %s（形参不符）⇒ 结果是 null\n",
+                    want, GET_CURRENT_LINE(), have);
+        }
         frame->ip += consumed;
         DISPATCH();
     }
