@@ -4,6 +4,16 @@
             //   回退下界受"被闭包按引用捕获的槽位"约束（见 sem_local_release）。
             int _mark_if = sem_local_mark(s);
 
+            // ★ 2026-11-18（F2·L2）：**在访问条件之前**就把"早退收窄"的候选记下来。
+            //   ⚠ 必须在这里做：`visit(s, cond)` 可能会**改写/替换**条件子树
+            //     （`=>` 绑定、守卫链重写…），事后再读 `u.binop.l/r` 就是野指针 ——
+            //     实测在 leno_gui 的 IDE 布局上直接 0xC0000005 ✗
+            int _nn_eq = 0;
+            const char* _nn_name = sem_null_cmp_var(ast->u.if_.cond, &_nn_eq);
+            // 同理：then 体"C 里是不是必定离开"也必须在访问前判 —— 访问之后
+            // `then->u.block.items` 可能已被改写/释放（实测读了就 0xC0000005 ✗）
+            int _nn_exits = (!ast->u.if_.else_) ? sem_body_always_exits(ast->u.if_.then) : 0;
+
             // D2: 条件位置出现赋值（`if x = 5`）几乎总是漏写 '='（想写 ==）。
             // 赋值表达式会把值写入变量并以该值作为条件——静默通过是 C 语言经典坑。
             if (ast->u.if_.cond && (ast->u.if_.cond->kind == AST_ASSIGN ||
@@ -435,6 +445,9 @@
                     }
                 }
                 
+                // （`if q != null { … }` 的 then 分支收窄由 `apply_null_narrowing` 建影子符号
+                //   完成 —— 影子符号的 `type->nullable` 已清零，L2 的检查自然放行 ✓
+                //   这里不需要再做一遍。）
                 if (ast->u.if_.then->kind == AST_BLOCK) {
                     visit_list(s, &ast->u.if_.then->u.block);
                 } else {
@@ -520,6 +533,16 @@
                     scope_detach_child(s->current, else_scope);
                     scope_free(else_scope);
                 }
+            }
+
+            // ★ 2026-11-18（F2·L2）：**早退收窄** —— `if q == null { return/break/continue/throw }`
+            //   之后，本块**剩下**的语句里 q 一定非空（否则那些语句根本执行不到）。
+            //   `_nn_name`/`_nn_eq` 在**访问条件之前**就记下了（见 case 开头，那里能安全读 AST）。
+            //   ⚠ 只记名字、不改 Symbol：改 `sym->type->nullable` 或持有 Symbol* 都会在
+            //     作用域先释放时炸（实测 0xC0000005 ✗）；消费方两处自查名字集合
+            //     （L2 的检查 + native 可空形参检查）。
+            if (_nn_name && _nn_eq && _nn_exits) {
+                sem_narrow_nonnull(s, _nn_name);
             }
 
             // if 表达式：触发类型推断并缓存到 AST 节点，供代码生成器使用

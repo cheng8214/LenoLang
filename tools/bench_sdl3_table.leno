@@ -14,7 +14,7 @@ import "../build/leno_module/LenoSDL3/lib/sdl_table.leno" as tbl
 use win.(Window, Renderer)
 use tbl.Table
 
-Renderer R = null
+Renderer? R = null
 
 func benchFrames(string name, int frames, func():void body) {
     for 0 : 2 to _w { body() }

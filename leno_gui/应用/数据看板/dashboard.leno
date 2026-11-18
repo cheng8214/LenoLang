@@ -172,7 +172,7 @@ Array[float]  YS = [150.0, 150.0, 200.0, 150.0, 150.0, 0.0, 150.0,
 // ==================== 运行时状态 ====================
 // ⚠ Leno 的 struct 是"立即分配"的值类型（`== null` 会告警）⇒ 这里只当普通全局用：
 //   在 `build_ui` 里赋值，且**从不判空**（所有调用都发生在 build 之后 ✓）
-TabControl TAB = null
+TabControl? TAB = null
 Array[Button] NAVS = []            // 导航按钮（切页时统一改选中态 ✓）
 int CUR_PAGE = 0
 

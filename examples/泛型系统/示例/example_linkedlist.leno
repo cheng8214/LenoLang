@@ -2,11 +2,11 @@
 
 struct Node[T] {
     T data
-    Node next = null
+    Node? next = null
 }
 
 struct LinkedList[T] {
-    Node head = null
+    Node? head = null
     int length = 0
 
     // 在头部插入

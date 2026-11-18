@@ -127,7 +127,8 @@ export func after(Dict app, any fn) {
 //   · 预检（OPTIONS + Access-Control-Request-Method）⇒ 204 + Allow-* 头，不走路由
 //   · 普通响应 ⇒ after 钩子补 Access-Control-Allow-Origin
 export func cors(Dict app, string origins) {
-    before(app, func(Dict req): Dict {
+    // ⚠ 返回类型必须是 `Dict?`：非预检时 `return null` 表示"继续走路由"（L1 会警告）
+    before(app, func(Dict req): Dict? {
         if (req["method"] as string) != "OPTIONS" { return null }
         if header(req, "access-control-request-method", "") == "" { return null }   // 非预检
         Dict h = {}

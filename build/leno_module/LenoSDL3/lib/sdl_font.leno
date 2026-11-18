@@ -127,12 +127,12 @@ export struct Font {
     pri string texLastText = ""
     pri int texLastR = -1, texLastG = -1, texLastB = -1
     pri float texLastPt = -1.0
-    pri Dict texIdx = null
+    pri Dict? texIdx = null
     // 码点 → 宽度（`charWidth` 用；SSAA 倍率变化时清空，见 setSSAA）
     //   ASCII 走**数组**快路径（O(1) 索引，比 Dict 哈希快 ~5 倍），其余码点走 Dict。
     //   文本类内容 90%+ 是 ASCII ⇒ 这一层把"逐字符查宽度"从 ~100 ns 压到 ~20 ns。
     pri Array[float] chWAscii = []
-    pri Dict chWCache = null
+    pri Dict? chWCache = null
     // 尺寸缓存：measureString 高频调用，缓存避免重复测量
     pri Array[CachedMeas] measCache = []
     pri int measCap = 256
@@ -148,7 +148,7 @@ export struct Font {
     pri float measLastMpt = -1.0
     // key → measCache 下标（O(1) 查找）。原来是**线性扫描**（最多 256 条，逐条比字符串），
     //   界面上一屏几十上百个不同标签时，每次测量都要扫几十~几百条 ⇒ 换成字典。
-    pri Dict measIdx = null
+    pri Dict? measIdx = null
 
     func load(string path, float ptsize): bool {
         if not ttfInit() { return false }

@@ -15,7 +15,7 @@ export func makeData(int id, int val): Data {
 }
 
 export struct Wrapper {
-    Engine  eng = null
+    Engine?  eng = null
     sys_lib lib = null
 }
 export func wrapEngine(): Wrapper {

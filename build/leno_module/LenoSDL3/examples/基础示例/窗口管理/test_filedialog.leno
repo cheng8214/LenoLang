@@ -22,8 +22,8 @@ import "sdl_filedialog" as fdlg
 string g_status = "点击下方按钮打开文件对话框"
 bool g_exit = false
 // 字体只创建一次，避免每帧 createFontAuto 导致原生字体句柄泄漏（曾致 2GB/分）
-Font g_fontBig = null
-Font g_fontSmall = null
+Font? g_fontBig = null
+Font? g_fontSmall = null
 
 main() {
     var win = SDL3.createWindow({title: "文件对话框测试 — 点击按钮", w: 720, h: 420})

@@ -25,7 +25,14 @@ void visit_list(Semantic* s, AstList* list) {
         break;
     }
 
+    // ★ 2026-11-18（F2·L2）：**早退收窄的回滚点**。
+    //   `if q == null { return }` 之后，本列表**剩下**的语句里 q 被临时标成非空；
+    //   出了这个块体必须恢复（否则收窄泄漏到兄弟块/后面的函数 ✗）。
+    //   本函数是**所有块体**的唯一入口（if/while/for/case 的体都走这里，绕过 AST_BLOCK）
+    //   ⇒ 在这里存/恢复是唯一正确的位置 ✓
+    int _nn_saved = s ? s->null_narrow_count : 0;
     for (int i = 0; i < list->count; i++) {
         visit(s, list->items[i]);
     }
+    sem_narrow_restore(s, _nn_saved);
 }

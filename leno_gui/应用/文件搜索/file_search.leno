@@ -362,7 +362,7 @@ struct FileSearcher {
         }
 
         // 处理顶层文件（主线程直接扫描）
-        var topEntries = null
+        Array? topEntries = null      // 读目录失败要保留 "没有" 这一态（L1：非可空不能赋 null）
         try {
             topEntries = dirs.listdir(dirPath)
         } catch e {

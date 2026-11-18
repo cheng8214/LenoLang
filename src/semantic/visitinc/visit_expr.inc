@@ -2219,7 +2219,11 @@
                             if (func_def->u.func.params && func_def->u.func.pcnt > i) {
                                 warn_null_literal(ast->u.call.args.items[i], expected_type,
                                                   "形参", func_def->u.func.params[i]);
-                            }
+                                // ★ 2026-11-18（F2·L2）：`f(q)`（q 可空、形参非可空）⇒ 警告
+                                //   ⚠ 该警告当前**默认关闭**（见 warn_nullable_flow 的说明）：
+                                //     规则本身验过，但打开后在某些 GUI 文件上编译期崩溃，根因未定位
+                                warn_nullable_flow(s, ast->u.call.args.items[i], expected_type,
+                                                   "形参", func_def->u.func.params[i]);                            }
 
                             // 泛型函数：用推断的类型替换泛型参数
                             TypeInfo* check_type = expected_type;

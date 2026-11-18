@@ -158,7 +158,7 @@ export struct Shortcut {
 }
 
 // 键名 → scancode 映射表（懒加载）
-Dict _keyNameMap = null
+Dict? _keyNameMap = null
 
 func _ensureKeyNameMap() {
     if _keyNameMap != null { return }

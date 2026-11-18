@@ -1186,7 +1186,7 @@ export func isRobotsAllowed(string robotsText, string userAgent, string url): bo
     string path = _robotsPath(url)
 
     // 查找最匹配的 UA 组（精确匹配优先，其次 *)
-    Dict[string, any] selected = null
+    Dict[string, any]? selected = null
     bool selectedIsStar = false
     if groups is Array {
         for groups to g {

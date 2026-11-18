@@ -25,6 +25,9 @@
             if (ast->u.ret && s->current_func) {
                 warn_null_literal(ast->u.ret, s->current_func->u.func.return_type,
                                   "返回值", s->current_func->u.func.name);
+                // ★ 2026-11-18（F2·L2）：`return q`（q 可空、返回类型非可空）⇒ 警告
+                warn_nullable_flow(s, ast->u.ret, s->current_func->u.func.return_type,
+                                   "返回值", s->current_func->u.func.name);
             }
 
             // ★ 2026-11-15：**裸 return（不返回值）** 在声明了返回类型的函数里要定向报错。

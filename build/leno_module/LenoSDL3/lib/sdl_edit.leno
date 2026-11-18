@@ -111,7 +111,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     pri bool lwDirty = true               // 行宽缓存需全量重算
     // 行内容 → 像素宽度（跨重排复用）。结构级变更时只有**新内容**需要重新测量，
     //   否则 5000 行文档每次回车都要重测全文（实测 ~0.7 ms）。字体变化时清空。
-    pri Dict lineWCache = null
+    pri Dict? lineWCache = null
 
     // ★ 2026-11-13（性能）：`sync_line_col()` 是 O(行数)（从第 0 行累到光标行），
     //   原先**每帧**都全表扫一遍 —— 实测 5000 行文档 ≈ 250 µs/帧（占整帧 72%）。
@@ -125,7 +125,7 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     pri float _twVal = 0.0
     pri bool  _twDirty = true
     // 占位符按 `\n` 拆行：原来**每帧**都 split 一次（数组 + 每行一个字符串）。
-    pri Array[string] _phLines = null
+    pri Array[string]? _phLines = null
     pri string _phLast = ""
     // 单行渲染每帧要 `measureString(整串)` 只为拿高度（居中用）—— 文本没变就复用。
     //   实测 500 字符输入框：这一步占了单行 render 的绝大部分。

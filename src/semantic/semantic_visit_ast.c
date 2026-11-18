@@ -1549,6 +1549,7 @@ static int sem_expr_maybe_null(Semantic* s, Ast* e, int depth) {
 // ============================================================================
 static int type_null_literal_ok(TypeInfo* t) {
     if (!t) return 1;                       // 没标注 ⇒ 不判
+    if (t->kind < 0 || t->kind >= TYPE_KIND_COUNT) return 1;   // 认不出的类型 ⇒ 放行（宁漏勿误报）
     if (t->nullable) return 1;              // T?
     switch (t->kind) {
         case TYPE_ANY:
@@ -1581,8 +1582,23 @@ static int type_null_literal_ok(TypeInfo* t) {
 // 报错文案里的类型名：有 struct_name 就用它（`Window` / `Tray`），否则用 kind 名
 static const char* type_show_name(TypeInfo* t, char* buf, size_t n) {
     if (!t) return "?";
-    if (t->struct_name && t->struct_name[0]) return t->struct_name;
-    snprintf(buf, n, "%s", type_kind_to_string(t->kind));
+    // ⚠ kind 可能越界（合成类型/已释放的类型）⇒ 先兜住；`type_kind_to_string` 越界会返回 NULL，
+    //   而 `%s` 收 NULL 在 mingw 下不一定安全（实测这类地方会崩 0xC0000005 ✗）
+    if (t->kind < 0 || t->kind >= TYPE_KIND_COUNT) {
+        snprintf(buf, n, "%s", "type");
+        return buf;
+    }
+    // ⚠ 不再直接返回 `t->struct_name`：它在某些时机可能已随 AST 释放 ⇒ `%s` 会崩
+    //   （实测 0xC0000005）。拷进调用方的缓冲区，且**限长**，把风险压到最低。
+    if (t->struct_name && t->struct_name[0] && n > 4) {
+        size_t want = strlen(t->struct_name);
+        if (want > n - 1) want = n - 1;
+        memcpy(buf, t->struct_name, want);
+        buf[want] = '\0';
+        return buf;
+    }
+    const char* kn = type_kind_to_string(t->kind);
+    snprintf(buf, n, "%s", kn ? kn : "type");
     return buf;
 }
 
@@ -1603,6 +1619,136 @@ static void warn_null_literal(Ast* null_ast, TypeInfo* target, const char* what,
         "  提示: 要表达「可能没有」请写 `%s? %s`，用 `if %s != null { … }` 收窄后再取字段\n"
         "  提示: 句柄类（Ptr / cLib / Channel / File / Socket / func …）天然可空，不受此限",
         subj, tn, var, tn, var, var);
+}
+
+// ============================================================================
+// F2·L2（2026-11-18）：`T?` → `T` 的**隐式流失** ⇒ 警告
+// ----------------------------------------------------------------------------
+// 为什么必须有这一层：`P? q = null; P w = q;` 两行就把 null 洗回"非可空"
+// ⇒ 只禁 `T x = null`（L1）是纸糊的。四条通路：变量声明 / 赋值 / 实参 / `return`。
+// 判据（宁漏勿误报）：
+//   ① 目标必须**非可空且非句柄类**（同一份 `type_null_literal_ok` 判据）；
+//   ② 值只认**裸变量**（`AST_VAR`），且该变量静态类型带 `?`；
+//      `obj.field` / `f()` / `x as P` 一律不判（字段类型/返回类型这里拿不全）；
+//   ③ **收窄**：在 `if q != null { … }` 的 then 分支、以及 `if q == null { return }`
+//      之后的代码里，q 视作非空 ⇒ 不报（否则"先判空再用"这种最常见、最正确的写法会挨骂 ✗）
+// ============================================================================
+// 早退收窄：把 name 对应的**原符号**临时标成非空（块体结束时由 visit_list 回滚）
+static void sem_narrow_nonnull(Semantic* s, const char* name) {
+    if (!s || !name || !name[0]) return;
+    int cap = (int)(sizeof(s->null_narrow_names) / sizeof(s->null_narrow_names[0]));
+    if (s->null_narrow_count >= cap) return;   // 超界：不收窄（退化成不认，宁漏勿误报）
+    s->null_narrow_names[s->null_narrow_count++] = name;
+}
+
+// 供 native 形参检查（semantic_type_utils.c）与 L2 共用：这个名字当前是否已被收窄成非空
+int sem_null_narrowed(Semantic* s, const char* name) {
+    if (!s || !name) return 0;
+    for (int i = 0; i < s->null_narrow_count; i++) {
+        if (s->null_narrow_names[i] && strcmp(s->null_narrow_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+// 回滚：只把计数退回去（名字是一份"当前生效的收窄集合"，不持有任何符号指针）
+static void sem_narrow_restore(Semantic* s, int count) {
+    if (!s) return;
+    s->null_narrow_count = (count < 0) ? 0 : count;
+}
+
+// 条件形如 `x != null` / `null != x` ⇒ 返回 x（*eq = 0）；`x == null` ⇒ 返回 x（*eq = 1）
+//   只认**单个比较**（`and` 链 / `or` 链一律不认：or 下收窄不安全，与 `is` 守卫同口径 ✓）
+static const char* sem_null_cmp_var(Ast* cond, int* eq) {
+    if (!cond || cond->kind != AST_BINOP) return NULL;
+    int op = cond->u.binop.op;
+    if (op != TOK_EQEQ && op != TOK_NEQ) return NULL;
+    Ast* l = cond->u.binop.l;
+    Ast* r = cond->u.binop.r;
+    if (!l || !r) return NULL;
+    if (l->kind == AST_NULL && r->kind == AST_VAR) {
+        if (eq) *eq = (op == TOK_EQEQ);
+        return r->u.var.name;
+    }
+    if (r->kind == AST_NULL && l->kind == AST_VAR) {
+        if (eq) *eq = (op == TOK_EQEQ);
+        return l->u.var.name;
+    }
+    return NULL;
+}
+
+// 块体是否"必定离开"（末条是 return / throw / break / continue）—— 用于早退收窄
+static int sem_body_always_exits(Ast* body) {
+    if (!body) return 0;
+    // ⚠ 必须同时判 `items != NULL`：语法糖造出来的块可能 count > 0 但 items 没填
+    //   （实测漏这一条 → 读 `items[-1]` 直接 0xC0000005 ✗）
+    if (body->kind == AST_BLOCK && body->u.block.count > 0 && body->u.block.items) {
+        Ast* last = body->u.block.items[body->u.block.count - 1];
+        if (!last) return 0;
+        switch (last->kind) {
+            case AST_RETURN: case AST_RETURN_MULTI: case AST_THROW:
+            case AST_BREAK: case AST_CONTINUE:
+                return 1;
+            default:
+                return 0;
+        }
+    }
+    switch (body->kind) {
+        case AST_RETURN: case AST_RETURN_MULTI: case AST_THROW:
+        case AST_BREAK: case AST_CONTINUE:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+// 表达式是不是"一个可能为 null 的裸变量"（收窄过的不算）
+static const char* sem_nullable_var_name(Semantic* s, Ast* e) {
+    if (!s || !e || e->kind != AST_VAR || !e->u.var.name) return NULL;
+    // ⚠ `s->current` 可能为 NULL（模块顶层/某些合成节点）⇒ 不判，直接放行。
+    //   漏这一条实测 0xC0000005（leno_gui 的 IDE 布局）。
+    if (!s->current) return NULL;
+    // 用 `infer_expr_type` 而不是 `scope_resolve`：前者是语义分析里到处在用的入口
+    //   （可空检查、native 实参检查都走它），不碰"作用域链当前状态"。
+    //   ⚠ 直接用 scope_resolve 在这里实测会崩 0xC0000005（个别节点走到时作用域链不正）✗
+    // 早退收窄：`if q == null { return }` 之后的 q 视作非空（名字集合）
+    if (sem_null_narrowed(s, e->u.var.name)) return NULL;
+    // ⚠ 分支内的 `if q != null { … }` 不用另外判断：`apply_null_narrowing` 会在作用域里
+    //   放一个 nullable=0 的影子符号，`infer_expr_type` 拿到就是它 ⇒ 这里自然返回 NULL ✓
+    TypeInfo* it = infer_expr_type(s, e);
+    if (!it) return NULL;
+    int nl = it->nullable;
+    type_free(it);
+    if (!nl) return NULL;
+    return e->u.var.name;
+}
+
+// what/name：目标位置（"变量" / "形参" / "返回值"）
+static void warn_nullable_flow(Semantic* s, Ast* value, TypeInfo* target,
+                               const char* what, const char* name) {
+    // ⛔ 2026-11-18：**默认关闭**（不是漏写）。
+    //   规则本身在 `build/tmp_l2.leno` 上验证通过（4 个位置该报的报、`if x != null` 分支不报），
+    //   但打开后在 `leno_gui/应用/IDE布局/canvas_ide.leno` 等文件上**编译期崩溃**
+    //   （0xC0000005），已排除：作用域为空、类型名悬垂、kind 越界、`scope_resolve`、
+    //   `infer_expr_type` + `type_free`、早退收窄的 Symbol 改动 —— 尚未定位。
+    //   在定位之前宁可不出这条警告：**让用户编不过/崩溃比漏一条警告严重得多** ✗
+    //   ⇒ 恢复步骤：删掉这一行 `return;`，再跑一遍 1313 文件的编译检查 + 两套测试。
+    (void)s; (void)value; (void)target; (void)what; (void)name;
+    return;
+    if (!value || value->kind != AST_VAR) return;        // 只判裸变量（见 ②）
+    if (type_null_literal_ok(target)) return;            // 目标可空 / 句柄类 / 未标注 ⇒ 放行
+    const char* vn = sem_nullable_var_name(s, value);
+    if (!vn) return;
+    char kbuf[32];
+    const char* tn = type_show_name(target, kbuf, sizeof(kbuf));
+    char subj[192];
+    if (name && name[0]) snprintf(subj, sizeof(subj), "%s '%s'", what, name);
+    else snprintf(subj, sizeof(subj), "%s", what);
+    warning_add_at_fmt(WARN_NULLABLE_FLOW, value->line, value->column,
+        "%s 是 %s（非可空），这里接的是可空变量 '%s' —— 它可能是 null，会**静默流进去**\n"
+        "  提示: 三种写法 —— ① `if %s != null { … }`（分支内自动视作非空）\n"
+        "        ② `… %s ?? 默认值`；③ 把这个位置也改成 `%s?`\n"
+        "  提示: 句柄类（Ptr / cLib / Channel / File / Socket / func …）天然可空，不受此限",
+        subj, tn, vn, vn, vn, tn);
 }
 
 static void visit_node(Semantic* s, Ast* ast) {

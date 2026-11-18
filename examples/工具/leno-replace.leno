@@ -65,6 +65,9 @@ func is_ext_ok(string name):bool {
 }
 
 // 原始字节读取（**不剥 BOM、不做行尾翻译**）
+//   ⚠ 这里本该是 `string?`（读不了返回 null），但"早退收窄"（`if raw == null { return }`
+//     之后 raw 视作非空）随 L2 一起**默认关闭**了 ⇒ 先留非可空（L1 会照常给一条警告，
+//     L2 的收窄恢复后再改回 `string?`）。
 func read_raw(string path):string {
     var f = files.open(path, "rb")
     if f == null { return null }

@@ -18,8 +18,8 @@ use SDL3.(Window, Event, Renderer)
 
 int nA = 0
 int nB = 0
-Window a = null
-Window b = null
+Window? a = null
+Window? b = null
 
 main() {
     a = SDL3.createWindow({title: "A-static", w: 300, h: 160})

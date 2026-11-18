@@ -44,7 +44,7 @@ import "../build/leno_module/LenoSDL3/lib/sdl_edit.leno" as edt
 use win.(Window, Renderer)
 use edt.Edit
 
-Renderer R = null
+Renderer? R = null
 
 func benchFrames(string name, int frames, func():void body) {
     for 0 : 2 to _w { body() }

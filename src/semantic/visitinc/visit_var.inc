@@ -164,6 +164,9 @@
                 //   必须在 alias 解析**之后**：`alias Color = int` 这类要先展开成实际类型再判 ✓
                 warn_null_literal(ast->u.var_decl.init, ast->u.var_decl.type,
                                   "变量", ast->u.var_decl.name);
+                // ★ 2026-11-18（F2·L2）：`P w = q`（q 是 P?）⇒ 警告（可空静默流入非可空）
+                warn_nullable_flow(s, ast->u.var_decl.init, ast->u.var_decl.type,
+                                   "变量", ast->u.var_decl.name);
 
                 // 检查 var 是否被用作类型参数（如 Array[var]、Dict[string, var]）
                 // var 只能用于变量声明的顶层类型（var x = ...），不能作为复合类型的类型参数
@@ -576,9 +579,13 @@
             //     NULL（只有 names），实测漏过一版 ⇒ 两个都看 ✓
             if (left_count == 1 && ast->u.assign.value && ast->u.assign.value->kind == AST_NULL) {
                 const char* tn0 = NULL;
-                if (ast->u.assign.targets && ast->u.assign.targets[0] &&
-                    ast->u.assign.targets[0]->kind == AST_VAR) {
-                    tn0 = ast->u.assign.targets[0]->u.var.name;
+                if (ast->u.assign.targets && ast->u.assign.targets[0]) {
+                    // 只有**裸变量**目标才判；`a.raw = null` / `arr[i] = null` 的目标是
+                    // 字段/下标表达式 —— 此时按 `names[0]` 回退会拿到**宿主对象**的名字
+                    // （实测 `a.raw = null` 被判成"变量 'a'（Anim）赋了 null" ⇒ 三条误报）
+                    if (ast->u.assign.targets[0]->kind == AST_VAR) {
+                        tn0 = ast->u.assign.targets[0]->u.var.name;
+                    }
                 } else if (ast->u.assign.names && ast->u.assign.names[0]) {
                     tn0 = ast->u.assign.names[0];
                 }
@@ -586,6 +593,23 @@
                     Symbol* wsym = scope_resolve(s->current, tn0);
                     if (wsym && wsym->type) {
                         warn_null_literal(ast->u.assign.value, wsym->type, "变量", tn0);
+                    }
+                }
+            }
+
+            // ★ 2026-11-18（F2·L2）：`x = q`（q 可空、x 非可空）⇒ 警告
+            if (left_count == 1 && ast->u.assign.value && ast->u.assign.value->kind == AST_VAR) {
+                const char* tn1 = NULL;
+                if (ast->u.assign.targets && ast->u.assign.targets[0] &&
+                    ast->u.assign.targets[0]->kind == AST_VAR) {
+                    tn1 = ast->u.assign.targets[0]->u.var.name;
+                } else if (!ast->u.assign.targets && ast->u.assign.names) {
+                    tn1 = ast->u.assign.names[0];
+                }
+                if (tn1) {
+                    Symbol* wsym2 = scope_resolve(s->current, tn1);
+                    if (wsym2 && wsym2->type) {
+                        warn_nullable_flow(s, ast->u.assign.value, wsym2->type, "变量", tn1);
                     }
                 }
             }

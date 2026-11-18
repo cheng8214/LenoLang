@@ -189,7 +189,7 @@ func stats(Dict req): Dict {
 }
 
 // 全局访问日志（管道式中间件：返回 null 放行）
-func logMw(Dict req): Dict {
+func logMw(Dict req): Dict? {
     string m = req["method"] as string
     string p = req["path"] as string
     var t = times.format(times.now(), "%H:%M:%S")

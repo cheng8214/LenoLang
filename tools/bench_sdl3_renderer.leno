@@ -44,7 +44,7 @@ import "../build/leno_module/LenoSDL3/lib/sdl_event.leno" as evt
 use win.(Window, Renderer)
 use evt.Event
 
-Renderer R = null
+Renderer? R = null
 Ptr[u8] G_TEX = null
 
 // 端到端「一帧」基准：模拟一帧里画 sprites 个纹理 + rects 个矩形 + 一次 present，

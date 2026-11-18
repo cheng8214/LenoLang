@@ -207,7 +207,7 @@ export struct TrayMenu {
         return e
     }
 
-    func addSubmenu(string label): TrayMenu {
+    func addSubmenu(string label): TrayMenu? {
         Ptr[u8] entry = insert(label, TrayEntryFlag.SUBMENU, -1)
         if entry == null { return null }
         Ptr[u8] subPtr = _lib.SDL_CreateTraySubmenu(entry)
@@ -287,7 +287,7 @@ export struct Tray {
 // ============ 工厂 ============
 
 
-export func createTray(Dict opts): Tray {
+export func createTray(Dict opts): Tray? {
     _ensureCb()
 
     Ptr[u8] icon = null

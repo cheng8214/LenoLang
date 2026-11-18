@@ -103,7 +103,7 @@ main() {
 
     // ---------- ⑥ before 抛异常：500，且同一连接下一个请求照常 ----------
     var appBad = http.newApp()
-    http.before(appBad, func(Dict req): Dict {
+    http.before(appBad, func(Dict req): Dict? {
         if (req["path"] as string) == "/boom" { throw "中间件炸了" }
         return null
     })

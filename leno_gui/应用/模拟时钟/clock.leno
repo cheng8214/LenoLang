@@ -72,7 +72,7 @@ const _MI_FMT    = 4     //   └ 12 小时制
 const _MI_DATE   = 5     //   └ 显示日期
 const _MI_ABOUT  = 7     // 6 是分隔行
 const _MI_QUIT   = 8
-PopMenu _pm = null       // 自绘弹出菜单（main 里建；自检要用 ⇒ 模块级 ✓）
+PopMenu? _pm = null       // 自绘弹出菜单（main 里建；自检要用 ⇒ 模块级 ✓）
 
 // ===== 菜单图标（图片资源，与 MenuBar/文件管理器同一套约定 ✓）=====
 // 放本应用自己的 images/（随包资源目录 = dirs.res_dir() ✓ 见 docs：读资源用 res_dir ✓）
@@ -88,7 +88,7 @@ bool _selfCheck = false    // 本次是否自检跑（决定结尾的汇总/退�
 int  _sfFail = 0           // 自检失败计数
 int  _sfStep = 0           // 当前步骤（0 = 未开始；每 tick 末尾推进一格 ✓）
 int  _sfDeadline = 0       // 当前步骤的超时时刻（getTicks 语义）
-Window _sfWin = null       // 自检要"程序化关窗"（win.requestClose）⇒ 留一个句柄 ✓
+Window? _sfWin = null       // 自检要"程序化关窗"（win.requestClose）⇒ 留一个句柄 ✓
 
 func _sfCheck(bool okv, string what) {
     if okv { print("[自检] OK   " + what) }
@@ -432,7 +432,7 @@ main() {
     // ===== 主节拍：16ms ≈60fps（秒针走得顺）；隐藏时降到 200ms（几乎不占 CPU ✓）=====
     // 托盘动作在这里统一落地（见头部约定 ①）
     // ★ tick 先声明（显式类型）再赋值：回调里要改节拍（tick.reset）⇒ 自引用必须带类型 ✓
-    Timer tick = null
+    Timer? tick = null
     tick = win.addTimer(16, func() {
         // 托盘被点 ⇒ 按左右键分发（右键弹菜单 / 左键切显隐 ✓）
         var tp = SDL3.pollTrayClick()

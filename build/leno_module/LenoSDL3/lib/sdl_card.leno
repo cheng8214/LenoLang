@@ -481,7 +481,7 @@ export struct Card impl Widget, Themeable {
         return c
     }
     func clear_content() { _content = null; metricsDirty = true; core.markFrameRedraw() }
-    func content_widget(): Widget {
+    func content_widget(): Widget? {
         var c = _content
         if c is Widget { return c }
         return null

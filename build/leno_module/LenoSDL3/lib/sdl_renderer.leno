@@ -85,7 +85,7 @@ int _atlasH = 1024
 int _atlasX = 0
 int _atlasY = 0
 int _atlasRowH = 0
-Dict _atlasMap = null
+Dict? _atlasMap = null
 Array[AtlasReg] _atlasRegs = []
 // 待插入队列（本帧首次出现的文字）——由 present() 统一插入
 Array[Font]   _atlasPendFont = []

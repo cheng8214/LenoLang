@@ -9,7 +9,7 @@ import "../build/leno_module/LenoSDL3/lib/sdl_renderer.leno" as rend
 import "../build/leno_module/LenoSDL3/lib/sdl_button.leno" as btn
 use win.(Window, Renderer)
 
-Renderer R = null
+Renderer? R = null
 
 func benchFrames(string name, int frames, func():void body) {
     for 0 : 2 to _w { body() }

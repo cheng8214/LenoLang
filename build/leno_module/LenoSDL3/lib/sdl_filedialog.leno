@@ -101,13 +101,13 @@ func _normPattern(string p): string {
 // default_location 规范化：SDL3 在 Windows 上不接受相对路径（传 "." 会导致对话框
 // 初始化失败而不弹出），故用 dirs.abspath 把相对路径 / "." 解析为绝对路径；
 // 已是绝对路径则原样返回。空串返回 null（交给 SDL 用默认目录）。
-func _normLocation(string s): string {
+func _normLocation(string s): string? {
     if s == null or s.len() == 0 { return null }
     return dirs.abspath(s)
 }
 
 // 从 opts 取 default_location 并规范化；未设置则返回 null
-func _optDefaultLocation(Dict opts): string {
+func _optDefaultLocation(Dict opts): string? {
     var v = opts.get("default_location", null)
     if v == null { return null }
     return _normLocation(v as string)

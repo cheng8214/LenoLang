@@ -2259,6 +2259,12 @@ int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKin
     //   （native 侧 `val_as_obj(args[0])` 对 null 直接解引用；`_uint8`/`val_as_int` 之类则拿到垃圾值）
     //   口径：native 形参**没有可空标记** ⇒ 静态可空类型一律不许直传（要传就先收窄：x as T / _str(x) ✓）
     if (arg_type->nullable) {
+        // ★ 2026-11-18（F2·L2）：**早退收窄**之后不报 —— `if s == null { return }` 保证
+        //   本行之后的 s 一定非空（否则执行不到这里）。收窄集合由 visit_control 维护。
+        //   ⚠ 分支内的 `if s != null { … }` 走的是影子符号（nullable 已清），不经过这里 ✓
+        if (ast->kind == AST_VAR && ast->u.var.name && sem_null_narrowed(s, ast->u.var.name)) {
+            return 0;   // 按"已收窄"处理：跳过可空拦截，继续走后面的常规检查
+        }
         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                  "可空值不能直接传给 %s 的第 %d 个参数（期望非可空的具体类型 '%s'）\n"
                  "  提示: native 侧**没有 null 校验**（盲转会崩）⇒ 请先收窄：`if x is %s { ... }`（is 收窄对可空类型有效 ✓），\n"

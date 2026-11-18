@@ -22,8 +22,8 @@ int nB = 0
 int sA = 0
 int sB = 0
 int fails = 0
-Window a = null
-Window b = null
+Window? a = null
+Window? b = null
 
 func ck(bool cond, string what) {
     print(if cond then "OK   " + what + "\n" else "FAIL " + what + "\n")

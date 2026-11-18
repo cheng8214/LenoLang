@@ -946,7 +946,7 @@ func _drawMagnifier(Renderer ren) {
 }
 
 // ==== 裁剪像素（含标注绘制） ====
-func _cropPixels(Array[Font] fontList): Dict {
+func _cropPixels(Array[Font] fontList): Dict? {
     var[float, float, float, float](fx, fy, fw, fh) = getRect()
     int x=_int(fx); int y=_int(fy); int w=_int(fw); int h=_int(fh)
     if w<=0 or h<=0 { return null }

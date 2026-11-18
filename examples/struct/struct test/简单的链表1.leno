@@ -1,12 +1,12 @@
 struct Node
 {
     int value = 0
-    Node next = null
+    Node? next = null
 }
 
 struct LinkedList
 {
-    Node head = null
+    Node? head = null
     int count = 0
 
     // 添加元素到链表头部（更简单，不需要遍历）

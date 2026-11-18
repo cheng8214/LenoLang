@@ -126,7 +126,7 @@ func tinylang_parse(Array[Dict] tokens): Dict {
     }
     
     // 辅助函数：获取当前标记
-    func peek(): Dict {
+    func peek(): Dict? {
         if token_index < len {
             return tokens[token_index];
         }
@@ -163,7 +163,7 @@ func tinylang_parse(Array[Dict] tokens): Dict {
     }
     
     // 解析二元表达式
-    func parse_binary_expr(): Dict {
+    func parse_binary_expr(): Dict? {
         var left = parse_primary();
         if not left {return null}
         while token_index < len and (tokens[token_index].type == "OPERATOR" or (tokens[token_index].type == "SYMBOL" and (tokens[token_index].value == "+" or tokens[token_index].value == "-" or tokens[token_index].value == "*" or tokens[token_index].value == "/"))) {
@@ -177,7 +177,7 @@ func tinylang_parse(Array[Dict] tokens): Dict {
     }
     
     // 解析基本表达式
-    func parse_primary(): Dict {
+    func parse_primary(): Dict? {
         var token = peek()
         if not token {return null}
         

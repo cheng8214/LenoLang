@@ -188,6 +188,20 @@ typedef struct {
     //   （由来与取舍见上面 SemUnionNarrow 的说明块 ✓）
     SemUnionNarrow union_narrow[SEM_UNION_NARROW_MAX];
     int union_narrow_count;
+
+    // ★ 2026-11-18（F2·L2）：**早退收窄**的记账（`if q == null { return }` 之后的代码里
+    //   q 视作非空）。分支内部的收窄仍走既有的 `apply_null_narrowing()`（影子符号）；
+    //   这里只处理"if **之后**"—— 影子符号定义不到"if 之后"，只能在原符号上临时清
+    //   `nullable`，并在**块体结束时回滚**（`visit_list` 统一恢复 ✓）。
+    //   为什么不另起一个"名字栈"：第一版就是那样，结果原生调用的可空形参检查
+    //   （`strings.byte_slice(raw, …)`）读的是 Symbol 而不是栈 ⇒ 收窄对它不生效、仍报错 ✗
+    //   ⚠ 这里**只记名字**，不去改 Symbol 的类型：
+    //     · 持有 Symbol* 再回写 = use-after-free（作用域可能先被释放 → 实测崩溃 0xC0000005 ✗）；
+    //     · 直接清 `sym->type->nullable` 也会崩（同一 Symbol 的 type 可能被替换/释放 ✗）。
+    //   ⇒ 名字集合 + 两个消费方各查一次：本文件的 L2 检查、以及
+    //     `semantic_check_native_arg()`（native 形参的可空检查）。
+    const char* null_narrow_names[8];
+    int null_narrow_count;
     // ★ 2026-10-30：`visit()` 的递归深度。超长表达式（如 5000 项的 `a+b+...`）
     //   让 AST 深度随项数线性增长，递归会耗尽调用栈 ⇒ 进程 SIGSEGV（实测 4800 项起）。
     //   超过上限就报一条明确诊断并停止下探，而不是崩溃。见 semantic_visit_ast.c。
@@ -208,6 +222,10 @@ typedef struct {
     int owned_placeholder_count;
     int owned_placeholder_capacity;
 } Semantic;
+
+// 这个名字当前是否已被"早退收窄"成非空（实现见 semantic_visit_ast.c）
+//   消费方两处：L2 的流失检查、《native 形参的可空拦截》（semantic_check_native_arg）
+int sem_null_narrowed(Semantic* s, const char* name);
 
 // 命名实参（C1，2026-11-02）：把 `f(a = 1, b = 2)` 的实参按形参名重排成位置实参。
 //   func_def = 被调函数的 AST_FUNC_DEF（NULL ⇒ 拿不到签名，报"不支持命名实参"）。

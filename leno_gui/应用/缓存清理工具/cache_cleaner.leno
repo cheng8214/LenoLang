@@ -241,7 +241,7 @@ struct CacheCleaner {
                     // 哨兵在（完整释放）或目录为空 ⇒ 都是 Leno 释放缓存 ✓
                     if dirs.exists(dirs.join(appDir + "\\pack\\" + hn, ".leno_pack_ok")) { isItem = true }
                     else {
-                        var inner = null
+                        Array? inner = null      // 读不了目录 ⇒ 保持 null（下面按"没有"处理）
                         try { inner = dirs.listdir(dirs.join(packDir, hn)) } catch e { inner = null }
                         if inner != null and inner.len() == 0 { isItem = true }
                     }

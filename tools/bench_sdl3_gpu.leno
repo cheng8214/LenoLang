@@ -18,7 +18,7 @@ import "../build/leno_module/LenoSDL3/lib/sdl_window.leno" as win
 import "../build/leno_module/LenoSDL3/lib/sdl_renderer.leno" as rend
 use win.(Window, Renderer)
 
-Renderer R = null
+Renderer? R = null
 
 func bench(string name, int frames, func():void body) {
     for 0 : 4 to _w { body() }                 // warmup

@@ -1,7 +1,7 @@
 // Bug #4: struct 字段默认 null 时，不允许访问其子字段
 struct Link {
     int val = 0
-    Link next = null
+    Link? next = null
 }
 
 main() {

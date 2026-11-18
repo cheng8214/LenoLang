@@ -596,6 +596,7 @@ void warning_print_all(void) {
             case WARN_VOID_CALL_VALUE:       type_str = "void调用结果"; break;
             case WARN_MULTI_RET_DEGRADE:     type_str = "多返回值被截断"; break;
             case WARN_NULL_LITERAL:          type_str = "非可空类型赋了 null"; break;
+            case WARN_NULLABLE_FLOW:         type_str = "可空值流入非可空"; break;
             // ★ 2026-11-14：补齐下面这批"有枚举、有调用点、却没有类别名"的警告 ——
             //   原来它们打印成 `warning: [] ...`（类别名静默为空），排查时少一半信息。
             case WARN_EMPTY_ENUM:            type_str = "空enum"; break;
