@@ -776,7 +776,13 @@ bool _redrawRequested = false
 // 帧计数器（每帧递增，供控件做帧内去重判断）
 int _frameId = 0
 
-export func requestRedraw() { _redrawRequested = true }
+// [诊断 2026-11-18] 每秒有多少次"全脏"请求 / 多少次按窗口请求 —— 由 LENO_FRAME_TRACE 读差值。
+//   为什么要它：Aria 播放时实测 63 帧/秒**全是全脏帧**（所有窗口一起画），可代码里
+//   只有两处 30fps 定时器（本该一个按窗口、一个早退）⇒ 必须量出真实请求速率再改 ✓
+export var _dbgGlobalReqs = 0
+export var _dbgWinReqs = 0
+
+export func requestRedraw() { _redrawRequested = true; _dbgGlobalReqs = _dbgGlobalReqs + 1 }
 
 // 只看不消费：本帧有没有"全脏"请求（run 循环用 —— **必须等真出帧了才 consume**，
 //   否则这次请求会被帧率节流吞掉：`consume` 把标志清了、帧却没画 ⇒ 那次重绘永久丢失 ✗）
@@ -794,12 +800,39 @@ export func hasGlobalRedraw(): bool { return _redrawRequested }
 Array[int] _redrawWids = []
 
 export func requestRedrawWindow(int wid) {
-    if wid <= 0 { _redrawRequested = true; return }   // 拿不到窗口 id ⇒ 退化成全脏
+    if wid <= 0 { _redrawRequested = true; _dbgGlobalReqs = _dbgGlobalReqs + 1; return }   // 拿不到窗口 id ⇒ 退化成全脏
+    _dbgWinReqs = _dbgWinReqs + 1
     if not _redrawWids.has(wid) { _redrawWids.add(wid) }
 }
 
 // run 循环入口用：有没有"某个窗口欠一帧"
 export func hasWindowRedraw(): bool { return _redrawWids.len() > 0 }
+
+// ★ 2026-11-18：run 循环要"先看有没有请求、再决定画不画"（不能先 take，否则被窗口级
+//   动画节流挡下时那个请求就丢了）⇒ 补两个小接口：只看、画完再消费 ✓
+export func hasWindowRedrawFor(int wid): bool {
+    if _redrawRequested { return true }
+    return _redrawWids.has(wid)
+}
+export func dropWindowRedraw(int wid) {
+    int idx = _redrawWids.index_of(wid)
+    if idx >= 0 { _redrawWids.remove(idx) }
+}
+
+// ==================== 窗口级「最小出帧间隔」（2026-11-18）====================
+// 用途：小动画（封面自转 / 波形 / 呼吸灯）不该把**整页**按 60fps 重绘。
+//   控件在 render 里调 `setFrameGap(40)` ⇒ run 循环把这个窗口压到 ~25fps；
+//   不调（或调 0）⇒ 恢复不限（仍受窗口 maxFPS 的全局节流约束 ✓）。
+// 为什么按窗口：同一次循环里主窗可能在播动画、桌面歌词只要 30fps、对话框根本不动，
+//   用一个全局帧率就只能取最严的那个 ⇒ 白烧 CPU ✗（正是老机器 30~40% 的成因）
+// 记录方式：dispatch 期间只有一个"当前窗口" ⇒ 单变量足够，run 渲染完读一次存进自己的数组。
+var _capGapMs = 0
+export var _dbgGapCalls = 0     // [诊断] 非 0 的 setFrameGap 调用次数（看动画控件到底有没有每帧声明）
+export func setFrameGap(int ms) {
+    _capGapMs = if ms < 0 then 0 else ms
+    if _capGapMs > 0 { _dbgGapCalls = _dbgGapCalls + 1 }
+}
+export func frameGap(): int { return _capGapMs }
 
 // run 循环逐窗口用：这个窗口这一帧要不要画（画完就把它的标记消掉）
 export func takeWindowRedraw(int wid): bool {

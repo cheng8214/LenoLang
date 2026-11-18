@@ -219,7 +219,6 @@ export struct ImageView impl Widget, Themeable {
         if not _loaded or not visible { return }
         ensure_tex(r)
         // 自转：角度 = 基准 + 速度 × 经过时间（**按时间算，不累加** ⇒ 帧率抖动不会变成"一顿一顿" ✓）
-        //   每帧请求下一帧，窗口按自己的 maxFPS（默认 60）节流 ⇒ 转起来是连续的 ✓
         if spinDeg != 0.0 {
             float now = _float(core.getTicks())
             if rotStartMs < 0.0 { rotStartMs = now }
@@ -229,7 +228,21 @@ export struct ImageView impl Widget, Themeable {
             a = a - turns * 360.0
             if a < 0.0 { a = a + 360.0 }
             rotDeg = a
-            core.requestRedraw()          // 下一帧继续（窗口有帧率节流，不会打满 ✓）
+            // ★★ 2026-11-18（Aria 老机器 CPU 30~40% 反哺，重要）：
+            //   原来这里是 `core.requestRedraw()` —— 那是**全局**请求 ⇒ 只要封面在转（播放中），
+            //   所有窗口（主窗整页 + 桌面歌词 + 对话框）都被拖进 **60fps 全量重绘**。
+            //   实测（LENO_FRAME_TRACE，Aria 播放本地 mp3）：
+            //     globReq≈69/s、63 帧/秒**全是全脏帧**（full=63），主窗一帧 6ms
+            //     ⇒ 单核烧掉 ~40%（老机器 4 线程、每帧慢 2~3 倍 ⇒ 总占用 30~40% ✗）
+            //   而"不开桌面歌词 10%、开了 40%"只是表象：歌词窗也多画了一份 60fps。
+            //   现在两处一起改：
+            //     ① `markFrameRedraw()` —— 渲染时有窗口上下文 ⇒ 只脏**画它的那个窗口** ✓
+            //     ② `setFrameGap(40)` —— 该窗口压到 ~25fps（唱片 24°/s，40ms 只转 1°，
+            //        肉眼看不出台阶；整页重绘次数直接砍掉 60% ✓）
+            //   注意：**每帧都要调**（不是"每 40ms 调一次"）—— 限速是窗口那边按时间判的；
+            //   这里若自己也按 40ms 卡，链条会断（下一帧不请求 ⇒ 一直停到别的定时器来叫醒 ✗）
+            core.setFrameGap(40)
+            core.markFrameRedraw()
         }
 
         // 背景填充（可选）

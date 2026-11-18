@@ -10,6 +10,7 @@
 //    var ev = SDL3.createEvent()
 //    while running { while ev.poll() { ... } ren.clear(); ...; ren.present() }
 import ffi
+import files          // 2026-11-18：LENO_FRAME_TRACE 的帧诊断写文件用（应用多关控制台 ⇒ print 看不见）
 import maths          // 控件透明度夹取 / 定时等待夹取（2026-11-01：maths.saturate / clampi）
 import "sdl_core.leno" as core
 import "sdl_clickthrough.leno" as ct      // 整窗鼠标穿透（2026-10-21；只依赖 core，无循环引用 ✓）
@@ -21,6 +22,12 @@ sdl3 _lib = core.lib()
 
 // 全局窗口引用计数，最后一个窗口销毁时才 quit
 var _windowCount = 0
+
+// ★ 2026-11-18：run 循环里"事件合并"用的两块 128B 缓冲，**只分配一次**（原来每次迭代 malloc/free）。
+//   实测每次迭代的固定开销约 0.36ms，播放动画时每秒醒 1500+ 次 ⇒ 光这块就白烧半个核 ✗
+//   ⚠ 只在 run 的那个线程里用（同一进程只有一个 run 循环），单线程独占 ✓
+Ptr[u8] _evBufA = null
+Ptr[u8] _evBufB = null
 
 import "sdl_renderer.leno" as renderer
 use renderer.Renderer
@@ -1743,6 +1750,13 @@ export struct Window {
         //     "兜底全脏"不触发 ⇒ 只画了那个窗口，**这次全局重绘永久丢失**（不报错、不闪，
         //     就是那一帧该更新没更新）。提到循环外即可 ✓
         bool _pendingFull = false     // 有"欠一次全脏帧"的请求尚未兑现（跨轮次）
+        // ★ 2026-11-18：**每窗口最小帧间隔**的两张表（按 _runWids 下标走）。
+        //   `_winGap[i]` 是"这个窗口两帧至少隔多少毫秒"（0 = 不限）；`_lastDrawAt[i]` 是上次真画的时间。
+        //   谁来设 `_winGap`：控件在 render 里调 `core.setFrameGap(40)`（如 `ImageView` 的封面自转），
+        //   run 在渲染完那个窗口时把它读进 `_winGap[i]` —— 用来把"小动画"压在 ~25fps，
+        //   而不是让整页 60fps 重绘（老机器 CPU 30~40% 的元凶，见 sdl_imageview 的说明 ✓）
+        Array[int] _winGap = []
+        Array[int] _lastDrawAt = []
         int  _lastRenderTicks = core.getTicks()   // 上次渲染时刻，用于帧率节流
         int  _throttleMs = if maxFPS > 0 then 1000 / maxFPS else 1
         int _sizeSyncRemaining = 10   // 安全网：前 N 帧持续检查窗口尺寸（SDL_SyncWindow 已解决主问题）
@@ -1766,6 +1780,40 @@ export struct Window {
         int _benchDone = 0
         int _benchT0 = core.getPerfCounter()
         if _benchFrames > 0 { _throttleMs = 0 }   // 基准模式去掉帧率节流（每轮都真渲染）
+
+        // ---- 运行时帧诊断（2026-11-18，Aria 老机器「开桌面歌词 CPU 10% → 40%」反哺）----
+        // `LENO_FRAME_TRACE=<文件路径>` ⇒ 每秒写一行到**文件**并 print 一次：
+        //     [FRAME] 12s iters=62 frames=62 full=0 | w1 n=0 | w2 n=30 420us/f | timer=1ms ev=2ms
+        // 判读方法：
+        //   · 某个窗口 n 明显大于它的定时器频率 ⇒ 有东西在（直接或间接）反复请求它重绘；
+        //   · full > 0 且每秒都有 ⇒ 有调用方走了**全局** requestRedraw（会把所有窗口一起画）；
+        //   · 某窗口 us/f 很大 ⇒ 是那一页自己的绘制太重（控件树），不是窗口数量的问题；
+        //   · iters 远大于 frames ⇒ 循环被高频唤醒但没出帧（节流/定时器参数问题）。
+        // 为什么写文件：应用普遍 `_console(false)` 关掉控制台，print 是看不见的 ✗
+        // 不设这个环境变量 ⇒ 下面所有分支都不进，行为与之前逐字一致 ✓
+        string _trPath = ""
+        {
+            var _trEnv = _env("LENO_FRAME_TRACE")
+            if _trEnv != null { _trPath = _str(_trEnv) }
+        }
+        bool _trOn = _trPath != ""
+        int _trNext = core.getTicks() + 1000
+        int _trIters = 0
+        int _trFrames = 0
+        int _trFull = 0
+        int _trTimerUs = 0
+        int _trEvUs = 0
+        int _trEvs = 0        // 每秒处理的事件个数（=0 却 iters 很高 ⇒ 空转自旋；>1000 ⇒ 事件风暴）
+        int _trSpin = 0       // "等着出帧但 waitTimeout 几乎没睡"的次数（≈iters ⇒ 在空转烧 CPU）
+        int _trSkip = 0       // 欠帧但被**帧率节流**挡下的次数（说明节流窗口里在反复空转）
+        int _trGapSkip = 0    // 被"窗口级最小间隔"挡下的次数（2026-11-18）
+        int _trG0 = core._dbgGlobalReqs      // 上一秒的"全脏请求"计数（差值 = 每秒速率）
+        int _trW0c = core._dbgWinReqs        // 上一秒的"按窗口请求"计数
+        int _trGC0 = core._dbgGapCalls       // 上一秒的 setFrameGap(>0) 计数
+        string _trLog = ""
+        Array[int] _trN = []
+        Array[int] _trUs = []
+
         while true {
             core.resetFrameCursor()   // 每帧开始：清空本帧光标请求
             core.advanceFrame()       // 帧计数器递增（供控件做帧内去重）
@@ -1826,19 +1874,39 @@ export struct Window {
             //     · 正常模式里动画/定时器欠帧时也被推迟最多 5ms：30fps 的 33ms 预算白扔 15%，
             //       表现为"动画偶发跳一下"（一直查不出的那类抖动 ✓）
             //   只在**真的没事干**（不欠帧、也不在跑基准）时才补，保留原来"防事件循环空转"的意图 ✓
-            if not ev.has and _wakeWait < 5 and not _needRedraw and _benchFrames <= 0 {
-                core.delay(5 - _wakeWait)
+            // ★★ 2026-11-18（Aria 播放时 CPU 反哺）：**欠帧但还在节流窗口里**必须把这段预算睡掉。
+            //   原逻辑只在"没事干"时补睡 5ms，欠帧时则不管 —— 实测（LENO_FRAME_TRACE）：
+            //     播放中 iters≈2400/秒、spin≈iters、skip≈iters、evs=0
+            //   也就是每秒空转两千多次（每次还要 malloc×2/free/轮询），一帧都没多画，
+            //   白烧 ~10% 单核（老机器更糟）。原因是 `ev.waitTimeout(n)` 在 Windows/D3D 下
+            //   经常**立刻返回**（没有事件也秒回），靠它做节流等于没有节流 ✗
+            //   为什么补睡安全：这里 `ev.has=false`（没有事件），SDL 的等待本来就会被新事件唤醒；
+            //   补睡只是把"下一帧"推到节流窗口末端 —— 那本来就是它该出帧的时刻 ✓
+            if not ev.has and _benchFrames <= 0 {
+                if _needRedraw and not _inputEvent {
+                    int _remMs = _throttleMs - (core.getTicks() - _lastRenderTicks)
+                    if _remMs > 1 { core.delay(_remMs - 1) }
+                } else if not _needRedraw and _wakeWait < 5 {
+                    core.delay(5 - _wakeWait)
+                }
             }
+            if _trOn and _needRedraw and not ev.has and _wakeWait < 2 { _trSpin = _trSpin + 1 }
             // ★ Motion 事件合并：鼠标快速移动时 SDL 队列中会堆积大量连续 motion 事件，
             //   每个都触发全控件 process()。弱 CPU 上导致 CPU 占用飙升。
             //   合并策略：只保留同窗口的最后一个 motion 事件，丢弃中间的。
             //   _motionBuf 保存最新 motion，_deferredBuf 保存合并期间遇到的非 motion 事件。
-            Ptr[u8] _motionBuf = ffi.malloc(128)
-            Ptr[u8] _deferredBuf = ffi.malloc(128)
+            // ★ 2026-11-18：这两块 128B 缓冲改成**只分配一次**（模块级，见 `_evBufA/_evBufB`）。
+            //   原来每次循环迭代 malloc×2 + free×2 —— 实测循环体固定开销约 0.36ms/次，
+            //   而播放动画时每秒会醒 1500+ 次（见下面的节流/窗口级限速），白烧半个核 ✗
+            if _evBufA == null { _evBufA = ffi.malloc(128) }
+            if _evBufB == null { _evBufB = ffi.malloc(128) }
+            Ptr[u8] _motionBuf = _evBufA
+            Ptr[u8] _deferredBuf = _evBufB
             bool _hasDeferred = false
             int _profBody0 = core.getPerfCounter()
             int _profEv0 = core.getPerfCounter()
             while ev.has {
+                if _trOn { _trEvs = _trEvs + 1 }
                 // 鼠标移动(motion)不强制整窗重绘：光标为 OS 级、hover 变化已由控件
                 // markFrameRedraw() 请求重绘；否则每次移动都触发全窗清屏+全控件重绘，
                 // 偶发呈现异常会让控件（如表）整块露出背景而“闪一下”。
@@ -1944,6 +2012,9 @@ export struct Window {
                             _runDialogHidden.remove(i); _runTransparent.remove(i)
                             _runOverlays.remove(i)
                             _runShortcuts.remove(i); _runShortcutGuards.remove(i)
+                            // ★ 2026-11-18：窗口级动画限速的两张表也要跟着删（下标必须对齐）
+                            if i < _winGap.len() { _winGap.remove(i) }
+                            if i < _lastDrawAt.len() { _lastDrawAt.remove(i) }
                             // 恢复焦点到父窗口（非模态关闭时 _restoreWid 为 -1，跳过）
                             if _restoreWid >= 0 { raiseWindow(_restoreWid) }
                             break
@@ -2094,8 +2165,9 @@ export struct Window {
                     ev.poll()
                 }
             }
-            ffi.free(_motionBuf); ffi.free(_deferredBuf)
+            // 缓冲常驻（见上面的 `_evBufA/_evBufB`），这里不再 free ✓
             int _profCur0 = core.getPerfCounter()
+            if _trOn { _trEvUs = _trEvUs + _profAdd(_profEv0) }   // [诊断] 本帧事件轮询+派发耗时
             core.applyFrameCursor()    // 帧末：按本帧各控件的请求统一设置一次光标（避免互相覆盖）
             int _profCursorTmp = _profAdd(_profCur0)
             if _runWids.len() == 0 {
@@ -2108,6 +2180,7 @@ export struct Window {
             int _profTmr0 = core.getPerfCounter()
             timer.tickAllTimers()
             int _profTimerTmp = _profAdd(_profTmr0)
+            if _trOn { _trTimerUs = _trTimerUs + _profTimerTmp }   // [诊断] 定时器回调（含频谱 FFT）每秒总耗时
             // ★ 程序化退出请求（requestExit()：托盘菜单/定时器等非 onEvent 上下文发起）：
             //   与 SDL_QUIT 事件同款收尾（控件 dispose → 渲染器/窗口销毁 → 事件反初始化）
             if _exitRequested {
@@ -2125,6 +2198,7 @@ export struct Window {
                 _runRoots = []; _runRootX = []; _runRootY = []; _runW = []; _runH = []
                 _runDialogHidden = []; _runTransparent = []; _runOverlays = []
                 _runShortcuts = []; _runShortcutGuards = []
+                _winGap = []; _lastDrawAt = []     // ★ 窗口级动画限速表（2026-11-18）
                 // 浮层/点外部状态也归零（否则下次 run() 会带着上一次窗口的矩形 ✓）
                 _moWid = -1; _moWidget = null; _moW = 0.0; _moH = 0.0
                 _outWid = -1; _outCb = null; _outArmed = false; _outW = 0.0; _outH = 0.0
@@ -2183,6 +2257,7 @@ export struct Window {
                 // ★ 输入类事件（滚轮/点击/键盘/resize）**不等节流**，立刻出一帧：
                 //   节流本来是为了压制动画/motion 的 CPU 占用，但把它套在用户输入上，
                 //   就会让滚动/点击"攒着一起动"✗ ⇒ 输入路径放行，其余照旧 ✓
+                if _trOn and not _inputEvent and now - _lastRenderTicks < _throttleMs { _trSkip = _trSkip + 1 }
                 if _inputEvent or now - _lastRenderTicks >= _throttleMs {   // 节流：距上次渲染不足节流间隔则跳过
                     _lastRenderTicks = now
                     _needRedraw = false   // 清除标记；动画控件在 render 时可调用 requestRedraw() 请求下一帧
@@ -2226,13 +2301,32 @@ export struct Window {
                             fpt.free()
                         }
                     }
+                    int _gapWaitMs = 0
                     for _runWids.len() to i {
                     // ★ 2026-11-17（F4）：这一帧只有"某个窗口欠一帧"时，其余窗口**整个跳过**
                     //   （不清屏、不 relayout、不 present）—— 浮窗的 20fps 不再拖着主窗口重绘。
                     //   `_fullFrame` 为真时照旧全画：事件、全局 requestRedraw、toast/tooltip、
                     //   尺寸同步这些路径都可能是"任何窗口都受影响"的 ✓
                     if not _fullFrame {
-                        if not core.takeWindowRedraw(_runWids[i]) { continue }
+                        // ★ 2026-11-18：先**看**请求、再判窗口级最小间隔、真画了才消费 ✓
+                        //   （原来直接 takeWindowRedraw ⇒ 被节流挡下时请求已经没了，整页 60fps）
+                        if not core.hasWindowRedrawFor(_runWids[i]) { continue }
+                        while _winGap.len() <= i { _winGap.add(0) }
+                        while _lastDrawAt.len() <= i { _lastDrawAt.add(0) }
+                        int _gapMs = _winGap[i]
+                        // 用户输入（点击/滚轮/键盘）**不受窗口级限速约束**：拖动/滚动要跟手 ✓
+                        // 基准模式也绕过：`LENO_SDL_FRAMES` 要做**确定性**的每帧渲染，被限速会失真 ✓
+                        if _inputEvent or _benchFrames > 0 { _gapMs = 0 }
+                        if _gapMs > 0 {
+                            int _waitMs = _gapMs - (core.getTicks() - _lastDrawAt[i])
+                            if _waitMs > 0 {
+                                if _trOn { _trGapSkip = _trGapSkip + 1 }
+                                // 还没到点：请求保留、下一轮再看；把"还要等多久"记下来统一补睡
+                                if _waitMs > _gapWaitMs { _gapWaitMs = _waitMs }
+                                continue
+                            }
+                        }
+                        core.dropWindowRedraw(_runWids[i])
                     }
                     if _skipRender { continue }
                     // 每帧清屏：用 fillRect 打满整个窗口代替 SDL_RenderClear
@@ -2240,11 +2334,14 @@ export struct Window {
                     // 透明窗口跳过背景填充，保留 alpha=0 区域透明
                     // 使用主题背景色而非硬编码黑色，消除首帧黑闪
                     var ren = _runRens[i]
+                    // [诊断] LENO_FRAME_TRACE：本窗口这一帧的起点（关闭时取 0，不算）
+                    int _tW0 = if _trOn then core.getPerfCounter() else 0
                     // ★ SSAA：每帧渲染前重新设置渲染目标到离屏高分辨率纹理 + 缩放
                     // present() 每帧执行后会重置渲染目标为窗口、缩放为 1.0，
                     // 必须在此切回 SSAA 纹理，否则后续 fillRect/控件绘制全部直接画到窗口、SSAA 失效
                     int _profB0 = core.getPerfCounter()
                     ren.beginFrame()
+                    core.setFrameGap(0)      // ★ 每次渲染前重置：本帧没人调 setFrameGap ⇒ 该窗口恢复不限速
                     if not _runTransparent[i] {
                         Theme th = theme.getTheme()
                         ren.setColor(th.bg)
@@ -2353,6 +2450,10 @@ export struct Window {
                     // 叠加层：在所有控件/弹层/Tooltip 之上绘制（拖拽浮动框等），present 之前最后一遍
                     var _ovl = _runOverlays[i]
                     if _ovl != null { _ovl(_runRens[i]) }
+                    // ★ 2026-11-18：收集本帧控件声明的"最小出帧间隔"（见 sdl_core.setFrameGap）
+                    //   放在这里（控件都画完）⇒ 下一帧就用它给这个窗口限速 ✓
+                    while _winGap.len() <= i { _winGap.add(0) }
+                    _winGap[i] = core.frameGap()
                     // [诊断] present 之前的"控件树绘制"耗时（含 toast/tooltip/叠加层）
                     //   只在基准模式累计 ⇒ 正常跑图零开销（两个整数加法都不做 ✓）
                     if _benchFrames > 0 {
@@ -2367,6 +2468,15 @@ export struct Window {
                                                                / _float(core.getPerfFrequency()))
                     }
                     _frameTotal = _frameTotal + 1      // ★ 诊断：累计渲染帧数（供 frameTotal() 查）
+                    while _lastDrawAt.len() <= i { _lastDrawAt.add(0) }
+                    _lastDrawAt[i] = core.getTicks()   // ★ 窗口级最小出帧间隔的起点（2026-11-18）
+                    // [诊断] LENO_FRAME_TRACE：按窗口累计帧数与单帧耗时（微秒）
+                    if _trOn {
+                        while _trN.len() <= i { _trN.add(0); _trUs.add(0) }
+                        _trN[i] = _trN[i] + 1
+                        _trUs[i] = _trUs[i] + _profAdd(_tW0)
+                        _trFrames = _trFrames + 1
+                    }
                     // 对话框窗口：首帧渲染完后显示（避免创建时闪现默认背景）
                     // show 后立即 raise，确保对话框在主窗口前面
                     if _runDialogHidden[i] {
@@ -2375,8 +2485,19 @@ export struct Window {
                         _runDialogHidden[i] = false
                     }
                 }
-                    // 全脏的一帧已经把每个窗口都画过 ⇒ 窗口级标记一并作废（否则下一轮还会再画一次）
-                    if _fullFrame { core.clearWindowRedraws() }
+                    // ★★ 2026-11-18 修（这条把动画彻底掐死了）：**帧末绝对不能再 clearWindowRedraws()**。
+                    //   全脏帧的窗口级标记已经在帧首清过了（见上面的 consumeRedrawRequest +
+                    //   clearWindowRedraws）；帧末再清一次，会把**渲染过程中**新产生的请求一起抹掉 ——
+                    //   而"动画续帧"（封面自转 / 波形）恰恰就是在 render 里请求下一帧的 ✗
+                    //   实测症状：`gapCalls=5`（每秒只渲染 5 次，动画每帧都请求、每次都被清零）⇒
+                    //   唱片停转、主窗只剩 200ms 一拍；一改成帧首清，25fps 立刻恢复 ✓
+                    if _fullFrame { if _trOn { _trFull = _trFull + 1 } }
+                    // ★ 2026-11-18：有窗口被"最小出帧间隔"挡住 ⇒ 在这里补睡到它到点。
+                    //   为什么不 continue 空转：欠帧标记还在，下一轮会立刻又进来 ⇒ 上千次/秒 ✗
+                    //   封顶 16ms（≈60fps 一帧）：再长的话输入延迟会超过一帧（宁可多醒两次）
+                    if _gapWaitMs > 0 {
+                        core.delay(if _gapWaitMs > 16 then 16 else _gapWaitMs)
+                    }
                 }              // 闭合节流 if
             }
             // 动画控件可能在 render 中调用了 requestRedraw() → 下一轮**必须全脏**出帧
@@ -2384,6 +2505,40 @@ export struct Window {
             //     per-window 请求或帧率节流"顶掉"，全脏的意图就丢了 ⇒ 记到 `_pendingFull`，
             //     等**真的画出全脏帧**再清（消费点见渲染分支 ✓）
             if core.consumeRedrawRequest() { _needRedraw = true; _pendingFull = true }
+
+            // ---- [诊断] LENO_FRAME_TRACE：每秒一行（见循环前那段判读说明）----
+            if _trOn {
+                _trIters = _trIters + 1
+                int _trNow = core.getTicks()
+                if _trNow >= _trNext {
+                    string _trS = "[FRAME] " + _str(_trNow / 1000) + "s iters=" + _str(_trIters)
+                        + " frames=" + _str(_trFrames) + " full=" + _str(_trFull)
+                    for _runWids.len() to _ti {
+                        int _tn = 0
+                        int _tu = 0
+                        if _ti < _trN.len() { _tn = _trN[_ti]; _tu = _trUs[_ti] }
+                        // 带上窗口尺寸 ⇒ 不用猜是哪个窗（主窗 1000x680 / 桌面歌词 920x96 / 对话框各异 ✓）
+                        _trS = _trS + " | w" + _str(_runWids[_ti])
+                            + "(" + _str(_runW[_ti]) + "x" + _str(_runH[_ti]) + ")"
+                            + " n=" + _str(_tn)
+                        if _tn > 0 { _trS = _trS + " " + _str(_tu / _tn) + "us/f" }
+                        if _ti < _winGap.len() { _trS = _trS + " gap=" + _str(_winGap[_ti]) }
+                    }
+                    _trS = _trS + " | timer=" + _str(_trTimerUs / 1000) + "ms ev=" + _str(_trEvUs / 1000) + "ms"
+                        + " evs=" + _str(_trEvs) + " spin=" + _str(_trSpin) + " skip=" + _str(_trSkip)
+                        + " thr=" + _str(_throttleMs) + " maxfps=" + _str(maxFPS)
+                        + " globReq=" + _str(core._dbgGlobalReqs - _trG0) + " winReq=" + _str(core._dbgWinReqs - _trW0c)
+                        + " gapSkip=" + _str(_trGapSkip) + " gapCalls=" + _str(core._dbgGapCalls - _trGC0) + "\n"
+                    _trLog = _trLog + _trS
+                    try { files.write(_trPath, _trLog) } catch e { print("[FRAME] 写 trace 失败：" + _str(e) + "\n") }
+                    print(_trS)
+                    _trN = []; _trUs = []
+                    _trIters = 0; _trFrames = 0; _trFull = 0; _trTimerUs = 0; _trEvUs = 0
+                    _trEvs = 0; _trSpin = 0; _trSkip = 0; _trGapSkip = 0
+                    _trG0 = core._dbgGlobalReqs; _trW0c = core._dbgWinReqs; _trGC0 = core._dbgGapCalls
+                    _trNext = _trNow + 1000
+                }
+            }
 
             // ---- 确定性 GUI 基准：跑满 _benchFrames 帧后收尾 ----
             // 摘要里的 `sum`（批处理计数之和）是**负载一致性判据**：两次运行的 sum 相同
