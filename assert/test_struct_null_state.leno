@@ -30,12 +30,14 @@ main() {
     assert_eq(g_noinit == null, true, "P g_noinit（不写初值）仍是 null")
 
     // ②-b 字段才自动分配
+    //   ⚠ 2026-11-18（F2·L4）起**不能再写** `bx.inner_noinit == null` —— 那是"确定非空
+    //     操作数与 null 比较"，编译期直接报错。改成"取字段不炸"来证明它确实有内容 ✓
     Box bx = new Box()
-    assert_eq(bx.inner_noinit == null, false, "struct 字段不写初值会被自动分配")
+    assert_eq(bx.inner_noinit.x, 0, "struct 字段不写初值会被自动分配（能取字段即非空）")
 
-    // ③ new 出来的当然不为 null
+    // ③ new 出来的当然不为 null（同上：用取字段代替 == null 比较）
     P made = new P()
-    assert_eq(made == null, false, "new P() 不为 null")
+    assert_eq(made.x, 0, "new P() 有内容（非空）")
 
     // ④ 可空类型：显式声明才算"可能没有"
     P? maybe = null

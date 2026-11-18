@@ -103,7 +103,9 @@ var horses = [horse, horse]
 assert_eq(type(horses), "Array[Horse]")
 
 // ========== 12. face 不能实例化（编译期已验证，此处仅确认 struct 可实例化） ==========
+//   ⚠ 2026-11-18（F2·L4）起不能再写 `h != null`：确定非空的操作数与 null 比较是编译错误
+//     ⇒ 改成按具体类型确认（`type(h)` 拿到 Horse 就说明实例化成功 ✓）
 var h = new Horse()
-assert_eq(h != null, true)
+assert_eq(type(h), "Horse")
 
 print("test_face_advanced passed")

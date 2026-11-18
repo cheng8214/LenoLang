@@ -277,15 +277,20 @@
                         if (sem_expr_maybe_null(s, other, 0)) struct_vs_null = 0;
                     }
                     if (struct_vs_null) {
-                        // ★ 2026-11-17（F2）：文案跟着判据一起改准。
-                        //   旧文案说"struct 值类型默认被立即分配" —— 这句只对 **struct 字段**
-                        //   成立：实测 `P p`（局部/模块级不写初值）**仍是 null**，只有字段才自动分配。
-                        //   现在能走到这里的都是"确定不为 null"的形态（`new X()` / `x as P` 已排除），
-                        //   所以直接说比较恒为什么，并给出可空写法 ✓
-                        warning_add_at_fmt(WARN_STRUCT_EQ_NULL, ast->line, ast->column,
+                        // ★ 2026-11-18（F2·L4）：**升为错误**（此前是 WARN_STRUCT_EQ_NULL 警告）。
+                        //   为什么现在才敢升：L3 之后"非可空类型"真的非空了（`T x = null` 编不过），
+                        //   所以"确定不为 null 的操作数与 null 比较"就**永远**是逻辑错误，
+                        //   不再是"碰运气"——恒 false / 恒 true 的判断留着只会写出一段死代码。
+                        //   为什么是错误而不是警告：这条一旦命中，那个分支**必然**走不到，
+                        //   与其让它静默存在，不如逼作者当场删掉或改成 `Type?` ✓
+                        //   存量：仓内 1313 文件 + 11 个同级项目 203 文件实测 **0 命中** ⇒ 升级零返工。
+                        //   文案跟着判据走：能走到这里的都是"确定不为 null"的形态
+                        //   （`new X()` / struct 字面量 / 不写初值的 struct 字段；`x as P` 已排除）
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                             "这个操作数确定不为 null（`new X()` / struct 字面量 / 不写初值的 struct 字段）"
-                            "⇒ `%s null` 恒为 %s；"
-                            "要表达「可能没有」请用 `Type?` 可空类型",
+                            "⇒ `%s null` 恒为 %s —— 这个分支永远走不到\n"
+                            "  提示: 要表达「可能没有」请把变量/字段声明成 `Type?`，"
+                            "再 `if x != null { … }` 收窄；确定非空就直接删掉这个判断 ✓",
                             (op == TOK_EQEQ) ? "==" : "!=",
                             (op == TOK_EQEQ) ? "false" : "true");
                     }
