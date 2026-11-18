@@ -17,13 +17,13 @@ struct P { int x = 0 }
 
 struct Box { P inner_noinit }
 
-P g = null
+P? g = null
 
 P g_noinit
 
 main() {
     // ① 显式 null ⇒ 比较有意义（正是原警告误报的那种写法）
-    assert_eq(g == null, true, "P g = null 之后 g 真的是 null")
+    assert_eq(g == null, true, "P? g = null 之后 g 真的是 null")
     assert_eq(g != null, false, "同上，取反也一致")
 
     // ② 不写初值 ⇒ **仍然是 null**（自动分配只发生在 struct **字段**上，见文件头）

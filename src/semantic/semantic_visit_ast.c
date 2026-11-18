@@ -1603,7 +1603,12 @@ static const char* type_show_name(TypeInfo* t, char* buf, size_t n) {
 }
 
 // what：位置描述（"变量" / "形参" / "返回值" / "字段"）；name：实体名（可空）
-static void warn_null_literal(Ast* null_ast, TypeInfo* target, const char* what, const char* name) {
+// ★ 2026-11-18（F2·L3）：**升为错误**（此前是 WARN_NULL_LITERAL 警告）。
+//   理由：L1 的警告跑了一整轮、仓内 1313 文件 + 5 个同级项目（Aria / LenoTrae / LenoDumate /
+//   LenoWorkBuddy / AriaDeployd）的 25 处存量已全部按 `T?` / `Dict?` 迁移干净 ⇒
+//   这时再允许"非可空 ← null"就等于把 L2 的收窄保证漏回一个口子。
+//   `T?` / any / 未标注 / 泛型形参 / 句柄类仍照放行（type_null_literal_ok）。
+static void check_null_literal(Ast* null_ast, TypeInfo* target, const char* what, const char* name) {
     if (!null_ast || null_ast->kind != AST_NULL) return;
     if (type_null_literal_ok(target)) return;
     char kbuf[32];
@@ -1612,13 +1617,14 @@ static void warn_null_literal(Ast* null_ast, TypeInfo* target, const char* what,
     if (name && name[0]) snprintf(subj, sizeof(subj), "%s '%s'", what, name);
     else snprintf(subj, sizeof(subj), "%s", what);
     const char* var = (name && name[0]) ? name : "x";
-    warning_add_at_fmt(WARN_NULL_LITERAL, null_ast->line, null_ast->column,
-        "%s 是 %s（非可空），却赋了 null\n"
-        "  提示: 刚赋 null 时 `%s != null` 为 false（值就是 null），赋过之后才为真 —— "
+    error_add_at_fmt(ERR_TYPE_MISMATCH, null_ast->line, null_ast->column,
+        "%s 是 %s（非可空），不能赋 null\n"
+        "  提示: 要表达「可能没有」请把类型写成 `%s? %s`，"
+        "再用 `if %s != null { … }` 收窄后取字段/调方法\n"
+        "  提示: 刚赋 null 时 `%s != null` 为 false，"
         "\"有没有\"靠人手维护另一个 bool 很容易忘同步 ✗\n"
-        "  提示: 要表达「可能没有」请写 `%s? %s`，用 `if %s != null { … }` 收窄后再取字段\n"
         "  提示: 句柄类（Ptr / cLib / Channel / File / Socket / func …）天然可空，不受此限",
-        subj, tn, var, tn, var, var);
+        subj, tn, tn, var, var, var);
 }
 
 // ============================================================================

@@ -68,10 +68,10 @@ main() {
 
     // ⑦b 引用类型：string / Dict 在 Leno 里本来就允许 null（不是 `string?`）
     //    ⇒ `??=` 必须能用；只有**值类型**（int/float/bool…）才判"不可空"。
-    string str = null
+    string? str = null
     str ??= "有空"
     assert_eq(str, "有空", "string（引用类型）可用 ??=")
-    Dict dd2 = null
+    Dict? dd2 = null
     dd2 ??= {}
     assert_eq(dd2.len(), 0, "Dict（引用类型）可用 ??=")
 

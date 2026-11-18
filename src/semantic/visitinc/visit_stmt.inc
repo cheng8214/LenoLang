@@ -23,7 +23,7 @@
             // ★ 2026-11-18（F2·L1）：`return null` 而返回类型非可空且非句柄 ⇒ 警告
             //   （`func f(): P { return null }` 此前零诊断 ⇒ 调用点拿到 null 还以为它是对象 ✗）
             if (ast->u.ret && s->current_func) {
-                warn_null_literal(ast->u.ret, s->current_func->u.func.return_type,
+                check_null_literal(ast->u.ret, s->current_func->u.func.return_type,
                                   "返回值", s->current_func->u.func.name);
                 // ★ 2026-11-18（F2·L2）：`return q`（q 可空、返回类型非可空）⇒ 警告
                 warn_nullable_flow(s, ast->u.ret, s->current_func->u.func.return_type,

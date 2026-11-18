@@ -802,6 +802,10 @@ static int semantic_import_payload_enum(Semantic* s, const char* name,
             TypeInfo* pt = (es->member_param_types && es->member_param_types[m])
                                ? es->member_param_types[m][k] : NULL;
             sym->struct_field_types[pidx] = pt ? type_copy(pt) : type_new(TYPE_ANY);
+            // ★ 2026-11-18（F2·L3）：**载荷槽本身必须是可空的** —— 它的语义就是"这条成员没填
+            //   的时候这里是 null"（默认值就是 null 字面量，见 semantic.c 的降级）。
+            //   此前字段类型照抄载荷类型（`Pt`），L3 一开就报"字段 'p0' 是 Pt，不能赋 null" ✗
+            if (sym->struct_field_types[pidx]) sym->struct_field_types[pidx]->nullable = 1;
             if (pt && pt->nullable) sym->struct_field_null_default[pidx] = 1;
             pidx++;
         }

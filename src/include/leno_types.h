@@ -279,19 +279,9 @@ typedef enum {
                                 //   ⚠ 带**收窄**：`if q != null { … }` 的 then 分支、
                                 //     `if q == null { return }` 之后的代码里 q 视作非空 ⇒ 不报
                                 //     （先判空再用是最常见也最正确的写法 ✗ 报了就没法用）
-    WARN_NULL_LITERAL,          // **非可空类型 ← `null` 字面量**（2026-11-18 加，F2 的 L1）
-                                //   `Window dlWin = null` 之后 `dlWin != null` **恒真**（值就是 null），
-                                //   应用只能靠 `bool dlOpen` 这类手工伴生字段兜 —— 忘同步就静默错
-                                //   （Aria 桌面歌词 / 托盘两个真 bug 都是它）。
-                                //   覆盖 5 个位置：变量声明 / 赋值 / 实参 / `return` / 字段默认值。
-                                //   ⚠ 口径（宁漏勿误报）：
-                                //     · 只认 **`null` 字面量**（变量、调用结果一律不判）；
-                                //     · 目标必须**显式可判定**：`T?` / `any` / 未标注 ⇒ 放行；
-                                //     · **句柄类天然可空**（Ptr / cLib / Channel / Thread / Future /
-                                //       File / Socket / func / cstruct 指针）⇒ 放行 —— 它们的存在意义
-                                //       就是"可能还没准备"，实测这类存量有 82 处，判红是错的；
-                                //     · 值类型 / string / Array / Dict / struct / face / enum ⇒ 才报。
-                                //   以后（L3）会升成错误；2026-11-18 这版**只有警告** ✓
+    // 注：`WARN_NULL_LITERAL`（非可空类型 ← null 字面量）已于 2026-11-18 **升为错误**
+    //     （F2 的 L3，`ERR_TYPE_MISMATCH`，见 semantic_visit_ast.c 的 check_null_literal）——
+    //     存量 25 处已全部迁移到 `T?`，不再需要"先警告一轮"的过渡态 ✓
 } WarnType;
 
 // ============================================================================

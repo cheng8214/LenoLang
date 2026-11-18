@@ -243,7 +243,7 @@ func test_face_array_param() {
 // 13. 跨模块 face 的 null 安全
 // ============================================================
 func test_face_null_safe() {
-    Printable p = null
+    Printable? p = null
     assert(p == null)
 
     User u = new User(); u.name = "NonNull"; u.age = 1

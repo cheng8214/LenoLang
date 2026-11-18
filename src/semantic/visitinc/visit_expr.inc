@@ -2223,7 +2223,7 @@
                             //   （放在类型兼容检查**之前**：兼容检查认为 null 对引用类型合法，
                             //     所以我们这条是"语义提醒"，不改变它的结论 ✓）
                             if (func_def->u.func.params && func_def->u.func.pcnt > i) {
-                                warn_null_literal(ast->u.call.args.items[i], expected_type,
+                                check_null_literal(ast->u.call.args.items[i], expected_type,
                                                   "形参", func_def->u.func.params[i]);
                                 // ★ 2026-11-18（F2·L2）：`f(q)`（q 可空、形参非可空）⇒ 警告
                                 //   ⚠ 该警告当前**默认关闭**（见 warn_nullable_flow 的说明）：

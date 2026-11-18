@@ -162,7 +162,7 @@
 
                 // ★ 2026-11-18（F2·L1）：`非可空类型 x = null` ⇒ 警告（判据见 warn_null_literal）
                 //   必须在 alias 解析**之后**：`alias Color = int` 这类要先展开成实际类型再判 ✓
-                warn_null_literal(ast->u.var_decl.init, ast->u.var_decl.type,
+                check_null_literal(ast->u.var_decl.init, ast->u.var_decl.type,
                                   "变量", ast->u.var_decl.name);
                 // ★ 2026-11-18（F2·L2）：`P w = q`（q 是 P?）⇒ 警告（可空静默流入非可空）
                 warn_nullable_flow(s, ast->u.var_decl.init, ast->u.var_decl.type,
@@ -592,7 +592,7 @@
                 if (tn0) {
                     Symbol* wsym = scope_resolve(s->current, tn0);
                     if (wsym && wsym->type) {
-                        warn_null_literal(ast->u.assign.value, wsym->type, "变量", tn0);
+                        check_null_literal(ast->u.assign.value, wsym->type, "变量", tn0);
                     }
                 }
             }

@@ -703,7 +703,7 @@
                             // ★ 2026-11-18（F2·L1）：字段默认值是 null、而字段类型非可空且非句柄 ⇒ 警告
                             //   （`struct B { P inner = null }` 之后每个实例的 inner 都是 null，
                             //     取字段直接运行期报错 —— 与变量那条同口径 ✓）
-                            warn_null_literal(ast->u.struct_def.field_defaults[i],
+                            check_null_literal(ast->u.struct_def.field_defaults[i],
                                               ast->u.struct_def.field_types[i],
                                               "字段", ast->u.struct_def.field_names[i]);
                             TypeInfo* ft = ast->u.struct_def.field_types[i];

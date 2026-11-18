@@ -221,7 +221,7 @@ func test_mixed_deep() {
 // ============================================================================
 func test_multiple_deep_lists() {
     // 创建多个深链表，增加 GC 标记栈压力
-    Node list1 = build_deep_list(2000)
+    Node? list1 = build_deep_list(2000)   // L3 起：要显式清空（list1 = null）必须可空
     Node list2 = build_deep_list(2000)
     Node list3 = build_deep_list(2000)
 

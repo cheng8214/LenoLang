@@ -21,7 +21,7 @@ main() {
     var caught = 0
 
     // ① 语句位置：`a.add(x)`（C = need_result = 0 的那条路）
-    Array[string] a = null
+    Array[string]? a = null
     try {
         a.add("x")
         print("① 不该到这")
@@ -31,7 +31,7 @@ main() {
     print("① null.add（语句位置）caught=" + _str(caught))
 
     // ② 表达式位置：`int n = a.add(x)`（need_result = 1，写回长度那条路）
-    Array[string] b = null
+    Array[string]? b = null
     try {
         int n = b.add("y")
         print("② 不该到这: " + _str(n))
@@ -70,7 +70,7 @@ main() {
     string nullForErr = ""
     int nullLoops = 0
     try {
-        Array[string] nul = null
+        Array[string]? nul = null
         // ⚠ 循环体不能空：空体会被优化掉，连 OP_LEN 都不发（那样测不到检查 ✓）
         for nul to it { nullLoops = nullLoops + 1 }
     } catch e {

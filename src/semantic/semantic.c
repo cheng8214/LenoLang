@@ -588,6 +588,19 @@ static void enum_payload_synthesize(Semantic* s, Ast* ast) {
                                 e->u.enum_def.member_param_types[m])
                                    ? e->u.enum_def.member_param_types[m][k] : NULL;
                 sd->u.struct_def.field_types[pidx] = tk ? type_copy(tk) : type_new(TYPE_ANY);
+                // ★ 2026-11-18（F2·L3）：下面给"引用类载荷槽"显式造 null 默认值 —— 那些槽的
+                //   类型也必须标成**可空**，否则 L3（非可空不能赋 null）会把编译器**自己生成**
+                //   的代码判成错误（实测：带 struct 载荷的 enum 全部编不过 ✗）。
+                //   只对"要造 null 默认值"的那几类 kind 标，标量槽（int/float/bool/string）
+                //   仍走零值、保持非可空 ✓
+                if (sd->u.struct_def.field_types[pidx] &&
+                    (sd->u.struct_def.field_types[pidx]->kind == TYPE_STRUCT ||
+                     sd->u.struct_def.field_types[pidx]->kind == TYPE_FACE ||
+                     sd->u.struct_def.field_types[pidx]->kind == TYPE_PTR ||
+                     sd->u.struct_def.field_types[pidx]->kind == TYPE_CSTRUCT ||
+                     sd->u.struct_def.field_types[pidx]->kind == TYPE_GENERIC_PARAM)) {
+                    sd->u.struct_def.field_types[pidx]->nullable = 1;
+                }
                 // ★ 2026-11-10（压测发现）：**引用类**载荷槽必须显式默认 null。
                 //   不写默认值时，struct / face / Ptr / cstruct 类型的槽会被自动造成一个
                 //   **新实例**（实测 `enum P { num(int v)  pt(Pt p) }`：`P.num(5)` 的 p1 是

@@ -8,7 +8,9 @@
 //   ① `var x = null` ⇒ 类型为 **any（未锁定）**；
 //   ② 第一次赋非 null 值 ⇒ **锁定**为该类型（`x = 42` 锁成 int；此后 `x = "hello"` ❌ 报错）；
 //   ③ `int` / `float` / `bool` / `bigint` 是**值类型**，不能赋 null（要可空得写 `int?`）；
-//      而引用型（string 等）可以为 null，`var name = "cheng"; name = null` 是清空，合法。
+//      ★ 2026-11-18（F2·L3）：**引用型也一样** —— `string` / `Dict` / struct 这些"非可空"类型
+//      赋 null 现在是**编译错误**，要清空必须声明成 `string?`（原文档的"引用型可以直接 null"
+//      是 L1 之前的旧口径，已废止）。
 //
 // 本文件钉：三条正向 + 三条**按文档必须报错**的负例（负例证明"锁"与"值类型"两条规则真的在生效）。
 
@@ -28,11 +30,11 @@ main() {
     var y = null
     assert_eq(y, null)           // 未赋过 ⇒ 仍是 null
 
-    // ---- ③ 正向：引用型可以为 null（清空写法）----
-    var name = "cheng"
+    // ---- ③ 正向：**可空**引用型才能清空（L3 起 `string` 本身不许 null）----
+    string? name = "cheng"
     name = null
     assert_eq(name, null)
-    string c = null
+    string? c = null
     assert_eq(c, null)
 
     // ---- ③ 正向：函数从**引用型**返回 null（表示"不存在"）----
@@ -91,15 +93,15 @@ main() {
 
     // ---- 正向：**引用型容器**可以为 null（收编自 examples/验证/test_null_ref_type.leno，已删；
     //   该文件同时还钉了"值类型 int 不能为 null" ✗，那条已在负例 2 覆盖）----
-    Dict d = null
-    Array arr = null
+    Dict? d = null
+    Array? arr = null
     assert_eq(d, null)
     assert_eq(arr, null)
 
     print("test_var_null_semantics passed")
 }
 
-func findUser(int id): string {
+func findUser(int id): string? {
     if id == 0 {
         return null
     }
