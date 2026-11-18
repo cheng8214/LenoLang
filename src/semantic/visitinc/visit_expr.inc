@@ -1311,7 +1311,9 @@
                                             if (!type_utils_is_array_element_mutator(method_name)) {
                                                 char callee[256];
                                                 snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
-                                                if (semantic_check_native_arg(s, ast, arg_type, expected_param_type, callee, i)) {
+                                                // ★ 2026-11-18：传**实参节点**而不是整个调用 —— 报错要指在
+                                                //   出问题的那个实参上，收窄判断也要能认出它是哪个变量 ✓
+                                                if (semantic_check_native_arg(s, ast->u.call.args.items[i], arg_type, expected_param_type, callee, i)) {
                                                     if (arg_type) type_free(arg_type);
                                                     continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
                                                 }
@@ -1441,7 +1443,9 @@
                                             if (!type_utils_is_dict_element_mutator(method_name)) {
                                                 char callee[256];
                                                 snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
-                                                if (semantic_check_native_arg(s, ast, arg_type, expected_param_type, callee, i)) {
+                                                // ★ 2026-11-18：传**实参节点**而不是整个调用 —— 报错要指在
+                                                //   出问题的那个实参上，收窄判断也要能认出它是哪个变量 ✓
+                                                if (semantic_check_native_arg(s, ast->u.call.args.items[i], arg_type, expected_param_type, callee, i)) {
                                                     if (arg_type) type_free(arg_type);
                                                     continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
                                                 }
@@ -1529,7 +1533,9 @@
                                             {
                                                 char callee[256];
                                                 snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
-                                                if (semantic_check_native_arg(s, ast, arg_type, expected_param_type, callee, i)) {
+                                                // ★ 2026-11-18：传**实参节点**而不是整个调用 —— 报错要指在
+                                                //   出问题的那个实参上，收窄判断也要能认出它是哪个变量 ✓
+                                                if (semantic_check_native_arg(s, ast->u.call.args.items[i], arg_type, expected_param_type, callee, i)) {
                                                     if (arg_type) type_free(arg_type);
                                                     continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
                                                 }

@@ -14,6 +14,7 @@
             // `then->u.block.items` 可能已被改写/释放（实测读了就 0xC0000005 ✗）
             int _nn_exits = (!ast->u.if_.else_) ? sem_body_always_exits(ast->u.if_.then) : 0;
 
+
             // D2: 条件位置出现赋值（`if x = 5`）几乎总是漏写 '='（想写 ==）。
             // 赋值表达式会把值写入变量并以该值作为条件——静默通过是 C 语言经典坑。
             if (ast->u.if_.cond && (ast->u.if_.cond->kind == AST_ASSIGN ||

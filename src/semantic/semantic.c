@@ -159,6 +159,11 @@ void semantic_init(Semantic* s, Ast* root) {
     //   漏了它会让**同文件 extend** 的 pri 访问被误判成"跨模块"而报错（实测 ✗）
     s->in_cross_module_extend = 0;
     s->has_module_load_failure = 0;
+    // ★ 2026-11-18（F2·L2）：早退收窄的名字集合**必须清零** —— 本函数不是整体 memset
+    //   （Semantic 是 main.c 的栈变量），漏清就是栈上垃圾：`null_narrow_count` 实测读到
+    //   29 万级的随机数 ⇒ `sem_null_narrowed()` 的循环越界读 `null_narrow_names[]`，
+    //   在 strcmp 上直接 0xC0000005（这批"打开 L2 就崩 391 个文件"的根因就是这个 ✗）
+    s->null_narrow_count = 0;
     s->in_main_func = 0;
     s->for_in_lhs = NULL;   // ★ Q3：for 头 `x in y` 的定向提示用（漏清就是读栈上垃圾）
     s->for_in_lhs_name = NULL;

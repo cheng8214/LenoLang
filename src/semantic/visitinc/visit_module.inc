@@ -538,7 +538,8 @@
                         !type_utils_is_dict_element_mutator(method_name)) {
                         char callee[256];
                         snprintf(callee, sizeof(callee), "%s.%s", actual_module, method_name);
-                        if (semantic_check_native_arg(s, ast, arg_type, expected_type, callee, i)) {
+                        // ★ 2026-11-18：传实参节点（报错位置指到实参、收窄判断才认得出变量）
+                        if (semantic_check_native_arg(s, ast->u.module_call.args.items[i], arg_type, expected_type, callee, i)) {
                             if (arg_type) type_free(arg_type);
                             continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
                         }
@@ -1578,7 +1579,8 @@
                                     !type_utils_is_dict_element_mutator(method_name)) {
                                     char callee[256];
                                     snprintf(callee, sizeof(callee), "方法 '%s'", method_name);
-                                    if (semantic_check_native_arg(s, ast, arg_type, expected_param_type, callee, i)) {
+                                    // ★ 2026-11-18：传**实参节点**（理由同 visit_expr.inc 的三处）
+                                    if (semantic_check_native_arg(s, ast->u.module_call.args.items[i], arg_type, expected_param_type, callee, i)) {
                                         if (arg_type) type_free(arg_type);
                                         continue;   // 已由需求机制接管 ⇒ 跳过常规比较（见该函数注释 ✓）
                                     }

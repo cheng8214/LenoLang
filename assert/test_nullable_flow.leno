@@ -1,0 +1,119 @@
+// ============================================================
+// F2·L2（2026-11-18）：**`T?` → `T` 的流失**警告 + 收窄
+// ------------------------------------------------------------
+// 规则：目标位置（变量/形参/返回值）非可空、非句柄类，而值是**裸变量**且静态带 `?`
+//   ⇒ 警告（不报错）。两条收窄都放行：
+//     ① 分支内：`if q != null { … }`（走既有 apply_null_narrowing 的影子符号）
+//     ② 早退：`if q == null { return }` 之后（走 null_narrow_names 名字集合）
+// ⚠ 这条规则的实现踩过一个**编译期崩溃**（391 个文件）：`semantic_init()` 没清
+//   `null_narrow_count`（Semantic 是栈变量）⇒ 越界读名字数组。用例 ⑤ 就是那个形状的护栏。
+// ============================================================
+
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+import strings
+
+func write_case(string work, string name, string body): string {
+    var f = dirs.join(work, name)
+    files.write(f, body)
+    return f
+}
+
+// ① 三条通路都报
+func case_warns(string work) {
+    var f = write_case(work, "warn.leno",
+        "struct P { int x = 0 }\n" +
+        "P g = new P()\n" +
+        "func take(P p) { }\n" +
+        "func give(): P { P? t = null\n    return t }\n" +
+        "main() {\n" +
+        "    P? q = null\n" +
+        "    g = q\n" +
+        "    take(q)\n" +
+        "    print(\"TAG=done\")\n" +
+        "}\n")
+    var out = ce.expect_ok(f, "流失只警告、不阻断编译", "TAG=done")
+    assert_true(strings.has(out, "可空值流入非可空"), "必须报流失警告；实际=" + out)
+    assert_true(strings.has(out, "变量 'g'"), "赋值通路要报；实际=" + out)
+    assert_true(strings.has(out, "形参 'p'"), "实参通路要报；实际=" + out)
+    assert_true(strings.has(out, "返回值 'give'"), "return 通路要报；实际=" + out)
+}
+
+// ② 分支内收窄 ⇒ 不报
+func case_branch_narrow(string work) {
+    var f = write_case(work, "branch.leno",
+        "struct P { int x = 0 }\n" +
+        "P g = new P()\n" +
+        "func take(P p) { }\n" +
+        "main() {\n" +
+        "    P? q = null\n" +
+        "    if q != null {\n" +
+        "        take(q)\n" +
+        "        g = q\n" +
+        "    }\n" +
+        "    print(\"TAG=done\")\n" +
+        "}\n")
+    var out = ce.expect_ok(f, "`if q != null` 分支内必须放行", "TAG=done")
+    assert_true(not strings.has(out, "可空值流入非可空"),
+        "分支内已收窄，不该报；实际=" + out)
+}
+
+// ③ 早退收窄 ⇒ 之后不报
+func case_early_exit(string work) {
+    var f = write_case(work, "exit.leno",
+        "struct P { int x = 0 }\n" +
+        "func take(P p) { }\n" +
+        "main() {\n" +
+        "    P? q = new P()\n" +
+        "    if q == null { return }\n" +
+        "    take(q)\n" +
+        "    print(\"TAG=done\")\n" +
+        "}\n")
+    var out = ce.expect_ok(f, "`if q == null { return }` 之后必须放行", "TAG=done")
+    assert_true(not strings.has(out, "可空值流入非可空"),
+        "早退之后已非空，不该报；实际=" + out)
+}
+
+// ④ 早退收窄对 **native** 形参也生效（崩溃/收窄的实账：strings.byte_slice）
+func case_early_exit_native(string work) {
+    var f = write_case(work, "native.leno",
+        "import \"strings\" as str\n" +
+        "func read_raw(): string? { return \"abcd\" }\n" +
+        "main() {\n" +
+        "    string? raw = read_raw()\n" +
+        "    if raw == null { return }\n" +
+        "    var b = str.byte_slice(raw, 0, 2)\n" +
+        "    print(\"TAG=\" + _str(b.len()))\n" +
+        "}\n")
+    var out = ce.expect_ok(f, "native 形参在早退之后要放行", "TAG=3")
+    assert_true(not strings.has(out, "可空值不能直接传给"),
+        "早退之后不该拦 native 实参；实际=" + out)
+}
+
+// ⑤ 回归护栏：`null_narrow_count` 未被初始化时曾让 391 个文件编译期崩溃。
+//   这里跑一个"只有类型声明、没有任何 if"的模块，确保 Semantic 初始化干净。
+func case_no_if(string work) {
+    var f = write_case(work, "noif.leno",
+        "import \"strings\" as str\n" +
+        "main() {\n" +
+        "    var s = \"abc\"\n" +
+        "    print(\"TAG=\" + _str(s.len()) + _str(str.byte_slice(s, 0, 1).len()))\n" +
+        "}\n")
+    ce.expect_ok(f, "没有 if 的文件也不能崩", "TAG=32")
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_nullable_flow")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    case_warns(work)
+    case_branch_narrow(work)
+    case_early_exit(work)
+    case_early_exit_native(work)
+    case_no_if(work)
+
+    dirs.delete(work)
+    print("test_nullable_flow passed\n")
+}

@@ -1644,7 +1644,13 @@ static void sem_narrow_nonnull(Semantic* s, const char* name) {
 // 供 native 形参检查（semantic_type_utils.c）与 L2 共用：这个名字当前是否已被收窄成非空
 int sem_null_narrowed(Semantic* s, const char* name) {
     if (!s || !name) return 0;
-    for (int i = 0; i < s->null_narrow_count; i++) {
+
+    // 防御：`Semantic` 是栈变量、`semantic_init` 不 memset ⇒ 计数一旦是垃圾就会越界读。
+    //   semantic_init 已显式清零（根因），这里再夹一道，保证"坏状态最多退化成不收窄" ✓
+    int n = s->null_narrow_count;
+    int cap = (int)(sizeof(s->null_narrow_names) / sizeof(s->null_narrow_names[0]));
+    if (n < 0 || n > cap) return 0;
+    for (int i = 0; i < n; i++) {
         if (s->null_narrow_names[i] && strcmp(s->null_narrow_names[i], name) == 0) return 1;
     }
     return 0;
@@ -1725,15 +1731,10 @@ static const char* sem_nullable_var_name(Semantic* s, Ast* e) {
 // what/name：目标位置（"变量" / "形参" / "返回值"）
 static void warn_nullable_flow(Semantic* s, Ast* value, TypeInfo* target,
                                const char* what, const char* name) {
-    // ⛔ 2026-11-18：**默认关闭**（不是漏写）。
-    //   规则本身在 `build/tmp_l2.leno` 上验证通过（4 个位置该报的报、`if x != null` 分支不报），
-    //   但打开后在 `leno_gui/应用/IDE布局/canvas_ide.leno` 等文件上**编译期崩溃**
-    //   （0xC0000005），已排除：作用域为空、类型名悬垂、kind 越界、`scope_resolve`、
-    //   `infer_expr_type` + `type_free`、早退收窄的 Symbol 改动 —— 尚未定位。
-    //   在定位之前宁可不出这条警告：**让用户编不过/崩溃比漏一条警告严重得多** ✗
-    //   ⇒ 恢复步骤：删掉这一行 `return;`，再跑一遍 1313 文件的编译检查 + 两套测试。
-    (void)s; (void)value; (void)target; (void)what; (void)name;
-    return;
+    // ⚠ 2026-11-18 踩过的坑（别再犯）：这条警告打开后一度让 **391 个文件编译期崩溃**
+    //   （0xC0000005）。根因不是这里，而是 `semantic_init()` **没有清 `null_narrow_count`**
+    //   （Semantic 是 main.c 的栈变量、该函数不 memset）⇒ `sem_null_narrowed()` 拿着 29 万
+    //   级的垃圾计数越界读 `null_narrow_names[]`，在 strcmp 上炸。已在 semantic_init 里清零 ✓
     if (!value || value->kind != AST_VAR) return;        // 只判裸变量（见 ②）
     if (type_null_literal_ok(target)) return;            // 目标可空 / 句柄类 / 未标注 ⇒ 放行
     const char* vn = sem_nullable_var_name(s, value);
