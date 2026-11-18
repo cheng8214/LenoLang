@@ -190,6 +190,12 @@ int version_satisfies(SemVer* version, VersionReq* req);
 /** 设置当前项目的运行时模块要求（cfg 为 NULL = 清空）。拷贝条目，调用方可随后 free cfg。 */
 void package_requirements_set(PackageConfig* cfg);
 
+// ★ 2026-11-18：记下**项目自己那份 leno.toml** 的路径（main 启动时调一次）。
+//   用途：`[requires]` 的版本校验要能认出"这个被 import 的模块其实就是项目自己"——
+//   项目名与模块包同名时（LenoMusic 项目 vs LenoMusic 模块）否则会拿项目自己的版本
+//   去比模块的要求 ⇒ 误报版本不满足（实测项目永远编不过）。
+void package_set_self_toml(const char* toml_path);
+
 /** 清空当前项目的运行时模块要求 */
 void package_requirements_clear(void);
 

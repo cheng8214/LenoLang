@@ -1543,6 +1543,9 @@ int lenolang_run_file(const char* path) {
                 char toml_path[MAX_PATH_LEN];
                 snprintf(toml_path, sizeof(toml_path), "%sleno.toml", proj_root);
                 PackageConfig* pkg_cfg = package_config_parse(toml_path);
+                /* ★ 2026-11-18：记下"项目自己那份 leno.toml" —— [requires] 校验靠它认出
+                   自我引用（项目名与模块包同名时，否则会拿项目版本去比模块要求 ⇒ 误报） */
+                package_set_self_toml(toml_path);
                 if (pkg_cfg) {
                     /* [requires]：运行时模块包版本要求 —— 必须在 import 解析前装载 ✓ */
                     package_requirements_set(pkg_cfg);

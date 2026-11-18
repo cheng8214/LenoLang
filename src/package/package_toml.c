@@ -640,6 +640,16 @@ static int g_module_req_count = 0;
 static char g_req_checked[MAX_DEPENDENCIES][256];
 static int g_req_checked_count = 0;
 
+/* ★ 2026-11-18：**项目自己那份 leno.toml 的绝对路径**（启动时由 main 记录）。
+   用途：判断"这个被 import 的模块文件其实就是项目自己"（`is_self`）——
+   原来靠 `error_get_filename()` 现推，模块首次编译时它可能是 NULL（实测 LenoMusic
+   从项目根之外检查时就是这样）⇒ 判不出来 ⇒ 误报「模块包 'LenoMusic' 版本 0.2.2
+   不满足项目要求 '>=2.0.0'」，14 个文件全红 ✗ */
+static char g_self_toml[REQ_PATH_MAX + 16];
+
+/* 定义放在 req_abspath 之后（那里才有路径规整工具） */
+void package_set_self_toml(const char* toml_path);
+
 void package_requirements_clear(void) {
     for (int i = 0; i < g_module_req_count; i++) {
         free(g_module_reqs[i].name);
@@ -696,6 +706,47 @@ static int req_parent_dir(char* path) {
     return 1;
 }
 
+/* 规整成绝对路径（只为**比较**用；失败时退回原样） */
+static int req_abspath(const char* in, char* out, int cap) {
+    if (!in || !out || cap <= 0) return 0;
+#ifdef _WIN32
+    if (!_fullpath(out, in, (size_t)cap)) snprintf(out, (size_t)cap, "%s", in);
+    return 1;
+#else
+    char buf[REQ_PATH_MAX];
+    if (realpath(in, buf)) snprintf(out, (size_t)cap, "%s", buf);
+    else snprintf(out, (size_t)cap, "%s", in);
+    return 1;
+#endif
+}
+
+/* ★ 2026-11-18（实测修）：两个路径是否指向**同一个文件**。
+   为什么需要：`is_self`（"这个模块其实就是项目自己"）原来用 strcmp 比字符串 ——
+   而从**项目根之外**跑 `--check D:\CLeno\LenoMusic\bang_page.leno` 时，一侧是
+   `D:\CLeno\LenoMusic\leno.toml`（绝对）、另一侧是 `./leno.toml` 或大小写不同的写法，
+   字符串必然不等 ⇒ 误报「模块包 'LenoMusic' 版本 0.2.2 不满足项目要求 '>=2.0.0'」
+   （实测：LenoMusic 的 14 个文件只有在项目根下才编得过 ✗）。
+   现在两边都规整成绝对路径再比，Windows 上不分大小写、分隔符统一 ✓ */
+static int req_same_path(const char* a, const char* b) {
+    if (!a || !b) return 0;
+    char na[REQ_PATH_MAX + 16], nb[REQ_PATH_MAX + 16];
+    if (!req_abspath(a, na, (int)sizeof(na))) return 0;
+    if (!req_abspath(b, nb, (int)sizeof(nb))) return 0;
+#ifdef _WIN32
+    for (int i = 0; na[i]; i++) if (na[i] == '/') na[i] = '\\';
+    for (int i = 0; nb[i]; i++) if (nb[i] == '/') nb[i] = '\\';
+    return _stricmp(na, nb) == 0;
+#else
+    return strcmp(na, nb) == 0;
+#endif
+}
+
+void package_set_self_toml(const char* toml_path) {
+    g_self_toml[0] = '\0';
+    if (!toml_path || !toml_path[0]) return;
+    if (!req_abspath(toml_path, g_self_toml, (int)sizeof(g_self_toml))) g_self_toml[0] = '\0';
+}
+
 /* 从模块文件向上找最近的 leno.toml（内置/缓存包的包根） */
 static int req_find_package_toml(const char* resolved_path, char* out_toml, int out_len) {
     if (!resolved_path || !out_toml || out_len <= 0) return 0;
@@ -734,17 +785,25 @@ int package_check_module_version(const char* resolved_path, char* out_msg, int o
        项目要求 '>=2.0.0'」（实测：项目永远编不过，除非删掉这条 [requires]）。
        判据：解析出的模块文件属于**入口所在的项目根** ⇒ 不是外部包，跳过。 */
     {
-        const char* entry = error_get_filename();
-        char* proj = entry ? package_find_project_root(entry) : NULL;
-        if (proj) {
-            char proj_toml[REQ_PATH_MAX + 16];
-            snprintf(proj_toml, sizeof(proj_toml), "%sleno.toml", proj);
-            int is_self = (strcmp(proj_toml, toml) == 0);
-            free(proj);
-            if (is_self) {
-                package_config_free(pkg);
-                return 1;
+        // 首选 main 启动时记下的"项目自己的 leno.toml"（最可靠：与当前正在编哪个文件无关）。
+        //   ⚠ 不能只靠 `error_get_filename()` 现推 —— 模块首次编译时它可能是 NULL，
+        //     于是 `is_self` 判不出来 ⇒ 误报（实测 LenoMusic 14 个文件）
+        int is_self = 0;
+        if (g_self_toml[0]) {
+            is_self = req_same_path(g_self_toml, toml);
+        } else {
+            const char* entry = error_get_filename();
+            char* proj = entry ? package_find_project_root(entry) : NULL;
+            if (proj) {
+                char proj_toml[REQ_PATH_MAX + 16];
+                snprintf(proj_toml, sizeof(proj_toml), "%sleno.toml", proj);
+                is_self = req_same_path(proj_toml, toml);
+                free(proj);
             }
+        }
+        if (is_self) {
+            package_config_free(pkg);
+            return 1;
         }
     }
 
