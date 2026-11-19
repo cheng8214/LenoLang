@@ -115,7 +115,7 @@ Unicode 文本中两种返回值的区别：
 | `f.seek(off, "set")` | 定位到指定字节偏移 |
 | `f.close()` | 关闭文件 |
 | `str.byte(i)` | 获取第 i 个字节的值 (0-255) |
-| `str.byte_slice(s, e)` | 取字节区间 [s, e) 的子串 |
+| `str.byte_slice(s, e)` | 取字节区间 [s, e] 的子串（**闭区间，含 e**；2026-10-10 起与 `slice` 同口径） |
 | `strings.char(b1, b2, ...)` | 从字节值构造字符串 |
 
 ### 工作流程
