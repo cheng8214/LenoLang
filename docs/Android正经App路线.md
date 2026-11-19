@@ -239,6 +239,41 @@ adb shell am start -n com.leno.app/.SdlActivity --es assetsdir lmusic --es asset
 > 单窗口 + 自绘浮层的应用（Aria、LenoMusic 主界面、看板/工具类）现在就能上；
 > 靠多窗口做对话框的老界面，要么改成浮层，要么等框架补这一层。
 
+### 5.6 一次误诊记录：**跨模块 struct 跨线程**是好的，错的是调用点
+
+LenoMusic 上安卓后，双击榜单行"边下边播"表现为：播放条转成暂停图标、时间停在 `0:00 / 0:00`、
+`downloads/试听缓存/` 一个字节都没有，而主线程照常 96% CPU 跑渲染 —— 也就是"点了没反应"。
+
+第一版判断是 **VM 缺陷**：`channel_clone_struct` 在子线程 re-clone 时，跨模块的 `struct` 定义
+对不上，克隆出 null。**这个判断是错的**，反证在仓库里：
+
+| 证据 | 结果 |
+|---|---|
+| `assert/test_thread_crossmod_struct.leno`（struct 定义在**另一个模块**，实例经 `Array[fx.Item]` 跨线程） | **通过**：字段完整、深拷贝生效、空数组也正常 |
+| `assert/probe_thread_shape_mismatch.leno`（同一 worker，改传 `Array[Array[string]]`） | 报 `字段访问需要结构体对象`，**桌面即可复现**（与安卓无关） |
+| 内联 struct 探针 `m_xstruct.leno`（定义与用法同一文件） | 正常 |
+
+真因是**调用点传错了形状**：`dl_flow.start_stream` 把 wire 行（`Array[string]`）直接递给 worker：
+
+```
+// 原来：one 是行（Array[string]），worker 形参却是 Array[srow.SongRow]
+streamThread = threads.start(dlWorker, [one], …)
+// 现在：转换点仍然只有一个（songrow.from_row）
+Array[srow.SongRow] oneJob = [srow.from_row(one)]
+streamThread = threads.start(dlWorker, oneJob, …)
+```
+
+于是子线程拿到的元素是**数组**，第一句 `job.name` 就抛异常。而 `threads.start` 是 native 调用，
+**参数类型不做检查**（`threads_check_entry` 只查 arity）⇒ 编译器也不会拦。
+
+同时补了两处：`eng.songlabel(w.jobs[k])` 把 SongRow 当行用（同样会炸）、`dlWorker` 的形参类型
+从 `Array[Array[string]]` 订正为 `Array[srow.SongRow]`；并在应用侧加了 `stream_watchdog()` ——
+线程 `state() == "error"` 时把 `error()` 打到状态栏。**静默死掉**才是这条 bug 难查的真正原因，
+报错本身一直存在（`Thread.state/error`，TH11），只是没人去问。
+
+修后安卓实测：双击榜单行 → 41~54 MB flac 整首下完 + `.lrc` 落地、
+`AAudioStream_requestStart(s#1) returned 0`、播放条 `0:09 → 0:42 / 4:03` 连续推进。
+
 ---
 
 

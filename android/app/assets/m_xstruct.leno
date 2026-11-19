@@ -1,0 +1,31 @@
+// m_xstruct.leno —— 本文件内定义的 struct 跨线程传，字段能不能读到
+// 对照：LenoMusic 的 Array[srow.SongRow]（**跨模块**定义）在子线程里读出来是 null
+import threads
+
+struct P {
+    string n = ""
+}
+
+func w(Array[P] a) {
+    print("[w] entered len=" + _str(a.len()))
+    try {
+        var e0 = a[0]
+        print("[w] is struct?")
+        print("[w] n=" + e0.n)
+    } catch ex {
+        print("[w] EX:" + _str(ex))
+    }
+    print("[w] leave")
+}
+
+main() {
+    Array[P] a = []
+    P p = new P()
+    p.n = "hi"
+    a.add(p)
+    print("[m] built len=" + _str(a.len()))
+    var t = threads.start(w, a)
+    print("[m] started")
+    sleep(3000)
+    print("[m] end")
+}

@@ -1,0 +1,67 @@
+// ============================================================================
+// m_audio.leno —— Android 上 miniaudio 能不能加载、能不能真出声（手工探针）
+// ----------------------------------------------------------------------------
+// 背景：LenoMusic（16.6k 行）已经原样跑在模拟器上、界面/搜索/下载链路都通，
+//   但"下载窗口建不出来"⇒ 走不到播放。而播放走的是 `import "Music"`（miniaudio），
+//   它的 find_dll() 里所有候选根目录都是桌面路径（~/.leno/pkgs、CWD、lib、script_dir），
+//   Android 上这些都不存在，最后落在 rel = "android/<abi>/libminiaudio.so"。
+//   这条 .so 在 APK 里是 lib/<abi>/libminiaudio.so（build_android.sh 自动收的），
+//   但 ffi.load 拿到的名字带子目录 ⇒ dlopen("android/x86_64/...") 相对 cwd=/ 必失败。
+//   本探针就是来确认这一步到底成不成，别靠推演。
+//
+// 用法：
+//   leno.exe -c m_audio.leno
+//   adb root; adb push bk.mp3 /data/data/com.leno.app/files/bk.mp3
+//   adb shell am start -n com.leno.app/.MainActivity --es path /data/local/tmp/m_audio.lenb
+// ============================================================================
+import "Music" as audio
+use audio.Sound
+import files
+
+main() {
+    print("[1] os = " + _os())
+    print("[1b] arch = " + _arch())
+
+    // ★ 先单点摸库加载：getVersion() 内部就是 lib() → find_dll() → ffi.load()
+    //   若它抛异常，main 直接中断、错误进 stdout ⇒ 正好是最想要的诊断信息
+    var v = audio.getVersion()
+    print("[2] Music.getVersion() = " + _str(v))
+
+    string p = "/data/data/com.leno.app/files/bk.mp3"
+    if not files.exists(p) {
+        print("[3] 样本不存在: " + p)
+        return
+    }
+    print("[3] 样本存在 " + _str(files.size(p)) + " 字节")
+
+    var s = audio.createSound(p)
+    if not s.isInit() {
+        print("[4] createSound 失败（解码器/设备打不开）")
+        return
+    }
+    print("[4] createSound ok, 时长 " + _str(s.getDuration()) + " 秒")
+
+    s.setVolume(0.8)
+    s.play()
+    print("[5] play() 后 isPlaying = " + _str(s.isPlaying()))
+
+    sleep(1500)
+    float pos1 = s.getPosition()
+    print("[6] 1.5s 后位置 = " + _str(pos1) + " 秒")
+
+    sleep(1500)
+    float pos2 = s.getPosition()
+    print("[7] 3.0s 后位置 = " + _str(pos2) + " 秒")
+
+    // 判定：位置在往前走 ⇒ 解码线程在跑（miniaudio 的设备回调在推采样）
+    //   ⚠ 注意：位置前进只证明"解码+时钟"在走，不 100% 等于扬声器有声（模拟器可能静音）
+    if pos2 > pos1 and pos1 > 0.1 {
+        print("[OK] 播放推进正常")
+    } else {
+        print("[NG] 位置没有推进")
+    }
+
+    s.stop()
+    s.uninit()
+    print("[8] 结束")
+}

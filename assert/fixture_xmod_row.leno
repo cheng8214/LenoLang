@@ -1,0 +1,14 @@
+// fixture_xmod_row.leno —— 「跨模块 struct」测试用的从属模块（不进 test_* 自动套件）
+//
+// 为什么要**跨文件**：LenoMusic 的边下边播曾经在安卓上静默死掉，第一版判断是
+//   "跨模块 struct 跨线程克隆后元素变 null"。实测（test_thread_crossmod_struct.leno）
+//   证明跨模块克隆是好的 —— 真因是调用方把**行**（Array[string]）当成 SongRow 传进线程。
+//   这个 fixture 就是那条对照实验的另一半：struct 定义必须在**另一个模块**里。
+export struct Item {
+    string name = ""
+    string artist = ""
+}
+
+export func from_row(Array[string] r): Item {
+    return new Item(name = r[0], artist = r[1])
+}

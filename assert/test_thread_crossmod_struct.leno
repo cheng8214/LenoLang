@@ -1,0 +1,45 @@
+// test_thread_crossmod_struct.leno —— 跨模块 struct 跨线程：克隆链本身是好的
+//
+// 背景（2026-11-19）：LenoMusic 的"边下边播"在安卓上双击榜单行后播放条停在 0:00，
+//   子线程抛「字段访问需要结构体对象」，而主线程从不 join 它 ⇒ 完全静默。
+//   当时的判断是"跨模块 struct + per-thread GC 下克隆出 null"，于是打算去改 VM。
+//   本测试是那条判断的**反证**：struct 定义在**另一个模块**里、实例经 Array 跨线程，
+//   字段一个不少（`fx.from_row` 造实例、子线程读 `name/artist`）。
+//
+//   ⇒ 真因是调用方把**行**（Array[string]）传给声明为 Array[SongRow] 的形参，
+//     那条"错用会被看见"的验证在 `assert/probe_thread_shape_mismatch.leno`（手工跑，
+//     因为它必然留下一条线程错误 ⇒ 进程退出码非 0，不适合进自动套件）。
+import threads
+import "./fixture_xmod_row.leno" as fx
+
+// 形参类型来自**另一个模块**的 struct
+func echo_item(Array[fx.Item] jobs): string {
+    return jobs[0].name + "|" + jobs[0].artist
+}
+
+// 两个元素 + 回写：证明是**深拷贝**（改副本不影响主线程那个实例）
+func rename_first(Array[fx.Item] jobs): string {
+    string before = jobs[0].name
+    jobs[0].name = "changed-in-thread"
+    return before + "->" + jobs[0].name
+}
+
+main() {
+    var it = fx.from_row(["songA", "artistA"])
+    var arr = [it]
+
+    var t1 = threads.start(echo_item, arr)
+    assert_eq(t1.join(), "songA|artistA")
+
+    var t2 = threads.start(rename_first, arr)
+    assert_eq(t2.join(), "songA->changed-in-thread")
+    // 主线程那份没被改（深拷贝口径 ✓）
+    assert_eq(it.name, "songA")
+
+    // 空数组也要能过（长度边界）
+    Array[fx.Item] empty = []
+    var t3 = threads.start(func(Array[fx.Item] jobs): int { return jobs.len() }, empty)
+    assert_eq(t3.join(), 0)
+
+    print("[test_thread_crossmod_struct] ok")
+}

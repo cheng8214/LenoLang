@@ -1,0 +1,47 @@
+// probe_thread_shape_mismatch.leno —— 手工探针：把「行」传给声明为 struct 数组的形参
+//
+// ⚠ 这是 **probe_** 前缀（不进 `run_tests.leno` 的自动套件）：它故意让子线程报错，
+//   而"有线程错误"会让进程退出码非 0（实测 127）⇒ 进自动套件必然被判 FAIL。
+//
+// 跑法：build/leno.exe assert/probe_thread_shape_mismatch.leno
+// 期望：stdout 打 `state=error`、`msg=<…结构体…>`，进程退出码 127。
+//
+// 钉住的三件事：
+//   ① 错用**不会崩进程**（主线程照常活、还能问线程状态）
+//   ② 错误**拿得到**（`Thread.state()` == "error"、`Thread.error()` 带「结构体」字样）
+//   ③ 这就是 LenoMusic `dl_flow.start_stream` 原来的错法（`threads.start(dlWorker, [one], …)`
+//      里 `one` 是 Array[string] 行，而 worker 形参是 `Array[srow.SongRow]`）——
+//      对照 `test_thread_crossmod_struct.leno`（正路）一起看，就知道当时怀疑
+//      "跨模块 struct 克隆出 null"是找错了地方。
+import threads
+import strings
+import "./fixture_xmod_row.leno" as fx
+
+func read_row_as_item(Array[fx.Item] jobs): string {
+    return jobs[0].name          // ← 元素其实是 Array[string] ⇒ 这里抛「字段访问需要结构体对象」
+}
+
+func wait_state(Thread t): string {
+    var st = t.state()
+    var i = 0
+    while st == "running" and i < 3000 {
+        threads.sleep(1)
+        st = t.state()
+        i = i + 1
+    }
+    return st
+}
+
+main() {
+    Array[Array[string]] rows = [["songB", "artistB"]]
+    var t = threads.start(read_row_as_item, rows)
+    var st = wait_state(t)
+    var msg = t.error()
+    print("state=" + st)
+    print("msg=" + msg)
+    if st != "error" or not strings.has(msg, "结构体") {
+        print("[probe] 行为不符预期（应 error + 提到「结构体」）")
+        return
+    }
+    print("[probe] 符合预期：错用被看见、进程没崩")
+}
