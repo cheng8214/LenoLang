@@ -13,6 +13,7 @@
         android:label="Leno Demo"
         android:allowBackup="false"
         android:extractNativeLibs="true"
+        android:usesCleartextTraffic="true"
         android:hasCode="true">
 
         <activity

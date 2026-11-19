@@ -1,0 +1,170 @@
+// ============================================================================
+// app_web.leno —— 「正经 app」形态的骨架：Leno 当后端，WebView 当界面
+// ----------------------------------------------------------------------------
+// 分工：
+//   · 界面 = HTML/CSS（宿主用 WebView 加载 http://127.0.0.1:18080/）
+//   · 业务 = Leno（路由、SQLite、JSON、文件），全部跑在 VM 里
+//   · 通信 = 本机环回 TCP（已实测：应用内可绑端口、可自连自发）
+//
+// 为什么这条路能当"正经 app"用：
+//   1) 不用为每个控件写 JNI —— 界面改动只改 HTML，不重编 .so
+//   2) LenoHTTP（2.3k 行纯 Leno）现成：路由 / 静态文件 / JSON / 表单 / keep-alive
+//   3) LenoSqlite 现成：真落盘到 filesDir，重启不丢
+//   4) 仍然只有"一个 APK、一套逻辑" —— 桌面 `leno.exe app_web.leno` 也能直接跑同一个站点
+//
+// 跑法：
+//   桌面:   build\leno.exe android\app\assets\app_web.leno      → 浏览器开 127.0.0.1:18080
+//   Android: adb shell am start -n com.leno.app/.MainActivity \
+//                --es asset app_web.lenb --es ui web
+// ============================================================================
+import strings
+import dirs
+import times
+import "../../../build/leno_module/LenoSqlite/lib/sqlite3.leno" as sq
+import "../../../build/leno_module/LenoHTTP/lib/HTTP.leno" as http
+
+// 端口固定，宿主侧轮询这个端口等服务器起来（换端口要同步改 MainActivity 的 PORT）
+int PORT = 18080
+
+// 样式单独放一份**非插值**原始字符串：$@"..." 里 `{` 是插值语法，
+//   而 CSS 规则块全是 `{`，混在一起会编译报错。分开写最省事。
+string CSS = @"<style>
+:root{--bg:#0b1020;--card:#131a2e;--line:#233052;--fg:#e8eefc;--dim:#8fa0c4;--acc:#3ddc84;--acc2:#59a5ff}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 -apple-system,""Noto Sans CJK SC"",""PingFang SC"",sans-serif;padding:24px 18px 48px}
+header{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}
+h1{font-size:22px;margin:0;letter-spacing:.5px}
+.tag{font-size:12px;color:#052e16;background:var(--acc);border-radius:999px;padding:2px 10px;font-weight:700}
+.sub{color:var(--dim);font-size:13px;margin:0 0 22px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.stat b{display:block;font-size:26px;line-height:1.2;color:var(--acc)}
+.stat span{font-size:12px;color:var(--dim)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:16px}
+.card h2{font-size:14px;margin:0 0 12px;color:var(--dim);font-weight:600;letter-spacing:.4px}
+ul{list-style:none;margin:0;padding:0}
+li{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px dashed var(--line);font-size:15px}
+li:last-child{border-bottom:0}
+li em{font-style:normal;color:var(--dim);font-size:12px;white-space:nowrap}
+form{display:flex;gap:10px;margin-top:4px}
+input{flex:1;min-width:0;background:#0e1424;border:1px solid var(--line);border-radius:11px;color:var(--fg);padding:12px 14px;font-size:15px}
+input:focus{outline:none;border-color:var(--acc2)}
+button{background:var(--acc);color:#052e16;border:0;border-radius:11px;padding:0 18px;font-size:15px;font-weight:700}
+button:active{transform:scale(.97)}
+.empty{color:var(--dim);font-size:14px;padding:8px 0}
+footer{color:var(--dim);font-size:12px;text-align:center;margin-top:26px}
+code{background:#0e1424;border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:13px}
+</style>"
+
+// JS 同理单独放（函数体里也全是 `{`）
+string JS = @"<script>
+async function submitNote(e) {
+  e.preventDefault();
+  var el = document.getElementById('note');
+  var v = el.value.trim();
+  if (!v) return false;
+  await fetch('/api/add', {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: v
+  });
+  location.reload();
+  return false;
+}
+</script>"
+
+func page(string body): string {
+    return $@"<!doctype html><html lang=""zh-CN""><head><meta charset=""utf-8"">
+<meta name=""viewport"" content=""width=device-width,initial-scale=1,viewport-fit=cover"">
+<title>Leno 打卡</title>{CSS}</head><body>
+{body}
+</body></html>"
+}
+
+// ---------------- 数据层 ----------------
+func dbPath(): string {
+    return dirs.join(_tmpdir(), "web.db")
+}
+
+func initDb() {
+    var d = sq.open(dbPath())
+    if d.isOk() {
+        d.exec("CREATE TABLE IF NOT EXISTS records(id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, note TEXT NOT NULL)")
+        d.close()
+    }
+}
+
+func addRecord(string note): int {
+    var d = sq.open(dbPath())
+    if not d.isOk() { return -1 }
+    string at = times.format(times.now(), "%m-%d %H:%M")
+    string safe = strings.replace(note, "'", "''")
+    d.exec("INSERT INTO records(at, note) VALUES ('" + at + "', '" + safe + "')")
+    d.close()
+    return 1
+}
+
+// ---------------- 页面 ----------------
+func home(Dict req): string {
+    Array[Dict] rows = sq.queryAll(dbPath(), "SELECT id, at, note FROM records ORDER BY id DESC LIMIT 20")
+    Array[Dict] agg = sq.queryAll(dbPath(), "SELECT COUNT(*) AS n FROM records")
+    int total = 0
+    if agg.len() > 0 { total = agg[0]["n"] as int }
+
+    var items = ""
+    if rows.len() == 0 {
+        items = "<div class=""empty"">还没有记录，下面写一条试试。</div>"
+    } else {
+        for rows to r {
+            items = items + "<li><span>" + http.esc(r["note"] as string) + "</span><em>"
+                  + (r["at"] as string) + "</em></li>"
+        }
+    }
+
+    string today = times.format(times.now(), "%Y-%m-%d")
+    var body = $@"<header><h1>Leno 打卡</h1><span class=""tag"">{_os()}</span></header>
+<p class=""sub"">{today} · 界面是 WebView，逻辑和存储全在 Leno 里</p>
+<div class=""stats"">
+  <div class=""stat""><b>{total}</b><span>累计记录</span></div>
+  <div class=""stat""><b>{rows.len()}</b><span>本次显示</span></div>
+</div>
+<div class=""card""><h2>最近记录</h2><ul>{items}</ul></div>
+<div class=""card""><h2>记一笔</h2>
+<form onsubmit=""return submitNote(event)"">
+  <input id=""note"" placeholder=""今天做了什么"" autocomplete=""off"">
+  <button>保存</button>
+</form></div>
+<footer>端口 {PORT} · <code>POST /api/add</code> · <code>GET /api/list</code></footer>
+{JS}"
+    return page(body)
+}
+
+// ---------------- JSON 接口 ----------------
+func apiList(Dict req): Dict {
+    Array[Dict] rows = sq.queryAll(dbPath(), "SELECT id, at, note FROM records ORDER BY id DESC LIMIT 50")
+    return http.json({ok: true, count: rows.len(), items: rows})
+}
+
+func apiAdd(Dict req): Dict {
+    string note = strings.trim_end(req["body"] as string)
+    if strings.len(note) == 0 { return http.jsonStatus(400, {ok: false, err: "empty"}) }
+    addRecord(note)
+    return http.json({ok: true})
+}
+
+main() {
+    initDb()
+
+    var app = http.newApp()
+    http.get(app, "/", home)
+    http.get(app, "/api/list", apiList)
+    http.post(app, "/api/add", apiAdd)
+
+    var server = http.listen("127.0.0.1", PORT)
+    if not (server["ok"] as bool) {
+        print("ERR 绑定端口失败：" + (server["err"] as string))
+        return
+    }
+    print("LenoHTTP 就绪 http://127.0.0.1:" + _str(PORT))
+    http.run(server, app)
+}

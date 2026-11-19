@@ -1,0 +1,101 @@
+// ============================================================================
+// 探针 17 / 写"正经 app"的三块地基
+// ----------------------------------------------------------------------------
+// 目的：把"能不能做真应用"从推测变成实测。三个关键能力：
+//   ① 自加载 libleno.so + dlsym 导出符号
+//      ⇒ Leno 侧能直接调宿主在 libleno.so 里导出的 C 胶水函数，
+//        再由胶水用 JNIEnv 调 Java（Toast / 通知 / 分享 / 权限 / 原生控件）。
+//        这条路不需要在 Leno 里写 JNI。
+//   ② ffi.callback / callbackCount / pump_callbacks
+//      ⇒ 原生侧（Java 线程）能反过来触发 Leno 里的函数，
+//        跨线程回调走队列 + pump，正好对应"事件轮询"的写法。
+//   ③ 环回 TCP（127.0.0.1 自连自发）
+//      ⇒ 本地 HTTP 服务 + WebView 的 UI 方案成立：界面用 HTML/CSS 写，
+//        业务仍在 Leno 里，WebView 连 127.0.0.1 取页面、POST 交互。
+//
+// 注：`ffi.load` 失败是**抛异常**（错误码 126），不是返回 null ⇒ 一律用 try 兜住，
+//     否则桌面端（没有 libleno.so）第一步就中断，后面的项一条都测不到。
+// ============================================================================
+import sockets
+import ffi
+import strings
+
+cfunc _Cb(i32 v):i32
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+int g_hits = 0
+func on_ev(int v): int {
+    g_hits = g_hits + 1
+    return v + 1
+}
+
+main() {
+    print("== c17 正经 app 地基 ==")
+
+    // ---------- ① 自加载 + 符号解析 ----------
+    Ptr self = null
+    try { self = ffi.load("libleno.so") } catch e { print("INFO 自加载失败: " + _str(e)) }
+    chk("自加载 libleno.so", self != null, "handle 非空")
+
+    if self != null {
+        Ptr a = ffi.dlsym(self, "lenolang_run_lenb")
+        Ptr b = ffi.dlsym(self, "Java_com_leno_app_MainActivity_buildInfo")
+        Ptr c = ffi.dlsym(self, "Java_com_leno_app_MainActivity_setDataDir")
+        chk("dlsym lenolang_run_lenb", a != null, "VM 入口可见")
+        chk("dlsym Java_ 符号", b != null and c != null, "宿主胶水可见 ⇒ 可扩展自写胶水")
+    }
+
+    Ptr log = null
+    try { log = ffi.load("liblog.so") } catch e { print("INFO liblog 失败: " + _str(e)) }
+    chk("加载 liblog.so", log != null, "系统库可见")
+    if log != null {
+        Ptr p = ffi.dlsym(log, "__android_log_print")
+        chk("dlsym __android_log_print", p != null, "系统函数可见")
+    }
+
+    // ---------- ② 回调槽 ----------
+    Ptr cb = null
+    try { cb = ffi.callback(on_ev, _Cb) } catch e { print("INFO callback 失败: " + _str(e)) }
+    chk("ffi.callback 建槽", cb != null, "返回 trampoline")
+    int n = ffi.callbackCount()
+    chk("callbackCount", n >= 1, "存活回调 " + _str(n) + " 个")
+    ffi.pump_callbacks()
+    chk("pump_callbacks 空转不崩", true, "无待派发事件时安全返回")
+    if cb != null { ffi.free_callback(cb) }
+
+    // ---------- ③ 环回 TCP ----------
+    Socket srv = null
+    try { srv = sockets.listen("127.0.0.1", 18099) } catch e { print("INFO listen 失败: " + _str(e)) }
+    chk("listen 127.0.0.1:18099", srv != null, "应用内可绑本地端口")
+    if srv != null {
+        srv.set_timeout(3000)
+        Socket cli = null
+        try { cli = sockets.connect("127.0.0.1", 18099) } catch e { print("INFO connect 失败: " + _str(e)) }
+        chk("connect 环回", cli != null, "自发自连成立")
+        if cli != null {
+            cli.send("GET /probe HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+            Socket acc = srv.accept()
+            chk("accept", acc != null, "拿到连接")
+            if acc != null {
+                acc.set_timeout(3000)
+                string req = acc.recv(1024)
+                chk("服务端收到请求行", req.has("GET /probe"), "长度 " + _str(strings.len(req)))
+                acc.send("HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nhi")
+                string resp = cli.recv(1024)
+                chk("客户端拿到响应", resp.has("200 OK"), "长度 " + _str(strings.len(resp)))
+                acc.close()
+            }
+            cli.close()
+        }
+        srv.close()
+    }
+
+    print("== c17 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+}

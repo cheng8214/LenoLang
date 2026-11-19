@@ -6,6 +6,9 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.util.TypedValue;
 import android.view.View;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -15,6 +18,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -44,30 +49,52 @@ public class MainActivity extends Activity {
     public native void setDataDir(String absDir);
 
     private TextView out;
+    private WebView web;
     private final StringBuilder log = new StringBuilder();
+
+    /** 与 app_web.leno 里的 PORT 必须一致（宿主轮询这个端口等服务器起来）。 */
+    static final int WEB_PORT = 18080;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(Color.parseColor("#0B1020"));
+        // 两种界面形态，同一套宿主：
+        //   ui=log（默认）—— 把 VM 的 stdout 当界面，适合命令行式工具和探针
+        //   ui=web        —— 脚本里起 LenoHTTP，本页用 WebView 连 127.0.0.1 当界面
+        // 界面形态只影响"怎么显示"，不影响脚本怎么跑 ⇒ 业务代码两种模式通用。
+        boolean webMode = "web".equals(getIntent().getStringExtra("ui"));
 
-        out = new TextView(this);
-        out.setTypeface(Typeface.MONOSPACE);
-        // 字号可用 intent 覆盖（`--ei fontsp 13`）；默认 11sp —— 实测 13sp 时
-        // 1080px 宽的竖屏只放得下 31 个 ASCII 列（等宽字体 advance ≈ 0.6em，
-        // 汉字占两列），二维码 29 模块 + 缩进就顶到边了。
-        int fontSp = getIntent().getIntExtra("fontsp", 11);
-        out.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSp);
-        out.setTextColor(Color.parseColor("#3DDC84"));
-        out.setBackgroundColor(Color.parseColor("#0B1020"));
-        int pad = (int) (16 * getResources().getDisplayMetrics().density);
-        out.setPadding(pad, pad, pad, pad);
-        out.setTextIsSelectable(true);
+        if (webMode) {
+            web = new WebView(this);
+            WebSettings ws = web.getSettings();
+            ws.setJavaScriptEnabled(true);
+            ws.setDomStorageEnabled(true);
+            ws.setSupportZoom(false);
+            web.setBackgroundColor(Color.parseColor("#0B1020"));
+            web.setWebViewClient(new WebViewClient());   // 站内跳转留在 WebView 里
+            WebView.setWebContentsDebuggingEnabled(true); // chrome://inspect 可调试
+            setContentView(web);
+        } else {
+            ScrollView scroll = new ScrollView(this);
+            scroll.setBackgroundColor(Color.parseColor("#0B1020"));
 
-        scroll.addView(out);
-        setContentView(scroll);
+            out = new TextView(this);
+            out.setTypeface(Typeface.MONOSPACE);
+            // 字号可用 intent 覆盖（`--ei fontsp 13`）；默认 11sp —— 实测 13sp 时
+            // 1080px 宽的竖屏只放得下 31 个 ASCII 列（等宽字体 advance ≈ 0.6em，
+            // 汉字占两列），二维码 29 模块 + 缩进就顶到边了。
+            int fontSp = getIntent().getIntExtra("fontsp", 11);
+            out.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSp);
+            out.setTextColor(Color.parseColor("#3DDC84"));
+            out.setBackgroundColor(Color.parseColor("#0B1020"));
+            int pad = (int) (16 * getResources().getDisplayMetrics().density);
+            out.setPadding(pad, pad, pad, pad);
+            out.setTextIsSelectable(true);
+
+            scroll.addView(out);
+            setContentView(scroll);
+        }
         getWindow().setStatusBarColor(Color.parseColor("#0B1020"));
 
         // 必须在任何脚本执行之前注入：脚本里第一次 `_tmpdir()` 就依赖它
@@ -84,6 +111,42 @@ public class MainActivity extends Activity {
                         asset == null ? "hello.lenb" : asset);
             }
         }, "leno-vm").start();
+
+        // web 模式：VM 线程正阻塞在 http.run() 里，不可能回头通知"服务已起"
+        //   ⇒ 宿主自己轮询端口，通了再 loadUrl（比固定 sleep 可靠，机器快慢都不怕）
+        if (webMode) {
+            new Thread(() -> {
+                if (waitForPort(WEB_PORT, 15000)) {
+                    runOnUiThread(() -> web.loadUrl("http://127.0.0.1:" + WEB_PORT + "/"));
+                } else {
+                    appendLine("[host] 等 127.0.0.1:" + WEB_PORT + " 超时（脚本没起服务？）");
+                }
+            }, "leno-http-wait").start();
+        }
+    }
+
+    /** 轮询本机端口直到可连接或超时。返回 true 表示已经有人 listen。 */
+    private boolean waitForPort(int port, int timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            try (Socket s = new Socket()) {
+                s.connect(new InetSocketAddress("127.0.0.1", port), 300);
+                return true;
+            } catch (IOException ignored) {
+                try { Thread.sleep(120); } catch (InterruptedException e) { return false; }
+            }
+        }
+        return false;
+    }
+
+    @Override
+    public void onBackPressed() {
+        // web 模式下后退键先退网页历史，退到底再退出 app
+        if (web != null && web.canGoBack()) {
+            web.goBack();
+            return;
+        }
+        super.onBackPressed();
     }
 
     private void run(File target, String assetName) {
@@ -118,6 +181,8 @@ public class MainActivity extends Activity {
         final String text = new String(data, StandardCharsets.UTF_8);
         runOnUiThread(() -> {
             log.append(text);
+            // web 模式没有日志控件：输出仍会由 native 侧镜像到 logcat（`adb logcat -s leno_jni`）
+            if (out == null) return;
             out.setText(log);
             // 跟随滚动到底部
             if (out.getParent() instanceof ScrollView) {
@@ -131,6 +196,7 @@ public class MainActivity extends Activity {
         final String text = s + "\n";
         runOnUiThread(() -> {
             log.append(text);
+            if (out == null) return;
             out.setText(log);
         });
     }
