@@ -51,8 +51,26 @@ public class SdlActivity extends org.libsdl.app.SDLActivity {
     protected void onCreate(Bundle savedInstanceState) {
         // 先把 .lenb 落到应用私有目录：assets 里的条目 native 侧没有 fd 可读，
         // 而 VM 的入口只接受文件路径。
+        String dir = getIntent().getStringExtra("assetsdir");
+        if (dir != null && dir.isEmpty()) dir = null;
         String asset = getIntent().getStringExtra("asset");
         if (asset == null) asset = "app_sdl.lenb";
+        // assetsdir 给定时，asset 按"该目录下的相对路径"解释（lmusic + musicdl_gui.lenb）
+        if (dir != null && !asset.startsWith(dir + "/")) asset = dir + "/" + asset;
+
+        // 整棵资源树先落地：assets/<dir>/** → filesDir/<dir>/**
+        // 为什么需要：VM 的 dirs.res_dir() 在未打包态 = 字节码所在目录，应用里
+        // dirs.join(res_dir(), "images/x.png") 就靠这条把图片放到 .lenb 旁边。
+        // （此前 copyAsset 一次只拷一个名字 —— 带子目录/z 张图的界面没法用）
+        if (dir != null) {
+            File root = new File(getFilesDir(), dir);
+            try {
+                copyAssetTree(dir, root);
+                Log.i(TAG, "已展开资源树 " + dir + " → " + root.getAbsolutePath());
+            } catch (IOException e) {
+                Log.e(TAG, "展开资源树失败: " + dir, e);
+            }
+        }
 
         // 调试后门：--es path /data/local/tmp/x.lenb（adb push 后免重装 APK 迭代）
         String abs = getIntent().getStringExtra("path");
@@ -60,7 +78,7 @@ public class SdlActivity extends org.libsdl.app.SDLActivity {
             sLenbPath = abs;
             Log.i(TAG, "使用设备上的字节码: " + abs);
         } else {
-            File dst = new File(getFilesDir(), "sdl_app.lenb");
+            File dst = new File(getFilesDir(), asset);
             sLenbPath = dst.getAbsolutePath();
             try {
                 copyAsset(asset, dst);
@@ -100,7 +118,38 @@ public class SdlActivity extends org.libsdl.app.SDLActivity {
         super.main();
     }
 
+    /**
+     * 递归把 assets 里的一个目录整棵拷到磁盘。
+     *
+     * <p>{@code AssetManager.list(path)} 对目录返回子项名字、对文件返回空数组，
+     * 所以拿子项数就能区分"目录"和"文件"，不必事先知道清单。
+     */
+    private void copyAssetTree(String assetDir, File dstDir) throws IOException {
+        String[] kids = getAssets().list(assetDir);
+        if (kids == null) return;
+        if (!dstDir.exists() && !dstDir.mkdirs()) {
+            throw new IOException("mkdirs 失败: " + dstDir);
+        }
+        for (String k : kids) {
+            String child = assetDir + "/" + k;
+            String[] sub = getAssets().list(child);
+            if (sub != null && sub.length > 0) {
+                copyAssetTree(child, new File(dstDir, k));
+            } else {
+                try {
+                    copyAsset(child, new File(dstDir, k));
+                } catch (IOException e) {
+                    Log.e(TAG, "跳过 " + child, e);
+                }
+            }
+        }
+    }
+
     private void copyAsset(String name, File dst) throws IOException {
+        File p = dst.getParentFile();
+        if (p != null && !p.exists() && !p.mkdirs()) {
+            throw new IOException("mkdirs 失败: " + p);
+        }
         try (InputStream in = getAssets().open(name);
              FileOutputStream out = new FileOutputStream(dst)) {
             byte[] buf = new byte[16 * 1024];

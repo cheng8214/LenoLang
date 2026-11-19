@@ -42,6 +42,9 @@ void vm_set_res_dir(const char* dir);
 // ============================================================================
 // 本次运行的脚本绝对路径（供 `_script()` / `dirs.script_dir()` 用）
 void leno_set_script_path(const char* path);
+// 读回注入的脚本路径；NULL = 未注入（`dirs.script_dir()` 在 Android 上依赖它：
+// 那里没有 argv，`_script()` 与 `script_dir()` 必须共用这一份来源）
+const char* leno_script_path(void);
 // 宿主提供的可写数据目录（Android 传 getFilesDir()）；`_tmpdir()` 在 TMPDIR 缺失时用它
 void leno_set_data_dir(const char* dir);
 // 读回当前注入的数据目录；NULL = 未注入

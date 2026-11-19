@@ -482,8 +482,16 @@ _drawBorder = opts.get("border", true)
         if _os() == "android" and hwnd != null { core.startTextInput(hwnd) }
     }
     func blur() {
+        // ★ 2026-11-19：**只有本来有焦点才关文本输入**。
+        //   `core.stopTextInput(hwnd)` 是**窗口级**调用（一个窗口只有一个文本输入通道），
+        //   而 MOUSE_DOWN 是**广播**给所有控件的：点 A 输入框时，B 输入框也会收到同一次
+        //   mouse-down，算出"点不在我身上" ⇒ 调自己的 blur() ⇒ 把**整个窗口**的文本输入关掉。
+        //   现场（LenoMusic / 任何有 2 个以上 Edit 的界面）：点搜索框，软键盘弹出后立刻消失，
+        //   SDL_EVENT_TEXT_INPUT 一条都进不来 ⇒ 一个字都打不进去。
+        //   单输入框界面（app_text）不会触发，所以这个问题一直没暴露。
+        bool was = focused
         focused = false; blinkTimer?.stop()
-        if _os() == "android" and hwnd != null { core.stopTextInput(hwnd) }
+        if was and _os() == "android" and hwnd != null { core.stopTextInput(hwnd) }
     }
 
     // 保存当前状态到撤销栈

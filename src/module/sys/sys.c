@@ -44,6 +44,16 @@ void leno_set_script_path(const char* path) {
     snprintf(g_script_path, sizeof(g_script_path), "%s", path);
 }
 
+// 读回宿主注入的脚本路径；NULL = 未注入（桌面解释器/打包 exe 都走 argv 推断）
+//   为什么要这个 getter：`dirs.script_dir()`（dirs.c）与 `_script()`（本文件）是
+//   **同一语义的两套入口**。此前只有 `_script()` 看注入，`script_dir()` 只认 argv ⇒
+//   Android 上 `_script()` 有值、`script_dir()` 返回 null（g_argv[0] 是 SDL 塞的
+//   "app_process"，realpath 失败）⇒ 应用里 dirs.join(script_dir(), "downloads") 直接抛
+//   "第 1 个参数是 null"。两个入口必须共用同一个来源。
+const char* leno_script_path(void) {
+    return g_script_path[0] ? g_script_path : NULL;
+}
+
 void leno_set_data_dir(const char* dir) {
     if (!dir) { g_data_dir[0] = '\0'; return; }
     snprintf(g_data_dir, sizeof(g_data_dir), "%s", dir);

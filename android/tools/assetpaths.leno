@@ -1,0 +1,162 @@
+// assetpaths.leno -- 把 APK 里条目名的反斜杠改成斜杠（Windows 上 aapt2 的坑）
+//
+// 用法:
+//   build\leno.exe android\tools\assetpaths.leno <apk>
+//
+// 为什么要它:
+//   aapt2 在 **Windows** 上把 assets 子目录递归打进来时，用系统的路径分隔符当条目名：
+//       assets/lmusic\images\about.png      ← 真的长这样（unzip -l 能看见）
+//   Android 的 AssetManager 按 '/' 切路径去 zip 里查名字 ⇒ list("lmusic/images") 为空、
+//   open("lmusic/images/about.png") 直接 FileNotFoundException。
+//   **平铺的 assets 不受影响**（没有分隔符），所以这问题只在"资源有子目录"时爆发 ——
+//   之前的宿主 copyAsset(name) 一次只拷一个平铺文件，正好绕开了它，代价是子目录资源没法用。
+//
+// 为什么可以"原地改名":
+//   zip 条目名在本地头和中央目录里各存一份，**改名不改长度**（'\' → '/' 都是 1 字节）
+//   ⇒ 所有偏移、CRC、压缩数据、数据描述符全部不动，只替换名字里那些字节。
+//   这比"解包重打包"安全得多（重打包会破坏 aapt2 的压缩结果与对齐）。
+//
+// 边界:
+//   · 只认 EOCD + 中央目录（不支持 zip64）——APK 打包链路不会碰到
+//   · 本地头按中央目录里的 loff 定位，逐个改；不依赖条目物理顺序
+//   · 改完要重新签名（内容变了）：本工具在 zipalign/apksigner **之前**调用 ✓
+import strings
+import files
+
+func _u16(string s, int o): int {
+    return strings.byte(s, o) | (strings.byte(s, o + 1) << 8)
+}
+
+func _u32(string s, int o): int {
+    return strings.byte(s, o) | (strings.byte(s, o + 1) << 8)
+         | (strings.byte(s, o + 2) << 16) | (strings.byte(s, o + 3) << 24)
+}
+
+func _die(string msg) {
+    print("[assetpaths] " + msg + "\n")
+    _exit(1)
+}
+
+func _readBin(string path): string {
+    var f = files.open(path, "rb")
+    var s = f.read()
+    f.close()
+    return s
+}
+
+func _findEocd(string s): int {
+    int n = strings.byte_len(s)
+    if n < 22 { return -1 }
+    int lo = n - 22 - 65535
+    if lo < 0 { lo = 0 }
+    var i = n - 22
+    while i >= lo {
+        if strings.byte(s, i) == 0x50 and strings.byte(s, i + 1) == 0x4B
+            and strings.byte(s, i + 2) == 0x05 and strings.byte(s, i + 3) == 0x06 {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+// 名字里若含反斜杠，返回"换成斜杠后"的等长串；否则返回 null
+func _fixedName(string raw): string? {
+    int n = strings.byte_len(raw)
+    Array[int] b = []
+    bool hit = false
+    for 0:n-1 to i {
+        int c = strings.byte(raw, i)
+        if c == 0x5C { b.add(0x2F); hit = true }
+        else { b.add(c) }
+    }
+    if not hit { return null }
+    return strings.from_bytes(b)
+}
+
+main() {
+    Array[string] a = []
+    for _args() to x { a.add(_str(x)) }
+    if a.len() != 1 {
+        print("用法: leno.exe android\\tools\\assetpaths.leno <apk>\n")
+        _exit(2)
+    }
+    string apk = a[0]
+    if not files.exists(apk) { _die("APK 不存在：" + apk) }
+
+    var raw = _readBin(apk)
+    int n = strings.byte_len(raw)
+    int eocd = _findEocd(raw)
+    if eocd < 0 { _die("不是 zip：找不到 EOCD：" + apk) }
+
+    int count = _u16(raw, eocd + 10)
+    int cdOff = _u32(raw, eocd + 16)
+    if count == 0xFFFF or cdOff == 0xFFFFFFFF { _die("不支持 zip64") }
+
+    // 要改的字节位置（每条名字的起始偏移 + 新名字）
+    Array[int] at = []
+    Array[string] with_ = []
+    var pos = cdOff
+    var hits = 0
+
+    for 0:count-1 to idx {
+        if _u32(raw, pos) != 0x02014b50 { _die("第 " + _str(idx + 1) + " 个中央目录项签名不对") }
+        int nlen = _u16(raw, pos + 28)
+        int elen = _u16(raw, pos + 30)
+        int clen = _u16(raw, pos + 32)
+        int loff = _u32(raw, pos + 42)
+        string name = strings.byte_slice(raw, pos + 46, pos + 46 + nlen - 1)
+
+        var fixed = _fixedName(name)
+        if fixed != null {
+            hits = hits + 1
+            // 中央目录里的名字
+            at.add(pos + 46)
+            with_.add(fixed)
+            // 本地头里的名字（长度以本地头自己为准，可能与 CD 不同）
+            int lnlen = _u16(raw, loff + 26)
+            string lname = strings.byte_slice(raw, loff + 30, loff + 30 + lnlen - 1)
+            var lfixed = _fixedName(lname)
+            if lfixed != null {
+                at.add(loff + 30)
+                with_.add(lfixed)
+            }
+        }
+        pos = pos + 46 + nlen + elen + clen
+    }
+
+    if hits == 0 {
+        print("  = 条目名无需修正（没有反斜杠）\n")
+        return
+    }
+
+    // 按偏移升序拼回整份文件（一个条目两处，位置天然单调，但 loff 不保证升序 ⇒ 排序）
+    int total = at.len()
+    for 0:total-1 to i {
+        for i+1:total-1 to j {
+            if at[j] < at[i] {
+                int t = at[i]
+                at[i] = at[j]
+                at[j] = t
+                string ts = with_[i]
+                with_[i] = with_[j]
+                with_[j] = ts
+            }
+        }
+    }
+
+    Array[string] parts = []
+    var cur = 0
+    for 0:total-1 to i {
+        int o = at[i]
+        string nw = with_[i]
+        if o < cur { _die("补丁区间重叠（偏移 " + _str(o) + "）—— 文件结构异常") }
+        parts.add(strings.byte_slice(raw, cur, o - 1))
+        parts.add(nw)
+        cur = o + strings.byte_len(nw)
+    }
+    parts.add(strings.byte_slice(raw, cur, n - 1))
+
+    files.write(apk, strings.join(parts, ""))
+    print("  ~ 条目名反斜杠 → 斜杠：" + _str(hits) + " 条\n")
+}

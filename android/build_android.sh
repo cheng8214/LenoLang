@@ -122,6 +122,20 @@ mkdir -p "$OUT/gen"
     --auto-add-overlay \
     -o "$OUT/base.apk"
 
+echo "== 2.5/6 修正 assets 条目名 =="
+# aapt2 在 Windows 上递归打 assets 子目录时，条目名用的是**系统分隔符**：
+#     assets/lmusic\images\about.png        （unzip -l 能直接看到反斜杠）
+# 而 AssetManager 按 '/' 切路径查 zip ⇒ list("lmusic/images") 为空，
+# open() 抛 FileNotFoundException。平铺 assets 没分隔符，所以以前没暴露。
+# 改名不改长度（'\' → '/' 都是 1 字节）⇒ 偏移/CRC/压缩数据全不动，见 assetpaths.leno。
+LENO_TP="$ROOT/build/leno.exe"
+[ -x "$LENO_TP" ] || LENO_TP="$ROOT/build/leno"
+if [ -x "$LENO_TP" ]; then
+    "$LENO_TP" "$ANDROID_DIR/tools/assetpaths.leno" "$OUT/base.apk"
+else
+    echo "   ! 没有桌面 leno，跳过（带子目录的 assets 在设备上会读不到）"
+fi
+
 echo "== 3/6 编译 Java =="
 rm -rf "$OUT/classes" && mkdir -p "$OUT/classes"
 # SDL3 的 Java 宿主类（org.libsdl.app.*）必须打进 APK —— 见 SdlActivity.java 顶部注释：

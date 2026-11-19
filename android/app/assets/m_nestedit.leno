@@ -1,0 +1,73 @@
+// ============================================================================
+// m_nestedit.leno —— 【手工探针，不属于 run_probes 自动套件】多输入框的文本输入
+// ----------------------------------------------------------------------------
+// 为什么它叫 m*（manual）：这条要**人点一下再打字**才能判定，自动跑只会挂在那里等输入。
+//   run_probes.sh 只收 c* / s*，所以本文件不会被自动套件带走 ✓
+//
+// 它抓到的真实缺陷（2026-11-19，LenoMusic 上安卓）：
+//   一个窗口里有 **2 个以上 Edit** 时，点 A 框 ⇒ 软键盘弹出后**立刻消失**、一个字都进不来。
+//   根因：`Edit.blur()` 无条件调 `core.stopTextInput(hwnd)`，而那是**窗口级**调用；
+//   MOUSE_DOWN 是广播给所有控件的 ⇒ B 框收到同一次点击、算出"不在我身上"→ 自己 blur()
+//   → 把整个窗口的文本输入关掉。修法见 sdl_edit.blur()：只有**本来有焦点**才关 ✓
+//   单输入框的 app_text.leno 不会触发，所以此前一直没暴露。
+//
+// 判读：A（直接挂窗口）/ B（挂 HBox）各点一次、各打几个字，
+//   标签出现"A：xxx / B：xxx"且"有字=true"即通过 ✓
+// ============================================================================
+import "../../../build/leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.(Window, Size)
+use SDL3.WindowFlag
+
+main() {
+    print("== s2 嵌套输入框 ==")
+    SDL3.ttfInit()
+
+    Window win = SDL3.createWindow({title: "嵌套输入", w: 720, h: 1280, flags: WindowFlag.FULLSCREEN})
+    if not win.ok {
+        print("NG createWindow — " + SDL3.getError())
+        return
+    }
+
+    // A：直接挂窗口（app_text 的形态）
+    var flat = win.addEdit({x: 30, y: 90, w: 660, h: 90, font_size: 30, radius: 8, placeholder: "A 直接挂窗口"})
+    // B：挂在 HBox 里（LenoMusic 的形态）
+    var row = SDL3.createHBox({x: 30, y: 220, w: 660, h: 90, spacing: 10})
+    var nested = SDL3.createEdit({text: "", w: 500, h: 90, font_size: 30, radius: 8, placeholder: "B 挂在 HBox 里"})
+    row.add(nested, {grow: 1, shrink: 1, align: 3})
+    var btn = SDL3.createButton({w: 140, h: 90, text: "按钮", font_size: 26})
+    row.add(btn, {grow: 0, shrink: 0, basis: 140, align: 3})
+    win.add(row)
+
+    var outA = win.addLabel({x: 30, y: 340, text: "A：（空）", font_size: 26, text_color: #3DDC84FF})
+    var outB = win.addLabel({x: 30, y: 390, text: "B：（空）", font_size: 26, text_color: #FFD166FF})
+    var cnt = win.addLabel({x: 30, y: 440, text: "文本事件：A=0 B=0", font_size: 22})
+
+    int nA = 0
+    int nB = 0
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isTextInput() {
+                print("text_input → " + e.text() + "\n")
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.setColor(#0B1020FF)
+            r.clear()
+            string a = flat.get_text()
+            string b = nested.get_text()
+            if a != "" and nA == 0 { nA = 1 }
+            if b != "" and nB == 0 { nB = 1 }
+            outA.set_text("A：" + a)
+            outB.set_text("B：" + b)
+            cnt.set_text("A 有字=" + _str(a != "") + "  B 有字=" + _str(b != ""))
+        }
+    )
+
+    SDL3.ttfQuit()
+    print("A='" + flat.get_text() + "' B='" + nested.get_text() + "'\n")
+}

@@ -614,7 +614,13 @@ static Value native_dirs_script_dir(int argCount, Value* args) {
     extern char** g_argv;
     extern int g_packaged_mode;   // 打包版（入口如实上报，见 main.c/vm_main.c 的定义处）
 
-    const char* target = NULL;
+    // ★ 2026-11-19：**宿主注入的脚本路径优先**（Android/JNI 场景）。
+    //   嵌入宿主没有 argv：SDL 塞进来的 g_argv[0] 是 "app_process"，realpath 必然失败 ⇒
+    //   原来这里返回 null，而同一进程里 `_script()` 返回的是 .lenb 路径（它看注入）
+    //   ⇒ 同一语义的两个入口给出不同答案，应用侧 dirs.join(script_dir(), "downloads")
+    //   直接抛"第 1 个参数是 null"（LenoMusic 首次上安卓实测）。
+    const char* injected = leno_script_path();
+    const char* target = (injected && injected[0]) ? injected : NULL;
     char* target_heap = NULL;  // 若 target 来自 GetModuleFileNameW，需 free
 
     // ★ 2026-10-17 打包版：命令行里**没有脚本路径**（脚本嵌在 exe 里）⇒ 别去参数里找：
@@ -622,7 +628,7 @@ static Value native_dirs_script_dir(int argCount, Value* args) {
     //   （实测 `_args_probe a b -c` 在 /tmp 下跑 ⇒ script_dir() 返回 /tmp）⇒ 直接落到下面的
     //   exe 路径分支（本函数注释第 572 行写的正是"直接运行 exe ⇒ 返回 exe 所在目录" ✓）
     // 解释器模式：优先从参数中找脚本路径（第一个非选项参数）
-    if (!g_packaged_mode) {
+    if (!target && !g_packaged_mode) {
         for (int i = 1; i < g_argc; i++) {
             if (g_argv[i][0] != '-') {
                 target = g_argv[i];
