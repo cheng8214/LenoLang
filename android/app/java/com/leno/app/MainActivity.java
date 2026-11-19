@@ -55,7 +55,11 @@ public class MainActivity extends Activity {
 
         out = new TextView(this);
         out.setTypeface(Typeface.MONOSPACE);
-        out.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        // 字号可用 intent 覆盖（`--ei fontsp 13`）；默认 11sp —— 实测 13sp 时
+        // 1080px 宽的竖屏只放得下 31 个 ASCII 列（等宽字体 advance ≈ 0.6em，
+        // 汉字占两列），二维码 29 模块 + 缩进就顶到边了。
+        int fontSp = getIntent().getIntExtra("fontsp", 11);
+        out.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSp);
         out.setTextColor(Color.parseColor("#3DDC84"));
         out.setBackgroundColor(Color.parseColor("#0B1020"));
         int pad = (int) (16 * getResources().getDisplayMetrics().density);

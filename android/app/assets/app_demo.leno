@@ -1,0 +1,150 @@
+// ============================================================================
+// app_demo.leno —— 用 Leno 写的第一个 Android 小应用：「今日看板」
+// ----------------------------------------------------------------------------
+// 它跑在 APK 的宿主里（MainActivity 把 VM 的 stdout 实时刷到屏幕上），
+// 所以"界面"就是这段文本流。三块内容各验一个真能力：
+//   ① 本地存储（LenoSqlite）—— 每次运行追加一条记录，重启不丢（真落盘到 filesDir）
+//   ② 文件读写（files）     —— 沙箱私有目录可写、可读回
+//   ③ 二维码（LenoQR）     —— 用半块字符 ▀▄█ 渲染，29 模块 ≈ 29 字符宽，竖屏放得下
+//
+// 排版约束（实测）：1080px 竖屏、11sp 等宽字体下约 36 个 ASCII 列，汉字占 2 列
+//   ⇒ 下面每一行的"显示宽度"都控制在 34 列以内；超了就会折行，二维码会被打断。
+//
+// 跑法：
+//   Android: adb shell am start -n com.leno.app/.MainActivity --es asset app_demo.lenb
+//   桌面:    build\leno.exe android\app\assets\app_demo.leno
+// ============================================================================
+import strings
+import files
+import dirs
+import times
+import ffi
+import "../../../build/leno_module/LenoSqlite/lib/sqlite3.leno" as sq
+import "../../../build/leno_module/LenoQR/lib/QR.leno" as qr
+import "../../../build/leno_module/LenoSDL3/lib/sdl_core.leno" as core
+import "../../../build/leno_module/LenoSDL3/lib/sdl_image.leno" as image
+use core.sdl3
+
+// `print` 自带换行（实测：不补 "\n" 也是每行一条）
+func put(string s) {
+    print(s)
+}
+
+func rule() {
+    put("--------------------------------")
+}
+
+// 二维码：每个字符 = 1 模块宽 × 2 模块高（▀ 上半、▄ 下半、█ 实心）
+//   为什么不用两个字符表示一个模块：29 模块 × 2 = 58 字符会换行，二维码就断了
+func drawQr(string text) {
+    var e = qr.encode(text, "M")
+    if not (e.ok as bool) {
+        put("  编码失败：" + (e.err as string))
+        return
+    }
+    int size = e["size"] as int
+    Array[string] rows = e["rows"] as Array[string]
+    var y = 0
+    while y < size {
+        var line = "   "
+        for 0:size-1 to x {
+            var top = false
+            var bot = false
+            if rows[y].byte(x) == 49 { top = true }
+            if y + 1 < size and rows[y + 1].byte(x) == 49 { bot = true }
+            if top and bot { line = line + "█" }
+            else if top   { line = line + "▀" }
+            else if bot   { line = line + "▄" }
+            else          { line = line + " " }
+        }
+        put(line)
+        y = y + 2
+    }
+}
+
+// 把同一枚码另存成真 PNG（SDL3_image 编码）—— 屏幕上的字符版受字形留白影响，
+//   严格解码器（quirc）扫不出来；存成 PNG 才是能直接扫的那份。
+//   toARGB 给的字节序是 B,G,R,A ⇒ 对应 SDL 的 ARGB8888（小端）。
+func saveQrPng(Dict e, string path): bool {
+    int size = e["size"] as int
+    int scale = 6
+    int quiet = 4
+    int side = (size + quiet * 2) * scale
+    string argb = qr.toARGB(e, scale, quiet)
+    if strings.byte_len(argb) != side * side * 4 { return false }
+    Ptr[u8] buf = ffi.malloc(side * side * 4)
+    if buf == null { return false }
+    ffi.write_bytes(buf, 0, argb)
+    var sdl = core.lib()
+    Ptr[u8] surf = sdl.SDL_CreateSurfaceFrom(side, side, core.PIXELFORMAT_ARGB8888, buf, side * 4)
+    var ok = false
+    if surf != null {
+        ok = image.savePNG(surf, path)
+        sdl.SDL_DestroySurface(surf)
+    }
+    ffi.free(buf)
+    return ok
+}
+
+main() {
+    int t0 = _int(times.ms())
+
+    put("")
+    put("  Leno 今日看板")
+    put("  " + times.format(times.now(), "%m-%d %H:%M") + "  " + _os() + "/" + _arch())
+    rule()
+
+    // ---------------- ① 记一笔：SQLite 持久化 ----------------
+    put("[1] 本地库 · LenoSqlite")
+    string dbPath = dirs.join(_tmpdir(), "demo.db")
+    var d = sq.open(dbPath)
+    if not d.isOk() {
+        put("  打不开库：" + dbPath)
+    } else {
+        d.exec("CREATE TABLE IF NOT EXISTS ticks(id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, minutes INTEGER NOT NULL)")
+        string nowText = times.format(times.now(), "%m-%d %H:%M")
+        // 每次运行真的写一行 —— 下次运行还能看到这次写的，这才叫持久化
+        d.exec("INSERT INTO ticks(at, minutes) VALUES ('" + nowText + "', 30)")
+        d.close()
+
+        Array[Dict] agg = sq.queryAll(dbPath, "SELECT COUNT(*) AS n, SUM(minutes) AS s FROM ticks")
+        Array[Dict] recent = sq.queryAll(dbPath, "SELECT at, minutes FROM ticks ORDER BY id DESC LIMIT 2")
+        if agg.len() > 0 {
+            put("  本次 +1 条，历史 " + _str(agg[0]["n"] as int) + " 条")
+            put("  累计 " + _str(agg[0]["s"] as int) + " 分钟")
+        }
+        for recent to r {
+            put("    " + (r["at"] as string) + "  " + _str(r["minutes"] as int) + " 分")
+        }
+        put("  库文件 " + _str(files.size(dbPath)) + " 字节")
+    }
+    rule()
+
+    // ---------------- ② 写文件 ----------------
+    put("[2] 文件 · files")
+    string notePath = dirs.join(_tmpdir(), "demo_note.txt")
+    files.write(notePath, "Leno 能写文件，也能读回来。\n")
+    if files.exists(notePath) {
+        put("  demo_note.txt " + _str(files.size(notePath)) + " 字节")
+        put("  「" + strings.trim_end(files.read(notePath)) + "」")
+    } else {
+        put("  写入失败：" + notePath)
+    }
+    rule()
+
+    // ---------------- ③ 二维码 ----------------
+    put("[3] 二维码 · LenoQR")
+    var e = qr.encode("https://gitee.com/cheng8214/LenoLang", "M")
+    drawQr("https://gitee.com/cheng8214/LenoLang")
+    put("  gitee.com/cheng8214/LenoLang")
+    string pngPath = dirs.join(_tmpdir(), "qr.png")
+    if saveQrPng(e, pngPath) {
+        put("  另存 qr.png " + _str(files.size(pngPath)) + " 字节（可直接扫）")
+    } else {
+        put("  PNG 存盘失败：" + pngPath)
+    }
+    rule()
+
+    put("完成 · 用时 " + _str(_int(times.ms()) - t0) + " ms")
+    put("")
+}
