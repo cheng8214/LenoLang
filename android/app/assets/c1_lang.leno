@@ -1,0 +1,119 @@
+// ============================================================================
+// 探针 1 / 语言核心：写 app 每天都要用的语法
+// 输出约定：行首 OK / NG，便于 `adb logcat -s leno_jni | grep -cE "^[0-9-]+ .* (OK|NG)  "`
+// ============================================================================
+import strings
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond {
+        g_ok = g_ok + 1
+        print("OK   " + name + " | " + detail)
+    } else {
+        g_ng = g_ng + 1
+        print("NG   " + name + " | " + detail)
+    }
+}
+
+struct Item {
+    string name = ""
+    int qty = 0
+    float price = 0.0
+}
+
+func makeItem(string n, int q, float p): Item {
+    return new Item(name = n, qty = q, price = p)
+}
+
+func sumPrice(Array[Item] items): float {
+    float s = 0.0
+    for items to it {
+        s = s + it.price * _float(it.qty)
+    }
+    return s
+}
+
+func divmod(int a, int b): [int, int] {
+    return a / b, a % b
+}
+
+main() {
+    print("== c1 语言核心 ==")
+
+    // ---- 1. struct：字段、构造、方法外计算 ----
+    var it = makeItem("咖啡", 3, 12.5)
+    chk("struct.construct", it.name == "咖啡" and it.qty == 3, it.name + " x" + _str(it.qty))
+
+    // ---- 2. Array[struct] + for 遍历 ----
+    var cart = [makeItem("A", 1, 2.0), makeItem("B", 2, 3.5)]
+    var t = sumPrice(cart)
+    chk("array.of.struct", t == 9.0, "合计=" + _str(t))
+
+    // ---- 3. Dict 字面量 + has/get/set ----
+    var cfg = {"host": "127.0.0.1", "port": 8080, "debug": true}
+    cfg.set("port", 9090)
+    chk("dict.literal", cfg.has("host") and cfg.get("port") == 9090,
+        "host=" + _str(cfg.get("host")) + " port=" + _str(cfg.get("port")))
+    chk("dict.keys", cfg.keys().len() == 3, "keys=" + _str(cfg.keys().len()))
+
+    // ---- 4. 闭包：map / filter ----
+    var nums = [1, 2, 3, 4, 5, 6]
+    var sq = nums.map(func(int x) { return x * x })
+    var even = nums.filter(func(int x) { return x % 2 == 0 })
+    chk("closure.map", sq.len() == 6 and sq[5] == 36, "sq[5]=" + _str(sq[5]))
+    chk("closure.filter", even.len() == 3, "even.len=" + _str(even.len()))
+
+    // ---- 5. try / catch / throw ----
+    var caught = ""
+    try {
+        throw "业务异常"
+    } catch e {
+        caught = _str(e)
+    }
+    chk("try.catch", caught.has("业务异常"), "e=" + caught)
+
+    // 数组越界这类运行期错误也能被捕获（app 里防崩溃的关键）
+    var caught2 = ""
+    try {
+        var a = [1, 2, 3]
+        var _x = a[99]
+    } catch e {
+        caught2 = _str(e)
+    }
+    chk("try.catch.runtime", caught2 != "", "e=" + caught2)
+
+    // ---- 6. switch 区间匹配 ----
+    var level = ""
+    switch 87 {
+        case 0:59 { level = "F" }
+        case 60:89 { level = "B" }
+        default { level = "A" }
+    }
+    chk("switch.range", level == "B", "87 -> " + level)
+
+    // ---- 7. 可空类型 ----
+    string? nick = null
+    var fallback = "游客"
+    if nick == null {
+        fallback = "游客(默认)"
+    }
+    chk("optional.type", fallback == "游客(默认)", fallback)
+
+    // ---- 8. 多返回值 ----
+    var[int, int](q, r) = divmod(17, 5)
+    chk("multi.return", q == 3 and r == 2, "17/5 = " + _str(q) + " 余 " + _str(r))
+
+    // ---- 9. 字符串处理 ----
+    var parts = strings.split("a,b,c", ",")
+    var joined = strings.join(parts, "-")
+    var up = strings.to_upper("leno")
+    chk("string.split.join", joined == "a-b-c" and up == "LENO", joined + " / " + up)
+    chk("string.format", format("%s:%d", "port", 80) == "port:80", format("%s:%d", "port", 80))
+
+    // ---- 10. 浮点与数学 ----
+    chk("math.float", _int(3.99) == 3 and _float("2.5") == 2.5, "round-trip ok")
+
+    print("== c1 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+}

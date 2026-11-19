@@ -1,0 +1,71 @@
+// ============================================================================
+// 探针 10 / 系统库可达性：Android 只允许 dlopen "公共库"（public.libraries.txt）
+// 这个探针回答两个问题：
+//   1) 公开白名单里的库（liblog / libEGL / libandroid）能不能用
+//   2) 黑名单里的库（libsqlite）用**绝对路径**能不能绕过 —— 决定了 SQLite 该怎么接
+// 说明：ffi.load 找不到库时是**抛错**（不是返回 null），所以统一经 tryLoad 兜住，
+//   否则第一次失败就会把整个探针打断（桌面跑这份时 liblog.so 必然不存在）。
+// ============================================================================
+import ffi
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+func tryLoad(string name): any {
+    try {
+        return ffi.load(name)
+    } catch e {
+        print("INFO load 失败 " + name + " -> " + _str(e))
+        return null
+    }
+}
+
+main() {
+    print("== c10 系统库可达性 ==")
+
+    // ---- 1. liblog.so：公共库，且在 logcat 里能看到调用结果 ----
+    var log = tryLoad("liblog.so") as Ptr      // as Ptr：把 any 收窄回指针（不匹配返回 null）
+    chk("lib.load.log", log != null, "liblog.so")
+    if log != null {
+        // __android_log_write(int prio, const char* tag, const char* text)；prio 4 = INFO
+        var rc = ffi.call_int(log, "__android_log_write", 4, "leno_ffi_probe", "hello from Leno FFI")
+        chk("liblog.write", _int(rc) >= 0, "__android_log_write rc=" + _str(rc))
+    }
+
+    // ---- 2. libEGL.so：图形栈入口（app 若自绘就要它）----
+    var egl = tryLoad("libEGL.so") as Ptr
+    chk("lib.load.egl", egl != null, "libEGL.so")
+    if egl != null {
+        var q = ffi.dlsym(egl, "eglQueryString")
+        chk("libegl.dlsym", q != null, "eglQueryString 符号存在")
+    }
+
+    // ---- 3. libandroid.so：NDK 平台层（ANativeWindow 等）----
+    var andr = tryLoad("libandroid.so") as Ptr
+    chk("lib.load.android", andr != null, "libandroid.so")
+
+    // ---- 4. 私有库：按名字 vs 按绝对路径 ----
+    var byName = tryLoad("libsqlite.so") as Ptr
+    print("INFO libsqlite.so（按名）       = " + _str(byName))
+    var byPath = tryLoad("/system/lib64/libsqlite.so") as Ptr
+    print("INFO /system/lib64/libsqlite.so = " + _str(byPath))
+
+    // 关键结论：只要有一种方式能拿到，SQLite 就能免打包直接用
+    var lib = byName
+    if lib == null { lib = byPath }
+    if lib != null {
+        var vp = ffi.call_ptr(lib, "sqlite3_libversion")
+        var ver = ""
+        if vp != null { ver = ffi.read_string(vp, 0) }
+        chk("sqlite.reachable", ver.has("."), "sqlite 版本 " + ver)
+    } else {
+        print("SEC  SQLite 不可达 ⇒ 必须自带 sqlite3.c 编进 .so")
+    }
+
+    print("== c10 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+}

@@ -33,6 +33,26 @@ extern int g_argc;
 extern char** g_argv;
 extern int g_packaged_mode;   // 打包版（入口如实上报，见 main.c/vm_main.c 的定义处）
 
+// ==================== 嵌入宿主的路径注入（2026-11-18） ====================
+// 见 include/leno_vm_runtime.h 的说明：嵌入模式没有 argv，也没有可写的 /tmp。
+// 这两个静态量是"宿主说了算"的唯一来源，默认空 ⇒ 完全退回原行为。
+static char g_script_path[MAX_PATH_LEN] = {0};
+static char g_data_dir[MAX_PATH_LEN] = {0};
+
+void leno_set_script_path(const char* path) {
+    if (!path) { g_script_path[0] = '\0'; return; }
+    snprintf(g_script_path, sizeof(g_script_path), "%s", path);
+}
+
+void leno_set_data_dir(const char* dir) {
+    if (!dir) { g_data_dir[0] = '\0'; return; }
+    snprintf(g_data_dir, sizeof(g_data_dir), "%s", dir);
+}
+
+const char* leno_data_dir(void) {
+    return g_data_dir[0] ? g_data_dir : NULL;
+}
+
 // ==================== ExecResult 的类型规格（`_exec` 的返回，v3.2.8） ====================
 // `_exec(cmd[, timeout_ms])` 此前返回 `[output, code]` **二元数组** —— 两个元素**类型不齐**
 //   （output 是 string、code 是 int）⇒ 同质的 `Array[T]` 表达不了，只能注册成 `Array[any]`，
@@ -132,6 +152,12 @@ static Value native_script(int argCount, Value* args) {
 
     if (g_packaged_mode) { return native_executable(argCount, args); }
 
+    // 嵌入宿主注入优先：JNI/宿主壳直接调 lenolang_run_lenb 时**没有 argv**，
+    // 这是 `_script()` 唯一的正确来源（否则返回 null，调用方一路 null 传染）
+    if (g_script_path[0]) {
+        return val_obj((Object*)str_copy(g_script_path, (int)strlen(g_script_path)));
+    }
+
     int past_ddash = 0;
     for (int i = 1; i < g_argc; i++) {
         if (!past_ddash && strcmp(g_argv[i], "--") == 0) { past_ddash = 1; continue; }
@@ -189,12 +215,18 @@ static Value native_gc_control(int argCount, Value* args) {
 }
 
 // _os() - 返回操作系统名称
+// ⚠ `__ANDROID__` 必须在 `__linux__` **之前**判断：bionic 同时定义了 `__linux__`，
+//   顺序反了 Android 就会报成 "linux"，与桌面 Linux 无法区分 ——
+//   而两者的差异是实打实的（bionic 没 iconv、系统库要过 public.libraries.txt 白名单、
+//   动态库要按 ABI 分发），模块想正确挑库就必须能分辨。
 static Value native_os(int argCount, Value* args) {
     (void)argCount;
     (void)args;
 
     #ifdef _WIN32
         return val_obj((Object*)str_copy("windows", 7));
+    #elif defined(__ANDROID__)
+        return val_obj((Object*)str_copy("android", 7));
     #elif defined(__APPLE__)
         #include "TargetConditionals.h"
         #if TARGET_OS_MAC
@@ -862,6 +894,10 @@ static Value native_tmpdir(int argCount, Value* args) {
         const char* tmp = getenv("TMPDIR");
         if (tmp != NULL) {
             return val_obj((Object*)str_copy(tmp, (int)strlen(tmp)));
+        }
+        // 没有 TMPDIR 时：宿主注入的可写目录优先（Android 沙箱里 "/tmp" 既不存在也不可写）
+        if (g_data_dir[0]) {
+            return val_obj((Object*)str_copy(g_data_dir, (int)strlen(g_data_dir)));
         }
         return val_obj((Object*)str_copy("/tmp", 4));
     #endif

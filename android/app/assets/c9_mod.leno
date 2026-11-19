@@ -1,0 +1,38 @@
+// ============================================================================
+// 探针 9 / 多文件模块：app 的代码组织方式
+// 一个 app 不可能只有一个文件。这里验证：相对路径导入、跨文件导出 struct / 函数 / 常量
+// ============================================================================
+import "lib/util.leno" as util
+import "lib/util.leno" as u2
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+main() {
+    print("== c9 多文件模块 ==")
+
+    // ---- 1. 导入本地模块的导出函数 ----
+    var acc = util.newAccount("A001", 100)
+    chk("import.func", acc.id == "A001" and acc.balance == 100, util.label(acc))
+
+    // ---- 2. 跨文件 struct（构造 + 字段读写 + 作为参数传递）----
+    acc = util.deposit(acc, 50)
+    chk("import.struct", acc.balance == 150, util.label(acc))
+
+    // ---- 3. 导出常量 ----
+    chk("import.const", util.MAX_BALANCE == 1000000, _str(util.MAX_BALANCE))
+
+    // ---- 4. 同一模块以两个别名导入（不该重复初始化，也不该报错）----
+    var acc2 = u2.newAccount("B002", 7)
+    chk("import.alias", acc2.id == "B002", u2.label(acc2))
+
+    // ---- 5. 模块内的 import 传递（util 自己 import 了 strings）----
+    chk("import.transitive", util.label(acc).has("150"), "传递依赖 ok")
+
+    print("== c9 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+}

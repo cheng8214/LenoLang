@@ -6,20 +6,38 @@ description = "Leno SDL3 绑定模块 - 窗口、渲染器、事件、绘图"
 [modules]
 root = "lib"
 
+# ==================== 原生库（2026-11-19 起按平台分目录）====================
+# 布局（与 LenoSqlite / LenoMusic / LenoQR / LenoWeb 统一）：
+#     lib/win/<名>.dll        ← win 键
+#     lib/linux/<名>.so       ← linux 键
+#     lib/android/<abi>/...   ← Android 侧不在这里声明（见下）
+#
+# ★ 原先是 lib/ 下平铺，还带 `mac = "lib/SDL3.so"` —— **那个键是假通过**：
+#   随包的 SDL3.so 是 Linux ELF，macOS 上 dlopen 必失败，而 `mac = ...` 只检查
+#   "文件存在"就认为有 mac 产物。本次重排一并**去掉 mac 键**（没有 Mach-O 就不该声称有）。
+#   要支持 macOS：在 macOS 上取官方 dmg 里的 SDL3.framework/dylib 放进 lib/mac/，再补
+#       mac = "lib/mac/SDL3.dylib"
+#   以及它自己的 loader 分支（sdl_core.libPath 目前只返回 win/linux/android 三种）。
+#
+# ★ Android 不列键：一个平台键只能指一个路径，而 Android 要按 ABI 各带一份
+#   （arm64-v8a / x86_64 是两份不同 ELF）；且 SDL3 的 Android 产物必须走官方
+#   Gradle/CMake 工程产出，不是"丢个 .so 就行"。真要上 Android 时由
+#   android/build_android.sh 从 lib/android/<abi>/ 取，与 LenoSqlite 同路。
+#
+# 声明了而文件不存在 ⇒ 打包直接报错；`run_all_tests.leno` 也会据此判定缺库并**静默 SKIP**
+#   整个模块 ⇒ 路径写错时汇总只多一个 SKIP，极易当成跑过了。改布局时这里必须同步。
+
 [native-libs.sdl3]
-win   = "lib/SDL3.dll"
-linux = "lib/SDL3.so"
-mac   = "lib/SDL3.so"
+win   = "lib/win/SDL3.dll"
+linux = "lib/linux/SDL3.so"
 
 [native-libs.sdl3_image]
-win   = "lib/SDL3_image.dll"
-linux = "lib/SDL3_image.so"
-mac   = "lib/SDL3_image.so"
+win   = "lib/win/SDL3_image.dll"
+linux = "lib/linux/SDL3_image.so"
 
 [native-libs.sdl3_ttf]
-win   = "lib/SDL3_ttf.dll"
-linux = "lib/SDL3_ttf.so"
-mac   = "lib/SDL3_ttf.so"
+win   = "lib/win/SDL3_ttf.dll"
+linux = "lib/linux/SDL3_ttf.so"
 
 # ==================== 可选：WebP 支持（2026-10-21）====================
 # SDL3_image 的 WebP 是**运行时动态加载**的（见 lib/sdl_image.leno 的 _preloadWebp）：
@@ -31,16 +49,16 @@ mac   = "lib/SDL3_ttf.so"
 # 三个缺一不可（SDL3_image 的加载链是 webp → demux → mux）。
 # GIF/PNG/JPG 是 SDL3_image **内建**的，不需要这些。
 [native-libs.libwebp]
-win      = "lib/libwebp-7.dll"
-linux    = "lib/libwebp.so.7"
+win      = "lib/win/libwebp-7.dll"
+linux    = "lib/linux/libwebp.so.7"
 optional = true
 
 [native-libs.libwebpdemux]
-win      = "lib/libwebpdemux-2.dll"
-linux    = "lib/libwebpdemux.so.2"
+win      = "lib/win/libwebpdemux-2.dll"
+linux    = "lib/linux/libwebpdemux.so.2"
 optional = true
 
 [native-libs.libwebpmux]
-win      = "lib/libwebpmux-3.dll"
-linux    = "lib/libwebpmux.so.3"
+win      = "lib/win/libwebpmux-3.dll"
+linux    = "lib/linux/libwebpmux.so.3"
 optional = true

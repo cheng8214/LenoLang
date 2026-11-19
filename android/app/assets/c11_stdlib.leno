@@ -1,0 +1,48 @@
+// ============================================================================
+// 探针 11 / 标准库 .leno 模块（LenoResult、LenoCrypto 这类**纯脚本**库）
+// 这些库是 app 最想要的那批能力（加密、HTTP、CSV、ZIP…），而且零 C 依赖。
+// 它们装在 build/leno_module/<包名>/lib/ 下，运行时靠"exe 目录"去找 ——
+// 而 Android 进程没有 exe 目录。这个探针就是验证这条路在设备上到底通不通。
+//
+// 导入写法（与 LenoSDL3 一致）：引号包**库文件名**，不是包目录名
+//   import "Crypto"  → leno_module/LenoCrypto/lib/Crypto.leno
+//   import "Result"  → leno_module/LenoResult/lib/Result.leno
+// ============================================================================
+import "Crypto" as crypto
+import "Result" as R
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+main() {
+    print("== c11 标准库模块 ==")
+
+    // ---- 1. 跨模块调用（LenoResult.codeName） ----
+    var name = R.codeName(0)
+    chk("stdlib.call", name != "", "Result.codeName(0) = " + name)
+
+    // ---- 2. 泛型结构 Result[T] ----
+    var r = R.ok("放进去的值")
+    chk("stdlib.generic", r.isOk() and r.get() == "放进去的值", "ok().get() = " + r.get())
+
+    // ---- 3. 纯 Leno 实现的 SHA-256（app 的密码/签名基础）----
+    //   已知答案：sha256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+    var h = crypto.sha256("abc")
+    chk("stdlib.sha256", h == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        "sha256(\"abc\")=" + h)
+
+    // ---- 4. MD5 ----
+    var m = crypto.md5("abc")
+    chk("stdlib.md5", m == "900150983cd24fb0d6963f7d28e17f72", "md5(\"abc\")=" + m)
+
+    // ---- 5. HMAC-SHA256（带密钥，比裸 hash 更适合做签名）----
+    var mac = crypto.hmac_sha256("key", "message")
+    chk("stdlib.hmac", mac.len() == 64, "hmac 长度=" + _str(mac.len()))
+
+    print("== c11 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+}

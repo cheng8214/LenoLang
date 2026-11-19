@@ -1,0 +1,24 @@
+// 被 c9_mod.leno 导入的本地模块（app 里就是"自己的一层业务代码"）
+// 注意：文件名/app 目录里**不要**出现 io.leno、ffi.leno 这类与内置模块同名的文件
+//   （2026-11-18 修的内置模块遮蔽问题就是踩这个坑）
+import strings
+
+export struct Account {
+    string id = ""
+    int balance = 0
+}
+
+export func newAccount(string id, int init): Account {
+    return new Account(id = id, balance = init)
+}
+
+export func deposit(Account a, int n): Account {
+    a.balance = a.balance + n
+    return a
+}
+
+export func label(Account a): string {
+    return strings.format("%s=%d", a.id, a.balance)
+}
+
+export const int MAX_BALANCE = 1000000

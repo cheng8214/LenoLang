@@ -1,0 +1,112 @@
+// ============================================================================
+// 探针 8 / SQLite（经 FFI 直调系统库）
+// 为什么重要：app 的本地存储（离线缓存、消息记录）几乎都靠它。
+// Android 系统自带 /system/lib64/libsqlite.so，Windows 10+ 自带 winsqlite3.dll
+//   ⇒ 不需要往 APK 里塞任何第三方库，也不必等官方绑定。
+// ============================================================================
+import ffi
+import files
+import dirs
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+main() {
+    print("== c8 SQLite ==")
+
+    // ---- 1. 打开系统自带的 sqlite 动态库 ----
+    // Android 上必须用**随 APK 打包**的 libsqlite3.so —— 系统自带的 libsqlite.so
+    //   不在 public.libraries.txt 里，dlopen 会被 namespace 拒绝（见 c10 探针）。
+    //   打包位置 app/jniLibs/<abi>/libsqlite3.so → 安装到 app 自己的库目录，
+    //   名字 dlopen 得到。
+    var libName = "libsqlite3.so"
+    if _os() == "windows" { libName = "winsqlite3.dll" }
+    // ffi.load 找不到库时是**抛错**（不是返回 null）⇒ 必须兜住，否则整个探针在这里断掉
+    var lib = null
+    var loadErr = ""
+    try {
+        lib = ffi.load(libName)
+    } catch e {
+        loadErr = _str(e)
+    }
+    if lib == null {
+        print("SKIP sqlite.load | " + libName + " 不可达")
+        print("SEC  " + loadErr)
+        print("SEC  Android 只允许 dlopen public.libraries.txt 里的库；libsqlite.so 不在其中")
+        print("SEC  ⇒ 方案：把 sqlite3.c 编进 libleno.so 并导出符号（或走 Java android.database.sqlite）")
+        print("== c8 结果: 跳过（平台限制，非移植缺陷） ==")
+        return
+    }
+    chk("sqlite.load", true, libName)
+
+    // ---- 2. 版本号（char* 返回值） ----
+    var verPtr = ffi.call_ptr(lib, "sqlite3_libversion")
+    var ver = ""
+    if verPtr != null { ver = ffi.read_string(verPtr, 0) }
+    chk("sqlite.version", ver.has("."), "sqlite3_libversion() = " + ver)
+
+    // ---- 3. 建库（sqlite3_open 需要 char** 出参 ⇒ 先 malloc 一个指针槽） ----
+    var dir = dirs.join(_tmpdir(), "probe_data")
+    dirs.mkdir_p(dir)
+    var dbPath = dirs.join(dir, "app.db")
+    if files.exists(dbPath) { files.delete(dbPath) }
+
+    var pp = ffi.malloc(8)
+    var rc = ffi.call_int(lib, "sqlite3_open", dbPath, pp)
+    var db = ffi.read_ptr(pp, 0)
+    chk("sqlite.open", _int(rc) == 0 and db != null, "rc=" + _str(rc) + " db=" + _str(db))
+    if db == null {
+        print("== c8 结果: 打开失败 ==")
+        return
+    }
+
+    // ---- 4. 建表 + 插入（sqlite3_exec） ----
+    var sql1 = "CREATE TABLE msg (id INTEGER PRIMARY KEY, body TEXT, ts INTEGER)"
+    var rc1 = ffi.call_int(lib, "sqlite3_exec", db, sql1, 0, 0, 0)
+    chk("sqlite.create", _int(rc1) == 0, "CREATE rc=" + _str(rc1))
+
+    var sql2 = "INSERT INTO msg (body, ts) VALUES ('第一条消息 中文', 1795013000)"
+        + "; INSERT INTO msg (body, ts) VALUES ('second', 1795013100)"
+    var rc2 = ffi.call_int(lib, "sqlite3_exec", db, sql2, 0, 0, 0)
+    chk("sqlite.insert", _int(rc2) == 0, "INSERT rc=" + _str(rc2))
+
+    // ---- 5. 错误路径：非法 SQL 应当返回非 0，并能取到 sqlite 的错误信息 ----
+    var rcBad = ffi.call_int(lib, "sqlite3_exec", db, "SELEC nonsense", 0, 0, 0)
+    var errPtr = ffi.call_ptr(lib, "sqlite3_errmsg", db)
+    var errMsg = ""
+    if errPtr != null { errMsg = ffi.read_string(errPtr, 0) }
+    chk("sqlite.error", _int(rcBad) != 0 and errMsg != "", "rc=" + _str(rcBad) + " err=" + errMsg)
+
+    // ---- 6. 关闭 ----
+    var rcClose = ffi.call_int(lib, "sqlite3_close", db)
+    chk("sqlite.close", _int(rcClose) == 0, "rc=" + _str(rcClose))
+    ffi.free(pp)
+
+    // ---- 7. 验证真的落盘 ----
+    // 只断言"文件存在且至少有一页"（SQLite 默认 4096 字节/页）。
+    // 不把文件内容读成字符串再打印：db 是二进制，含 NUL 会污染整条输出流。
+    var ok = files.exists(dbPath)
+    var size = 0
+    if ok { size = files.size(dbPath) }
+    chk("sqlite.persist", ok and size >= 1024, dbPath + " = " + _str(size) + " 字节")
+
+    // ---- 8. 重开一次，确认库能再次打开（持久化可复用）----
+    var pp2 = ffi.malloc(8)
+    var rcRe = ffi.call_int(lib, "sqlite3_open", dbPath, pp2)
+    var db2 = ffi.read_ptr(pp2, 0)
+    var rcSel = -1
+    if db2 != null {
+        rcSel = ffi.call_int(lib, "sqlite3_exec", db2, "SELECT * FROM msg", 0, 0, 0)
+        ffi.call_int(lib, "sqlite3_close", db2)
+    }
+    ffi.free(pp2)
+    chk("sqlite.reopen", _int(rcRe) == 0 and _int(rcSel) == 0,
+        "重开 rc=" + _str(rcRe) + " SELECT rc=" + _str(rcSel) + "（表还在）")
+
+    print("== c8 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+}

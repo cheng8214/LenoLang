@@ -27,7 +27,8 @@ main() {
 | `web_cdp.leno` | **无头浏览器 / 动态渲染**（CDP 驱动 Chrome/Edge + 进程管理） |
 | `web_generic.leno` | `Result[T]` 等泛型小工具 |
 
-原生依赖：`lib/libcurl-x64.dll`（Windows）/ `lib/libcurl.so`（Linux），已在 `leno.toml` 的 `[native-libs]` 声明。
+原生依赖：`lib/win/libcurl-x64.dll`（Windows）/ `lib/linux/libcurl.so`（Linux），已在 `leno.toml` 的 `[native-libs]` 声明。
+库文件自 2026-11-19 起**按平台分目录**存放（与 LenoSqlite / LenoMusic / LenoQR / LenoSDL3 统一）。
 
 ## 字符集：响应体自动转 UTF-8（2026-10-06 新增）
 
@@ -380,7 +381,7 @@ var pool2 = web.proxyPoolFromFile("proxies.txt")   // 文件不存在 ⇒ 空池
 
 `setCipherList` / `setTls13Ciphers` / `setEcCurves` 能调套件与曲线顺序，但 JA3/JA4 还包含
 **扩展顺序、ALPN、GREASE**，libcurl 原生没有这些开关。真要对齐 Chrome 指纹，需要把
-`lib/libcurl-x64.dll` 换成 [curl-impersonate](https://github.com/lwthiker/curl-impersonate)
+`lib/win/libcurl-x64.dll` 换成 [curl-impersonate](https://github.com/lwthiker/curl-impersonate)
 的 Windows 构建（导出符号与 libcurl 兼容，本模块**无需改代码**即可加载）。
 
 本包**不预置**该 DLL（体积、来源可信度、许可证都要单独交代）。替换后这样验证：

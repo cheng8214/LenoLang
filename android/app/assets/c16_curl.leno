@@ -1,0 +1,78 @@
+// ============================================================================
+// 探针 16 / LenoWeb 模块（curl + mbedTLS）
+// ----------------------------------------------------------------------------
+// lib/android/<abi>/libcurl.so 由 src/build_android.sh 编出来：curl 8.23.0，
+// TLS 后端 mbedTLS 3.6 **静态链入**（NEEDED 里只有 libc/libm/libdl）。
+//
+// 为什么要自己编：Android 没有给 app 用的系统 TLS 库 —— BoringSSL 的
+// `libssl.so` 不在 public.libraries.txt 白名单，dlopen 会被 namespace 拒
+// （SQLite 那边踩过同一个坑）。
+//
+// 为什么还要自己拼证书：Android 的系统 CA 放在 Java KeyStore 里，native 拿不到；
+// 桌面版 libcurl 有编译期默认 CA 路径，我们这份裸编的没有 ⇒ 不设 CAINFO 时
+// 任何 https 都会报 CURLE_PEER_FAILED_VERIFICATION(60)。
+// 模块里的 caBundle() 把 /system/etc/security/cacerts/*.0（每个文件就是一张 PEM）
+// 拼成一个 bundle 落到临时目录，HttpClient.init() 自动设 CURLOPT_CAINFO。
+//
+// 本探针就是要证这条链路真的通：http 能取、**https 也能取**（能取到就说明证书验证过了）。
+// ============================================================================
+import "../../../build/leno_module/LenoWeb/lib/Web.leno" as web
+import "../../../build/leno_module/LenoWeb/lib/web_curl_core.leno" as core
+use core.curl
+import files
+import strings
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+print("== c16 LenoWeb 模块（curl+mbedTLS）==")
+print("SEC  _os()=" + _os() + "  _arch()=" + _arch())
+
+// ---- 1. 库加载 + 全局初始化 ----------------------------------------------
+curl l = core.lib()
+chk("curl.load", l != null, "libcurl.so 已加载")
+
+int gi = core.globalInit(3)
+chk("curl.global", gi == 0, "curl_global_init = " + _str(gi))
+
+// 版本串（如 "libcurl/8.23.0 ..."）—— 能取到就说明符号与调用约定都对了
+string ver = core.version()
+chk("curl.version", strings.has(ver, "libcurl"), "curl_version = " + ver)
+
+// ---- 2. CA bundle 是否拼出来了（Android 专有步骤）-----------------------
+string ca = core.caBundle()
+if _os() == "android" {
+    var caSize = 0
+    if ca != "" and files.exists(ca) { caSize = files.size(ca) }
+    chk("curl.cabundle", ca != "" and caSize > 1024,
+        "bundle=" + ca + "（" + _str(caSize) + " 字节）")
+} else {
+    chk("curl.cabundle", true, "非 Android，走 libcurl 默认 CA 路径（" + ca + "）")
+}
+
+// ---- 3. HTTP 取一个页面 --------------------------------------------------
+var r1 = web.get("http://example.com/")
+chk("curl.http", r1.statusCode == 200 and r1.body.byte_len() > 100,
+    "http://example.com/ → " + _str(r1.statusCode) + "，" + _str(r1.body.byte_len()) + " 字节")
+
+// ---- 4. HTTPS 取同一个页面（证书验证必须通过，否则这里会是 curlCode=60）--
+var r2 = web.get("https://example.com/")
+chk("curl.https", r2.statusCode == 200 and r2.body.byte_len() > 100,
+    "https://example.com/ → " + _str(r2.statusCode) + "，" + _str(r2.body.byte_len())
+        + " 字节，curlCode=" + _str(r2.curlCode) + " err=「" + r2.error + "」")
+
+// 内容校验：example.com 的正文里有这个标题
+if r2.body.byte_len() > 0 {
+    chk("curl.body", strings.has(r2.body, "Example Domain"),
+        "正文含「Example Domain」= " + _str(strings.has(r2.body, "Example Domain")))
+} else {
+    chk("curl.body", false, "HTTPS 没取到正文")
+}
+
+print("== c16 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+if g_ng > 0 { _exit(1) }

@@ -1,0 +1,104 @@
+// ============================================================================
+// 探针 2 / 文件与目录：app 的私有数据、配置、缓存都靠这一层
+// Android 上进程没有"当前目录"的概念（cwd 通常是 "/"），所以这里同时测
+//   _tmpdir() / dirs.cwd() / dirs.script_dir() 三个路径来源在 Android 上返回什么
+// ============================================================================
+import files
+import dirs
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+main() {
+    print("== c2 文件与目录 ==")
+
+    // ---- 0. 平台路径来源 ----
+    print("INFO _tmpdir()      = " + _tmpdir())
+    print("INFO dirs.cwd()     = " + dirs.cwd())
+    print("INFO dirs.sep()     = " + dirs.sep())
+    print("INFO _script()      = " + _script())
+    print("INFO _os / _arch    = " + _os() + " / " + _arch())
+
+    // app 的落盘位置：优先脚本所在目录（Android 上是 filesDir），退到临时目录
+    // 落盘位置统一用 _tmpdir()：
+    //   桌面 = 系统临时目录，Android = app 的 filesDir（已由宿主注入）
+    //   刻意**不写**在脚本旁边 —— 那是 assets 目录，中文文件名会让打包工具直接失败
+    var root = dirs.join(_tmpdir(), "probe_data")
+    print("INFO 工作根目录      = " + root)
+
+    // ---- 1. 建目录（含多级） ----
+    var made = dirs.mkdir_p(root)
+    chk("dirs.mkdir_p", dirs.is_dir(root), root + " made=" + _str(made))
+
+    // ---- 2. 写文本 → 读回 ----
+    var f1 = dirs.join(root, "config.json")
+    var cfgText = "{\"theme\":\"dark\",\"lang\":\"zh\"}"
+    files.write(f1, cfgText)
+    chk("files.write+read", files.exists(f1) and files.read(f1) == cfgText, "len=" + _str(files.size(f1)))
+
+    // ---- 3. 中文内容（UTF-8 往返） ----
+    var f2 = dirs.join(root, "日志.txt")
+    files.write(f2, "第一行\n第二行 中文 ✓")
+    var back = files.read(f2)
+    chk("files.utf8", back.has("第二行"), "读回=" + back.replace("\n", "\\n"))
+
+    // ---- 3b. 4 字节 UTF-8（emoji）—— JNI 的 NewStringUTF 在这里最容易出错 ----
+    //   我们走的是 jbyteArray + Java 侧 UTF-8 解码，理应无损；这条就是验证它
+    var f4 = dirs.join(root, "emoji.txt")
+    files.write(f4, "🎵🎉🚀")
+    var e4 = files.read(f4)
+    chk("files.utf8.4byte", e4 == "🎵🎉🚀" and e4.byte_len() == 12,
+        "读回=" + e4 + " 字节数=" + _str(e4.byte_len()))
+
+    // ---- 4. 文件句柄：逐行读 ----
+    var fh = files.open(f2, "r")
+    var n = 0
+    if fh != null {
+        while not fh.eof() {
+            var line = fh.readline()
+            if line != "" { n = n + 1 }
+        }
+        fh.close()
+    }
+    chk("files.open+readline", n == 2, "行数=" + _str(n))
+
+    // ---- 5. 追加写 ----
+    var f3 = dirs.join(root, "append.txt")
+    files.write(f3, "A")
+    var ah = files.open(f3, "a")
+    if ah != null { ah.write("B"); ah.close() }
+    chk("files.append", files.read(f3) == "AB", "内容=" + files.read(f3))
+
+    // ---- 6. 列目录 ----
+    var list = dirs.listdir(root)
+    chk("dirs.listdir", list.len() >= 3, "条目=" + _str(list.len()))
+
+    // ---- 7. stat：大小 / 是否文件 / 修改时间 ----
+    var st = dirs.stat(f1)
+    chk("dirs.stat", st.exists and st.is_file and st.size == cfgText.len(),
+        "size=" + _str(st.size) + " mtime=" + _str(st.mtime))
+
+    // ---- 8. 路径运算 ----
+    var p = dirs.join("a", "b", "c.txt")
+    chk("dirs.path.ops",
+        dirs.basename(p) == "c.txt" and dirs.extname(p) == ".txt" and dirs.stem(p) == "c",
+        p + " -> " + dirs.basename(p) + " / " + dirs.extname(p))
+
+    // ---- 9. 递归遍历 ----
+    dirs.mkdir_p(dirs.join(root, "sub"))
+    files.write(dirs.join(root, "sub", "deep.txt"), "x")
+    var walk = dirs.walk(root)
+    chk("dirs.walk", walk.len() >= 1, "节点=" + _str(walk.len()) + " files=" + _str(walk[0].files.len()))
+
+    // ---- 10. 删除 ----
+    files.delete(f3)
+    dirs.delete(dirs.join(root, "sub"))
+    chk("files.delete", not files.exists(f3), "已删 append.txt")
+
+    print("== c2 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+}

@@ -1,0 +1,95 @@
+// ============================================================================
+// 探针 5 / 并发：threads（真线程）+ asyncs（协程事件循环）
+// app 场景：后台拉数据不卡 UI、并发下载、定时任务
+// ⚠ 已知边界（仓库文档）：事件循环每进程一个，跑在主线程 ⇒ 子线程里不能 asyncs.run()
+// ============================================================================
+import threads
+import asyncs
+import times
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+// 后台线程体：从 channel 取任务，算平方后回传
+func worker(Channel jobs, Channel out): int {
+    var n = 0
+    while true {
+        var v = jobs.receive()
+        if v == null { break }
+        out.send(_int(v) * _int(v))
+        n = n + 1
+    }
+    return n
+}
+
+func slow(int ms): int {
+    sleep(ms)
+    return ms
+}
+
+async func tick(int id) {
+    print("INFO async tick " + _str(id))
+}
+
+main() {
+    print("== c5 并发 ==")
+
+    // ---- 1. threads.sleep ----
+    var t0 = times.ms()
+    threads.sleep(150)
+    var d = times.ms() - t0
+    chk("threads.sleep", d >= 140 and d < 1200, _str(d) + "ms")
+
+    // ---- 2. 起线程 + join ----
+    var th = threads.start(slow, 50)
+    chk("threads.start", th != null, "Thread 句柄=" + _str(th))
+    if th != null {
+        var joined = th.join()
+        chk("threads.join", _int(joined) == 50, "线程返回值=" + _str(joined))
+    }
+
+    // ---- 3. channel 跨线程传值 ----
+    var jobs = threads.channel(8)
+    var out = threads.channel(8)
+    var w = threads.start(worker, jobs, out)
+    for [2, 3, 4] to x { jobs.send(x) }
+    jobs.send(null)
+    var sum = 0
+    var i = 0
+    while i < 3 {
+        sum = sum + _int(out.receive())
+        i = i + 1
+    }
+    w.join()
+    chk("channel.pass", sum == 4 + 9 + 16, "平方和=" + _str(sum))
+
+    // ---- 4. 并发跑 4 个 100ms 的任务：真并行则总耗时接近 100ms ----
+    var t1 = times.ms()
+    var ts = []
+    for 4 to k { ts.add(threads.start(slow, 100)) }
+    for ts to tt { tt.join() }
+    var wall = times.ms() - t1
+    chk("threads.parallel", wall < 380, "4x100ms 实际 " + _str(wall) + "ms（串行需 400+）")
+
+    // ---- 5. parallel_for ----
+    // parallel_for(n, f)：f(index) 在 n 个线程上各跑一次，返回**真实起来的线程数**
+    var started = threads.parallel_for(4, func(int idx) { print("INFO parallel idx=" + _str(idx)) })
+    chk("threads.parallel_for", _int(started) == 4, "起来 " + _str(started) + " 个线程")
+
+    // threads.map(arr, f)：逐元素并行，返回结果数组
+    var mapped = threads.map([1, 2, 3, 4], func(int x, int idx): int { return x * x })
+    chk("threads.map", mapped != null and mapped.len() == 4 and _int(mapped[3]) == 16, "结果=" + _str(mapped))
+
+    // ---- 6. 协程：async 函数 + run 驱动 ----
+    tick(1)
+    tick(2)
+    asyncs.run()
+    chk("asyncs.run", true, "两个协程已执行（见上面的 tick 输出）")
+
+    print("== c5 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+}

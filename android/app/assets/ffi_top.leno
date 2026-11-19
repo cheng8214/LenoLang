@@ -1,0 +1,19 @@
+import ffi
+
+print("=== FFI top-level ===")
+
+// 1) dlopen 系统库（bionic 的 libc.so）+ 调无参整数返回
+Ptr libc = ffi.load("libc.so")
+var pid = ffi.call(libc, "getpid")
+print("getpid() = " + _str(pid))
+
+// 2) 浮点参数 + 浮点返回（走 FFI 的浮点寄存器路径）
+Ptr libm = ffi.load("libm.so")
+var v = ffi.call(libm, "hypot", 3.0, 4.0)
+print("hypot(3.0, 4.0) = " + _str(v))
+
+// 3) 字符串参数（指针）：strlen
+var n = ffi.call(libc, "strlen", "leno on android")
+print("strlen = " + _str(n))
+
+print("=== top done ===")

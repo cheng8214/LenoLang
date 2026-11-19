@@ -85,6 +85,81 @@ static inline wchar_t* utf8_to_utf16(const char* str) {
     return wstr;
 }
 
+#elif defined(__ANDROID__)
+// ---------------------------------------------------------------------------
+// Android (bionic)：**不用 iconv** —— bionic 的 iconv 直到 API 28 才提供，且只支持
+//   UTF-8 / UTF-16 / UTF-32(UCS-4) / US-ASCII 这几族；引 <iconv.h> 在 API < 28 上
+//   直接是空声明 ⇒ `iconv_open` 未声明（C99 下是 error，实测 r27c + android21 报
+//   "call to undeclared function 'iconv_open'" 共 120 处）。
+// 这里用纯 C 做 UTF-8 ↔ UCS-4：Android 上 `wchar_t` 恒为 4 字节（与 Linux glibc 同），
+//   语义与 iconv 的 "WCHAR_T" 一致，但不依赖 API 级别、少一次 dlopen/表查找，
+//   而且**非法序列不会整体失败**（iconv 会返回 -1 让整串丢掉，这里逐字符跳过）。
+// ---------------------------------------------------------------------------
+#include <stdlib.h>
+#include <string.h>
+#include <wchar.h>
+
+// UCS-4(wchar_t) → UTF-8：每个码点最多 4 字节，含结尾 NUL ⇒ n*4+1
+static inline char* utf16_to_utf8(const wchar_t* wstr) {
+    if (!wstr) return NULL;
+    size_t n = wcslen(wstr);
+    char* out = (char*)malloc(n * 4 + 1);
+    if (!out) return NULL;
+    char* p = out;
+    for (size_t i = 0; i < n; i++) {
+        unsigned int cp = (unsigned int)wstr[i];
+        if (cp < 0x80u) {
+            *p++ = (char)cp;
+        } else if (cp < 0x800u) {
+            *p++ = (char)(0xC0u | (cp >> 6));
+            *p++ = (char)(0x80u | (cp & 0x3Fu));
+        } else if (cp < 0x10000u) {
+            *p++ = (char)(0xE0u | (cp >> 12));
+            *p++ = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+            *p++ = (char)(0x80u | (cp & 0x3Fu));
+        } else if (cp <= 0x10FFFFu) {
+            *p++ = (char)(0xF0u | (cp >> 18));
+            *p++ = (char)(0x80u | ((cp >> 12) & 0x3Fu));
+            *p++ = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+            *p++ = (char)(0x80u | (cp & 0x3Fu));
+        } else {
+            *p++ = '?';   // 非法码点（代理对 / 越界）⇒ 单个 '?'，绝不整串失败
+        }
+    }
+    *p = '\0';
+    return out;
+}
+
+// UTF-8 → UCS-4(wchar_t)：输出最多 n+1 个 wchar_t
+static inline wchar_t* utf8_to_utf16(const char* str) {
+    if (!str) return NULL;
+    size_t n = strlen(str);
+    wchar_t* out = (wchar_t*)malloc((n + 1) * sizeof(wchar_t));
+    if (!out) return NULL;
+    const unsigned char* s = (const unsigned char*)str;
+    size_t o = 0;
+    while (*s) {
+        unsigned int cp;
+        int extra;
+        if (s[0] < 0x80u)                          { cp = s[0];          extra = 0; }
+        else if ((s[0] & 0xE0u) == 0xC0u)          { cp = s[0] & 0x1Fu;  extra = 1; }
+        else if ((s[0] & 0xF0u) == 0xE0u)          { cp = s[0] & 0x0Fu;  extra = 2; }
+        else if ((s[0] & 0xF8u) == 0xF0u)          { cp = s[0] & 0x07u;  extra = 3; }
+        else { s++; continue; }                    // 非法首字节：跳过，不放弃整串
+        s++;
+        int ok = 1;
+        for (int k = 0; k < extra; k++) {
+            if ((*s & 0xC0u) != 0x80u) { ok = 0; break; }
+            cp = (cp << 6) | (unsigned int)(*s & 0x3Fu);
+            s++;
+        }
+        if (!ok) continue;                          // 截断序列：跳过
+        out[o++] = (wchar_t)cp;                     // Android 的 wchar_t 是 4 字节，直接存码点
+    }
+    out[o] = L'\0';
+    return out;
+}
+
 #else
 // Linux/macOS 使用 iconv
 #include <iconv.h>

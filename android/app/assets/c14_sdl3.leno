@@ -1,0 +1,157 @@
+// ============================================================================
+// 探针 14 / LenoSDL3 模块（三个 .so：SDL3 / SDL3_image / SDL3_ttf）
+// ----------------------------------------------------------------------------
+// 这道题考的是「SDL3 这套大库交叉编译到 Android 之后，在设备上到底能不能用」。
+//   · libSDL3.so        —— SDL 3.4.20，NDK 双 ABI
+//   · libSDL3_image.so  —— SDL_image 3.4.8（png/jpeg/webp 全部**静态**链入，
+//                          运行时不需要再带 libwebp*.so，NEEDED 里只有 libSDL3.so）
+//   · libSDL3_ttf.so    —— SDL_ttf 3.2.2（freetype + harfbuzz 静态链入）
+//
+// ⚠ 为什么**不测开窗渲染**：SDL3 的 android 视频驱动不是纯 native 的 —— 它要求
+//   Java 侧存在 `org.libsdl.app.SDLActivity`（提供 Surface、把触摸/生命周期转给 native）。
+//   本 APK 的宿主是普通 MainActivity + TextView，没有那套胶水 ⇒ SDL_Init(VIDEO) 必失败，
+//   SDL_CreateRenderer 更不可能成。
+//   所以这里验证的是**不需要窗口**的那条主链路：
+//     建 surface → 填充 → PNG 编码 → 读回解码 → 用系统字体栅格化一段中英混排
+//   这三件事分别是 SDL3 核心、SDL3_image、SDL3_ttf 的核心能力；能跑通就说明三个 .so
+//   都真的被加载并执行了，而不是"文件躺在 APK 里"。
+//   最后一步会把 SDL_Init(VIDEO) 的真实错误原样打出来（**不计入 ok/ng**），
+//   作为"开窗还差什么"的现场证据。
+// ============================================================================
+import "../../../build/leno_module/LenoSDL3/lib/sdl_core.leno" as core
+import "../../../build/leno_module/LenoSDL3/lib/sdl_image.leno" as image
+import "../../../build/leno_module/LenoSDL3/lib/sdl_font.leno" as font
+use core.sdl3
+use font.Font
+// ⚠ 被导入模块**不传递**自己的 import ⇒ ffi / files / dirs 必须在这里再来一次
+import ffi
+import files
+import dirs
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+print("== c14 LenoSDL3 模块 ==")
+print("SEC  _os()=" + _os() + "  _arch()=" + _arch())
+
+// ---- 1. libSDL3.so 是否 dlopen 成功（lib() 内部就是 ffi.load，失败会抛）----
+sdl3 l = core.lib()
+chk("sdl.core", l != null, "libSDL3.so 已加载")
+
+// ---- 2. SDL_Init(0)：只初始化核心子系统 --------------------------------
+// 传 0 而不是 VIDEO：见文件头注释，Android 的视频驱动要 SDLActivity 配合。
+// 注意：Android 上这一步能成功的前提是 JavaVM 已经交给 SDL —— 由 leno_jni.c 的
+// JNI_OnLoad 里"手动调 libSDL3.so 的 JNI_OnLoad"来完成（dlopen 不会自动触发它）。
+bool ok0 = core.init(0)
+if _os() == "android" {
+    // Android 上 SDL_Init 需要 JavaVM —— SDL 是在它自己的 JNI_OnLoad 里缓存 VM 的，
+    // 而 JNI_OnLoad 只有 System.loadLibrary 才会被调用；我们是 ffi.load(dlopen) 加载，
+    // 钩子不触发 ⇒ 这一步**预期失败**。这是诊断信息，不计入 ok/ng。
+    // （手动调它的 JNI_OnLoad 会让进程 abort：它要 FindClass SDLActivity，见 leno_jni.c 注释）
+    print("INFO  SDL_Init(0) = " + _str(ok0) + "，SDL_GetError=「" + l.SDL_GetError() + "」")
+} else {
+    chk("sdl.init", ok0, "SDL_Init(0) = " + _str(ok0))
+}
+
+// ---- 3. libSDL3_image.so：先问版本（返回非 0 = 符号解析通了）-----------
+int iv = image.version()
+chk("sdl.image", iv > 0, "IMG_Version = " + _str(iv))
+
+// ---- 4. 建 surface + 填色 + PNG 编码 -----------------------------------
+Ptr[u8] surf = l.SDL_CreateSurface(64, 64, core.PIXELFORMAT_RGBA8888)
+chk("sdl.surface", surf != null, "SDL_CreateSurface(64x64)")
+
+string pngPath = dirs.join(_tmpdir(), "sdl3_probe.png")
+if surf != null {
+    // SDL_Rect 就是 4 个 i32（x, y, w, h）⇒ 直接拿 16 字节内存当它用
+    Ptr[i32] rc = ffi.malloc(16)
+    rc[0] = 0
+    rc[1] = 0
+    rc[2] = 64
+    rc[3] = 64
+    // 颜色是 SDL3 的 0xRRGGBBAA 打包格式（4.x 起 FillSurfaceRect 多了这个参数）
+    bool filled = l.SDL_FillSurfaceRect(surf, rc, 0x1E90FFAA)
+    ffi.free(rc)
+    chk("sdl.fill", filled, "SDL_FillSurfaceRect(64x64) = " + _str(filled))
+
+    // PNG 编码：走 SDL3_image 的 IMG_SavePNG（内部是静态链入的 libpng + zlib）
+    bool saved = image.savePNG(surf, pngPath)
+    int psz = 0
+    if files.exists(pngPath) { psz = files.size(pngPath) }
+    chk("sdl.png.write", saved and psz > 100,
+        "写 PNG = " + _str(saved) + "，文件 " + _str(psz) + " 字节")
+
+    l.SDL_DestroySurface(surf)
+}
+
+// ---- 5. PNG 解码回来（IMG_Load：libpng 解码 → 新 surface）--------------
+if files.exists(pngPath) {
+    Ptr[u8] back = image.load(pngPath)
+    chk("sdl.png.read", back != null, "IMG_Load 读回成功")
+    if back != null { l.SDL_DestroySurface(back) }
+} else {
+    chk("sdl.png.read", false, "上一步没写出 PNG，跳过")
+}
+
+// ---- 6. libSDL3_ttf.so：用系统字体栅格化中英混排 ------------------------
+bool ttfOk = font.ttfInit()
+chk("sdl.ttf.init", ttfOk, "TTF_Init = " + _str(ttfOk))
+
+// 选字体：先用模块自己挑的「平台默认中文字体」（Windows 是 msyh.ttc、Linux 扫描结果），
+// 桌面没有就退回 Android 的系统字体（API 30 上是 Roboto-Regular.ttf）。
+string fontPath = font.defaultCjkFont()
+if fontPath == "" or not files.exists(fontPath) {
+    fontPath = "/system/fonts/Roboto-Regular.ttf"
+}
+if not files.exists(fontPath) { fontPath = "/system/fonts/RobotoStatic-Regular.ttf" }
+if not files.exists(fontPath) { fontPath = "/system/fonts/DroidSans.ttf" }
+print("SEC  字体 = " + fontPath + "（存在=" + _str(files.exists(fontPath)) + "）")
+
+if ttfOk and files.exists(fontPath) {
+    Font f = font.createFont(fontPath, 28.0)
+    if f.ok {
+        var[float, float](tw, th) = f.measureString("Leno 在安卓上")
+        chk("sdl.ttf.measure", tw > 20.0 and th > 10.0,
+            "测量「Leno 在安卓上」= " + _str(tw) + "x" + _str(th) + "（" + fontPath + "）")
+
+        // 真正栅格化：返回一张 surface，再编码成 PNG
+        Ptr[u8] ts = f.renderTextBlended("Leno 在安卓上", 255, 255, 255)
+        chk("sdl.ttf.render", ts != null, "TTF_RenderText_Blended 出图")
+        if ts != null {
+            string tp = dirs.join(_tmpdir(), "sdl3_text.png")
+            bool tsaved = image.savePNG(ts, tp)
+            int tsz = 0
+            if files.exists(tp) { tsz = files.size(tp) }
+            chk("sdl.ttf.png", tsaved and tsz > 100, "文字图 PNG " + _str(tsz) + " 字节")
+            l.SDL_DestroySurface(ts)
+        } else {
+            chk("sdl.ttf.png", false, "没有 surface 可存")
+        }
+        f.close()
+    } else {
+        chk("sdl.ttf.measure", false, "createFont 失败（ok=false）：" + fontPath)
+        chk("sdl.ttf.render", false, "字体没加载")
+        chk("sdl.ttf.png", false, "字体没加载")
+    }
+} else {
+    chk("sdl.ttf.measure", false, "TTF_Init 失败或找不到系统字体")
+    chk("sdl.ttf.render", false, "同上")
+    chk("sdl.ttf.png", false, "同上")
+}
+
+// ---- 7. 开窗还差什么：把真实错误打出来（诊断，不计入 ok/ng）------------
+bool vok = core.initVideo()
+if vok {
+    print("INFO  SDL_Init(VIDEO) 成功")
+} else {
+    print("INFO  SDL_Init(VIDEO) 失败（预期：缺 org.libsdl.app.SDLActivity）")
+    print("INFO  SDL_GetError = " + l.SDL_GetError())
+}
+
+print("== c14 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+if g_ng > 0 { _exit(1) }

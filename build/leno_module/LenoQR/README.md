@@ -159,17 +159,18 @@ dlopen 成功 ≠ 签名一致（旧 DLL 配新 `.leno` 在 x64 上不会崩，�
 
 ```bat
 cd build\leno_module\LenoQR\src
-build_dll.bat          :: Windows → ..\lib\quirc.dll（-static-libgcc，自包含）
+build_dll.bat          :: Windows → ..\lib\win\quirc.dll（-static-libgcc，自包含）
 ```
 
 ```bash
 cd build/leno_module/LenoQR/src
-./build_so.sh          # Linux / macOS → ../lib/quirc.so（macOS 用 .so，与 LenoSDL3 同口径）
+./build_so.sh          # Linux → ../lib/linux/quirc.so
+OUT_DIR=../lib/mac ./build_so.sh   # macOS（同一脚本，换个输出目录）
 ```
 
 - 上游 quirc 源**不加 `-Wall`**（它本身不是零告警，不为消告警去 fork）；
   我们自己的 `leno_qr.c` 用 `-Wall -Wextra`（当前**0 warning**）。
-- 产物直接落 `lib/`，`src/` 只放源码。
+- 产物落 `lib/<平台>/`，`src/` 只放源码（2026-11-19 起；此前是平铺在 `lib/`）。
 
 ## 打包（`-p`）
 
@@ -177,17 +178,21 @@ cd build/leno_module/LenoQR/src
 
 ```toml
 [native-libs.quirc]
-win   = "lib/quirc.dll"
+win   = "lib/win/quirc.dll"
+linux = "lib/linux/quirc.so"
 ```
 
 `-p --onefile` 会把它内嵌进 exe，首次运行时解包到用户缓存目录（实测：897KB 单文件产物，
 `[pack] 内嵌 1 个原生库`，运行后能正常调 `qr.abi()`）。
 
-⚠ **POSIX 那一行还没加**：本机（Windows）产不出 `.so`，也没有 bash / WSL / Docker
-可以验证脚本 —— 所以 `build_so.sh` **未经运行验证**（脚本本身用 `cc` 而非写死 gcc，
-macOS 上 `cc` 就是 clang）。在 Linux/macOS 上跑一次并跑通五个测试后，把
-`linux = "lib/quirc.so"` / `mac = "lib/quirc.so"` 补进上面的表即可
-（声明了但文件不存在 ⇒ 打包会直接报错，所以现在不写）。
+⚠ 打包器只取**文件名**落盘（`collector_add` 把 `lib/win/quirc.dll` 复制成 exe 同目录下的
+`quirc.dll`）⇒ `qr_native.leno` 的 `lib()` 里"子目录路径失败后退回裸文件名"那一路正是
+为这个场景准备的，两边配合得上。
+
+⚠ **macOS 那行还没加**：随包的 `.so` 是 Linux ELF（macOS dlopen 必失败），写上
+`mac = "..."` 会让"文件不存在就报错"的检查变成**假通过**。要在 macOS 分发时，
+先 `OUT_DIR=../lib/mac ./build_so.sh` 产出 Mach-O，再补一行
+`mac = "lib/mac/quirc.so"`，同时在 `qr_native.leno` 的 `lib_name()` 里加 mac 分支。
 
 ## 测试
 

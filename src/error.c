@@ -575,6 +575,7 @@ void warning_print_all(void) {
             case WARN_PARTIAL_DECL_INIT: type_str = "部分初值声明"; break;
             case WARN_FIELD_NO_INIT:   type_str = "字段未初始化"; break;
             case WARN_AMBIGUOUS_MODULE: type_str = "模块名歧义"; break;
+            case WARN_BUILTIN_MODULE_SHADOWED: type_str = "内置模块被同名文件遮蔽"; break;
             case WARN_NATIVE_TYPE_NAME_CLASH: type_str = "与native类型同名"; break;
             case WARN_SYMTAB_INCOMPLETE: type_str = "符号表可能不完整"; break;
             case WARN_FIELD_SHADOW_ASSIGN: type_str = "遮蔽字段的赋值"; break;

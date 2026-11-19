@@ -92,34 +92,71 @@ string g_path = ""
 var g_ok = false
 miniaudio g_lib = null
 
-func find_dll() {
-    // 库文件名**随平台**：Windows 是 `miniaudio.dll`（src/build_dll.bat 产物），
-    //   POSIX 是 `miniaudio.so`（src/build_so.sh 产物）。原实现把 .dll 写死，
-    //   POSIX 上 ffi.load 会直接抛「加载库失败」⇒ 音频整体不可用 ✗
-    var name = if _os() == "windows" then "miniaudio.dll" else "miniaudio.so"
+// 库文件的**平台相对路径**（2026-11-19 起库文件按平台分目录存放）：
+//   win/miniaudio.dll · linux/miniaudio.so · android/<abi>/libminiaudio.so
+// 为什么要分目录：同一模块将来要带 Android 的 ELF（且按 ABI 各一份不同文件），
+//   平铺在一个目录里只能留一个文件名 ⇒ 分平台/ABI 才放得下。
+//   （本包目前只有 win/linux 两份产物，android/ 目录留给将来 —— 没有就不列 toml 键。）
+// 导出：诊断用（和 LenoQR 的 lib_name() 一个用途 —— 打印"到底会去哪儿找库"）
+export func rel_path(): string {
+    if _os() == "windows" { return "win/miniaudio.dll" }
+    if _os() == "android" { return "android/" + abi_dir() + "/libminiaudio.so" }
+    return "linux/miniaudio.so"
+}
 
-    // 1: global cache ~/.leno/pkgs/LenoMusic/lib/
-    //    用 dirs.join 拼：原实现是 `_homedir() + "\\.leno\\pkgs\\..."`，POSIX 上这是**字面量反斜杠** ✗
-    var cache = dirs.join(_homedir(), ".leno", "pkgs", "LenoMusic", "lib", name)
-    if files.exists(cache) { g_path = cache; return }
-    // 2: CWD
-    if files.exists(name) { g_path = name; return }
-    // 3: lib/ (dev mode from project root)
-    var p3 = dirs.join("lib", name)
-    if files.exists(p3) { g_path = p3; return }
-    // 4: ../../lib/ (from examples subdirectory)
-    var p4 = dirs.join("..", "..", "lib", name)
-    if files.exists(p4) { g_path = p4; return }
-    // 5: dirs.script_dir()
+// 裸文件名：打包后库被复制到 **exe 同目录**（package_install.c 的 collector_add 只取
+//   basename，子目录前缀会被剥掉）⇒ 那种场景下没有平台子目录可拼，只能按纯名字找。
+export func bare_name(): string {
+    if _os() == "windows" { return "miniaudio.dll" }
+    if _os() == "android" { return "libminiaudio.so" }
+    return "miniaudio.so"
+}
+
+// `_arch()` 给的是 arm64 / x64，而 Android 的 ABI 目录叫 arm64-v8a / x86_64 ⇒ 必须显式转换。
+// 未知架构退回 "x86"（老 NDK 的叫法），保证至少有一条路可试而不是直接崩。
+func abi_dir(): string {
+    var a = _arch()
+    if a == "arm64" { return "arm64-v8a" }
+    if a == "x64"   { return "x86_64" }
+    if a == "arm"   { return "armeabi-v7a" }
+    return "x86"
+}
+
+func find_dll() {
+    var rel = rel_path()
+    var bare = bare_name()
+
+    // 候选根目录（优先级自上而下）。每个根下**先试平台子目录、再试裸文件名** ——
+    //   后者既兼容旧布局（库还平铺在 lib/ 的版本），也覆盖"库已被复制到 exe 目录"的打包产物。
+    //   空串代表"相对当前工作目录"，不拼前缀。
+    Array[string] roots = []
+    roots.add(dirs.join(_homedir(), ".leno", "pkgs", "LenoMusic", "lib"))  // 1 全局缓存
+    roots.add("")                                                          // 2 CWD
+    roots.add("lib")                                                       // 3 从仓库根跑
+    roots.add(dirs.join("..", "..", "lib"))                                // 4 从 examples/<示例>/ 跑
+    // 5 dirs.script_dir()：原实现是 `_homedir() + "\\.leno\\pkgs\\..."` 那种字面量反斜杠拼接，
+    //   POSIX 上拼出来的路径必然不存在 ⇒ 这里统一用 dirs.join ✓
     var scr = dirs.script_dir()
     if scr != null {
-        var path = dirs.join(scr, name)
-        if files.exists(path) { g_path = path; return }
-        // Also try ../../lib/ relative to script dir
-        var libPath = dirs.join(scr, "..", "..", "lib", name)
-        if files.exists(libPath) { g_path = libPath; return }
+        roots.add(scr)
+        roots.add(dirs.join(scr, "..", "..", "lib"))
     }
-    g_path = name
+
+    // ⚠ 别把 dirs.script_dir() 当"模块目录"：它给的是**入口脚本**所在目录，
+    //   从 test/ 或 examples/<示例>/ 跑时与模块目录不是一回事（LenoQR 里踩过这个坑）。
+    //   模块目录的解析留给 ffi.load 自己做（见末尾 rel 兜底 + ffi.c 的 2a-2 / 2c）。
+    for roots to base {
+        var p = rel
+        if base != "" { p = dirs.join(base, rel) }
+        if files.exists(p) { g_path = p; return }
+        var q = bare
+        if base != "" { q = dirs.join(base, bare) }
+        if files.exists(q) { g_path = q; return }
+    }
+
+    // 都没命中 ⇒ 交给 ffi.load 按**平台相对路径**去模块目录解析
+    //   （src/module/ffi/ffi.c 的 2a-2「模块目录 + 完整相对路径」/ 2c「遍历所有模块目录」）。
+    g_path = rel
 }
 
 export func lib(): miniaudio {

@@ -1,0 +1,138 @@
+// ============================================================================
+// 探针 12 / LenoSqlite 模块（走模块 API，不是裸 FFI）
+// ----------------------------------------------------------------------------
+// 和 c8 的区别：c8 是 `ffi.load("libsqlite3.so")` + 手搓 call_int，证明"FFI 能开库"；
+//   这里 import 真正的 LenoSqlite 模块（build/leno_module/LenoSqlite），用
+//   `sqlite3.open()` / `execResult()` / `prepareResult()` / `Statement` 这套对外契约。
+//
+// 为什么这题必须单独考：模块的 lib() 决定了它认哪些库名。
+//   原实现只试 `sqlite3.so` 和 `libsqlite3.so.0` —— Android 两样都没有
+//   （NDK 产物叫 `libsqlite3.so`，不带 .0）⇒ 模块在设备上必定「SQLite3 library not loaded」，
+//   而 c8 直连 libsqlite3.so 是能过的 ⇒ c8 通过**掩盖**了模块不可用这个事实。
+// ============================================================================
+import "../../../build/leno_module/LenoSqlite/lib/sqlite3.leno" as sqlite3
+// ⚠ 被导入模块**不传递**它自己的依赖 ⇒ dirs/files 必须在本文件再 import 一次
+import dirs
+import files
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+main() {
+    print("== c12 LenoSqlite 模块 ==")
+    print("SEC  _os() = " + _os() + " / _arch() = " + _arch()
+        + "（库按平台子目录挑：win/ linux/ android/<abi>/）")
+
+    // ---- 1. 库加载：模块版 lib() ----
+    var l = sqlite3.lib()
+    chk("mod.load", l != null, "sqlite3.lib() 非空")
+    if l == null {
+        print("SEC  lib() 返回 null ⇒ 模块在此平台不可用")
+        print("== c12 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+        return
+    }
+    var ver = sqlite3.libversion()
+    chk("mod.version", ver.has("."), "libversion() = " + ver)
+
+    // ---- 2. 建库（Database.open 走 sqlite3_open_v2）+ 建表 ----
+    var dbPath = dirs.join(_tmpdir(), "probe_data/mod.db")
+    if files.exists(dbPath) { files.delete(dbPath) }
+    var db = sqlite3.open(dbPath)
+    chk("mod.open", db.isOk(), "sqlite3.open(" + dbPath + ")")
+    if not db.isOk() {
+        print("SEC  errmsg = " + db.errmsg())
+        print("== c12 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+        return
+    }
+
+    // ---- 3. execResult：DDL 成功应回 ok(受影响行数) ----
+    var r1 = db.execResult("CREATE TABLE note (id INTEGER PRIMARY KEY, title TEXT, body TEXT)")
+    chk("mod.ddl", r1.isOk(), "CREATE TABLE")
+
+    // ---- 4. 预编译 + 参数绑定 + 逐行读（Statement 全套）----
+    // ⚠ prepareResult 的返回是 `Result[Statement]`，但 Leno 的泛型不会单态化到
+    //   `unwrap()` 的静态类型上 —— `r.unwrap().bind(...)` 会报「类型 T 没有方法 bind」。
+    //   所以这里拆两步：prepareResult 只验成功/失败契约，真正拿句柄用 db.prepare()
+    //   （返回类型是具体的 Statement，方法表齐全）。
+    var checkPrepare = db.prepareResult("INSERT INTO note (title, body) VALUES (?, ?)")
+    chk("mod.prepareResult", checkPrepare.isOk(), "prepareResult 契约 ok")
+
+    var ins = db.prepare("INSERT INTO note (title, body) VALUES (?, ?)")
+    chk("mod.prepare", ins.isOk(), "prepare INSERT")
+    if ins.isOk() {
+        ins.bind(1, "中文标题")
+        ins.bind(2, "body with emoji 🎉")
+        var rc = ins.step()
+        ins.finalize()
+        chk("mod.insert", rc == sqlite3.DONE, "step RC=" + _str(rc) + " changes=" + _str(db.changes()))
+
+        // 第二条：验证多行
+        var ins2 = db.prepare("INSERT INTO note (title, body) VALUES (?, ?)")
+        ins2.bind(1, "second")
+        ins2.bind(2, "plain")
+        ins2.step()
+        ins2.finalize()
+    }
+
+    // ---- 5. 查询：column_value 保留类型 + NULL ---------------
+    var s2 = db.prepare("SELECT id, title, body, NULL AS empty FROM note ORDER BY id")
+    chk("mod.select", s2.isOk(), "prepare SELECT")
+    if s2.isOk() {
+        var rows = 0
+        var firstTitle = ""
+        var nullSeen = false
+        while s2.step() == sqlite3.ROW {
+            rows = rows + 1
+            if rows == 1 { firstTitle = _str(s2.column_value(1)) }
+            if s2.column_is_null(3) { nullSeen = true }
+        }
+        s2.finalize()
+        chk("mod.rows", rows == 2, "读到 " + _str(rows) + " 行")
+        chk("mod.utf8", firstTitle == "中文标题", "首行 title = " + firstTitle)
+        chk("mod.null", nullSeen, "NULL 未被压平成空串")
+    }
+
+    // ---- 6. 事务：写入后回滚，行数不该变 ----
+    // ⚠ 回调参数必须写具体类型 `sqlite3.Statement` —— 不能用 `var`/`any`
+    //   （any 上不允许调方法，编译器会要求先 is 收窄）
+    var before = 0
+    db.query("SELECT COUNT(*) AS c FROM note", func(sqlite3.Statement st) {
+        before = st.column_int(0)
+        return true
+    })
+    db.begin()
+    db.exec("INSERT INTO note (title, body) VALUES ('tx', 'rollback me')")
+    db.rollback()
+    var after = 0
+    db.query("SELECT COUNT(*) AS c FROM note", func(sqlite3.Statement st) {
+        after = st.column_int(0)
+        return true
+    })
+    chk("mod.tx", before == after and before == 2, "回滚前后都是 " + _str(after) + " 行")
+
+    // ---- 7. 错误路径：坏 SQL 要带回 SQLite 原话，而不是只有 rc ----
+    var bad = db.execResult("SELEC nonsense")
+    chk("mod.err", not bad.isOk(), "坏 SQL 被识别为失败")
+
+    // ---- 8. 持久化：关掉重开，数据还在 ----
+    db.close()
+    var db2 = sqlite3.open(dbPath)
+    var reopenOk = db2.isOk()      // ⚠ 必须先存下来：close() 会把 ok 置回 false
+    var n2 = 0
+    if reopenOk {
+        db2.query("SELECT COUNT(*) AS c FROM note", func(sqlite3.Statement st) {
+            n2 = st.column_int(0)
+            return true
+        })
+        db2.close()
+    }
+    chk("mod.persist", reopenOk and n2 == 2, "重开后 " + _str(n2) + " 行，文件 "
+        + _str(files.size(dbPath)) + " 字节")
+
+    print("== c12 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+}

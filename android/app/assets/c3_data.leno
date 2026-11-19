@@ -1,0 +1,86 @@
+// ============================================================================
+// 探针 3 / 数据层：JSON 与正则 —— app 与后端/配置打交道的必备两件
+// 注意 jsons.decode 的静态类型是 `any`，必须先 `as Dict` / `as Array` 再取成员
+//   （这是 Leno 既有的类型规则，不是 Android 特有问题）
+// ============================================================================
+import jsons
+import regexs
+import dirs
+import files
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+main() {
+    print("== c3 数据层 ==")
+
+    // ---- 1. decode：对象 / 数组 / 中文 ----
+    var raw = "{\"user\":{\"name\":\"张三\",\"age\":28},\"tags\":[\"a\",\"b\"],\"ok\":true}"
+    var obj = jsons.decode(raw) as Dict
+    chk("json.decode.dict", obj != null and obj.has("user"), "顶层键=" + _str(obj.keys().len()))
+
+    var user = obj.get("user") as Dict
+    chk("json.nested", user != null and user.get("name") == "张三", "name=" + _str(user.get("name")))
+
+    var tags = obj.get("tags") as Array
+    chk("json.array", tags != null and tags.len() == 2, "tags=" + _str(tags))
+
+    // ---- 2. 取值助手（get_str / get_int）----
+    chk("json.get_str", jsons.get_str(user, "name", "?") == "张三",
+        "get_str=" + jsons.get_str(user, "name", "?"))
+    chk("json.get_int", jsons.get_int(user, "age", 0) == 28, "get_int=" + _str(jsons.get_int(user, "age", 0)))
+
+    // ---- 3. encode：Dict → 字符串，再 decode 回来（往返一致）----
+    var cfg = {"app": "leno", "ver": 2, "debug": false}
+    var enc = jsons.encode(cfg)
+    var dec = jsons.decode(enc) as Dict
+    chk("json.roundtrip", dec != null and dec.get("app") == "leno",
+        enc)
+
+    // ---- 4. encode_pretty ----
+    var pretty = jsons.encode_pretty(cfg)
+    chk("json.pretty", pretty.has("\n"), "行数=" + _str(pretty.split("\n").len()))
+
+    // ---- 5. 落盘到文件（配置持久化）----
+    var dir = dirs.join(_tmpdir(), "probe_data")
+    dirs.mkdir_p(dir)
+    var path = dirs.join(dir, "c3.json")
+    jsons.write_file(path, cfg)
+    var loaded = jsons.read_file(path) as Dict
+    chk("json.file", loaded != null and loaded.get("ver") == 2,
+        "回读 ver=" + _str(loaded.get("ver")) + " size=" + _str(files.size(path)))
+
+    // ---- 6. 非法 JSON 应当报错而不是静默返回 ----
+    var badVal = jsons.decode("{不是 json")
+    chk("json.invalid.null", badVal == null, "非法 JSON 返回 null（不抛错，需调用方判空）")
+
+    // ---- 7. 正则：校验 / 提取 ----
+    // ⚠ 实测：regexs 的参数顺序是 (文本, 模式)；且引擎**不支持 {} 量词**（只有 * + ?）
+    //   所以 \d{11} 写不出来，只能展开
+    var phone = "13812345678"
+    var phoneRe = "^1[3-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$"
+    chk("regex.match", regexs.match(phone, phoneRe), phone + " 是手机号")
+    chk("regex.nomatch", not regexs.match("2381", phoneRe), "2381 被拒")
+
+    var logline = "2026-11-18 22:41 ERROR db timeout"
+    var m = regexs.extract(logline, "([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9])")
+    chk("regex.extract", m == "2026-11-18", "提取日期=" + m)
+
+    var tpl = "订单#{id} 金额#{amt}"
+    var filled = regexs.replace_all(tpl, "#\\{([a-z]+)\\}", "<$1>")
+    chk("regex.replace_all", filled.has("<id>") and filled.has("<amt>"), filled)
+
+    var parts = regexs.split("a1b22c333", "\\d+")
+    chk("regex.split", parts.len() == 4, "段数=" + _str(parts.len()))
+
+    // ---- 8. 正则提取多个（抓所有数字）----
+    var nums = regexs.extract_all("价格 12 元，运费 8 元", "\\d+")
+    chk("regex.extract_all", nums.len() == 2 and nums[0] == "12", "nums=" + _str(nums))
+
+    print("== c3 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+}

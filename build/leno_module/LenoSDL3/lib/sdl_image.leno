@@ -59,30 +59,37 @@ func _preloadWebp() {
     if _webpTried { return }
     _webpTried = true
 
-    // 文件名按平台取（Windows 带 `-<abi>` 后缀，Linux 是 soname）
-    string n1 = if _os() == "windows" then "libwebp-7.dll" else "libwebp.so.7"
-    string n2 = if _os() == "windows" then "libwebpdemux-2.dll" else "libwebpdemux.so.2"
-    string n3 = if _os() == "windows" then "libwebpmux-3.dll" else "libwebpmux.so.3"
+    // 文件名按平台取（Windows 带 `-<数字>` 后缀，Linux 是 soname），
+    // 并加上**平台子目录**前缀（2026-11-19 起库文件按平台分目录存放）：
+    //   win/libwebp-7.dll · linux/libwebp.so.7 · android/<abi>/libwebp.so.7
+    string d = core.libDir()
+    string n1 = if _os() == "windows" then d + "/libwebp-7.dll" else d + "/libwebp.so.7"
+    string n2 = if _os() == "windows" then d + "/libwebpdemux-2.dll" else d + "/libwebpdemux.so.2"
+    string n3 = if _os() == "windows" then d + "/libwebpmux-3.dll" else d + "/libwebpmux.so.3"
 
-    // ⚠ 用**裸名**交给 ffi.load 自己搜（会依次找「当前模块目录/bin」「当前模块目录」
-    //   「所有已加载模块目录」）——和 SDL3_image 自己被找到走的是同一套逻辑 ✓
-    //   别自己拼 `dirs.script_dir()+"/../..."`：那给的是**入口脚本**目录，不是模块目录，
-    //   实测拼出来 exists=false，预加载等于没做 ✗
+    // 裸名兜底：打包后库被复制到 exe 同目录（collector_add 只取 basename）
+    string b1 = if _os() == "windows" then "libwebp-7.dll" else "libwebp.so.7"
+    string b2 = if _os() == "windows" then "libwebpdemux-2.dll" else "libwebpdemux.so.2"
+    string b3 = if _os() == "windows" then "libwebpmux-3.dll" else "libwebpmux.so.3"
+
+    // ⚠ 路径由 libDir()/core 统一算，别自己拼 `dirs.script_dir()+"/../..."`：
+    //   那给的是**入口脚本**目录，不是模块目录，实测 exists=false，预加载等于没做 ✗
     //   顺序：libwebp 必须最先（demux/mux 依赖它）
     try {
         _webpLib = ffi.load(n1)
     } catch e {
-        return      // 没装这个可选依赖 = 正常情况，静默降级（只是 WebP 不可用）
+        // 没装这个可选依赖 = 正常情况，静默降级（只是 WebP 不可用）
+        try { _webpLib = ffi.load(b1) } catch e1 { return }
     }
     try {
         _webpDemuxLib = ffi.load(n2)
     } catch e {
-        return
+        try { _webpDemuxLib = ffi.load(b2) } catch e1 { return }
     }
     try {
         _webpMuxLib = ffi.load(n3)
     } catch e {
-        return
+        try { _webpMuxLib = ffi.load(b3) } catch e1 { return }
     }
 }
 
@@ -108,12 +115,10 @@ sdl3_image _img = null
 
 func imgLib(): sdl3_image {
     if _img == null {
-        string ext = if _os() == "windows" then ".dll" else ".so"
-        string path = dirs.script_dir() + "/../SDL3_image" + ext
-        if not files.exists(path) { path = dirs.script_dir() + "/SDL3_image" + ext }
-        if not files.exists(path) { path = "SDL3_image" + ext }
         _preloadWebp()                  // ★ 先预加载 libwebp（SDL3_image 的 WebP 依赖）
-        _img = ffi.load(path)
+        // 平台子目录优先（lib/win/SDL3_image.dll、lib/linux/SDL3_image.so），兜底裸名（打包后库在 exe 同目录）
+        try { _img = ffi.load(core.libPath("SDL3_image")) }
+        catch e { _img = ffi.load(core.libBare("SDL3_image")) }
     }
     return _img
 }

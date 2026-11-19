@@ -1,8 +1,8 @@
 @echo off
 setlocal
 REM Build quirc.dll for Windows x64 (MinGW). ASCII only -- see build.bat's note.
-REM Output: src\quirc.dll, copied to ..\lib\quirc.dll
-REM Consumer: lib\qr_native.leno loads it via ffi.load("quirc.dll")
+REM Output: ..\lib\win\quirc.dll  (per-platform dirs since 2026-11-19)
+REM Consumer: lib\qr_native.leno loads it via ffi.load("win/quirc.dll")
 
 echo Building quirc.dll...
 
@@ -23,13 +23,14 @@ if %ERRORLEVEL% neq 0 (
 
 REM -static-libgcc: keep the DLL self-contained (no libgcc_s_seh-1.dll dependency,
 REM which would otherwise have to be shipped next to the module)
-REM output goes straight to ..\lib\ : src\ is source-only (no build artifact there)
-gcc -shared -static-libgcc -o ..\lib\quirc.dll quirc.o decode.o identify.o version_db.o leno_qr.o
+REM output goes straight to ..\lib\win\ : src\ is source-only (no build artifact there)
+if not exist ..\lib\win mkdir ..\lib\win
+gcc -shared -static-libgcc -o ..\lib\win\quirc.dll quirc.o decode.o identify.o version_db.o leno_qr.o
 if %ERRORLEVEL% neq 0 (
     echo [fail] link
     exit /b 1
 )
 
 del /Q *.o >nul 2>nul
-echo Done: lib\quirc.dll
+echo Done: lib\win\quirc.dll
 exit /b 0

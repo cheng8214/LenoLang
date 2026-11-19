@@ -162,25 +162,72 @@ export const SQLITE_TRANSIENT = -1
 sqlite3 g_lib = null
 
 // 加载 SQLite3 动态库（全局缓存，避免重复加载）
-//   · Windows：随模块分发的 `sqlite3.dll`
-//   · POSIX  ：随模块分发的 `sqlite3.so`（由 sqlite.org 官方 amalgamation 的
-//              `sqlite3.c` 编译：`gcc -shared -fPIC -O2 -o sqlite3.so sqlite3.c -lpthread -ldl -lm`）
-//              `ffi.load` 会按文件名搜索**已加载模块目录**，故传纯文件名即可命中本模块 lib/ ✓
-//              万一没有自带 .so，再退回系统 soname `libsqlite3.so.0`（发行版普遍自带）
-// 原实现 POSIX 侧也找 `sqlite3.so`，但仓库里没有这个文件 ⇒ 加载必失败 ✗
+//
+// ★ 2026-11-18：库文件按**平台分目录**存放（原来是平铺在 lib/ 下）：
+//     lib/win/sqlite3.dll                  Windows
+//     lib/linux/sqlite3.so                 Linux 桌面（官方 amalgamation 编：
+//                                          gcc -shared -fPIC -O2 -o sqlite3.so sqlite3.c -lpthread -ldl -lm）
+//     lib/android/<abi>/libsqlite3.so      Android（NDK 编译，每个 ABI 一份）
+//   为什么要分：Android 的 .so 是**按 ABI 各一份**的不同 ELF，平铺在一个目录里只能留一个
+//   文件名 ⇒ 两份互相覆盖；而且 Windows 的 dll 与 Linux 的 so 也不同格式，混放只会互相踩。
+//
+// 每一路都是"按优先级试"：`ffi.load` 失败会**抛错**（不是返回 null），所以必须 try 兜住再试下一个。
+// 侥幸命中错误平台的文件会怎样：ELF 架构/magic 不符 ⇒ dlopen 直接失败 ⇒ 自动落到下一路，
+//   因此顺序错了也不会拿到"能加载但行为诡异"的库。
 export func lib(): sqlite3 {
     if g_lib == null {
         if _os() == "windows" {
-            g_lib = ffi.load("sqlite3.dll")
-        } else {
             try {
-                g_lib = ffi.load("sqlite3.so")
+                g_lib = ffi.load("win/sqlite3.dll")
             } catch e {
-                g_lib = ffi.load("libsqlite3.so.0")
+                g_lib = ffi.load("sqlite3.dll")          // 兼容旧布局（库还平铺在 lib/ 的版本）
+            }
+        } else if _os() == "android" {
+            // Android 两条路，顺序有讲究：
+            //   1. 模块内 `android/<abi>/libsqlite3.so` —— 只有模块目录**真的存在于设备上**时才有意义
+            //      （当前 VM 不做运行时 import 解析，模块是编译期内联的 ⇒ 设备上通常没有这个目录，
+            //       这一步基本会失败，留着是为了将来支持运行时加载模块）
+            //   2. `libsqlite3.so` 裸名 —— **APK 上真正生效的那条**：打包器按 ABI 把库落到
+            //      /data/app/.../lib/<abi>/，与 libleno.so 同目录，dlopen 按裸名直接命中。
+            //      ⚠ 不能拼绝对路径：android linker 的 namespace 只允许"白名单库名 / 自己 lib 目录"，
+            //        拼出来的路径反而会被拒。
+            //      ⚠ 系统自带的 /system/lib64/libsqlite.so 是**另一个库名**，而且不在
+            //        public.libraries.txt 白名单 ⇒ 无论按名还是按路径都 dlopen 不了。
+            try {
+                g_lib = ffi.load("android/" + abiDir() + "/libsqlite3.so")
+            } catch e1 {
+                g_lib = ffi.load("libsqlite3.so")
+            }
+        } else {
+            // POSIX 桌面：模块自带 → 旧布局 → 系统 soname → 系统链接名
+            try {
+                g_lib = ffi.load("linux/sqlite3.so")
+            } catch e1 {
+                try {
+                    g_lib = ffi.load("sqlite3.so")              // 兼容旧布局
+                } catch e2 {
+                    try {
+                        g_lib = ffi.load("libsqlite3.so.0")     // 发行版运行时 soname（不需要 -dev 包）
+                    } catch e3 {
+                        g_lib = ffi.load("libsqlite3.so")       // 部分系统的链接名
+                    }
+                }
             }
         }
     }
     return g_lib
+}
+
+// 把 `_arch()` 的返回值映射成 Android 的 ABI 目录名。
+// 两套命名不是一回事：`_arch()` 给的是 `arm64` / `x64`（见 src/module/sys/sys.c），
+// 而 APK 的 ABI 目录用的是 `arm64-v8a` / `x86_64` ⇒ 必须显式转换。
+// 未知架构退回 x86（老 NDK 的叫法），保证至少有一条路可试而不是直接崩。
+func abiDir(): string {
+    var a = _arch()
+    if a == "arm64" { return "arm64-v8a" }
+    if a == "x64"   { return "x86_64" }
+    if a == "arm"   { return "armeabi-v7a" }
+    return "x86"
 }
 
 // ==================== 核心函数封装 ====================

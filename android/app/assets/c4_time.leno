@@ -1,0 +1,80 @@
+// ============================================================================
+// 探针 4 / 时间·随机·环境信息
+// app 需要：时间戳与格式化、计时、随机数（抽奖/打乱）、设备与环境标识
+// ============================================================================
+import times
+import rands
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+main() {
+    print("== c4 时间·随机·环境 ==")
+
+    // ---- 1. 当前时间戳（秒）----
+    var now = times.now()
+    // 2024-01-01 之后、2100 之前 ⇒ 说明系统时钟正常，没被截断/符号搞错
+    chk("times.now", now > 1704067200 and now < 4102444800, _str(now))
+
+    // ---- 2. 格式化 ----
+    var s = times.format(now, "%Y-%m-%d %H:%M:%S")
+    chk("times.format", s.len() == 19 and s.has("-"), s)
+
+    // ---- 3. 拆分年月日 ----
+    var dt = times.datetime()
+    chk("times.datetime", dt.len() == 6 and dt[0] >= 2024,
+        _str(dt[0]) + "-" + _str(dt[1]) + "-" + _str(dt[2]))
+
+    // ---- 4. 毫秒计时（性能统计的基础）----
+    var t1 = times.ms()
+    sleep(120)
+    var cost = times.ms() - t1
+    chk("times.ms+sleep", cost >= 100 and cost < 1200, "睡 120ms 实测 " + _str(cost) + "ms")
+
+    // ---- 5. 随机整数落在区间内 ----
+    rands.seed(20261118)
+    var lo = 999
+    var hi = -1
+    var i = 0
+    while i < 200 {
+        var v = rands.ints(10, 20)
+        if v < lo { lo = v }
+        if v > hi { hi = v }
+        i = i + 1
+    }
+    chk("rands.ints", lo >= 10 and hi <= 20, "200 次范围 [" + _str(lo) + "," + _str(hi) + "]")
+
+    // ---- 6. 随机小数 ----
+    var f = rands.floats(0.0, 1.0)
+    chk("rands.floats", f >= 0.0 and f <= 1.0, _str(f))
+
+    // ---- 7. 打乱数组（洗牌算法可用性）----
+    var cards = [1, 2, 3, 4, 5, 6, 7, 8]
+    var shuffled = rands.shuffle(cards)
+    var sum = 0
+    for shuffled to c { sum = sum + c }
+    chk("rands.shuffle", shuffled.len() == 8 and sum == 36, "和=" + _str(sum) + "（元素没丢）")
+
+    // ---- 8. 从数组随机取一个 ----
+    var pick = rands.choice(["石头", "剪刀", "布"])
+    chk("rands.choice", pick == "石头" or pick == "剪刀" or pick == "布", pick)
+
+    // ---- 9. 环境与设备标识 ----
+    print("INFO _os()       = " + _os())
+    print("INFO _arch()     = " + _arch())
+    print("INFO _pid()      = " + _str(_pid()))
+    print("INFO _username() = " + _username())
+    print("INFO _homedir()  = " + _homedir())
+    var env = _env("PATH")
+    chk("env.PATH", env != "", "PATH 长度=" + _str(env.len()))
+    var miss = _env("LENO_NOT_EXIST_XYZ")
+    print("INFO _env(不存在) = " + _str(miss))
+    chk("env.missing", miss == null or miss == "", "不存在时返回 " + _str(miss))
+
+    print("== c4 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+}

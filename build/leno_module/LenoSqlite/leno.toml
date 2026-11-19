@@ -10,6 +10,19 @@ root = "lib"
 
 # 原生库：只声明**随包实际分发**的文件（打包时按当前平台键复制到 exe 同目录）。
 # 声明了而文件不存在 ⇒ 打包直接报错，故本包未随附的平台不列键。
+#
+# ★ 2026-11-18 起库文件**按平台分目录**存放（原来是 lib/ 下平铺）：
+#     lib/win/sqlite3.dll              ← win 键
+#     lib/linux/sqlite3.so             ← linux 键
+#     lib/android/<abi>/libsqlite3.so  ← **不在这里声明**
+#   Android 无法用这套键表达：一个平台键只能指一个路径，而 Android 要按 ABI
+#   各带一份（arm64-v8a / x86_64 是两份不同 ELF）⇒ 由 android/build_android.sh
+#   直接读 lib/android/<abi>/ 打进 APK 的 lib/<abi>/，见该脚本第 5 步。
+#   声明在这里反而会让 `leno pack` 把某一 ABI 的库复制到 exe 目录（对桌面无意义）。
+#
+# 打包时只取**文件名**复制到 exe 同目录（package_install.c 的 collector_add）⇒
+#   sqlite3_core.leno 的 lib() 里"带子目录的相对路径失败后退回纯文件名"那一路
+#   正是为打包场景准备的，两边配合得上。
 [native-libs.sqlite3]
-win   = "lib/sqlite3.dll"
-linux = "lib/sqlite3.so"
+win   = "lib/win/sqlite3.dll"
+linux = "lib/linux/sqlite3.so"

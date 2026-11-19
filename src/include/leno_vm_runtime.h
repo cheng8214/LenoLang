@@ -29,4 +29,22 @@ const char* vm_res_dir(void);
 // 由 VM 运行时（vm_main.c）在解包完成后写入；NULL / 空串 = 本次未解包。
 void vm_set_res_dir(const char* dir);
 
+// ============================================================================
+// 嵌入宿主（Android / iOS / 桌面壳）注入点
+// ----------------------------------------------------------------------------
+// 为什么需要：`_script()` 原来只从 argv 里取"第一个非选项参数"，`_tmpdir()` 只认
+//   TMPDIR/+"/tmp"。这两个前提在嵌入场景下都不成立 ——
+//   Android app 进程**没有 argv**（JNI 直接调 `lenolang_run_lenb(path)`），
+//   也没有可写的 `/tmp`（沙箱里只有 filesDir 可写）。
+//   实测（2026-11-18，Android 10 模拟器）：`_script()` 返回 null、
+//   `_tmpdir()` 返回 "/tmp" ⇒ 一切落盘操作全部失败，而且失败点离真实原因很远。
+// 约定：宿主在跑脚本**之前**调用；不调用则完全退回原行为（桌面不受影响）。
+// ============================================================================
+// 本次运行的脚本绝对路径（供 `_script()` / `dirs.script_dir()` 用）
+void leno_set_script_path(const char* path);
+// 宿主提供的可写数据目录（Android 传 getFilesDir()）；`_tmpdir()` 在 TMPDIR 缺失时用它
+void leno_set_data_dir(const char* dir);
+// 读回当前注入的数据目录；NULL = 未注入
+const char* leno_data_dir(void);
+
 #endif // LENO_VM_RUNTIME_H

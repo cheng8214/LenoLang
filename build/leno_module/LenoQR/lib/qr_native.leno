@@ -32,20 +32,39 @@ export var ERR_MEM = -3
 export var ERR_NO_LIB = -100
 
 // ==================== 库加载 ====================
-// 文件名随平台：Windows 是 quirc.dll（src/build_dll.bat 产物），
-//   POSIX 是 quirc.so（src/build_so.sh 产物；macOS 同样产 .so，与 LenoSDL3 的
-//   mac = "lib/SDL3.so" 同一口径 ⇒ dlopen 直接可加载）
+// ★ 2026-11-19 起库文件**按平台分目录**存放（原来是 lib/ 下平铺，与 LenoSqlite 等对齐）：
+//     lib/win/quirc.dll                · Windows（src/build_dll.bat 产物）
+//     lib/linux/quirc.so               · Linux（src/build_so.sh 产物）
+//     lib/android/<abi>/libquirc.so    · Android（本包暂无产物，留位）
 //
-// ★ 这里**只传裸文件名**，不自己拼路径：ffi.load 的搜索顺序本身就覆盖了
-//   「当前模块目录/bin → 当前模块目录 → 所有已加载模块目录 → 单文件打包资源目录
-//    → exe 目录 → PATH」（见 src/module/ffi/ffi.c 的 ffi_load_func 注释）。
-//   quirc.dll 与**本文件同目录**（lib/）⇒ 走"当前模块目录"那条即命中 ✓
-//   （第一版我按 LenoMusic 的 find_dll 抄了一套 dirs.script_dir() 拼接 —— 那是错的：
-//     dirs.script_dir() 给的是**入口脚本**所在目录，不是模块目录，
-//     从 test/ 跑时拼出来的是 leno_module/lib/ 这个不存在的路径 ✗）
+// 传的是**平台相对路径**（"win/quirc.dll"），不是裸文件名：
+//   ffi.load 的自动搜索会先试"模块目录 + 完整相对路径"（ffi.c 的 2a-2 / 2c 两步），
+//   所以库放在模块 lib/ 的子目录里也能命中，不需要自己拼 dirs.script_dir()。
+//   ⚠ 别自己拼 dirs.script_dir()：它给的是**入口脚本**所在目录，不是模块目录，
+//     从 test/ 跑时拼出来的是 leno_module/lib/ 这个不存在的路径（第一版踩过 ✗）。
+//
+// 加载失败时的兜底顺序见 lib()：子目录路径 → 裸文件名（打包后库被复制到 exe 同目录）。
 export func lib_name(): string {
+    if _os() == "windows" { return "win/quirc.dll" }
+    if _os() == "android" { return "android/" + abi_dir() + "/libquirc.so" }
+    return "linux/quirc.so"
+}
+
+// 裸文件名：打包后库被复制到 **exe 同目录**（package_install.c 的 collector_add 只取
+//   basename，子目录前缀会被剥掉）⇒ 那种场景下没有平台子目录可拼，只能按纯名字找。
+export func bare_name(): string {
     if _os() == "windows" { return "quirc.dll" }
+    if _os() == "android" { return "libquirc.so" }
     return "quirc.so"
+}
+
+// `_arch()` 给的是 arm64 / x64，而 Android 的 ABI 目录叫 arm64-v8a / x86_64 ⇒ 必须显式转换。
+func abi_dir(): string {
+    var a = _arch()
+    if a == "arm64" { return "arm64-v8a" }
+    if a == "x64"   { return "x86_64" }
+    if a == "arm"   { return "armeabi-v7a" }
+    return "x86"
 }
 
 string g_name = ""
@@ -59,8 +78,16 @@ export func lib(): quirc {
         g_name = lib_name()
         // 加载失败 = 抛异常：这里捕获后**保持 null**，让上层给出可执行的文案
         // （而不是把异常抛到用户面前，只看到一句英文系统错误）
+        //
+        // 两路兜底：
+        //   1. 平台子目录路径（"win/quirc.dll"）—— 开发/随源码树运行时走这条
+        //   2. 裸文件名（"quirc.dll"）        —— 打包后库被复制到 exe 同目录时走这条
+        //      （collector_add 只保留 basename，子目录会丢）
         try { g_lib = ffi.load(g_name) }
-        catch e { g_lib = null }
+        catch e {
+            try { g_lib = ffi.load(bare_name()) }
+            catch e2 { g_lib = null }
+        }
         g_loaded = g_lib != null
     }
     return g_lib

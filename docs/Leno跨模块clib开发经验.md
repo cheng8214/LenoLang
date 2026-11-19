@@ -114,3 +114,77 @@ LenoWin32/
 - 入口文件对流出的每个函数做 `_is_supported()` 检查
 - 子模块不依赖其他 Leno 库，仅用 `ffi` + 系统 DLL
 - SDL 桥接留给调用方（如 `SDL3.leno` 的 `createSurfaceFromRaw`）
+
+---
+
+## 6. 原生库按平台分目录（2026-11-19 起全模块统一）
+
+### 布局
+
+```
+LenoXXX/
+├── leno.toml
+├── lib/
+│   ├── win/<名>.dll                    ← win 键
+│   ├── linux/<名>.so                   ← linux 键
+│   ├── android/<abi>/lib<名>.so        ← 不写进 toml（见下）
+│   ├── mac/<名>.dylib                  ← 有 Mach-O 产物时才建这个目录
+│   └── *.leno                          ← 源码
+└── src/                                ← 只放源码（构建产物不许落这里）
+```
+
+现状：`LenoSqlite`（win/linux/android 三平台齐全）、`LenoMusic`、`LenoQR`、`LenoWeb`、
+`LenoSDL3`（都是 win/linux）。
+
+### 为什么必须分目录
+
+Android 的 `.so` 是**按 ABI 各一份**的不同 ELF（`arm64-v8a` / `x86_64`）。
+平铺目录只有一个文件名 ⇒ 两份互相覆盖，或把桌面的那份挤掉。
+混合平台同理：`.dll` 与 `.so` 放同一层，看一眼分不清谁是谁的产物。
+
+### 两条配套约束（漏了就跑不起来）
+
+1. **`ffi.load` 要能吃子目录相对路径。**
+   它原来的自动搜索会把传入路径**剥成纯文件名**（`filename = last_sep + 1`）再拼模块目录
+   ⇒ `ffi.load("win/quirc.dll")` 永远命中不了子目录。
+   已在 `src/module/ffi/ffi.c` 补了 2a-2「模块目录 + 完整相对路径」，**并且 2c
+   （遍历所有已加载模块目录那一轮）也补了** —— 编译期内联的模块 `source_path` 可能为空，
+   `mod_dir` 取不到时 2a/2a-2/2b 全跳过，真正救场的是 2c。
+
+2. **loader 要「子目录 → 裸名」两路。**
+   打包时 `collector_add` 只取**文件名**复制到 exe 同目录（子目录前缀被剥掉）
+   ⇒ 打包产物里没有 `win/` 这层，只能按纯名字找到。
+
+```leno
+// 平台子目录优先，兜底裸文件名（打包产物 / 旧布局）
+try { g_lib = ffi.load(libPath("SDL3")) }
+catch e { g_lib = ffi.load(libBare("SDL3")) }
+```
+
+`libPath()` / `libBare()` 这类算路径的小函数**放在模块的核心文件里导出，不要四处重写**：
+`LenoSDL3` 有 4 个加载点（core / font / image / filedialog），各写一份迟早走岔。
+
+### 三个会吃时间坑
+
+| 坑 | 现象 |
+|---|---|
+| 用 `dirs.script_dir()` 当模块目录 | 它给的是**入口脚本**目录。从 `test/` 或 `examples/<示例>/` 跑时与模块目录不同 ⇒ 拼出来的路径必然不存在。`LenoQR` / `LenoSDL3` 都踩过 |
+| `mac = "lib/xxx.so"` 指向 Linux ELF | `mac` 键只检查"文件存在"，于是变成**假通过**：打包跑完、运行时 dlopen 必失败。没有 Mach-O 就别写这个键 |
+| `leno.toml` 路径没跟着改 | `run_all_tests.leno` 的 `missing_lib()` 判定缺库后**静默 SKIP** 整个模块 ⇒ 汇总只多一个 SKIP，极易当成跑过了 |
+
+### 新增一个模块到新平台时的清单
+
+1. 产出物放进 `lib/<平台>/`（Android 再深一层 `lib/android/<abi>/`）；
+2. loader 加该平台分支（`_os()` 现在能区分 `android`，见下）；
+3. 桌面的 `leno.toml` 加对应键；**Android 不加**（一个键只能指一个路径，装不下两个 ABI，
+   由 `android/build_android.sh` 从 `lib/android/<abi>/` 取）；
+4. 跑 `build\leno.exe build\leno_module\run_all_tests.leno --only 你的模块`，
+   确认输出里**没有 `[SKIP]`**。
+
+### 相关：`_os()` 能分辨 Android 了
+
+`native_os()`（`src/module/sys/sys.c`）新增 `#ifdef __ANDROID__ → "android"`，
+**必须排在 `__linux__` 之前**（bionic 同时定义 `__linux__`）。
+这是**行为变更**：原来 `_os() == "linux"` 在 Android 上成立，现在不成立
+（`LenoSys.isLinux()` 因此返回 false，语义上更正确）。
+要表达"POSIX 就行"必须写 `_os() == "linux" or _os() == "android"`。

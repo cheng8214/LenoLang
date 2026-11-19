@@ -1,0 +1,95 @@
+// ============================================================================
+// 探针 13 / LenoQR 模块（走模块 API，纯 Leno 编码 + quirc 原生解码）
+// ----------------------------------------------------------------------------
+// 这道题考的是「模块自带的 Android 原生库能不能被选中并加载」：
+//   LenoQR 的 lib/android/<abi>/libquirc.so 由 src/build_android.sh 用 NDK 交叉编译，
+//   由 android/build_android.sh 打进 APK 的 lib/<abi>/（与 libleno.so 同目录）。
+//
+// 与 c8/c12 同一套路：**走模块 API**，不是裸 ffi.load —— 模块自己的选库逻辑才是要验的东西。
+//   编码端是纯 Leno（不依赖原生库），所以「编码成功」不能证明库加载了；
+//   必须让 decodeGray 真的扫出一枚码，才说明 libquirc.so 被 dlopen 成功。
+//
+// 同时覆盖：中文 + emoji 的 UTF-8 往返（4 字节码点走字节模式）、四档纠错、
+//   以及"图里没有码"这个正常路径（found=false 且 err=""，不是错误）。
+// ============================================================================
+import "../../../build/leno_module/LenoQR/lib/QR.leno" as qr
+// ⚠ 被导入模块**不传递**它自己的依赖 ⇒ ffi 必须在本文件再 import 一次
+import ffi
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+// 编码 → 灰度 → 解码，逐字比对
+func roundtrip(string text, string ecc) {
+    var r = qr.encode(text, ecc)
+    if not (r.ok as bool) {
+        chk("rt." + ecc, false, "encode 失败：" + (r.err as string))
+        return
+    }
+    int size = r["size"] as int
+    int scale = 4
+    int quiet = 4
+    int side = (size + quiet * 2) * scale
+    string gray = qr.toGray(r, scale, quiet)
+
+    Ptr[u8] buf = ffi.malloc(side * side)
+    if buf == null { chk("rt." + ecc, false, "ffi.malloc 失败"); return }
+    ffi.write_bytes(buf, 0, gray)
+    var d = qr.decodeGray(buf, side, side, side)
+    ffi.free(buf)
+
+    bool found = d.found as bool
+    string got = d.text as string
+    string detail = "v" + _str(size) + " " + _str(text.byte_len()) + "B "
+    if found {
+        detail = detail + "解码=「" + got + "」"
+    } else {
+        detail = detail + "未扫到 " + (d.err as string)
+    }
+    chk("rt." + ecc, found and got == text, detail)
+}
+
+main() {
+    print("== c13 LenoQR 模块 ==")
+    print("SEC  _os() = " + _os() + " / _arch() = " + _arch())
+
+    // ---- 1. 库是否真的加载上（模块自己的诊断 API）----
+    chk("qr.available", qr.available(), "libName=" + qr.libName() + " path=" + qr.libPath())
+    chk("qr.version", qr.version() != "", "quirc 版本 = " + qr.version())
+    chk("qr.abi", qr.abi() != 0, "abi = " + _str(qr.abi()) + " maxPayload = " + _str(qr.maxPayload()))
+
+    // ---- 2. 纯 Leno 编码（不依赖原生库，但下一段要用它）----
+    var e = qr.encode("hello leno", "M")
+    chk("qr.encode", e.ok as bool, "v" + _str(e["size"] as int) + " ecc=" + (e.eccName as string))
+
+    // ---- 3. 回环：纯 ASCII / 中文 / emoji / 数字模式 ----
+    roundtrip("hello leno", "M")
+    roundtrip("中文二维码测试", "M")
+    roundtrip("emoji 🎉🚀 混排", "M")
+    roundtrip("0123456789012345", "L")
+
+    // ---- 4. 四档纠错都能回环（H 档容量最小，用短文本）----
+    roundtrip("AAA", "H")
+
+    // ---- 5. 正常路径：纯白图里没有码 ⇒ found=false 且 err=""（不是错误）----
+    int side = 64
+    Ptr[u8] white = ffi.malloc(side * side)
+    if white != null {
+        ffi.memset(white, 255, side * side)
+        var d = qr.decodeGray(white, side, side, side)
+        ffi.free(white)
+        bool nofind = not (d.found as bool)
+        string errmsg = d.err as string
+        chk("qr.nocode", nofind and errmsg == "", "err=「" + errmsg + "」")
+    } else {
+        chk("qr.nocode", false, "ffi.malloc 失败")
+    }
+
+    print("== c13 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+    if g_ng > 0 { _exit(1) }
+}

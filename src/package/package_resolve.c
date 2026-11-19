@@ -8,6 +8,7 @@
  */
 
 #include "../include/leno_package.h"
+#include "../include/native.h"   /* native_is_builtin_module（内置模块名保留，见下面 import 解析） */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -216,6 +217,23 @@ int package_resolve_module_file(const char* module_name, char* out_path, int out
  * ============================================================================ */
 int package_resolve_import_spec(const char* spec, char* out_path, int out_len) {
     if (!spec || !out_path || out_len <= 0) return -1;
+
+    /* ★ 2026-11-18：**内置模块名优先**，裸名不许被同名 .leno 抢走。
+     *   症状（实测，Android 示例目录里放了一个测试文件 ffi.leno）：
+     *     `import ffi` 先在本目录命中 ./ffi.leno ⇒ 这个 "ffi" 变成那个脚本模块，
+     *     于是 `ffi.load(...)` 编译成「取成员 + 调用」的通用路径，运行期在**那一行**
+     *     报「函数未定义」—— 位置与真实原因（内置模块被同名文件替换）毫无关系 ✗，
+     *     而且桌面/设备表现一致、只跟目录里有没有那个文件有关，排查代价极高 ✗
+     *   判据与 `import … as 内置名` 的禁用规则同一口径（native_is_builtin_module），
+     *   即内置模块名是**保留名**；要用本地同名文件必须写带扩展名的
+     *   `import "ffi.leno"`（含 ".leno" ⇒ 走下面的文件路径规则 ✓）。
+     *   提示由调用方（parser_module.c）报出被忽略的具体文件 —— 这里只做判定，
+     *   免得解析器的每个调用点各写一份规则（S9 那类静默分叉就是这么来的）。 */
+    if (strchr(spec, '/') == NULL && strchr(spec, '\\') == NULL &&
+        strstr(spec, ".leno") == NULL && native_is_builtin_module(spec)) {
+        return -1;
+    }
+
     if (strstr(spec, ".leno") != NULL) {
         /* 含 ".leno" 的写法按「文件路径」处理 ⇒ 带路径的一律交回调用方（相对/绝对解析）。
          * 但**裸文件名**（不含路径分隔符）要再搜一遍模块搜索路径 ✓：

@@ -1,0 +1,89 @@
+// ============================================================================
+// 探针 7 / FFI：dlopen 系统库 · 内存读写 · 结构体布局
+// app 场景：调系统库（liblog/libsqlite/libEGL…）、与 C 库交互、处理二进制
+// 这份刻意做成"桌面/安卓都能跑"：按 _os() 选库名，两边的结果应当一致
+// ============================================================================
+import ffi
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+main() {
+    print("== c7 FFI ==")
+    var isAndroid = _os() == "android" or _os() == "linux"
+    print("INFO _os() = " + _os())
+
+    // ---- 1. dlopen 系统库 ----
+    // 平台差异只在"库名 + 符号名"，FFI 调用路径完全相同
+    var libcName = "libc.so"
+    var pidSym = "getpid"
+    if not isAndroid {
+        libcName = "kernel32.dll"
+        pidSym = "GetCurrentProcessId"
+    }
+    var libc = ffi.load(libcName)
+    chk("ffi.load.libc", libc != null, libcName + " -> " + _str(libc))
+
+    // ---- 2. 调无参整数返回 ----
+    var pid = ffi.call_int(libc, pidSym)
+    chk("ffi.call_int", _int(pid) == _pid(), pidSym + "()=" + _str(pid) + " _pid()=" + _str(_pid()))
+
+    // ---- 3. 字符串参数 → 整数返回（char* 传参路径） ----
+    var strlenSym = "strlen"
+    if not isAndroid { strlenSym = "lstrlenA" }
+    var n = ffi.call_int(libc, strlenSym, "leno on android")
+    chk("ffi.string.arg", _int(n) == 15, "strlen(\"leno on android\")=" + _str(n))
+
+    // ---- 4. 浮点参数 / 浮点返回（走浮点寄存器，不是通用寄存器） ----
+    var libmName = "libm.so"
+    if not isAndroid { libmName = "msvcrt.dll" }
+    var libm = ffi.load(libmName)
+    var h = ffi.call_double(libm, "sqrt", 9.0)   // 两边都有 sqrt；MSVC 的 hypot 叫 _hypot
+    chk("ffi.call_double", _int(h) == 3, "sqrt(9.0)=" + _str(h))
+
+    // ---- 5. 符号存在性（dlsym） ----
+    var sym = ffi.dlsym(libc, pidSym)
+    chk("ffi.dlsym", sym != null, "getpid 符号地址=" + _str(sym))
+
+    // ---- 6. 手工内存：malloc → 写 → 读 → free ----
+    var p = ffi.malloc(16)
+    chk("ffi.malloc", p != null, "16 字节 @ " + _str(p))
+    if p != null {
+        // 签名统一是 (ptr, 偏移/索引, [值])：read_int(ptr, off) / write_int(ptr, off, v)
+        ffi.write_int(p, 0, 123456)
+        var backInt = ffi.read_int(p, 0)
+        ffi.write_int(p, 8, 777)            // 偏移 8 处再写一个 int
+        var backAt = ffi.read_int(p, 8)
+        chk("ffi.mem.int", _int(backInt) == 123456 and _int(backAt) == 777,
+            "read(0)=" + _str(backInt) + " read(8)=" + _str(backAt))
+        ffi.free(p)
+        chk("ffi.free", true, "释放完成")
+    }
+
+    // ---- 7. C 字符串 ↔ Leno 字符串 ----
+    var buf = ffi.malloc(32)
+    if buf != null {
+        ffi.memset(buf, 0, 32)
+        ffi.write_string(buf, 0, "hello 世界")
+        var s = ffi.read_string(buf, 0)
+        chk("ffi.cstring", s == "hello 世界", "往返=" + s)
+        ffi.free(buf)
+    }
+
+    // ---- 8. 结构体布局（与 C 对齐规则一致，app 传结构体给系统 API 时必须对） ----
+    chk("ffi.sizeof_type", ffi.sizeof_type("int") == 4 and ffi.sizeof_type("double") == 8,
+        "int=" + _str(ffi.sizeof_type("int")) + " double=" + _str(ffi.sizeof_type("double")))
+    chk("ffi.alignof_type", ffi.alignof("double") == 8, "alignof(double)=" + _str(ffi.alignof("double")))
+
+    // ---- 9. 指针 ↔ 整数（高地址不得被截断）----
+    var ip = ffi.ptr_to_int(ffi.malloc(4))
+    var bp = ffi.ptr_from_int(ip)
+    chk("ffi.ptr.roundtrip", bp != null, "ptr -> int(" + _str(ip) + ") -> ptr 成功")
+
+    print("== c7 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+}

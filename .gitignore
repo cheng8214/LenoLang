@@ -54,3 +54,18 @@ tmp_syntax_probe/
 
 # 应用运行期缓存（试听音频 / 封面，用户能直接在资源管理器里看到并清理）
 leno_gui/*/*/cache
+
+# Android 构建产物（android/build_android.sh 的输出：.so / .apk / 中间 classes+dex / 截图）
+#   源码与脚本（android/app、tools、build_android.sh）要入库，只有产物不入库
+android/build/
+android/app/assets/probe_data/
+
+# 第三方 native 库的**中转目录**：真正的源在模块里（按 ABI 各一份）
+#   build/leno_module/LenoSqlite/lib/android/<abi>/libsqlite3.so
+#   build_android.sh 优先从那里取，jniLibs 只是旧布局的兜底与本地缓存 ⇒ 不入库
+#   （两份同样的 1.8MB 二进制进仓库没有意义，而且会跟模块里那份悄悄走岔）
+android/app/jniLibs/*/*.so
+
+# 各模块**交叉编译的中间目录**（CMake 构建树：对象文件 + 未 strip 的 .so，可达上百 MB）
+#   源码在 src/<库名>/，产物在 lib/android/<abi>/，中间过程不入库
+build/leno_module/*/src/build/

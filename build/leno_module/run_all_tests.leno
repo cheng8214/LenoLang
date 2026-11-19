@@ -69,14 +69,24 @@ func missing_lib(string modDir): string {
     if not files.exists(p) { return "" }
     var osKey = "win"
     if _os() == "linux" { osKey = "linux" }
-    if _os() == "mac" { osKey = "mac" }
+    // ★ 2026-11 起 `_os()` 在 Android 上返回 "android"（不再是 "linux"，见 src/module/sys/sys.c
+    //   的 native_os）：bionic 同时定义 __linux__，所以 Android 必须单独判，且要排在 linux 之后
+    //   也只是可读性问题。Android 上没有任何模块在 toml 里声明 android 键（库随 APK 的
+    //   lib/<abi>/ 分发）⇒ 这里不匹配任何行 = 不误判缺库。
+    if _os() == "android" { osKey = "android" }
+    // 原来写的是 "mac"，而 native_os 返回的是 "macos" ⇒ 该分支从未生效过（永远按 win 查）
+    if _os() == "macos" { osKey = "mac" }
     var text = files.read(p)
     for strings.split(text, "\n") to rawLine {
         string line = rawLine.trim()
         if line == "" or strings.starts_with(line, "#") { continue }
         if not strings.starts_with(line, osKey) { continue }
         for quoted(line) to q {
-            if strings.ends_with(q, ".dll") or strings.ends_with(q, ".so") or strings.ends_with(q, ".dylib") {
+            // ⚠ 不能只判 ends_with(".so")：soname 形态是 `libwebp.so.7` / `libcurl.so.4`，
+            //   结尾是 ".7" / ".4" ⇒ 漏判就等于"声明了但文件不在"这种情况**检测不到**，
+            //   而它的表现是整个模块被静默 SKIP（汇总只多一个 SKIP，极易当成跑过了）。
+            bool isLib = strings.ends_with(q, ".dll") or strings.ends_with(q, ".so") or strings.ends_with(q, ".dylib") or strings.has(q, ".so.")
+            if isLib {
                 if not files.exists(dirs.join(modDir, q)) { return q }
             }
         }

@@ -17,6 +17,17 @@ LenoCSV      = ">=0.1.0"
 
 # 原生库：只声明**随包实际分发**的文件（打包时按当前平台键复制到 exe 同目录）。
 # 声明了而文件不存在 ⇒ 打包直接报错，故本包未随附的平台不列键。
+#
+# ★ 2026-11-19 起库文件**按平台分目录**存放（原来是 lib/ 下平铺，与其他模块统一）：
+#     lib/win/libcurl-x64.dll    ← win 键
+#     lib/linux/libcurl.so       ← linux 键
+#     lib/android/<abi>/libcurl.so ← 本包暂无产物，**不列键**
+#   Android 不列键：一个平台键只能指一个路径，装不下两个 ABI；且 curl 上 Android
+#   还要解决 TLS 根证书从哪来（APK 里没有 /etc/ssl）⇒ 要支持时单独做，
+#   由 android/build_android.sh 从 lib/android/<abi>/ 取，与 LenoSqlite 同路。
+#
+# 声明了而文件不存在 ⇒ `run_all_tests.leno` 会判定缺库并**静默 SKIP** 整个模块
+#   ⇒ 路径写错时汇总只多一个 SKIP，极易当成跑过了。改布局时这里必须同步。
 [native-libs.curl]
-win   = "lib/libcurl-x64.dll"
-linux = "lib/libcurl.so"
+win   = "lib/win/libcurl-x64.dll"
+linux = "lib/linux/libcurl.so"

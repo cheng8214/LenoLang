@@ -7,6 +7,7 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo Copying to lib\...
-copy /Y miniaudio.dll ..\lib\miniaudio.dll >nul
+echo Copying to lib\win\...
+if not exist ..\lib\win mkdir ..\lib\win
+copy /Y miniaudio.dll ..\lib\win\miniaudio.dll >nul
 echo Done

@@ -805,6 +805,10 @@ int lenolang_run_lenb(const char* filename) {
         return 1;
     }
 
+    // 告诉运行时"本次跑的是哪个脚本"。
+    //   桌面 `leno_vm.exe x.lenb` 下值与 argv 推出的结果一致（无行为变化）；
+    //   嵌入宿主（JNI 直接调本函数）下这是 `_script()` / `dirs.script_dir()` 的**唯一**来源。
+    leno_set_script_path(filename);
     Chunk chunk;
     chunk_init(&chunk);
     Scope* scope = NULL;

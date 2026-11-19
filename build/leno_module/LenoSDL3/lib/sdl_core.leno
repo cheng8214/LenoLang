@@ -477,18 +477,61 @@ export const SDL_Color_SIZE  = 4
 //   ⇒ 该方案（含 `SDL_DelayPrecise` 包装）已整段移除；结论与方法论见 docs/Leno语言改进建议.md ✓
 
 // ==================== DLL 加载 ====================
+// ★ 2026-11-19 起库文件**按平台分目录**存放（原来是 lib/ 下平铺，与 LenoSqlite 等对齐）：
+//     lib/win/SDL3.dll / SDL3_image.dll / SDL3_ttf.dll / libwebp-7.dll …
+//     lib/linux/SDL3.so / SDL3_image.so / SDL3_ttf.so / libwebp.so.7 …
+//     lib/android/<abi>/…   ← 本包暂无产物（SDL3 的 Android 产物要走官方 Gradle/CMake 工程）
+//
+// 为什么传**平台相对路径**而不是裸文件名：库现在在 lib/ 的子目录里，裸名只会命中
+//   「模块目录/<名>」这一层，拼不到子目录 ✗
+//   ffi.load 的 2a-2 / 2c 两步会把相对路径接到**模块目录**后面 ⇒ 子目录能命中 ✓
+//   （见 src/module/ffi/ffi.c 的 ffi_load_func）
+// ⚠ 别再用 dirs.script_dir() 拼路径：那是**入口脚本**目录，不是模块目录。
+//   从 examples/<示例>/ 或 test/ 跑时与模块目录不同 ⇒ 拼出来的路径必然不存在（旧实现就是这么错的）。
+//
+// 只导出"算路径"的小函数、不导出"加载库"的函数：clib 类型的返回值不能作函数返回类型
+//   （会被当成 struct），所以每个库仍由各自的 lib() 自己 ffi.load。
+
+// 库所在的平台子目录：win / linux / android/<abi>
+export func libDir(): string {
+    if _os() == "windows" { return "win" }
+    if _os() == "android" { return "android/" + abiDir() }
+    return "linux"
+}
+
+// 平台相对路径。传**不含前缀与扩展名**的基名（"SDL3" / "SDL3_image" / "SDL3_ttf"）。
+// libwebp 系列命名不规则（libwebp-7.dll vs libwebp.so.7），用 libDir() 自己拼。
+export func libPath(string base): string {
+    if _os() == "windows" { return "win/" + base + ".dll" }
+    if _os() == "android" { return "android/" + abiDir() + "/lib" + base + ".so" }
+    return "linux/" + base + ".so"
+}
+
+// 裸文件名：打包后库被复制到 **exe 同目录**（package_install.c 的 collector_add 只取
+//   basename，子目录前缀会被剥掉）⇒ 那种场景下没有平台子目录可拼，只能按纯名字找。
+export func libBare(string base): string {
+    if _os() == "windows" { return base + ".dll" }
+    if _os() == "android" { return "lib" + base + ".so" }
+    return base + ".so"
+}
+
+// `_arch()` 给的是 arm64 / x64，而 Android 的 ABI 目录叫 arm64-v8a / x86_64 ⇒ 必须显式转换。
+func abiDir(): string {
+    var a = _arch()
+    if a == "arm64" { return "arm64-v8a" }
+    if a == "x64"   { return "x86_64" }
+    if a == "arm"   { return "armeabi-v7a" }
+    return "x86"
+}
 
 sdl3 g_lib = null
 
 export func lib(): sdl3 {
     if g_lib == null {
-        // 根据平台选择动态库扩展名
-        string ext = if _os() == "windows" then ".dll" else ".so"
-        // 从脚本目录和上级目录查找
-        var path = dirs.script_dir() + "/../SDL3" + ext
-        if not files.exists(path) { path = dirs.script_dir() + "/SDL3" + ext }
-        if not files.exists(path) { path = "SDL3" + ext }
-        g_lib = ffi.load(path)
+        // 1) 平台子目录（lib/win、lib/linux、lib/android/<abi>）
+        // 2) 兜底裸名（打包后库被复制到 exe 同目录）
+        try { g_lib = ffi.load(libPath("SDL3")) }
+        catch e { g_lib = ffi.load(libBare("SDL3")) }
     }
     return g_lib
 }

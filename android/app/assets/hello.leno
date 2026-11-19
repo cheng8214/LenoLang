@@ -1,0 +1,29 @@
+struct Song {
+    string name = ""
+    int dur = 0
+}
+
+Array[Song] list = []
+list.add(new Song(name = "晴天", dur = 269))
+list.add(new Song(name = "七里香", dur = 299))
+
+print("=== Leno on Android ===")
+print("count = " + _str(list.len()))
+
+int total = 0
+for list to s {
+    print("  " + s.name + "  " + _str(s.dur) + "s")
+    total = total + s.dur
+}
+print("total = " + _str(total) + "s")
+
+Array[int] nums = [1, 2, 3, 4, 5]
+var doubled = nums.map(func(int x) { return x * 2 })
+print("doubled = " + _str(doubled))
+
+switch total {
+    case 0:100 { print("short") }
+    case 101:500 { print("album length ok") }
+    default { print("long") }
+}
+print("=== done ===")

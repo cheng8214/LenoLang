@@ -1,0 +1,48 @@
+// ============================================================================
+// 探针 15 / LenoMusic 模块（miniaudio）
+// ----------------------------------------------------------------------------
+// lib/android/<abi>/libminiaudio.so 由 src/build_android.sh 用 NDK 交叉编译，
+// 与桌面那份 miniaudio.dll / miniaudio.so 是**同一个 C 文件**编出来的。
+//
+// Android 的音频后端是 AAudio（API 26+）优先、退回 OpenSL ES（API 21+），
+// 两者都由 miniaudio 在运行时 dlopen ⇒ 链接阶段不需要 -lOpenSLES / -lAAudio。
+//
+// ⚠ 这里**不测真的出声**：模拟器带 -no-audio 启动，没有可用输出设备；
+//   而且本项目其它测试也没有音频基准。这里验证的是"库能被选中、加载、调用"：
+//     getVersion() 返回 ma_version() 的打包值（1.0 时代是 2841，见模块 README）
+//     hasVorbis()  返回 1（stb_vorbis 静态编进去了）
+//   —— 这两个都是**跨过 dlopen 边界拿到真实返回值**，不是判断文件存在。
+// ============================================================================
+import "../../../build/leno_module/LenoMusic/lib/music_core.leno" as music
+use music.miniaudio
+// ⚠ 被导入模块**不传递**自己的 import ⇒ 这里要用到的必须再来一次
+import ffi
+
+int g_ok = 0
+int g_ng = 0
+
+func chk(string name, bool cond, string detail) {
+    if cond { g_ok = g_ok + 1; print("OK   " + name + " | " + detail) }
+    else    { g_ng = g_ng + 1; print("NG   " + name + " | " + detail) }
+}
+
+print("== c15 LenoMusic 模块 ==")
+print("SEC  _os()=" + _os() + "  _arch()=" + _arch())
+print("SEC  选中路径 rel_path()=" + music.rel_path() + "  bare_name()=" + music.bare_name())
+
+// ---- 1. 库加载 -----------------------------------------------------------
+miniaudio l = music.lib()
+chk("audio.load", l != null, "libminiaudio.so 已加载")
+
+// ---- 2. 版本号：ma_version() 打包值（major<<16 | minor<<8 | revision）----
+int v = music.getVersion()
+chk("audio.version", v > 0,
+    "ma_version() = " + _str(v) + "（" + _str(v / 65536) + "." + _str((v / 256) % 256) + "."
+        + _str(v % 256) + "）")
+
+// ---- 3. Ogg Vorbis 解码器是否编进来了 ------------------------------------
+bool vorbis = music.hasVorbis()
+chk("audio.vorbis", vorbis, "stb_vorbis = " + _str(vorbis))
+
+print("== c15 结果: ok=" + _str(g_ok) + " ng=" + _str(g_ng) + " ==")
+if g_ng > 0 { _exit(1) }

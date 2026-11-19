@@ -234,6 +234,12 @@ export struct HttpClient {
             _lastError = "curl_easy_init failed"
             return false
         }
+        // ★ Android：libcurl 没有编译期默认 CA 路径，系统也不给 app 用系统 CA
+        //   ⇒ 不设 CAINFO 时任何 https 都会报 CURLE_PEER_FAILED_VERIFICATION(60)。
+        //   caBundle() 在 android 上把 /system/etc/security/cacerts/*.0 拼成
+        //   一个 PEM 落到临时目录并缓存；其它平台返回 ""，这里什么都不做（保持原行为）。
+        var caPath = core.caBundle()
+        if caPath != "" { core.setopt_str(handle, Opt.CAINFO, caPath) }
         // 每个客户端一套回调 + 累加器：闭包捕获 _acc ⇒ 不再依赖模块级全局（多线程安全）
         _acc = new _RespAcc()
         _sink = new _Sink()

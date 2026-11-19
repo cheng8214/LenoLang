@@ -23,6 +23,7 @@
 
 import ffi
 import dirs
+import "sdl_core.leno" as core          // 只为拿 libPath/libBare（路径算法统一一处）
 import "sdl_window.leno" as wnd
 import "sdl_opts.leno" as dochk    // ★ 2026-10-13：选项对账（本文件原来没接 ✗）
 
@@ -51,8 +52,11 @@ sdl3dlg _lib = null
 
 func _ensureLib(): sdl3dlg {
     if _lib == null {
-        string ext = if _os() == "windows" then ".dll" else ".so"
-        _lib = ffi.load("SDL3" + ext)
+        // 平台子目录优先（lib/win/SDL3.dll、lib/linux/SDL3.so、lib/android/<abi>/libSDL3.so），
+        // 兜底裸名（打包后库被复制到 exe 同目录）。
+        // 2026-11-19 起库文件按平台分目录存放 ⇒ 原来的裸名 "SDL3.dll" 已经找不到文件了。
+        try { _lib = ffi.load(core.libPath("SDL3")) }
+        catch e { _lib = ffi.load(core.libBare("SDL3")) }
     }
     return _lib
 }

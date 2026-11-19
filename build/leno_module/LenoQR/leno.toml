@@ -13,12 +13,20 @@ root = "lib"
 #
 # 产物来自 src/build_dll.bat（Windows）与 src/build_so.sh（Linux/macOS），
 # 两者与 LenoSDL3 / LenoWeb 同口径：**预编译的原生库一并入库**，随包分发。
-#   · Windows：lib/quirc.dll    —— 随包提供 ✓（build_dll.bat 产出）
-#   · Linux  ：lib/quirc.so     —— 随包提供 ✓（src/build_so.sh 产出，2026-10-17 本机生成）
+#
+# ★ 2026-11-19 起库文件**按平台分目录**存放（原来是 lib/ 下平铺，与其他模块统一）：
+#   · Windows：lib/win/quirc.dll    —— 随包提供 ✓（build_dll.bat 产出）
+#   · Linux  ：lib/linux/quirc.so   —— 随包提供 ✓（src/build_so.sh 产出）
+#   · Android：lib/android/<abi>/libquirc.so —— 本包暂无产物，**不列键**
+#              （一个平台键只能指一个路径，装不下两个 ABI；且 quirc 是纯 C、无外部依赖，
+#               要支持 Android 时用 NDK 编一份丢进 lib/android/<abi>/ 即可，
+#               qr_native.leno 的 lib_name() 已经写好这条分支）
 #   · macOS  ：**不列键** —— 随包的这个 .so 是 ELF（Linux 产物），macOS dlopen 必失败；
-#              写上 mac = "lib/quirc.so" 反倒会让"文件不存在就报错"的检查变成假通过 ✗
-#              ⇒ 待 macOS 上跑一次 src/build_so.sh 产出 Mach-O 后再补：
-#                  mac = "lib/quirc.so"
+#              写上 mac = "lib/linux/quirc.so" 反倒会让"文件不存在就报错"的检查变成假通过 ✗
+#              ⇒ 待 macOS 上跑一次 src/build_so.sh 产出 Mach-O、放进 lib/mac/ 后再补键。
+#
+# 声明了而文件不存在 ⇒ 打包直接报错；`run_all_tests.leno` 也会据此判定缺库并**静默 SKIP**
+#   整个模块 ⇒ 路径写错时汇总只多一个 SKIP，极易当成跑过了。改布局时这里必须同步。
 [native-libs.quirc]
-win   = "lib/quirc.dll"
-linux = "lib/quirc.so"
+win   = "lib/win/quirc.dll"
+linux = "lib/linux/quirc.so"

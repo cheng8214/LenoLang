@@ -1,0 +1,22 @@
+import ffi
+
+main() {
+    print("=== FFI main ===")
+
+    var libc = ffi.load("libc.so")
+    if libc == null {
+        print("libc.so 加载失败")
+        return
+    }
+    print("getpid() = " + ffi.call_int(libc, "getpid"))
+    print("strlen(\"leno on android\") = " + ffi.call_int(libc, "strlen", "leno on android"))
+
+    var libm = ffi.load("libm.so")
+    if libm == null {
+        print("libm.so 加载失败")
+        return
+    }
+    print("hypot(3.0, 4.0) = " + ffi.call_double(libm, "hypot", 3.0, 4.0))
+
+    print("=== main done ===")
+}

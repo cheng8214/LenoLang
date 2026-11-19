@@ -5,9 +5,11 @@ import files
 main() {
     print("=== LenoMusic 版本信息 ===")
 
-    // 检查 DLL 是否能找到
-    bool found = files.exists("../../lib/miniaudio.dll")
-    print("DLL 在 ../../lib/ 存在: " + _str(found))
+    // 检查库文件是否能找到（2026-11-19 起库文件按平台分目录存放：lib/win、lib/linux）
+    string libRel = "../../lib/linux/miniaudio.so"
+    if _os() == "windows" { libRel = "../../lib/win/miniaudio.dll" }
+    bool found = files.exists(libRel)
+    print("库文件 " + libRel + " 存在: " + _str(found))
 
     int ver = audio.getVersion()
     print("miniaudio 版本: " + _str(ver))

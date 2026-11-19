@@ -125,7 +125,28 @@ Ast* parse_import_stmt(Parser* p) {
         /* T19 选项 2：告诉包层"当前导入方是谁" —— 裸名 import 会先查它自己的目录。
          * 此刻 error_get_filename() 就是导入方（module_loader 加载模块时存/还原了文件名）。 */
         package_set_importer_dir(error_get_filename());
-        if (package_resolve_import_spec(module_name, resolved, sizeof(resolved)) == 1) {
+
+        /* ★ 2026-11-18：内置模块名是**保留名** —— 裸名 import 不能被同名 .leno 遮蔽。
+         *   （判据收在 package_resolve_import_spec 里，解析器/扫描器共用一份；
+         *     这里是"同一判定"的**提示侧**：光拒绝不吭声不行 —— 用户改那个 ffi.leno
+         *     却毫无效果，等于把"静默选错文件"换成"静默忽略文件"，还是坑 ✗）
+         *   实测症状见 leno_types.h 的 WARN_BUILTIN_MODULE_SHADOWED。 */
+        int is_builtin_bare = (strchr(module_name, '/') == NULL &&
+                               strchr(module_name, '\\') == NULL &&
+                               strstr(module_name, ".leno") == NULL &&
+                               native_is_builtin_module(module_name));
+
+        if (is_builtin_bare) {
+            /* 探针：用**同一个**搜索实现看"本来会命中哪个文件"，不另写一套路径规则 */
+            char shadowed[MAX_PATH_LEN] = {0};
+            if (package_resolve_module_file(module_name, shadowed, sizeof(shadowed)) == 1) {
+                warning_add_at_fmt(WARN_BUILTIN_MODULE_SHADOWED, line, 1,
+                    "同名文件被忽略：%s —— `import %s` 指向**内置模块**（内置模块名是保留名）；"
+                    "要导入这个文件请写 import \"%s.leno\"",
+                    shadowed, module_name, module_name);
+            }
+            /* 保留裸名 ⇒ 语义/加载阶段按原生模块处理（与"目录里没这个文件"完全同一条路） */
+        } else if (package_resolve_import_spec(module_name, resolved, sizeof(resolved)) == 1) {
             // 找到了，将 module_name 替换为完整路径
             free(module_name);
             module_name = strdup(resolved);

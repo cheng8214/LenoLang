@@ -131,6 +131,26 @@ import "folder with spaces/space module.leno" as sp
 import "folder-with-dashes/dash-module.leno" as dash
 ```
 
+### 1.4 内置模块名是**保留名**（2026-11-18 起）
+
+`io / times / arrays / strings / maths / rands / files / asyncs / dirs / jsons /
+sockets / ffi / threads / regexs` 这 14 个名字属于内置模块。裸名导入**永远指向内置模块**，
+不会被当前目录（或搜索路径里）的同名 `.leno` 抢走：
+
+```leno
+// 假设当前目录里恰好有一个 ffi.leno（比如你放了个测试文件）
+import ffi          // ⇒ 内置模块 ffi（编译器会警告：那个 ffi.leno 被忽略）
+import "ffi.leno"   // ⇒ 那个本地文件（带 .leno ⇒ 按文件路径解析）
+```
+
+为什么要立这条规矩：此前裸名 `import ffi` 会先在本目录命中 `ffi.leno`，
+于是 `ffi` 变成那个脚本、`ffi.load(...)` 在运行期报**「函数未定义」**——
+指向 `ffi.load` 那一行，与真实原因（模块被同名文件替换）毫无关系，
+桌面和手机上表现一致、只取决于目录里有没有那个文件，极难定位。
+现在内置优先，且被忽略的文件会明确报出来（警告类别 `内置模块被同名文件遮蔽`）。
+
+> 与 `import … as 别名` 的既有规则同口径：别名也不能用内置模块名。
+
 ***
 
 ## 2. 模块导出规则

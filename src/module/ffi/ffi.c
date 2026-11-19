@@ -571,6 +571,23 @@ static Value ffi_load_func(int argc, Value* args) {
             }
         }
 
+        /* 2a-2) 当前模块目录/<完整相对路径>
+         *   给"模块内部按平台/ABI 分目录"用：`ffi.load("android/arm64-v8a/libfoo.so")`。
+         *   为什么必须单独一步：下面的 2b 只拼**纯文件名**（filename = last_sep + 1），
+         *   带子目录的写法会被剥掉前缀 ⇒ 永远命中不了子目录里的文件。
+         *   （2026-11-18 实测：LenoSqlite 想把 win/linux/android 分开放，卡在这里。） */
+        if (!handle && last_sep && mod_dir[0] != '\0') {
+            snprintf(search_path, sizeof(search_path), "%s%s", mod_dir, path);
+#ifndef _WIN32
+            /* 调用方可能按 Windows 习惯写反斜杠；非 Windows 的分隔符必须是 '/' */
+            { char* q; for (q = search_path; *q; q++) if (*q == '\\') *q = '/'; }
+#endif
+            if (file_exists_utf8(search_path)) {
+                handle = load_library_utf8(search_path);
+                if (handle) resolved_path = strdup(search_path);
+            }
+        }
+
         /* 2b) 当前模块目录/<文件名> */
         if (!handle && mod_dir[0] != '\0') {
             snprintf(search_path, sizeof(search_path), "%s%s", mod_dir, filename);
@@ -580,7 +597,13 @@ static Value ffi_load_func(int argc, Value* args) {
             }
         }
 
-        /* 2c) 所有已加载模块目录/<文件名>（DLL 与 .leno 同目录，包自包含） */
+        /* 2c) 所有已加载模块目录/<文件名>（DLL 与 .leno 同目录，包自包含）
+         *   同时支持 <完整相对路径>：模块把库按平台/ABI 分目录存放时，
+         *   `win/sqlite3.dll` 这类写法要能在每个候选目录里都试一遍。
+         *   为什么不能只靠上面的 2a-2：`mod_dir` 依赖 current_module_frame 的
+         *   source_path，而**编译期内联的模块**（典型：`import "X/lib/x.leno"` 后
+         *   打进 .lenb）这一项可能为空 ⇒ 2a-2 整段跳过，只剩这里能命中。
+         *   2026-11-18 实测就是这条把 LenoSqlite 的 win/linux/android 分目录救回来的。 */
         if (!handle) {
             extern int loaded_modules_get_count(void);
             extern ObjModule* loaded_modules_get(int index);
@@ -590,12 +613,27 @@ static Value ffi_load_func(int argc, Value* args) {
                 if (!m || !m->source_path) continue;
                 char mdir[MAX_PATH_LEN];
                 extract_dir(m->source_path, mdir, sizeof(mdir));
-                /* 跳过与当前模块目录相同的（2b 已搜索过） */
+                /* 跳过与当前模块目录相同的（2a-2 / 2b 已搜索过） */
                 if (mod_dir[0] != '\0' && strcmp(mdir, mod_dir) == 0) continue;
-                snprintf(search_path, sizeof(search_path), "%s%s", mdir, filename);
-                if (file_exists_utf8(search_path)) {
-                    handle = load_library_utf8(search_path);
-                    if (handle) resolved_path = strdup(search_path);
+
+                /* 先试带子目录的完整相对路径 */
+                if (last_sep) {
+                    snprintf(search_path, sizeof(search_path), "%s%s", mdir, path);
+#ifndef _WIN32
+                    { char* q; for (q = search_path; *q; q++) if (*q == '\\') *q = '/'; }
+#endif
+                    if (file_exists_utf8(search_path)) {
+                        handle = load_library_utf8(search_path);
+                        if (handle) resolved_path = strdup(search_path);
+                    }
+                }
+                /* 再试纯文件名 */
+                if (!handle) {
+                    snprintf(search_path, sizeof(search_path), "%s%s", mdir, filename);
+                    if (file_exists_utf8(search_path)) {
+                        handle = load_library_utf8(search_path);
+                        if (handle) resolved_path = strdup(search_path);
+                    }
                 }
             }
         }

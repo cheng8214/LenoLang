@@ -46,11 +46,11 @@ sdl3_ttf g_ttf = null
 
 export func ttfLib(): sdl3_ttf {
     if g_ttf == null {
-        string ext = if _os() == "windows" then ".dll" else ".so"
-        var path = dirs.script_dir() + "/../SDL3_ttf" + ext
-        if not files.exists(path) { path = dirs.script_dir() + "/SDL3_ttf" + ext }
-        if not files.exists(path) { path = "SDL3_ttf" + ext }
-        g_ttf = ffi.load(path)
+        // 平台子目录优先（lib/win/SDL3_ttf.dll、lib/linux/SDL3_ttf.so、lib/android/<abi>/libSDL3_ttf.so），
+        // 兜底裸名（打包后库被复制到 exe 同目录）。
+        // 路径算法统一由 sdl_core 提供 —— 别在这里重写一份，四处各写一份迟早走岔。
+        try { g_ttf = ffi.load(core.libPath("SDL3_ttf")) }
+        catch e { g_ttf = ffi.load(core.libBare("SDL3_ttf")) }
     }
     return g_ttf
 }
@@ -598,6 +598,20 @@ export func uiFontPath(): string { return _uiFontPath }
 // 平台默认中文字体文件（Windows 是 msyh.ttc，Linux 扫描结果）；找不到返回 ""
 export func defaultCjkFont(): string {
     if _os() == "windows" { return win_font_dir() + "/msyh.ttc" }
+    // ★ Android：系统字体全在 /system/fonts 这一层平铺，而且**没有** Linux 那套
+    //   /usr/share/fonts 目录树 ⇒ 原来直接落到 linux_font_find() 会去扫一堆不存在的目录
+    //   （实测：listdir 返回 null ⇒ font_scan 里 `for <null>` 直接抛运行时错误）。
+    //   这里按"越可能带中文越靠前"排一个候选表，取第一个存在的。
+    if _os() == "android" {
+        Array[string] cands = ["/system/fonts/NotoSansCJK-Regular.ttc",
+                               "/system/fonts/NotoSansSC-Regular.otf",
+                               "/system/fonts/DroidSansFallback.ttf",
+                               "/system/fonts/Roboto-Regular.ttf"]
+        for cands to p {
+            if files.exists(p) { return p }
+        }
+        return ""
+    }
     return linux_font_find()
 }
 
@@ -636,6 +650,9 @@ func font_scan(string dir, string key, int depth): string {
     if dir == "" or depth > 5 { return "" }
     Array[string] names = []
     try { names = dirs.listdir(dir) } catch e { return "" }
+    // ★ 目录不存在时 dirs.listdir 在部分平台（实测 Android）**不抛异常而是返回 null**
+    //   ⇒ 必须挡一下，否则下一行 `for names to nm` 会以「遍历对象是 null」中断整个程序。
+    if names == null { return "" }
     for names to nm {
         string low = nm.to_lower()
         bool isFont = low.ends_with(".ttf") or low.ends_with(".ttc") or low.ends_with(".otf")

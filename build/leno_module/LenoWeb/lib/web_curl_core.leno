@@ -266,14 +266,85 @@ export enum SslVersion {
 // ==================== DLL 加载 ====================
 
 // 加载 libcurl 动态库（全局缓存，避免重复加载）
-//   · Windows：随模块分发的 `libcurl-x64.dll`
-//   · POSIX  ：随模块分发的 `libcurl.so`（**curl 8.21.0** —— 与随包 `libcurl-x64.dll` 同版本；
-//              TLS 后端用源码静态链入的 mbedTLS 3.5.2，只依赖系统通用库 z/c/dl/rt/pthread/m）
-//              `ffi.load` 会按文件名搜索**已加载模块目录**，故传纯文件名即可命中本模块 lib/ ✓
-//              万一没有自带 .so，再退回系统 soname `libcurl.so.4`（发行版普遍自带）
-// 原实现 POSIX 侧找的是 `libcurl-x64.so`，本仓库并没有这个文件 ⇒ 加载必失败 ✗
 //
+// ★ 2026-11-19 起库文件**按平台分目录**存放（原来是 lib/ 下平铺，与其他模块统一）：
+//   · lib/win/libcurl-x64.dll       Windows（curl 8.21.0）
+//   · lib/linux/libcurl.so          Linux（与上面同版本；TLS 后端用源码静态链入的
+//                                   mbedTLS 3.5.2，只依赖系统通用库 z/c/dl/rt/pthread/m）
+//   · lib/android/<abi>/libcurl.so  本包暂无产物（见 leno.toml 的说明）
+//
+// 为什么传**平台相对路径**而不是裸名：库现在在 lib/ 的子目录里，裸名只会命中
+//   「模块目录/<名>」这一层，拼不到子目录 ✗
+//   ffi.load 的 2a-2 / 2c 两步会把相对路径接到**模块目录**后面 ⇒ 子目录能命中 ✓
+//   （见 src/module/ffi/ffi.c 的 ffi_load_func）
+//
+// 兜底顺序：平台子目录 → 裸名（打包后库被复制到 exe 同目录）→ 系统 soname
+//   `libcurl.so.4`（发行版普遍自带，不需要 -dev 包）。
+// 原实现 POSIX 侧找的是 `libcurl-x64.so`，本仓库并没有这个文件 ⇒ 加载必失败 ✗
 curl g_lib = null
+
+// `_arch()` 给的是 arm64 / x64，而 Android 的 ABI 目录叫 arm64-v8a / x86_64 ⇒ 必须显式转换。
+func abi_dir(): string {
+    var a = _arch()
+    if a == "arm64" { return "arm64-v8a" }
+    if a == "x64"   { return "x86_64" }
+    if a == "arm"   { return "armeabi-v7a" }
+    return "x86"
+}
+
+// ==================== TLS 证书：Android 上要自己拼 ====================
+// 桌面（Windows/macOS/发行版）的 libcurl 都编了**默认 CA 路径**，不设 CAINFO 也能验证证书。
+// 我们这份 Android 的 libcurl 是裸编的（没有 `--with-ca-bundle`），
+// 而 Android 也**没有**给 app 用的系统 CA 文件（BoringSSL 走 Java KeyStore，
+// native 侧拿不到）⇒ 不设 CAINFO 的话，任何 https 请求都会挂在
+// CURLE_PEER_FAILED_VERIFICATION(60)。
+//
+// 办法：系统证书目录 `/system/etc/security/cacerts/` 里每个文件**就是一张 PEM**
+// （文件名是证书 subject 的 hash，0644 可读）⇒ 首次用到时把它们拼成一个 bundle
+// 落到临时目录，之后复用。这样证书跟着系统更新走，不用随包塞一份会过期的 cacert.pem。
+//
+// 只在 android 上做：桌面维持原行为（走 libcurl 自己的默认路径），避免节外生枝。
+// 读一个文件，失败返回 def —— 系统证书目录里个别条目可能读不了，
+// 那种情况**只跳过那一条**，不能让整张 bundle 变空。
+// （写成小函数而不是就地 try/catch：空 catch 会被编译器判为"静默吞异常"✗）
+func _readOr(string p, string def): string {
+    try { return files.read(p) } catch e { return def }
+}
+
+func _sizeOr(string p, int def): int {
+    try { return files.size(p) } catch e { return def }
+}
+
+string g_caPath = ""
+bool g_caTried = false
+
+export func caBundle(): string {
+    if g_caTried { return g_caPath }
+    g_caTried = true
+    if _os() != "android" { return "" }
+
+    var srcDir = "/system/etc/security/cacerts"
+    Array[string] names = []
+    try { names = dirs.listdir(srcDir) } catch e { return "" }
+    if names.len() == 0 { return "" }
+
+    var outPath = dirs.join(_tmpdir(), "leno_ca_bundle.pem")
+    // 已有且像样（>1KB）就直接复用：每次启动重拼一遍纯浪费
+    if files.exists(outPath) and _sizeOr(outPath, 0) > 1024 {
+        g_caPath = outPath
+        return g_caPath
+    }
+
+    var buf = ""
+    for names to n {
+        buf = buf + _readOr(dirs.join(srcDir, n), "") + "\n"
+    }
+    if buf.byte_len() == 0 { return "" }
+
+    try { files.write(outPath, buf) } catch e { return "" }
+    g_caPath = outPath
+    return g_caPath
+}
 
 // ⚠ 这里是**懒加载**，全局在多线程间共享（见 web_net.leno 顶部注释）⇒ 首次并发调用时
 //   会有两个线程同时写 g_lib 的窗口。实测结论：**这一处是安全的，不必改造**——
@@ -285,12 +356,19 @@ curl g_lib = null
 export func lib(): curl {
     if g_lib == null {
         if _os() == "windows" {
-            g_lib = ffi.load("libcurl-x64.dll")
+            try { g_lib = ffi.load("win/libcurl-x64.dll") }
+            catch e { g_lib = ffi.load("libcurl-x64.dll") }
+        } else if _os() == "android" {
+            try { g_lib = ffi.load("android/" + abi_dir() + "/libcurl.so") }
+            catch e1 {
+                try { g_lib = ffi.load("libcurl.so") }
+                catch e2 { g_lib = ffi.load("libcurl.so.4") }
+            }
         } else {
-            try {
-                g_lib = ffi.load("libcurl.so")
-            } catch e {
-                g_lib = ffi.load("libcurl.so.4")
+            try { g_lib = ffi.load("linux/libcurl.so") }
+            catch e1 {
+                try { g_lib = ffi.load("libcurl.so") }
+                catch e2 { g_lib = ffi.load("libcurl.so.4") }
             }
         }
     }
