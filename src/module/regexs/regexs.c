@@ -28,7 +28,7 @@ static void arr_push_custom(ObjArray* arr, Value value) {
 }
 
 // ==================== 简单正则表达式引擎 ====================
-// 支持：. ^ $ * + ? [] () |
+// 支持：. ^ $ * + ? {n} {n,} {n,m} [] () |
 
 typedef enum {
     RE_CHAR,         // 普通字符
@@ -43,6 +43,7 @@ typedef enum {
     RE_STAR,         // *
     RE_PLUS,         // +
     RE_QUESTION,     // ?
+    RE_REPEAT,       // {n} / {n,} / {n,m}（2026-11-19 起支持；下界/上界在 rmin/rmax ✓）
     RE_EMPTY,        // 空表达式（`()` / `a|` 这类）—— **零宽成功**
     RE_BOUNDARY,     // \b —— 词边界（零宽断言 ✓）
     RE_NBOUNDARY,    // \B —— 非词边界（零宽断言 ✓）
@@ -58,6 +59,8 @@ typedef struct ReNode {
     char* class_chars;  // RE_CLASS/RE_CLASS_NEG 用
     int class_len;
     int group;             // RE_GROUP_START / RE_GROUP_END 用（组号从 1 起）
+    int rmin;              // RE_REPEAT 用：最少重复次数（`{n}` / `{n,}` / `{n,m}` 的 n）
+    int rmax;              // RE_REPEAT 用：最多重复次数（`{n,}` 为 RE_INF）
     struct ReNode* left;   // 左子节点（OR / 量词指向被重复的子链）
     struct ReNode* right;  // 右子节点（OR）
     struct ReNode* next;   // 下一个节点
@@ -191,6 +194,50 @@ static const char* re_shorthand_lower(char c, int* out_len) {
     return NULL;
 }
 
+// ==================== `{n}` / `{n,}` / `{n,m}` 量词（2026-11-19 新增）====================
+// 背景：本引擎此前**完全没有**花括号量词（文档曾误写"支持"，实测 `a{2}` 匹配 "aa" 是 false、
+//   匹配字面 "a{2}" 是 true ⇒ 静默错 ✗）；2026-10-01 改为"遇到 `{` `}` 就报错"挡住。
+//   但定长语义（电话 / 日期 / UUID / `#rrggbb` / 定长工号）没有它只能写
+//   `[0-9][0-9][0-9][0-9]`，改位数得数括号 ⇒ 现在补上真正的实现 ✓。
+//
+// 上限选 1000 而不是"随便多大"：`a{100000}` 会让 m_repeat 数 10 万次、还有 O(cnt²) 的贪婪回退，
+//   手滑写个大数字就变成"卡死"；这类写法 99% 是写错，编译期报错比运行期磨着强 ✓。
+#define RE_REPEAT_MAX 1000
+#define RE_INF        0x7fffffff        // `{n,}` 的上界 = 不限（与 `*` `+` 同口径）
+
+// 解析 `{n}` / `{n,}` / `{n,m}`：p 指向 '{'，成功返回 '}' **之后**的位置并写出 min/max；
+//   写法不合法（`{}` `{x}` `{2,1}` `{1001}` `{2` …）一律返回 NULL ⇒ 上层给具体报错 ✓
+static const char* re_parse_brace(const char* p, int* mn, int* mx) {
+    if (*p != '{') return NULL;
+    const char* q = p + 1;
+    if (*q < '0' || *q > '9') return NULL;      // `{}` / `{,3}` / `{x}` 都不认（下界必须显式写）
+    int lo = 0;
+    while (*q >= '0' && *q <= '9') {
+        lo = lo * 10 + (*q - '0');
+        if (lo > RE_REPEAT_MAX) return NULL;
+        q++;
+    }
+    int hi = lo;                                // `{n}` ⇒ 恰好 n 次
+    if (*q == ',') {
+        q++;
+        if (*q >= '0' && *q <= '9') {
+            hi = 0;
+            while (*q >= '0' && *q <= '9') {
+                hi = hi * 10 + (*q - '0');
+                if (hi > RE_REPEAT_MAX) return NULL;
+                q++;
+            }
+            if (hi < lo) return NULL;           // `{3,2}` 是写反了 ⇒ 报错，不悄悄改成 `{3}`
+        } else {
+            hi = RE_INF;                        // `{n,}` ⇒ 至少 n 次，上不封顶
+        }
+    }
+    if (*q != '}') return NULL;                 // `{2` / `{2x}` 都算不合法
+    *mn = lo;
+    *mx = hi;
+    return q + 1;
+}
+
 // 编译失败时给出**具体**消息（指出第一个不支持的转义）。
 //   为什么不设全局错误缓冲：那是静态可写状态，多线程下（threads 模块）会互相踩 ✗；
 //   这里改为把 pattern 再扫一遍 —— 无状态、可重入 ✓
@@ -213,12 +260,8 @@ static void re_report_invalid(const char* pattern) {
             q++;
             continue;
         }
-        // 量词写法（`{` / `}`）—— 与 shorthand 同理：不支持就**说清楚**，不要静默当字面量 ✓
-        if (*q == '{' || *q == '}') {
-            native_throw_error("无效的正则表达式：不支持量词 {}（本引擎只有 * + ?；"
-                               "要匹配字面花括号请写 \\{ 或 \\}）");
-            return;
-        }
+        // （花括号量词的校验在下面的"量词位置"那一遍里做 —— 那里有 prev / in_class 状态，
+        //   才能区分 `a{2}`（合法）与 `{2}`（前面没有可重复的元素）✓ 2026-11-19）
         // POSIX 字符类写法（`[:digit:]` 等）
         if (*q == '[' && *(q + 1) == ':') {
             native_throw_error("无效的正则表达式：不支持 POSIX 字符类 [:...:]"
@@ -331,6 +374,42 @@ static void re_report_invalid(const char* pattern) {
                 continue;
             }
             if (*q == '[') { in_class = 1; continue; }
+            // ★ 2026-11-19：花括号量词的三类诊断（写法错 / 前面没元素 / 非贪婪）。
+            //   此前这里一律报"不支持量词 {}"；现在支持了，但写错时仍要**指名**是哪种错 ✓
+            if (*q == '{') {
+                int mn = 0, mx = 0;
+                const char* after = re_parse_brace(q, &mn, &mx);
+                if (!after) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg),
+                             "无效的量词 '%.10s' —— 写法只有 {n} / {n,} / {n,m}"
+                             "（n、m 是 0~%d 的整数）。要匹配字面花括号请转义 \\{ \\}",
+                             q, RE_REPEAT_MAX);
+                    native_throw_error(msg);
+                    return;
+                }
+                if (prev == 0 || prev == '(' || prev == '|' ||
+                    prev == '*' || prev == '+' || prev == '?') {
+                    char msg[192];
+                    snprintf(msg, sizeof(msg),
+                             "无效的正则表达式：量词 '%.10s' 前面没有可重复的元素"
+                             "（要匹配字面花括号请写 \\{ \\}）", q);
+                    native_throw_error(msg);
+                    return;
+                }
+                if (*after == '?') {
+                    native_throw_error("无效的正则表达式：不支持非贪婪量词 '{n}?' —— "
+                                       "本引擎的量词**一律贪婪**（`*` `+` `?` `{n,m}` 都没有非贪婪写法）");
+                    return;
+                }
+                prev = '*';          // 视作"刚出现过量词"⇒ 紧跟另一个量词会被下面的检查挡住 ✓
+                q = after - 1;       // for 末尾还会 ++ ⇒ 正好停在 '}' 之后 ✓
+                continue;
+            }
+            if (*q == '}') {
+                native_throw_error("无效的正则表达式：多了一个 '}'（要匹配字面花括号请写 \\}）");
+                return;
+            }
             if (*q == '*' || *q == '+' || *q == '?') {
                 if (prev == 0 || prev == '(' || prev == '|' ||
                     prev == '*' || prev == '+' || prev == '?') {
@@ -561,9 +640,8 @@ static ReNode* parse_factor(const char** pp) {
             node->ch = *p++;
         }
     } else if (*p == '{' || *p == '}') {
-        // 量词 `{n}` / `{n,}` / `{n,m}` **不支持**（文档曾承诺，实现从来没有 —— 2026-10-01 实测：
-        //   `a{2}` 匹配 "aa" 是 false、匹配字面 "a{2}" 是 true ⇒ 静默错 ✗）⇒ 编译失败、响亮报错。
-        //   要匹配字面花括号请转义 `\{` / `\}`（在允许集合里 ✓）
+        // 走到这里说明花括号**不是**跟在某个元素后面（`{2}` / `a**{2}` / 单独 `}`）⇒ 非法。
+        //   具体文案由 re_report_invalid 的"量词位置"那一遍给（这里只负责让编译失败 ✓）
         return NULL;
     } else if (*p && strchr("*+?|)", *p) == NULL) {
         node = re_alloc_node();
@@ -583,6 +661,21 @@ static ReNode* parse_factor(const char** pp) {
         else if (*p == '+') quant->op = RE_PLUS;
         else quant->op = RE_QUESTION;
         p++;
+        node = quant;
+    } else if (*p == '{') {
+        // `{n}` / `{n,}` / `{n,m}`（2026-11-19 起真支持 ✓）
+        //   下界/上界直接存进节点，匹配器统一按 (min, max) 走 —— `*` 就是 (0,∞)、`+` 是 (1,∞)，
+        //   所以 m_repeat 里没有第二套逻辑 ✓。`{n,}` 的上界记作 RE_INF。
+        int mn = 0, mx = 0;
+        const char* after = re_parse_brace(p, &mn, &mx);
+        if (!after) return NULL;                 // 写法错 ⇒ 交给 re_report_invalid 报具体原因 ✓
+        ReNode* quant = re_alloc_node();
+        if (!quant) return NULL;
+        quant->op = RE_REPEAT;
+        quant->rmin = mn;
+        quant->rmax = mx;
+        quant->left = node;
+        p = after;
         node = quant;
     }
     
@@ -645,16 +738,20 @@ static bool m_replay(ReNode* unit, const char* pos, int k, ReCtx* ctx, const cha
     return true;
 }
 
-// 量词（* / +）：贪婪吃满 ⇒ 从最长往短回退，每次都用"剩余链"当续延再试 ✓
+// 量词（* / + / {n,m}）：贪婪吃满 ⇒ 从最长往短回退，每次都用"剩余链"当续延再试 ✓
+//   `*` ⇒ (0, ∞)、`+` ⇒ (1, ∞)、`{n,m}` ⇒ 节点里的 rmin/rmax（`{n,}` 的 rmax = RE_INF）。
+//   三种量词共用这一套：上界只影响"最多数几次"，下界只影响"回退能退到哪" ✓
 static bool m_repeat(ReNode* node, const char* pos, ReCtx* ctx, const char** out) {
     int min = (node->op == RE_PLUS) ? 1 : 0;
+    int max = RE_INF;
+    if (node->op == RE_REPEAT) { min = node->rmin; max = node->rmax; }
     int mark = ctx->nlog;
 
     // ① 先数出"最多能吃几次"（只计数：回退时用重放定位，省一个历史数组 ✓）
     int cnt = 0;
     {
         const char* p = pos;
-        while (true) {
+        while (cnt < max) {                     // `{n,m}` ⇒ 吃满 m 次就停（`{n,}` 的 m 是 RE_INF ✓）
             const char* nx;
             if (!m_chain(node->left, p, ctx, &nx)) break;
             if (nx == p) break;                 // 零宽单元 ⇒ 立刻停（防死循环 ✓）
@@ -764,6 +861,7 @@ static bool m_chain(ReNode* node, const char* pos, ReCtx* ctx, const char** out)
         }
         case RE_STAR:
         case RE_PLUS:
+        case RE_REPEAT:
             ok = m_repeat(node, pos, ctx, out);
             break;
         case RE_QUESTION: {

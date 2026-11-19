@@ -231,15 +231,33 @@ main() {
     }
     assert_eq(e2.has("无效的正则表达式"), true)
 
-    // 量词 `{n}` 与 POSIX 字符类 `[:digit:]` 同理**不支持** ⇒ 响亮报错
-    //   （以前 `a{2}` 被当字面 "a{2}"、`[[:digit:]]` 静默不匹配 —— 都是"看不出来"的错 ✗）
-    var e6 = ""
-    try {
-        regexs.match("aa", "a{2}")
-    } catch e {
-        e6 = _str(e.msg)
-    }
-    assert_eq(e6.has("不支持量词"), true)
+    // ★ 2026-11-19：`{n}` / `{n,}` / `{n,m}` **已支持**（此前一律报"不支持量词 {}"；
+    //   再往前是静默把 `a{2}` 当字面量 ⇒ "看着像数据不对"的最难查一类 ✗）
+    assert_eq(regexs.match("aa", "^a{2}$"), true, "①{n} 恰好两次")
+    assert_eq(regexs.match("a", "^a{2}$"), false, "①{n} 次数不足")
+    assert_eq(regexs.match("aaa", "^a{2}$"), false, "①{n} 不能多吃")
+    assert_eq(regexs.match("b", "^a{0}b$"), true, "①{0} 零次（零宽成功）")
+    assert_eq(regexs.match("ab", "^a{0}b$"), false, "①{0} 不吃 a")
+    assert_eq(regexs.match("aaaa", "^a{2,4}$"), true, "②{n,m} 上界内")
+    assert_eq(regexs.match("aaaaa", "^a{2,4}$"), false, "②{n,m} 超上界")
+    assert_eq(regexs.match("a", "^a{2,4}$"), false, "②{n,m} 不足下界")
+    assert_eq(regexs.match("aaaaa", "^a{2,}$"), true, "③{n,} 上不封顶")
+    assert_eq(regexs.match("a", "^a{2,}$"), false, "③{n,} 下界仍生效")
+    //   贪婪 + 回溯：`a{2,3}` 先吃满 3 个，发现后面 `b` 对不上要吐回 2 个 ✓
+    assert_eq(regexs.match("aaab", "^a{2,3}b$"), true, "④贪婪吃满后接字面量")
+    assert_eq(regexs.match("aab", "^a{2,3}b$"), true, "④只需吃 2 个")
+    assert_eq(regexs.match("aaaa", "^a{2,4}a$"), true, "④回退到 3 个才成功")
+    //   真实用途：定长字段再也不用 `[0-9][0-9][0-9][0-9]` 数括号 ✓
+    assert_eq(regexs.match("13812345678", "^[0-9]{11}$"), true, "⑤手机号 11 位")
+    assert_eq(regexs.match("1381234567", "^[0-9]{11}$"), false, "⑤少一位不匹配")
+    assert_eq(regexs.replace("13812345678", "^([0-9]{3})[0-9]{4}([0-9]{4})$", "$1****$2"),
+              "138****5678", "⑤手机号打码（组 + {n}）")
+    assert_eq(regexs.match("abab", "^(ab){2}$"), true, "⑥分组重复")
+    assert_eq(regexs.find("xxxxx123", "[0-9]{2,3}") , 5, "⑥子串查找定位到 5")
+    assert_eq(regexs.match("中文", "^.{2}$"), true, "⑦`{n}` 数的是字符（两个汉字）")
+    assert_eq(regexs.match("中", "^.{2}$"), false, "⑦一个汉字只有 1 个字符")
+
+    // POSIX 字符类 `[:digit:]` 仍**不支持** ⇒ 响亮报错 ✓
 
     var e7 = ""
     try {
