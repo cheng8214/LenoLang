@@ -9,6 +9,10 @@
     <!-- 网络：sockets 模块要建 TCP/UDP 连接就得有它；少了会在 connect 时抛 SecurityException -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- SDL3 的渲染器走 GLES（SDL 用 EGL + GLES2/3 把 SDLSurface 包成窗口） -->
+    <uses-feature android:glEsVersion="0x00020000" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
     <application
         android:label="Leno Demo"
         android:allowBackup="false"
@@ -26,5 +30,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- SDL3 形态宿主：继承 org.libsdl.app.SDLActivity。
+             configChanges 必须覆盖 SDL 官方清单里那一串：少一个，旋转/切语言时
+             Activity 会被重建，而 SDL 的 native 状态不会跟着重建 ⇒ 黑屏或直接退出。 -->
+        <activity
+            android:name=".SdlActivity"
+            android:exported="true"
+            android:label="Leno SDL3"
+            android:alwaysRetainTaskState="true"
+            android:launchMode="singleInstance"
+            android:screenOrientation="fullSensor"
+            android:preferMinimalPostProcessing="true"
+            android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation"
+            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" />
     </application>
 </manifest>

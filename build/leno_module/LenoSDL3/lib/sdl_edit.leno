@@ -474,8 +474,17 @@ _drawBorder = opts.get("border", true)
     // 注册上下文菜单自定义回调（内置动作执行之后触发，参数为项 id）
     func on_context_select(func(string):void cb) { onCtxSelect = cb }
     func set_word_wrap(bool w)  { wordWrap = w; scrollX = 0.0; drDirty = true; invalidate_sb() }
-    func focus()    { focused = true; blinkTimer?.start() }
-    func blur()     { focused = false; blinkTimer?.stop() }
+    // ★ Android：软键盘只在 SDL_StartTextInput 之后才弹（而且会挤小 Surface）⇒
+    //   不能在窗口注册时无条件开（见 sdl_window.registerOnly 的注释），改成聚焦时开、失焦时关。
+    //   桌面照旧：window.registerOnly 已经开过文本输入，这里再开一次是无副作用的空操作。
+    func focus() {
+        focused = true; blinkTimer?.start()
+        if _os() == "android" and hwnd != null { core.startTextInput(hwnd) }
+    }
+    func blur() {
+        focused = false; blinkTimer?.stop()
+        if _os() == "android" and hwnd != null { core.stopTextInput(hwnd) }
+    }
 
     // 保存当前状态到撤销栈
     pri func save_undo() {

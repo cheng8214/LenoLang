@@ -1,0 +1,83 @@
+// ============================================================================
+// s1_sdlwin.leno —— SDL3 **开窗**探针（跑在 com.leno.app.SdlActivity 里）
+// ----------------------------------------------------------------------------
+// 为什么单独一个前缀：c* 探针跑在 MainActivity（TextView 宿主）里，那里 libSDL3.so
+//   是被 dlopen 起来的、没有 JavaVM ⇒ SDL_Init(VIDEO) 必失败。
+//   s* 探针跑在 SdlActivity（继承 org.libsdl.app.SDLActivity）里，SDL3 由
+//   System.loadLibrary 加载、VM 跑在 SDL 主线程 ⇒ 开窗/渲染都能真跑。
+//
+// 本探针不等人点：画 90 帧就退出，用 `bash android/run_probes.sh s1_sdlwin` 跑。
+// ============================================================================
+import "../../../build/leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.(Window, Size)
+use SDL3.WindowFlag
+
+main() {
+    print("== s1 SDL3 开窗 ==")
+    int okN = 0
+    int ngN = 0
+
+    bool v = SDL3.initVideo()
+    if v { okN = okN + 1; print("OK initVideo") } else { ngN = ngN + 1; print("NG initVideo — " + SDL3.getError()) }
+
+    Window win = SDL3.createWindow({title: "s1", w: 720, h: 1280, flags: WindowFlag.FULLSCREEN})
+    if win.ok { okN = okN + 1; print("OK createWindow") } else { ngN = ngN + 1; print("NG createWindow — " + SDL3.getError()) }
+
+    if win.ok {
+        Size d = win.getSizeInPixels()
+        if d.w > 0 and d.h > 0 {
+            okN = okN + 1
+            print("OK windowSize " + _str(d.w) + "x" + _str(d.h))
+        } else {
+            ngN = ngN + 1
+            print("NG windowSize 0x0")
+        }
+
+        Renderer ren = SDL3.createRenderer(win.getHandle())
+        var[int, int](ow, oh) = ren.getOutputSize()
+        if ow > 0 and oh > 0 {
+            okN = okN + 1
+            print("OK createRenderer " + _str(ow) + "x" + _str(oh))
+        } else {
+            ngN = ngN + 1
+            print("NG createRenderer — " + SDL3.getError())
+        }
+
+        // ---- 画 90 帧（约 1.5 秒），每帧都 present ----
+        Event ev = SDL3.createEvent()
+        int t0 = SDL3.getTicks()
+        int presented = 0
+        float W = _float(ow)
+        float H = _float(oh)
+        // ⚠ 用 while 自己数帧，而不是 `for 0:89`：需要在收到 quit 时提前跳出，
+        //   而循环变量在体内赋值不可靠（`for` 的闭区间语义也容易数错一帧）。
+        int f = 0
+        while f < 90 {
+            while ev.poll() {
+                if ev.isQuit() or ev.isWindowClose() { f = 900 }
+            }
+            ren.setColor(#0B1020FF)
+            ren.clear()
+            ren.setColor(#3DDC84FF)
+            float bw = W * 0.6
+            ren.fillRect((W - bw) * 0.5, H * 0.4, bw, 60.0)
+            ren.setColor(#FFC857FF)
+            ren.fillCircle(W * 0.5, H * 0.6, 40.0)
+            if ren.present() { presented = presented + 1 }
+            SDL3.delay(16)
+            f = f + 1
+        }
+        int dur = SDL3.getTicks() - t0
+
+        if presented > 0 { okN = okN + 1; print("OK present " + _str(presented) + " 帧") }
+        else { ngN = ngN + 1; print("NG present 一次都没成功") }
+
+        if dur > 0 and presented > 0 { okN = okN + 1; print("OK 帧循环 " + _str(dur) + "ms") }
+        else { ngN = ngN + 1; print("NG 帧循环 时长异常") }
+    }
+
+    SDL3.quit()
+    print("结果: ok=" + _str(okN) + " ng=" + _str(ngN))
+}

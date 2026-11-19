@@ -723,6 +723,24 @@ export func createFontAuto(float ptsize): Font {
         print("[font] 候选字体全失败（雅黑/等线/黑体/宋体）—— 界面会用 SDL_ttf 内置字体")
         return createFont(dir + "/msyh.ttc", ptsize)
     }
+    // ★ Android：系统字体全部平铺在 /system/fonts，**没有** Linux 那套 /usr/share/fonts 目录树。
+    //   原来这里没有 android 分支 ⇒ 直接落到下面的 linux_font_find() 递归扫描 ⇒
+    //   扫不到任何东西、打印"没扫到可用中文字体"、最后拿一个不存在的 DejaVu 路径去开
+    //   ⇒ 界面上所有 Label/Button 的文字都是**空白**（实测：控件都画出来了，字一个没有）。
+    if _os() == "android" {
+        Array[string] cands = ["/system/fonts/NotoSansCJK-Regular.ttc",
+                               "/system/fonts/NotoSerifCJK-Regular.ttc",
+                               "/system/fonts/DroidSansFallback.ttf",
+                               "/system/fonts/Roboto-Regular.ttf"]
+        for cands to p {
+            Font cachedA = _findCachedFont(p, ptsize)
+            if cachedA.ok { return cachedA }
+            Font fa = createFont(p, ptsize)
+            if fa.ok { return fa }
+        }
+        print("[font] android 没找到系统字体（/system/fonts）")
+        return createFont(cands[0], ptsize)
+    }
     // Linux: 各发行版字体路径都不一样（Arch 在 /usr/share/fonts/noto/、Fedora 在
     //   google-noto-cjk/…）⇒ **按关键字在常见根目录里递归找**，不写死单一路径 ✓
     string found = linux_font_find()

@@ -1,0 +1,141 @@
+// ============================================================================
+// app_widget.leno —— 用 LenoSDL3 的控件层在 Android 上做一个真界面
+// ----------------------------------------------------------------------------
+// 目的：证明那 3.2 万行的控件层（Button / Label / CheckBox / Slider）不是只能在桌面跑
+//   —— 同一份 .leno、同一个 libSDL3.so，在安卓上照样能画、能点。
+//
+// 界面：
+//   标题 + 大号计数 + 三个按钮（-1 / +1 / 清零）+ 复选框 + 滑块 + 退出按钮
+// 交互全部走控件自己的点击/变更回调，onEvent 只负责打印触摸坐标与退出判定。
+// ============================================================================
+import "../../../build/leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+import files
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.(Window, Size)
+use SDL3.WindowFlag
+
+int gCount = 0
+int gTaps = 0
+bool gQuit = false
+
+main() {
+    print("== Leno SDL3 控件层 / Android ==")
+    print("os=" + _os() + " arch=" + _arch())
+
+    SDL3.ttfInit()
+    Window win = SDL3.createWindow({title: "Leno 控件层", w: 720, h: 1280, flags: WindowFlag.FULLSCREEN})
+    if not win.ok {
+        print("NG createWindow — " + SDL3.getError())
+        return
+    }
+    Size d = win.getSize()
+    int W = d.w
+    int H = d.h
+    print("窗口 " + _str(W) + "x" + _str(H))
+
+    // ---------------- 标题 ----------------
+    win.addLabel({x: 48, y: 90, h: 70,
+        text: "Leno 控件层", font_size: 52, text_color: #FFFFFFFF})
+    win.addLabel({x: 48, y: 170, h: 44,
+        text: "同一份 .leno 在安卓上跑", font_size: 24, text_color: #8FA6C8FF})
+
+    // ---------------- 大号计数 ----------------
+    var num = win.addLabel({x: 48, y: 240, h: 200,
+        text: "0", font_size: 150, text_color: #3DDC84FF})
+
+    // ---------------- 三个按钮 ----------------
+    int bw = 190
+    int bh = 120
+    int gap = 15
+    int bx0 = (W - bw * 3 - gap * 2) / 2
+    int by = 480
+
+    var bMinus = SDL3.createButton({x: bx0, y: by, w: bw, h: bh, text: "-1",
+        font_size: 44, radius: 14, bg_color: #2A3A5CFF, text_color: #FFFFFFFF})
+    var bPlus = SDL3.createButton({x: bx0 + bw + gap, y: by, w: bw, h: bh, text: "+1",
+        font_size: 44, radius: 14, bg_color: #3DDC84FF, text_color: #0B1020FF})
+    var bZero = SDL3.createButton({x: bx0 + (bw + gap) * 2, y: by, w: bw, h: bh, text: "清零",
+        font_size: 36, radius: 14, bg_color: #FFC857FF, text_color: #0B1020FF})
+    win.add(bMinus)
+    win.add(bPlus)
+    win.add(bZero)
+
+    bMinus.on_click(func() {
+        gCount = gCount - 1
+        num.set_text(_str(gCount))
+        print("click -1 → " + _str(gCount))
+    })
+    bPlus.on_click(func() {
+        gCount = gCount + 1
+        num.set_text(_str(gCount))
+        print("click +1 → " + _str(gCount))
+    })
+    bZero.on_click(func() {
+        gCount = 0
+        num.set_text("0")
+        print("click 清零 → 0")
+    })
+
+    // ---------------- 复选框 ----------------
+    var chk = SDL3.createCheckBox({x: bx0, y: 660, box: 40, gap: 14,
+        text: "计数变绿", font_size: 30, text_color: #FFFFFFFF,
+        checked_color: #3DDC84FF, unchecked_color: #8FA6C8FF})
+    win.add(chk)
+    chk.on_change(func(bool on) {
+        if on { num.set_text_color(#3DDC84FF) } else { num.set_text_color(#FFFFFFFF) }
+        print("checkbox → " + (if on then "on" else "off"))
+    })
+
+    // ---------------- 滑块 ----------------
+    win.addLabel({x: bx0, y: 740, h: 40,
+        text: "滑块（拖一下）", font_size: 24, text_color: #8FA6C8FF})
+    var sld = SDL3.createSlider({x: bx0, y: 790, w: W - bx0 * 2, h: 50,
+        min: 0.0, max: 100.0, value: 30.0, step: 1.0})
+    win.add(sld)
+    var bar = win.addLabel({x: bx0, y: 860, h: 50,
+        text: "值 = 30", font_size: 28, text_color: #5AA9FFFF})
+    sld.on_change(func(float v) {
+        bar.set_text("值 = " + _str(_int(v)))
+        print("slider → " + _str(_int(v)))
+    })
+
+    // ---------------- 触摸计数 ----------------
+    var tapLbl = win.addLabel({x: bx0, y: 940, h: 44,
+        text: "触摸 0 次", font_size: 26, text_color: #8FA6C8FF})
+
+    // ---------------- 退出 ----------------
+    var bQuit = SDL3.createButton({x: bx0, y: H - 200, w: W - bx0 * 2, h: 110,
+        text: "退出", font_size: 40, radius: 14, bg_color: #E05050FF, text_color: #FFFFFFFF})
+    win.add(bQuit)
+    bQuit.on_click(func() {
+        print("退出按钮")
+        gQuit = true
+        SDL3.exitApp()
+    })
+
+    print("界面就绪：按钮 / 复选框 / 滑块")
+
+    // ---------------- 事件 + 渲染 ----------------
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == 41 { return false }   // ESC
+            if e.isMouseButtonDown() {
+                gTaps = gTaps + 1
+                var[float, float](mx, my) = e.mousePos()
+                tapLbl.set_text("触摸 " + _str(gTaps) + " 次 @ " + _str(_int(mx)) + "," + _str(_int(my)))
+                print("tap " + _str(_int(mx)) + "," + _str(_int(my)))
+            }
+            if gQuit { return false }
+            return true
+        },
+        func(Renderer r) {
+            r.setColor(#0B1020FF)
+            r.clear()
+        }
+    )
+
+    SDL3.ttfQuit()
+    print("结果: 计数=" + _str(gCount) + " 触摸=" + _str(gTaps))
+}

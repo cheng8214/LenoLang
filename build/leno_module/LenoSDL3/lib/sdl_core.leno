@@ -480,7 +480,8 @@ export const SDL_Color_SIZE  = 4
 // ★ 2026-11-19 起库文件**按平台分目录**存放（原来是 lib/ 下平铺，与 LenoSqlite 等对齐）：
 //     lib/win/SDL3.dll / SDL3_image.dll / SDL3_ttf.dll / libwebp-7.dll …
 //     lib/linux/SDL3.so / SDL3_image.so / SDL3_ttf.so / libwebp.so.7 …
-//     lib/android/<abi>/…   ← 本包暂无产物（SDL3 的 Android 产物要走官方 Gradle/CMake 工程）
+//     lib/android/<abi>/…   ← 双 ABI 产物已入库（2026-11-19）；开窗需要 SdlActivity 宿主，
+//                              见 android/app/java/com/leno/app/SdlActivity.java 与 docs/Android正经App路线.md 5.4
 //
 // 为什么传**平台相对路径**而不是裸文件名：库现在在 lib/ 的子目录里，裸名只会命中
 //   「模块目录/<名>」这一层，拼不到子目录 ✗

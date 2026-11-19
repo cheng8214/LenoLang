@@ -13,12 +13,14 @@ set -u
 ADB="${ADB:-adb}"
 PKG=com.leno.app
 ACT=.MainActivity
+ACT_SDL=.SdlActivity   # s* 探针要开窗 ⇒ 必须跑在 SDL 宿主里（见 SdlActivity.java）
 ASSETS="$(cd "$(dirname "$0")" && pwd)/app/assets"
 
 if [ $# -gt 0 ]; then
     LIST="$*"
 else
-    LIST=$(cd "$ASSETS" && ls -1 c*.leno 2>/dev/null | sed 's/\.leno$//' | sort -V)
+    # c* = 纯文本宿主探针（MainActivity）；s* = SDL 宿主探针（SdlActivity）
+    LIST=$(cd "$ASSETS" && ls -1 c*.leno s*.leno 2>/dev/null | sed 's/\.leno$//' | sort -V)
 fi
 
 # 清空 logcat 并**确认清干净**。
@@ -48,8 +50,10 @@ printf '%-12s %6s %6s  %s\n' ------------ ------ ------ ------------------------
 total_ok=0; total_ng=0
 for p in $LIST; do
     clear_log
+    act="$ACT"
+    case "$p" in s*) act="$ACT_SDL";; esac
     "$ADB" shell "am force-stop $PKG" >/dev/null 2>&1
-    "$ADB" shell "am start -n $PKG/$ACT --es asset $p.lenb" >/dev/null 2>&1
+    "$ADB" shell "am start -n $PKG/$act --es asset $p.lenb" >/dev/null 2>&1
 
     # 轮询等探针自己打出 `== cX 结果: ... ==`，而不是死等固定秒数。
     # 为什么：固定 sleep 会在"探针已经跑完、但最后几条还堵在 logcat 缓冲里"时漏计

@@ -1613,7 +1613,11 @@ export struct Window {
 
     // 仅注册窗口（不启动主循环），用于多窗口场景：先逐个 registerOnly，最后 run() 启动循环
     func registerOnly(EventHandler onEvent, RenderCallback onRender) {
-        core.startTextInput(handle)      // 启用文本输入（供 Edit 控件使用）
+        // ★ Android：SDL_StartTextInput 会**立刻弹出软键盘**，而且键盘把 Surface 挤小
+        //   ⇒ 窗口高度从 1217 变成 ~600、所有控件位置全错（实测截图：键盘占了下半屏）。
+        //   桌面必须有它（Edit 控件靠 SDL_EVENT_TEXT_INPUT 收字），所以只在非 Android 上无条件开；
+        //   Android 要打字时由应用显式调用 SDL3.startTextInput(win.getHandle())。
+        if _os() != "android" { core.startTextInput(handle) }
         // ★ 阻塞等待 OS 完成异步窗口状态变更（如创建时带 MAXIMIZED 标志的窗口）。
         //   SDL3 官方 API：SDL_SyncWindow 阻塞直到所有 pending 的窗口状态变更被 OS 应用。
         //   不调用此函数时，Windows 上最大化是异步的——getSize() 可能返回请求尺寸（1000x680）

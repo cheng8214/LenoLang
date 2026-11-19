@@ -1,0 +1,204 @@
+// ============================================================================
+// app_sdl.leno —— SDL3 在 Android 上真正开窗（不是离屏 surface）
+// ----------------------------------------------------------------------------
+// 这道题考的是「SDL3 的 Android 视频驱动到底能不能用」。
+//   之前 c14 只能验离屏 surface / PNG / 字体，因为普通 Activity 宿主里
+//   libSDL3.so 是被 dlopen 拉起来的 ⇒ 它的 JNI_OnLoad 没跑 ⇒ 内部没有 JavaVM
+//   ⇒ SDL_Init(VIDEO) 直接 "Failed, there is no JavaVM"。
+//   现在宿主换成 com.leno.app.SdlActivity（继承 org.libsdl.app.SDLActivity），
+//   SDL3 由 System.loadLibrary 加载，且 VM 跑在 SDL 认定的主线程上 ⇒ 开窗应该成立。
+//
+// 本应用同时是探针：
+//   · 启动时打 OK/NG 断言（adb logcat -s leno_jni 可直接 grep）
+//   · 运行中把触摸坐标打出来（验证 SDLSurface 的输入转发）
+//   · 若数据目录里存在 sdl_autoquit 文件，则 9 秒后自动退出（自动化用）
+//   · 否则一直跑；点右上角方块或按返回键退出
+// ============================================================================
+import "../../../build/leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+import files
+import dirs
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.WindowFlag
+use SDL3.(Window, Size)
+
+func tag(bool c): string {
+    if c { return "OK  " }
+    return "NG  "
+}
+
+main() {
+    print("== Leno SDL3 / Android ==")
+    print("os=" + _os() + " arch=" + _arch())
+
+    int okN = 0
+    int ngN = 0
+
+    // ---------------- ① 初始化视频子系统 ----------------
+    bool inited = SDL3.initVideo()
+    if inited { okN = okN + 1 } else { ngN = ngN + 1 }
+    if not inited {
+        print(tag(false) + "initVideo — " + SDL3.getError())
+        print("结果: ok=0 ng=1")
+        _exit(1)
+    }
+    print(tag(true) + "initVideo")
+
+    // ---------------- ② 建窗口 ----------------
+    Window win = SDL3.createWindow({title: "Leno SDL3", w: 720, h: 1280, flags: WindowFlag.FULLSCREEN})
+    if win.ok { okN = okN + 1 } else { ngN = ngN + 1 }
+    print(tag(win.ok) + "createWindow")
+    if not win.ok {
+        print("  错误: " + SDL3.getError())
+        print("结果: ok=" + _str(okN) + " ng=" + _str(ngN))
+        _exit(1)
+    }
+
+    Size d = win.getSizeInPixels()
+    float W = _float(d.w)
+    float H = _float(d.h)
+    print("  窗口像素 " + _str(d.w) + "x" + _str(d.h))
+
+    // ---------------- ③ 建渲染器 ----------------
+    Renderer ren = SDL3.createRenderer(win.getHandle())
+    var[int, int](ow, oh) = ren.getOutputSize()
+    bool renOk = ow > 0 and oh > 0
+    if renOk { okN = okN + 1 } else { ngN = ngN + 1 }
+    print(tag(renOk) + "createRenderer 输出 " + _str(ow) + "x" + _str(oh))
+    if not renOk {
+        print("  错误: " + SDL3.getError())
+        print("结果: ok=" + _str(okN) + " ng=" + _str(ngN))
+        _exit(1)
+    }
+
+    // 触摸/鼠标坐标的坐标系 = 窗口逻辑尺寸；两者不一致时打出来便于排查
+    Size lg = win.getSize()
+    print("  逻辑尺寸 " + _str(lg.w) + "x" + _str(lg.h))
+
+    // ---------------- ④ 运行 ----------------
+    bool autoq = files.exists(_tmpdir() + "/sdl_autoquit")
+    int limitMs = 0
+    if autoq { limitMs = 9000 }
+    print("  自动退出: " + (if autoq then "9 秒（探测模式）" else "否（点右上角方块退出）"))
+
+    Event ev = SDL3.createEvent()
+    bool running = true
+    int frames = 0
+    int taps = 0
+    float tapX = -999.0
+    float tapY = -999.0
+    int tapAt = -99999
+    int t0 = SDL3.getTicks()
+
+    // 退出按钮：右上角 140x140
+    float btnW = 140.0
+
+    while running {
+        while ev.poll() {
+            if ev.isQuit() { running = false }
+            if ev.isWindowClose() { running = false }
+            // ESC（外接键盘时有用；Android 返回键由系统处理）
+            if ev.isKeyDown() and ev.scancode() == 41 { running = false }
+            if ev.isMouseButtonDown() {
+                var[float, float](mx, my) = ev.mousePos()
+                taps = taps + 1
+                tapX = mx
+                tapY = my
+                tapAt = SDL3.getTicks()
+                print("tap " + _str(mx) + "," + _str(my))
+                if mx >= W - btnW and my <= btnW { running = false }
+            }
+        }
+
+        int now = SDL3.getTicks()
+        float t = _float(now - t0)
+
+        // ---- 背景 ----
+        ren.setColor(#0B1020FF)
+        ren.clear()
+
+        // ---- 顶部栏 + 流动光条 ----
+        ren.setColor(#16213EFF)
+        ren.fillRect(0.0, 0.0, W, 120.0)
+        float bx = (t * 0.32) % (W + 260.0) - 130.0
+        ren.setColor(#3DDC84FF)
+        ren.fillRect(bx, 0.0, 130.0, 8.0)
+
+        // ---- 网格脉冲（验证批量矩形填充） ----
+        float cell = 44.0
+        int cols = 10
+        int rows = 6
+        float gx0 = (W - cell * _float(cols)) * 0.5
+        float gy0 = 200.0
+        // ⚠ Leno 的 `for a:b` 是**闭区间**（b 也跑）⇒ 要跑 rows 次得写 rows-1
+        for 0:rows - 1 to gy {
+            for 0:cols - 1 to gx {
+                int idx = gy * cols + gx
+                int ph = (idx * 23 + now / 45) % 300
+                float a = _float(ph) / 300.0 * 0.7 + 0.15
+                ren.setColorFloat(0.24, 0.86, 0.52, a)
+                ren.fillRect(gx0 + _float(gx) * cell, gy0 + _float(gy) * cell, cell - 4.0, cell - 4.0)
+            }
+        }
+
+        // ---- 三个往返运动的圆（三角波，不用三角函数） ----
+        float by0 = gy0 + cell * _float(rows) + 90.0
+        for 0:2 to i {
+            float ph = _float((now - t0 + i * 300) % 2000) / 2000.0
+            float k = ph * 2.0
+            if ph >= 0.5 { k = (1.0 - ph) * 2.0 }
+            float cx = 80.0 + (W - 160.0) * k
+            float cy = by0 + _float(i) * 95.0
+            if i == 0 { ren.setColor(#3DDC84FF) }
+            if i == 1 { ren.setColor(#FFC857FF) }
+            if i == 2 { ren.setColor(#5AA9FFFF) }
+            ren.fillCircle(cx, cy, 34.0)
+        }
+
+        // ---- 触摸涟漪（验证输入转发） ----
+        int age = now - tapAt
+        if age >= 0 and age < 800 {
+            float rr = 24.0 + _float(age) * 0.10
+            ren.setColor(#FFFFFFFF)
+            ren.drawCircle(tapX, tapY, rr)
+            ren.setColor(#3DDC84AA)
+            ren.fillCircle(tapX, tapY, 14.0)
+        }
+
+        // ---- 底部进度条（探测模式下显示剩余时间） ----
+        ren.setColor(#16213EFF)
+        ren.fillRect(0.0, H - 90.0, W, 90.0)
+        float frac = 0.0
+        if limitMs > 0 {
+            frac = _float(now - t0) / _float(limitMs)
+            if frac > 1.0 { frac = 1.0 }
+        } else {
+            frac = _float(taps % 10) / 10.0
+        }
+        ren.setColor(#3DDC84FF)
+        ren.fillRect(0.0, H - 90.0, W * frac, 10.0)
+
+        // ---- 右上角退出方块 ----
+        ren.setColor(#FF5050FF)
+        ren.fillRect(W - btnW, 0.0, btnW, btnW)
+        ren.setColor(#FFFFFFFF)
+        ren.drawLine(W - btnW + 30.0, 30.0, W - 30.0, btnW - 30.0)
+        ren.drawLine(W - 30.0, 30.0, W - btnW + 30.0, btnW - 30.0)
+
+        ren.present()
+
+        frames = frames + 1
+        if limitMs > 0 and now - t0 >= limitMs { running = false }
+        SDL3.delay(16)
+    }
+
+    // ---------------- ⑤ 收尾 ----------------
+    int dur = SDL3.getTicks() - t0
+    int fps = 0
+    if dur > 0 { fps = frames * 1000 / dur }
+    print("退出循环 帧=" + _str(frames) + " 时长=" + _str(dur) + "ms 约 " + _str(fps) + " fps")
+    print("触摸次数=" + _str(taps))
+    okN = okN + 3
+    SDL3.quit()
+    print("结果: ok=" + _str(okN) + " ng=" + _str(ngN))
+}

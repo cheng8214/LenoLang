@@ -124,6 +124,11 @@ mkdir -p "$OUT/gen"
 
 echo "== 3/6 编译 Java =="
 rm -rf "$OUT/classes" && mkdir -p "$OUT/classes"
+# SDL3 的 Java 宿主类（org.libsdl.app.*）必须打进 APK —— 见 SdlActivity.java 顶部注释：
+#   libSDL3.so 的 JNI_OnLoad 会 FindClass("org/libsdl/app/SDLActivity") 并 RegisterNatives，
+#   宿主里没有这个类就直接崩（ART abort）。源码就在模块里，不额外下载。
+SDL_JAVA="$ROOT/build/leno_module/LenoSDL3/src/sdl3/android-project/app/src/main/java"
+[ -d "$SDL_JAVA" ] || { echo "找不到 SDL3 的 Java 宿主源码: $SDL_JAVA"; exit 1; }
 # 注意：**不能**用 -bootclasspath android.jar —— android.jar 里的
 # java.lang.invoke.LambdaMetafactory 是空壳（缺 metafactory 方法签名），
 # lambda 一编译就报 "Unable to find method metafactory"。放 -classpath 上，
@@ -132,8 +137,9 @@ rm -rf "$OUT/classes" && mkdir -p "$OUT/classes"
     -source 8 -target 8 -nowarn -encoding UTF-8 \
     -classpath "$SDK/platforms/android-34/android.jar" \
     -d "$OUT/classes" \
-    $(find "$APP/java" "$OUT/gen" -name '*.java') > "$OUT/javac.log" 2>&1 || {
+    $(find "$APP/java" "$OUT/gen" "$SDL_JAVA" -name '*.java') > "$OUT/javac.log" 2>&1 || {
         cat "$OUT/javac.log"; echo "javac 失败"; exit 1; }
+echo "   java 源文件: $(find "$APP/java" "$SDL_JAVA" -name '*.java' | wc -l) 个"
 
 echo "== 4/6 dex（d8） =="
 rm -rf "$OUT/dex" && mkdir -p "$OUT/dex"

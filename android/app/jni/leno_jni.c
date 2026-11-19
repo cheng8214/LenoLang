@@ -99,12 +99,17 @@ static void outbuf_emit_lines(JNIEnv* env, OutBuf* b, int force) {
         cut = i;
     }
     mirror_to_logcat(b->data, cut);
-    jbyteArray arr = (*env)->NewByteArray(env, (jsize)cut);
-    if (!arr) return;
-    (*env)->SetByteArrayRegion(env, arr, 0, (jsize)cut, (const jbyte*)b->data);
-    (*env)->CallVoidMethod(env, g_sink, g_on_output, arr);
-    (*env)->DeleteLocalRef(env, arr);
-    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+
+    // SDL 形态的宿主没有 TextView（界面是 SDLSurface）⇒ g_sink 为空，
+    // 输出只走 logcat。这里必须容忍空 sink，否则整条 print 链路会段错误。
+    if (g_sink && g_on_output) {
+        jbyteArray arr = (*env)->NewByteArray(env, (jsize)cut);
+        if (!arr) return;
+        (*env)->SetByteArrayRegion(env, arr, 0, (jsize)cut, (const jbyte*)b->data);
+        (*env)->CallVoidMethod(env, g_sink, g_on_output, arr);
+        (*env)->DeleteLocalRef(env, arr);
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    }
     // 去掉已发出的部分；缓冲区缩到 0 但保留已分配的堆（下一行直接复用）
     memmove(b->data, b->data + cut, b->len - cut);
     b->len -= cut;
@@ -134,16 +139,22 @@ static void* reader_main(void* arg) {
 }
 
 // 接管 fd 1。必须在第一次跑字节码**之前**调用，且只调一次。
+// sink 允许为 NULL（SDL 宿主没有 TextView）⇒ 只镜像 logcat。
 static int stdout_hook_install(JNIEnv* env, jobject sink) {
     if (g_ready) return 1;
 
-    g_sink = (*env)->NewGlobalRef(env, sink);
-    if (!g_sink) return 0;
+    if (sink && env) {
+        g_sink = (*env)->NewGlobalRef(env, sink);
+        if (!g_sink) return 0;
 
-    jclass cls = (*env)->GetObjectClass(env, sink);
-    g_on_output = (*env)->GetMethodID(env, cls, "onOutput", "([B)V");
-    (*env)->DeleteLocalRef(env, cls);
-    if (!g_on_output) return 0;
+        jclass cls = (*env)->GetObjectClass(env, sink);
+        g_on_output = (*env)->GetMethodID(env, cls, "onOutput", "([B)V");
+        (*env)->DeleteLocalRef(env, cls);
+        if (!g_on_output) return 0;
+    } else {
+        g_sink = NULL;
+        g_on_output = NULL;
+    }
 
     int fds[2];
     if (pipe(fds) != 0) { LOGE("pipe 失败 errno=%d", errno); return 0; }
@@ -201,7 +212,7 @@ static void stdout_hook_restore(void) {
 }
 
 // ---------------------------------------------------------------------------
-// 【已放弃的尝试，留档免得下次又踩】SDL3 的 JavaVM 是靠它自己的 JNI_OnLoad 缓存的，
+// 【历史坑，留档免得下次又踩】SDL3 的 JavaVM 是靠它自己的 JNI_OnLoad 缓存的，
 // 而 dlopen 不会触发 JNI_OnLoad ⇒ SDL 内部报 "Failed, there is no JavaVM"，
 // Android 上 SDL_Init 直接失败。
 //
@@ -211,10 +222,9 @@ static void stdout_hook_restore(void) {
 // `art::Thread::AssertNoPendingException` 直接杀进程（实测 tombstone 栈：
 //   ClassLinker::FindClass → Thread::Abort）。
 //
-// 结论：SDL3 在 Android 上要真正可用，必须走它官方的 android-project 形态
-// （Java 侧继承 org.libsdl.app.SDLActivity、用 SDLSurface 提供窗口）。
-// 纯 ffi.load 拿到的 SDL 只能用到**不涉及 JavaVM**的部分 —— 这正是 c14 探针
-// 只验 surface / SDL3_image / SDL3_ttf 而不验开窗与 SDL_Init 的原因。
+// ★ 2026-11-19 已解决：改成 SDL 官方形态 —— 见 com.leno.app.SdlActivity
+//   （继承 org.libsdl.app.SDLActivity，SDL3 由 System.loadLibrary 加载 ⇒
+//    JNI_OnLoad 正常跑，JavaVM 缓存到位），入口就是本文件末尾的 leno_sdl_main()。
 // ---------------------------------------------------------------------------
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
@@ -283,4 +293,55 @@ Java_com_leno_app_MainActivity_buildInfo(JNIEnv* env, jobject thiz) {
              (int)(sizeof(void*) * 8),
              LENO_BIN_VERSION);
     return (*env)->NewStringUTF(env, buf);
+}
+
+// ---------------------------------------------------------------------------
+// SDL 形态宿主（com.leno.app.SdlActivity）用的同一份 setDataDir
+// ---------------------------------------------------------------------------
+JNIEXPORT void JNICALL
+Java_com_leno_app_SdlActivity_setDataDir(JNIEnv* env, jclass cls, jstring jdir) {
+    (void)cls;
+    if (!jdir) return;
+    const char* dir = (*env)->GetStringUTFChars(env, jdir, NULL);
+    if (dir) {
+        leno_set_data_dir(dir);
+        LOGI("dataDir = %s", dir);
+        (*env)->ReleaseStringUTFChars(env, jdir, dir);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// int leno_sdl_main(int argc, char** argv)
+//
+//   SDL 官方宿主约定的入口：由 SDLActivity 的 SDLThread →
+//   nativeRunMain("libleno.so", "leno_sdl_main", args) → SDL_RunApp(...) 调进来。
+//   **运行在 SDL 认定的主线程上**，这是 SDL_Init(VIDEO) 能成功的前提。
+//
+//   argv[0] 是 SDL 固定塞的 "app_process"，argv[1] 是 Java 侧 getArguments() 给的
+//   .lenb 绝对路径。
+// ---------------------------------------------------------------------------
+__attribute__((visibility("default")))
+int leno_sdl_main(int argc, char** argv) {
+    if (!g_vm) {
+        // 正常路径下 libleno.so 是被 System.loadLibrary("leno") 加载的，
+        // JNI_OnLoad 已经存过 vm；这里兜底一次，避免被别的加载方式拉起来时崩。
+        LOGE("leno_sdl_main: 没有 JavaVM（libleno.so 不是被 System.loadLibrary 加载的？）");
+    }
+
+    const char* path = (argc > 1) ? argv[1] : NULL;
+    if (!path || path[0] == '\0') {
+        LOGE("leno_sdl_main: 缺少 .lenb 路径（argv 里只有一个元素）");
+        return -901;
+    }
+
+    // SDL 宿主没有 TextView ⇒ sink 传 NULL，输出只走 logcat
+    stdout_hook_install(NULL, NULL);
+
+    LOGI("leno_sdl_main: %s（主线程）", path);
+    leno_error_init();
+    int rc = lenolang_run_lenb(path);
+    LOGI("VM 返回 %d", rc);
+
+    stdout_hook_restore();
+    return rc;
 }

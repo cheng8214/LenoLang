@@ -1,0 +1,59 @@
+// ============================================================================
+// app_text.leno —— Android 上的文本输入（软键盘）验证
+// ----------------------------------------------------------------------------
+// 桌面 SDL 默认就开着文本输入；Android 上 SDL_StartTextInput 才会弹软键盘，
+// 而这个调用原来在 window.registerOnly 里无条件执行 ⇒ 一进应用键盘就弹、窗口被挤小。
+// 现在改成"Edit 聚焦时才开、失焦关"（sdl_edit.focus/blur 里的 android 分支）。
+//
+// 这道题验的就是这条链：
+//   点输入框 → 键盘弹出 → SDL_EVENT_TEXT_INPUT 进来 → Edit 里的字同步到下面的 Label
+// ============================================================================
+import "../../../build/leno_module/LenoSDL3/lib/SDL3.leno" as SDL3
+use SDL3.Event
+use SDL3.Renderer
+use SDL3.(Window, Size)
+use SDL3.WindowFlag
+
+main() {
+    print("== Leno SDL3 文本输入 / Android ==")
+    SDL3.ttfInit()
+
+    Window win = SDL3.createWindow({title: "输入测试", w: 720, h: 1280, flags: WindowFlag.FULLSCREEN})
+    if not win.ok {
+        print("NG createWindow — " + SDL3.getError())
+        return
+    }
+    Size d = win.getSize()
+    print("窗口 " + _str(d.w) + "x" + _str(d.h))
+
+    win.addLabel({x: 40, y: 110, text: "点下面的输入框", font_size: 30, text_color: #FFFFFFFF})
+    win.addLabel({x: 40, y: 160, text: "键盘应弹出，输入的字会同步到下面", font_size: 20, text_color: #8FA6C8FF})
+
+    var ed = win.addEdit({x: 40, y: 220, w: 640, h: 100, font_size: 34, radius: 10})
+    var out = win.addLabel({x: 40, y: 360, text: "内容：（空）", font_size: 30, text_color: #3DDC84FF})
+    var keyLbl = win.addLabel({x: 40, y: 420, text: "文本事件：0", font_size: 22, text_color: #8FA6C8FF})
+
+    int nText = 0
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isTextInput() {
+                nText = nText + 1
+                print("text_input #" + _str(nText) + " → " + ed.get_text())
+            }
+            return true
+        },
+        func(Renderer r) {
+            r.setColor(#0B1020FF)
+            r.clear()
+            // ★ 标签必须在**渲染阶段**同步：onEvent 比 Edit 自己消费这次 TEXT_INPUT 更早，
+            //   在事件里读 get_text() 会永远慢一个字（实测：输入 LenoOnAndroid，标签显示 LenoOnAndroi）
+            out.set_text("内容：" + ed.get_text())
+            keyLbl.set_text("文本事件：" + _str(nText))
+        }
+    )
+
+    SDL3.ttfQuit()
+    print("结束 文本事件=" + _str(nText) + " 最终内容=" + ed.get_text())
+}
