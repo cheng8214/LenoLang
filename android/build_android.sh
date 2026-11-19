@@ -147,11 +147,15 @@ echo "== 5/6 组装 APK（dex + .so + assets） =="
 # assets 已由 aapt2 -A 放进 base.apk；这里补 dex 与 native 库。
 # .so 用 STORED（不压缩）：extractNativeLibs=true 时安装器直接把它落到 /data/app/.../lib/
 cp "$OUT/base.apk" "$OUT/unsigned.apk"
-PY="${PYTHON:-python}"
-"$PY" "$ANDROID_DIR/tools/apkadd.py" "$OUT/unsigned.apk" deflate \
+# 注入器是 Leno 自己写的（android/tools/apkadd.leno）——打包链路不再依赖 python：
+#   已有条目按**原始字节**搬运（不解压、不重压）⇒ 17MB 的包 0.4 秒，
+#   且 aapt2 的压缩产物原样保留（不膨胀）。
+LENO="$ROOT/build/leno.exe"
+[ -x "$LENO" ] || { echo "找不到 $LENO —— 先跑 bash build.sh 生成 leno.exe"; exit 1; }
+"$LENO" "$ANDROID_DIR/tools/apkadd.leno" "$OUT/unsigned.apk" deflate \
     "$OUT/dex/classes.dex" classes.dex
 for ABI in $ABIS; do
-    "$PY" "$ANDROID_DIR/tools/apkadd.py" "$OUT/unsigned.apk" stored \
+    "$LENO" "$ANDROID_DIR/tools/apkadd.leno" "$OUT/unsigned.apk" stored \
         "$OUT/$ABI/libleno.so" "lib/$ABI/libleno.so"
 
     # 第三方 native 库随包打入。**源的优先级**：
@@ -177,7 +181,7 @@ for ABI in $ABIS; do
             for so in "$PKG_LIBS"/*.so; do
                 [ -f "$so" ] || continue
                 NAME="$(basename "$so")"
-                # 两个模块带同名库时只打第一份（否则 apkadd 会写出重复条目）
+                # 两个模块带同名库时只打第一份（apkadd.leno 遇到重复条目会直接报错退出）
                 case " $PACKED " in *" $NAME "*) echo "   ~ 跳过重复的 $NAME（来自 $(echo "$PKG_LIBS" | sed "s|$ROOT/||")）"; continue;; esac
                 PACKED="$PACKED $NAME"
 
@@ -187,7 +191,7 @@ for ABI in $ABIS; do
                 else
                     cp "$so" "$ST"
                 fi
-                "$PY" "$ANDROID_DIR/tools/apkadd.py" "$OUT/unsigned.apk" stored \
+                "$LENO" "$ANDROID_DIR/tools/apkadd.leno" "$OUT/unsigned.apk" stored \
                     "$ST" "lib/$ABI/$NAME"
                 echo "   + lib/$ABI/$NAME  $(wc -c < "$ST") bytes  ← $(echo "$PKG_LIBS" | sed "s|$ROOT/||")"
             done

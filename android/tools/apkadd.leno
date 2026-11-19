@@ -1,0 +1,215 @@
+// apkadd.leno -- 往已存在的 APK（zip）里追加条目，用于手工打包链路的"dex + .so"注入
+//
+// 用法:
+//   build\leno.exe android\tools\apkadd.leno <apk> <stored|deflate> <src_path> <entry_name>
+// 例:
+//   build\leno.exe android\tools\apkadd.leno build\unsigned.apk stored lib\arm64-v8a\libleno.so lib/arm64-v8a/libleno.so
+//
+// 为什么不用现成工具:
+//   · Git Bash 不带 zip 命令
+//   · aapt add 会重排条目、压缩方式不可控（.so 被压掉 ⇒ extractNativeLibs 装不上）
+//   · .so 必须 STORED（不压缩）+ 名字带 lib 前缀，安装器才解成可加载的库
+//
+// 实现要点（与 Python 版 apkadd.py 行为一致，但**不重新压缩已有条目**）:
+//   · 已有条目按**原始字节**搬运（local header + 压缩数据整段 copy），不走解压→重压
+//     ⇒ 17MB 的 APK 也是毫秒级；且 aapt2 的压缩结果原样保留，包体不膨胀
+//   · 只重写中央目录里的"本地头偏移"字段（条目搬位置了），其余字段逐字节保留
+//   · EOCD 按新条目数 / 新目录大小 / 新目录偏移重建，归档注释原样保留
+//   · 大段拼接走 strings.join（不是 `body = body + chunk`，那在 N 个条目时是 O(N²)）
+//
+// 边界:
+//   · 不支持 zip64（条目数 > 65535 或偏移 > 4GB）——APK 打包链路不会碰到
+//   · 条目名重复直接报错（Py 版交给调用方去重；这里在入口挡住，免得写出两份同名条目）
+//   · 数据描述符（flag bit3）的条目原样搬运即可，不受影响
+import strings
+import files
+import times
+import maths
+import "Compress" as z
+
+// ---------------- 小端读写 ----------------
+
+func _u16(string s, int o): int {
+    return strings.byte(s, o) | (strings.byte(s, o + 1) << 8)
+}
+
+func _u32(string s, int o): int {
+    return strings.byte(s, o) | (strings.byte(s, o + 1) << 8)
+         | (strings.byte(s, o + 2) << 16) | (strings.byte(s, o + 3) << 24)
+}
+
+func _le16(int v): string {
+    Array[int] b = []
+    b.add(v & 0xFF)
+    b.add((v >> 8) & 0xFF)
+    return strings.from_bytes(b)
+}
+
+func _le32(int v): string {
+    Array[int] b = []
+    b.add(v & 0xFF)
+    b.add((v >> 8) & 0xFF)
+    b.add((v >> 16) & 0xFF)
+    b.add((v >> 24) & 0xFF)
+    return strings.from_bytes(b)
+}
+
+func _die(string msg) {
+    print("[apkadd] " + msg + "\n")
+    _exit(1)
+}
+
+// 二进制读文件（files.read 是文本语义、会剥 BOM ⇒ 必须走 open(...,"rb").read()）
+func _readBin(string path): string {
+    var f = files.open(path, "rb")
+    var s = f.read()
+    f.close()
+    return s
+}
+
+// DOS 时间/日期（1980 为基准；秒只有 2 秒精度）
+func _dosTime(): int {
+    var ts = times.now()
+    int hh = _int(times.format(ts, "%H"))
+    int mm = _int(times.format(ts, "%M"))
+    int ss = _int(times.format(ts, "%S"))
+    return (hh << 11) | (mm << 5) | (ss / 2)
+}
+
+func _dosDate(): int {
+    var ts = times.now()
+    int year = maths.clampi(_int(times.format(ts, "%Y")), 1980, 2107)
+    int mon = _int(times.format(ts, "%m"))
+    int day = _int(times.format(ts, "%d"))
+    return ((year - 1980) << 9) | (mon << 5) | day
+}
+
+// 从尾部往前找 EOCD（注释最长 65535 ⇒ 最多回扫 64KB + 22）
+func _findEocd(string s): int {
+    int n = strings.byte_len(s)
+    if n < 22 { return -1 }
+    var lo = maths.maxi(n - 22 - 65535, 0)
+    var i = n - 22
+    while i >= lo {
+        if strings.byte(s, i) == 0x50 and strings.byte(s, i + 1) == 0x4B
+            and strings.byte(s, i + 2) == 0x05 and strings.byte(s, i + 3) == 0x06 {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+main() {
+    Array[string] a = []
+    for _args() to x { a.add(_str(x)) }
+    if a.len() != 4 {
+        print("用法: leno.exe android\\tools\\apkadd.leno <apk> <stored|deflate> <src_path> <entry_name>\n")
+        _exit(2)
+    }
+    string apk = a[0]
+    string mode = a[1]
+    string src = a[2]
+    string entry = a[3]
+
+    if mode != "stored" and mode != "deflate" {
+        _die("压缩方式只能是 stored 或 deflate，收到：" + mode)
+    }
+    if not files.exists(apk) { _die("APK 不存在：" + apk) }
+    if not files.exists(src) { _die("源文件不存在：" + src) }
+
+    var raw = _readBin(apk)
+    int n = strings.byte_len(raw)
+    int eocd = _findEocd(raw)
+    if eocd < 0 { _die("不是 zip：找不到 EOCD（文件被截断，或不是 zip）：" + apk) }
+
+    int count = _u16(raw, eocd + 10)
+    int cdSize = _u32(raw, eocd + 12)
+    int cdOff = _u32(raw, eocd + 16)
+    if count == 0xFFFF or cdOff == 0xFFFFFFFF or cdSize == 0xFFFFFFFF {
+        _die("不支持 zip64（条目数 ≥ 65535 或偏移 > 4GB）")
+    }
+    if cdOff + cdSize > n { _die("中央目录越界：文件被截断？") }
+
+    // 归档注释要原样带走
+    int commentLen = _u16(raw, eocd + 20)
+    var comment = ""
+    if commentLen > 0 { comment = strings.byte_slice(raw, eocd + 22, eocd + 22 + commentLen - 1) }
+
+    Array[string] body = []      // [local header + data] × N
+    Array[string] cd = []        // 中央目录项
+    var pos = cdOff
+    var size = 0                 // 已搬运字节数 = 下一个条目的本地头偏移
+    var dup = false
+
+    for 0:count-1 to idx {
+        if _u32(raw, pos) != 0x02014b50 {
+            _die("第 " + _str(idx + 1) + " 个中央目录项签名不对（目录偏移算错了？）")
+        }
+        int csz = _u32(raw, pos + 20)
+        int nlen = _u16(raw, pos + 28)
+        int elen = _u16(raw, pos + 30)
+        int clen = _u16(raw, pos + 32)
+        int loff = _u32(raw, pos + 42)
+        string name = strings.byte_slice(raw, pos + 46, pos + 46 + nlen - 1)
+        if name == entry { dup = true }
+
+        // 本地头的 name/extra 长度可能与 CD 里的不同 ⇒ 必须重新读本地头
+        int lnlen = _u16(raw, loff + 26)
+        int lelen = _u16(raw, loff + 28)
+        int recLen = 30 + lnlen + lelen + csz
+        if loff + recLen > n { _die("条目 " + name + " 的本地记录越界") }
+
+        body.add(strings.byte_slice(raw, loff, loff + recLen - 1))
+
+        // CD 项整条保留，只把"本地头偏移"（字节 42..45）换成新位置
+        string rec = strings.byte_slice(raw, pos, pos + 46 + nlen + elen + clen - 1)
+        cd.add(strings.byte_slice(rec, 0, 41) + _le32(size) + strings.byte_slice(rec, 46, strings.byte_len(rec) - 1))
+
+        size = size + recLen
+        pos = pos + 46 + nlen + elen + clen
+    }
+
+    if dup { _die("APK 里已有同名条目：" + entry) }
+
+    // ---------------- 新条目 ----------------
+    var data = _readBin(src)
+    int usize = strings.byte_len(data)
+    var payload = data
+    var method = 0
+    if mode == "deflate" {
+        payload = z.deflateRaw(data)
+        method = 8
+    }
+    int csize = strings.byte_len(payload)
+    int crc = z.crc32(data)
+    int nlen2 = strings.byte_len(entry)
+    int dt = _dosTime()
+    int dd = _dosDate()
+    int newOff = size
+
+    body.add(_le32(0x04034b50) + _le16(20) + _le16(0x0800) + _le16(method)
+        + _le16(dt) + _le16(dd) + _le32(crc) + _le32(csize) + _le32(usize)
+        + _le16(nlen2) + _le16(0) + entry + payload)
+
+    cd.add(_le32(0x02014b50) + _le16(20) + _le16(20) + _le16(0x0800) + _le16(method)
+        + _le16(dt) + _le16(dd) + _le32(crc) + _le32(csize) + _le32(usize)
+        + _le16(nlen2) + _le16(0) + _le16(0) + _le16(0) + _le16(0)
+        + _le32(0) + _le32(newOff) + entry)
+
+    // ---------------- 收尾：目录 + EOCD ----------------
+    var bodyBytes = strings.join(body, "")
+    var cdBytes = strings.join(cd, "")
+    int cdNewOff = strings.byte_len(bodyBytes)
+    int cdLen = strings.byte_len(cdBytes)
+
+    int total = count + 1
+    var out = bodyBytes + cdBytes
+        + _le32(0x06054b50) + _le16(0) + _le16(0) + _le16(total) + _le16(total)
+        + _le32(cdLen) + _le32(cdNewOff) + _le16(strings.byte_len(comment)) + comment
+
+    files.write(apk, out)
+
+    print("  + " + entry + " (" + _str(usize) + " bytes, " + mode
+        + ", 压缩后 " + _str(csize) + ")\n")
+}
