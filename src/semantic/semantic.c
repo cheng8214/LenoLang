@@ -189,6 +189,13 @@ void semantic_init(Semantic* s, Ast* root) {
     s->union_narrow_count = 0;
     memset(s->union_narrow, 0, sizeof(s->union_narrow));
     s->ast_depth = 0;   // ★ 递归深度守护（同上面的教训：必须显式清零）
+    // ★ 2026-11-20：**泛型载荷 enum 的"期望类型"通道必须清零** —— 同上，Semantic 是栈变量。
+    //   漏了这一行的后果：`Res.ok(...)` 的构造改写点读 `s->expected_type` 得到**栈上垃圾**
+    //   （实测 0x581442DA00000000，看着像某个 double 的位模式），随即 `exp->kind` 访问违例。
+    //   症状极难定位：只有"带载荷的**泛型** enum 构造"会读这个字段 ⇒
+    //     `Array[Res[int]] arr = []; arr.add(Res.ok(2))` 在**语义阶段**偶发 0xC0000005，
+    //     崩溃率随堆/栈布局漂移（2/10 ~ 10/10），`--check` 有时绿、加了 printf 就绿。
+    s->expected_type = NULL;
     s->owned_placeholders = NULL;
     s->owned_placeholder_count = 0;
     s->owned_placeholder_capacity = 0;
