@@ -362,3 +362,57 @@ string / array / `ffi.nullptr()==null` 仍走解释器）；`assert` 273/0；
   §8.35（确定性 GC 钩子 + 金丝雀真因）；`jit_probes/README.md` 增加「确定性 GC 钩子」一节。
 - 环境已复位：临时 GC 探针已移除、对照二进制与诊断临时文件已删除。
   （2026-09-13 晚另建了无屏障对照二进制用于 P0 验收，已删除。）
+
+---
+
+## 九、子线程堆的引用计数回收（2026-11-20，修"切歌内存只涨不降"）
+
+### 症状
+Aria 每切一首歌进程内存就涨一截，永不回落（`_gc(false)` 也照涨）。
+
+### 根因（不是主堆 GC 不工作）
+`channel_send` 的克隆分配在**发送方线程的堆**上 ⇒ 旧实现用 `channel_used` 闸门
+（`gc_heap_detach_allowed() == 0`）在**线程退出时跳过整堆 detach**：buffer 里可能还压着
+这个堆的对象，提前释放会 UAF。代价是**整堆被 TLS 遗弃**，进程内再没有任何入口能释放它
+（`gc_free_all` 只处理主堆）。所有"发个结果就退出"的 worker 都命中这条路。
+
+实测（`Aria/tools/probe_thread_heap*.leno`，修前）：
+| 负载 | 每线程泄漏 |
+|---|---|
+| 只 send 一个 int | 75KB |
+| send 一个 30KB 字符串 | 2.2MB |
+| 模拟搜索回信（500 行） | 7.5MB |
+
+Aria 切歌一次起 3 条 worker（`prepare` / `lyric` / `cover_shard`）⇒ 每首几 MB。
+
+### 做法
+`GCDeadHeap` 改成**引用计数**：
+- 线程**首次 send** 时建一条发送记录（`refs = 1`，代表"本线程还活着"）；
+- 每成功 send 一次：该 channel 槽的 `owner` 指向记录，`refs++`（槽位数组与 buffer 平行，
+  见 `ObjChannel.buffer_owner`）；
+- 线程退出时**总是** detach（`active_thread_count == 0` 仍保留：子线程的 ObjThread 在本堆上），
+  把 young/old/pool 头填进同一条记录，然后 `gc_detach_heap_finish()` 放掉"线程自己"那份；
+- `receive` / `try_receive` / `try_take` 取走槽位时 `refs--`，`unref` 到 0 的人负责整堆释放；
+- result 是对象时先 `+1` 转给 `ObjThread`（join 还要从堆里克隆它），join / GC 收 Thread 时再 `--`。
+
+**安全性两条**（缺一条就会偶发 UAF，实测踩过）：
+1. **只能有一个计数**。"线程退出"和"槽位取走"不能各自判断"我是最后一个" ——
+   第一版用 `pinned` + `refs` 两个字段，两边都可能判定该释放 ⇒ 一次 free 后另一侧再用 ⇒
+   非确定性崩溃（探针第 1~30 轮随机崩）。
+2. **释放要等所有在跑的 GC 结束**：别的线程的 GC 可能刚从槽里标记了这些对象、还压在它的
+   `mark_stack` 上（排空在 GC 收尾）。用 `g_gc_inflight` 计数，非 0 时把死堆挂到待释放链，
+   最后一轮 GC 的 `gc_gc_exit()` 统一 free。
+
+### 验证
+- `assert/test_thread_heap_reclaim.leno`（新增回归）：200 条"发完就退"的线程，堆 < 8MB 且
+  `thread_pending_bytes == 0`。修前该负载 ≈ 22MB。
+- 修后同口径实测：只 send int 9KB/线程、30KB 串 20KB、模拟搜索回信 56KB（均为残余观察值，
+  不再随线程数线性增长）。
+- Aria 真实 worker（`probe_song_switch.leno`，歌词 + 封面两条线程 ×12 轮）：
+  修前 +8708KB 持续上涨 ⇒ 修后 +1652KB 后**走平**。
+- `assert/run_tests.leno`：647 全过。
+
+### 遗留（已知，未在本次处理）
+- **没人 join 的 Thread 对象**仍被 `vm->active_threads` 当根钉着（每条约 0.5KB）。
+  fire-and-forget 每首歌 3 条 ⇒ ~1.5KB/首，量级可忽略；要彻底解决得在"线程退出时把自己
+  从创建者的 active_threads 摘掉"，动的是 join 生命周期，另开一轮再动。

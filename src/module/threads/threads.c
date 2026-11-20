@@ -95,9 +95,6 @@ static Value threads_select(int argc, Value* args) {
     if (argc >= 2 && val_is_int(args[1])) timeout_ms = (int)val_as_num(args[1]);
     if (chs->count <= 0) return val_null();
 
-    extern void gc_note_channel_use(void);
-    gc_note_channel_use();          // 本线程用过 channel ⇒ 退出时不能整堆释放
-
     int waited = 0;
     while (true) {
         for (int i = 0; i < chs->count; i++) {

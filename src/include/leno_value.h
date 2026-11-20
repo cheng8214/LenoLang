@@ -969,8 +969,9 @@ typedef struct ObjThread {
     // ★ 2026-10-19：子线程退出时的 GC 堆快照（join / 对象回收时释放 ✓）
     //   为什么需要：子线程的 LenoGC 是 THREAD_LOCAL，退出后没人再碰它 ⇒ 整堆被遗弃 ✗
     //   （榜单每切一次会起 8~9 条线程，每条线程的堆都留着 ⇒ 一次涨 100MB+ ✓）
-    //   子线程若**没用过 channel**（结果只走 join 返回）⇒ 可在退出时把整堆摘下来，
-    //   等主线程 join（先把 result 克隆到主堆）之后再释放 ✓
+    // ★ 2026-11-20：**用过 channel 的线程也摘堆了**（靠引用计数，见 gc.c 顶部说明）。
+    //   这里只在 result 是对象时钉住它（join 还要从堆里克隆 result ✓）；
+    //   没人 join 时由 free_object_resources 的 unpin 兜底 ✓
     void* dead_heap;
 } ObjThread;
 
@@ -979,6 +980,11 @@ typedef struct ObjChannel {
     Object header;
     int ref_count;
     Value* buffer;
+    // ★ 2026-11-20：与 buffer 平行的“槽位属主”数组（可空）。
+    //   发消息时克隆分配在**发送方线程的堆**上；这个指针指出该槽里的对象属于哪个
+    //   子线程堆（GCDeadHeap），取走槽位时由 gc_dead_heap_unref 递减引用计数，
+    //   减到 0 的人才负责整堆释放（见 gc.c 顶部那段说明 ✓）
+    void** buffer_owner;
     int capacity;
     int head;
     int tail;
@@ -1093,15 +1099,24 @@ void gc_free_all(void);
 void channel_free_all(void);
 // ★ 2026-10-19：子线程堆的“摘下 → 主线程释放”（见 ObjThread.dead_heap 注释 ✓）
 //   `gc_detach_heap` 只能在**子线程自己**里调（它操作的是当前线程的 THREAD_LOCAL 堆 ✓）
+// ★ 2026-11-20：改用引用计数 —— 摘下来的堆先由 channel 槽引用，最后一个槽取走才真正释放。
+//   `gc_dead_heap_record()` 只在本线程里取（首次 send 时建记录，thread 退出时填堆头 ✓）
 void* gc_detach_heap(void);
 void gc_free_detached(void* dead_heap);
+void* gc_dead_heap_record(void);
+void gc_dead_heap_ref(void* dead_heap);
+void gc_dead_heap_unref(void* dead_heap);
+// 摘堆收尾：keep_ref=1 ⇒ 先转给 ObjThread 一份引用再放掉"线程自己"那份；
+//   **返回后 dead_heap 可能已被释放，调用方不得再碰它** ✓
+void gc_detach_heap_finish(void* dead_heap, int keep_ref);
+// GC 起止标记：别的线程可能刚从 channel 槽里标记了某个死堆上的对象、还压在 mark_stack 上，
+// 所以“释放死堆”必须等所有在跑的 GC 结束（见 gc.c 的 g_gc_inflight ✓）
+void gc_gc_enter(void);
+void gc_gc_exit(void);
 // 统计（供 `_gc_stats()`；只读字段，零热路径开销 ✓）
 void gc_get_counters(size_t* young, size_t* old, size_t* pooled,
                      size_t* minor, size_t* major, int* deferred, int* enabled);
 size_t gc_dead_heap_bytes(void* dead_heap);
-// 本线程有没有用过 channel（用过就不敢在退出时整堆释放：buffer 里可能还压着这堆的对象 ✗）
-void gc_note_channel_use(void);
-int gc_heap_detach_allowed(void);
 void gc_track_memory(Object* obj, size_t old_size, size_t new_size);
 // 写屏障：老年代 holder 被写入年轻代引用时，需要把 holder 记入 remembered set。
 // 内联在这里（而非 gc.c 导出函数）是因为它在「字段写入」热路径上每字段一次：

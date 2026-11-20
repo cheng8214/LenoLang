@@ -407,18 +407,114 @@ static void gc_pool_free_all(void) {
 }
 
 // ============================================================================
-// ★ 2026-10-19：子线程堆的“摘下 → 主线程释放”
-//   背景：`gc` / `pool_block_list` 都是 THREAD_LOCAL ⇒ 子线程退出后整堆没人回收 ✗
-//   做法：子线程退出前把三条链表头摘下来存进 ObjThread；主线程 join 时（先把 result
-//         克隆到主堆）再统一释放。**只在子线程没用过 channel 时允许** —— 用过 channel
-//         的话，buffer 里可能还压着这个堆上的克隆值，提前释放会 use-after-free ✗
+// 子线程堆的“摘下 → 谁最后引用谁释放”
+// ----------------------------------------------------------------------------
+// ★ 2026-11-20（修 Aria 切歌内存只涨不降）：
+//   旧做法：只有“本线程没用过 channel”时才摘堆（gc_heap_detach_allowed）。用过 channel
+//   的线程（= 所有往通道回结果的 worker）整堆被 TLS 遗弃 —— 进程内再没有任何入口能
+//   释放它。实测每线程固定 75KB 起（带 30KB 负载时 2MB+），切歌一次起 3 条线程 ⇒
+//   内存线性上涨、永不回落。
+//   现在改成引用计数：
+//     · 线程第一次 send 时建一条“发送记录”（GCDeadHeap，refs=0）；
+//     · 每成功 send 一次，该 channel 槽的 owner 指向这条记录，refs++；
+//     · 线程退出时**总是**摘堆（active_thread_count==0 时）：把 young/old/pool 头填进
+//       这条记录；refs==0 且没被 ObjThread 钉住 ⇒ 立刻整堆释放；
+//     · receive / try_receive / try_take 取走一个槽时 refs--，减到 0 的人负责释放。
+//   安全性两条：
+//     ① 只有“没有任何 channel 槽还指向这个堆”时才 free —— 槽在 channel mutex 内先清空
+//        再减计数，所以随后的 GC 不可能再从槽里标记到它；
+//     ② 反过来，**先前**那轮 GC 可能已经标记了这些对象、还压在它的 mark_stack 上
+//        （mark_stack 是 THREAD_LOCAL，排空在 GC 结束时）⇒ 用 g_gc_inflight 记“正在跑的
+//        GC 数”，非 0 就把死堆挂到待释放链，最后一轮 GC 收尾时统一 free。
 // ============================================================================
 typedef struct GCDeadHeap {
     Object* young_heap;
     Object* old_heap;
     PoolBlockHdr* pool_blocks;
     size_t bytes;               // 摘下来时的堆大小（young+old+pool；供 _gc_stats 观测 ✓）
+    int refs;                   // 持有者数（原子）：channel 槽 + 线程自己 + ObjThread（result 是对象时）
+    int attached;               // 堆头已填进来（摘堆完成）⇒ 1；0 时绝不释放 ✓
+    struct GCDeadHeap* next_free;
 } GCDeadHeap;
+
+static THREAD_LOCAL GCDeadHeap* tls_send_rec = NULL;   // 本线程的发送记录（首次 send 建）
+static THREAD_LOCAL int tls_send_untracked = 0;        // 记不出来（OOM）⇒ 退出时不许免费 ✓
+static int g_gc_inflight = 0;                          // 正在跑 GC 的线程数（原子）
+static GCDeadHeap* g_pending_free = NULL;              // 等 GC 结束再释放的死堆（原子栈）
+
+void gc_gc_enter(void) {
+    __atomic_add_fetch(&g_gc_inflight, 1, __ATOMIC_ACQ_REL);
+}
+
+static void gc_drain_pending(void) {
+    GCDeadHeap* h = __atomic_exchange_n(&g_pending_free, NULL, __ATOMIC_ACQ_REL);
+    while (h) {
+        GCDeadHeap* next = h->next_free;
+        gc_free_detached(h);
+        h = next;
+    }
+}
+
+void gc_gc_exit(void) {
+    if (__atomic_sub_fetch(&g_gc_inflight, 1, __ATOMIC_ACQ_REL) == 0) gc_drain_pending();
+}
+
+static void dead_heap_die(GCDeadHeap* d) {
+    if (!d) return;
+    if (__atomic_load_n(&g_gc_inflight, __ATOMIC_ACQUIRE) == 0) {
+        gc_free_detached(d);
+        return;
+    }
+    GCDeadHeap* head;
+    do {
+        head = __atomic_load_n(&g_pending_free, __ATOMIC_ACQUIRE);
+        d->next_free = head;
+    } while (!__atomic_compare_exchange_n(&g_pending_free, &head, d,
+                                          0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE));
+    // 入栈后若恰好那轮 GC 已经结束，别等下一轮（下一轮一定会来，这里只是让内存尽早落下去）
+    if (__atomic_load_n(&g_gc_inflight, __ATOMIC_ACQUIRE) == 0) gc_drain_pending();
+}
+
+static void dead_heap_maybe_free(GCDeadHeap* d) {
+    if (d && d->attached && d->refs <= 0) dead_heap_die(d);
+}
+
+// 本线程的发送记录：首次 send 时建，线程退出摘堆时填堆头（见 gc_detach_heap ✓）
+//   ⚠ 建出来就带 1 个引用，代表“本线程还活着” —— 退出时由 gc_detach_heap_finish 放掉。
+//     这样“槽位减到 0”和“线程退出”永远只有一方能把计数减到 0，不会两个人都以为自己该释放 ✗
+void* gc_dead_heap_record(void) {
+    if (!tls_send_rec) {
+        tls_send_rec = (GCDeadHeap*)calloc(1, sizeof(GCDeadHeap));
+        if (!tls_send_rec) {
+            // 连记录都建不出来 ⇒ 这条线程的堆**绝不能**在退出时被释放（槽里还压着它的对象，
+            // 而没有任何 owner 能证明这一点）⇒ 打标，退一步按老行为"遗弃" ✓
+            tls_send_untracked = 1;
+        } else {
+            tls_send_rec->refs = 1;      // 本线程自己的那一份
+        }
+    }
+    return tls_send_rec;
+}
+
+void gc_dead_heap_ref(void* h) {
+    if (h) __atomic_add_fetch(&((GCDeadHeap*)h)->refs, 1, __ATOMIC_ACQ_REL);
+}
+
+void gc_dead_heap_unref(void* h) {
+    if (!h) return;
+    if (__atomic_sub_fetch(&((GCDeadHeap*)h)->refs, 1, __ATOMIC_ACQ_REL) <= 0) {
+        dead_heap_maybe_free((GCDeadHeap*)h);
+    }
+}
+
+// 摘堆收尾：keep_ref=1 ⇒ 这份堆先交给 ObjThread 持有（result 是对象，join 还要从堆里克隆）；
+// 然后放掉“本线程”那一份。**返回后 h 可能已被释放，调用方不得再碰它** ✓
+void gc_detach_heap_finish(void* h, int keep_ref) {
+    GCDeadHeap* d = (GCDeadHeap*)h;
+    if (!d) return;
+    if (keep_ref) __atomic_add_fetch(&d->refs, 1, __ATOMIC_ACQ_REL);
+    gc_dead_heap_unref(d);
+}
 
 // ============================================================================
 // 统计接口（供 `_gc_stats()` 使用）
@@ -445,12 +541,27 @@ size_t gc_dead_heap_bytes(void* p) {
 static void free_object_resources_ex(Object* obj, int remove_intern);   // 定义在本文件后面 ✓
 
 void* gc_detach_heap(void) {
-    GCDeadHeap* d = (GCDeadHeap*)malloc(sizeof(GCDeadHeap));
-    if (!d) return NULL;
+    // 发送记录可能早就建好了（首次 send 时），这里把堆头填进同一条记录里 ⇒
+    //   channel 槽里存的 owner 指针不需要再改（省掉“退出时扫全局 channel 找属主” ✓）
+    GCDeadHeap* d = tls_send_rec;
+    if (!d) {
+        d = (GCDeadHeap*)calloc(1, sizeof(GCDeadHeap));
+        if (!d) return NULL;              // 连记录都建不出来 ⇒ 只能按老样子遗弃这个堆
+        d->refs = 1;                      // 本线程自己那一份（与 gc_dead_heap_record 同口径 ✓）
+    }
+    tls_send_rec = NULL;
+
     d->young_heap = gc.young_heap;
     d->old_heap = gc.old_heap;
     d->pool_blocks = pool_block_list;
     d->bytes = gc.young_allocated + gc.old_allocated + pool_total;
+    d->attached = 1;
+    if (tls_send_untracked) {
+        // 见 gc_dead_heap_record：有槽位指向这个堆但没人能减计数 ⇒ 永久多留一个引用，
+        // 让这块堆活到进程结束（等于老行为，安全优先 ✓）
+        tls_send_untracked = 0;
+        __atomic_add_fetch(&d->refs, 1, __ATOMIC_ACQ_REL);
+    }
     // 摘走：本线程后面不再用它（子线程马上退出 ✓）
     gc.young_heap = NULL;
     gc.old_heap = NULL;
@@ -1835,9 +1946,11 @@ static void free_object_resources_ex(Object* obj, int remove_intern) {
                 thread->pending_args = NULL;
             }
             // ★ 2026-10-19：没人 join 就进了回收 ⇒ 子线程堆也要在这里释放（否则照样漏 ✓）
+            // ★ 2026-11-20：改成 unpin —— 堆可能还被 channel 槽引用着，由最后一个槽放它 ✓
             if (thread->dead_heap) {
-                gc_free_detached(thread->dead_heap);
+                void* dh = thread->dead_heap;
                 thread->dead_heap = NULL;
+                gc_dead_heap_unref(dh);
             }
             platform_mutex_destroy(&thread->mutex);
             platform_cond_destroy(&thread->done_cond);
@@ -2151,6 +2264,7 @@ void gc_try_collect_deferred(void) {
 void gc_minor_collect(void) {
     if (gc.running || !gc.enabled) return;
 
+    gc_gc_enter();      // ★ 死堆释放要等所有在跑的 GC 结束（见 GCDeadHeap 段说明 ✓）
     gc.running = 1;
     gc.mode = GC_MODE_MINOR;
     gc.minor_gc_count++;
@@ -2222,6 +2336,8 @@ void gc_minor_collect(void) {
                 gc.dbg_roots[3], gc.dbg_roots[4], gc.dbg_roots[5],
                 gc.mark_new);
     }
+
+    gc_gc_exit();
 }
 
 // Major GC：收集全部（年轻代 + 老年代）
@@ -2229,6 +2345,7 @@ void gc_minor_collect(void) {
 void gc_major_collect(void) {
     if (gc.running || !gc.enabled) return;
 
+    gc_gc_enter();      // ★ 同 gc_minor_collect
     gc.running = 1;
     gc.mode = GC_MODE_FULL;
     gc.major_gc_count++;
@@ -2282,6 +2399,8 @@ void gc_major_collect(void) {
 #ifdef _WIN32
     HeapCompact(GetProcessHeap(), 0);
 #endif
+
+    gc_gc_exit();
 }
 
 // 自动选择 Minor 或 Major GC
@@ -2378,6 +2497,11 @@ void gc_free_all(void) {
 
     // 释放所有池块（池化对象槽内存随块释放）
     gc_pool_free_all();
+
+    // ★ 2026-11-20：把“等 GC 结束才释放”的死堆也收掉（进程收尾，不必再看 inflight）
+    //   ⚠ 不释放 tls_send_rec 本身：它可能还被 channel 槽当着 owner 用（主线程的堆永不摘，
+    //     记录就活到进程结束）。它是 32 字节，收尾时留给 OS 比“先 free 再被 unref”安全 ✓
+    gc_drain_pending();
 
     // 释放内化字符串表
     intern_table_free();

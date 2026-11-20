@@ -1,0 +1,35 @@
+// 子线程堆回收（2026-11-20）
+//
+// 回归点：**用过 channel 的工作线程**退出时，整个子堆必须能回收。
+//   旧实现里 `channel_used` 让线程退出时跳过 detach ⇒ 每起一条"发结果就退出"的线程，
+//   它的整个 VM 堆（含全局变量克隆、临时字符串、网络/JSON 中间结果）就被 TLS 遗弃，
+//   进程内再没有入口能释放。实测 75KB/线程起（带 30KB 负载 2MB+），
+//   Aria 切歌每首 3 条线程 ⇒ 内存只涨不降（用户报的"下一曲就涨"）。
+//
+// 断言口径（跨平台稳，不钉绝对字节数）：
+//   跑 200 条线程，Leno 堆 < 8MB。漏的话 200×75KB ≈ 15MB 起步，留了 2 倍余量 ✓
+//   另外 `thread_pending_bytes` 必须为 0（结果都是标量 ⇒ 没有任何堆该被钉住 ✓）
+import threads
+
+func heap_worker(Channel ch, int i) {
+    Array[string] rows = []
+    for 0 : 299 to k {        // 注意 `a : b to i` 是**闭区间** ⇒ 300 条
+        rows.add("w" + _str(i) + "-" + _str(k))
+    }
+    ch.send(rows.len())
+}
+
+main() {
+    int rounds = 200
+    var ch = threads.channel(8)
+    for 0 : rounds - 1 to i {
+        threads.start(heap_worker, ch, i)      // 故意不 join：Aria 的 worker 就是 fire-and-forget
+        var got = ch.receive()
+        assert_eq(got, 300)                    // 回信内容必须还是对的（别为省内存改了语义 ✓）
+    }
+
+    var st = _gc_stats()
+    int kb = ((st["young_bytes"] as int) + (st["old_bytes"] as int) + (st["pooled_bytes"] as int)) / 1024
+    assert_true(kb < 8 * 1024)
+    assert_eq((st["thread_pending_bytes"] as int), 0)
+}

@@ -927,29 +927,27 @@ static void* thread_entry_point(void* arg) {
         arr_free_list_release_all();
     }
 
-    // ★★ 2026-10-19：把子线程的 GC 堆**交给 join 去释放**（THREAD_LOCAL 堆没人会回收 ✗）
-    //   · 只在**没用过 channel** 时允许：buffer 里可能压着本堆的克隆值，提前释放 = UAF ✗
-    //   · result 也在这个堆上 ⇒ 由 `thread_join` **先克隆到主堆**、再调 gc_free_detached ✓
-    //   · 没人 join 的 Thread 对象被 GC 时，free_object_resources 里也会兜底释放 ✓
+    // ★★ 2026-10-19：把子线程的 GC 堆摘下来（THREAD_LOCAL 堆没人会回收 ✗）
+    // ★★ 2026-11-20：**不再因为"用过 channel"就跳过**。旧闸门让所有 worker 线程的整堆
+    //   被遗弃（Aria 切歌每首起 3 条线程 ⇒ 内存只涨不降）。现在：
+    //     · 摘下来的堆先由 channel 槽引用（发送时登记的 owner），refs==0 才真正释放；
+    //     · result 是对象时钉住它，等 join 克隆到主堆后再放（见 gc.c 的 GCDeadHeap ✓）。
     //   ⚠⚠ 还有一个**必须**满足的条件：本线程**没有活着的子线程**。
     //     子线程的 ObjThread（含 mutex/cond）与 pending_args 都分配在**本线程的堆**上；
-    //     若本线程先退出、heap 被主线程 join 释放，而子线程还在跑（要拿 mutex 写 state、
+    //     若本线程先退出、heap 被释放，而子线程还在跑（要拿 mutex 写 state、
     //     读 pending_args）⇒ 读写已释放内存（实测：进程**静默退出**，连后续 print 都不执行 ✗）。
     //     `active_thread_count == 0` = 起过的子线程都 join 过了（join 会把自己从表里移除 ✓）；
     //     有未 join 的（哪怕已跑完）就放弃本次整堆回收 —— 宁可少回收，不能 UAF ✓
-    if (child_vm.active_thread_count == 0 && gc_heap_detach_allowed()) {
+    if (child_vm.active_thread_count == 0) {
         void* detached = gc_detach_heap();
-        // ★★ 2026-10-19：结果是**标量**（int/float/bool/null，或没有返回值）时，
-        //   join 根本不需要这个堆 ⇒ **立刻释放**，不必等 join / 也不必等 major GC。
-        //   为什么值得：fire-and-forget 的线程绝大多数只返回"计数/是否成功"。
-        //   之前它们要等 major GC（实测这类负载里 major 根本不跑）或进程退出才回收
-        //   ⇒ 50 条 × 800KB 的探针峰值 60MB ✗
-        //   ⚠ 结果是对象（string/Array/Dict/struct）时**不能**在这里放：
-        //     join 还要从堆里克隆它 ⇒ 仍挂到 dead_heap，交给 join / GC 兜底 ✓
-        if (!thread_obj->has_result || !val_is_obj(thread_obj->result)) {
-            gc_free_detached(detached);
-        } else {
-            thread_obj->dead_heap = detached;
+        if (detached) {
+            // 结果是**对象**（string/Array/Dict/struct）⇒ join 还要从堆里克隆它 ⇒ 先转给
+            //   ObjThread 持有一份引用；标量结果 join 不需要堆 ⇒ 没人引用就当场整堆释放 ✓
+            // ⚠ gc_detach_heap_finish 会放掉"本线程"那一份引用，返回后 detached 可能已释放，
+            //   所以 thread_obj->dead_heap 必须**在调用前**赋好 ✓
+            int keep = thread_obj->has_result && val_is_obj(thread_obj->result);
+            if (keep) thread_obj->dead_heap = detached;
+            gc_detach_heap_finish(detached, keep);
         }
     }
     // 子线程都 join 过 ⇒ 本 VM 的活动线程表没人再用了（原来每条线程漏一份 malloc 数组）
@@ -1139,10 +1137,12 @@ static Value thread_reap(ObjThread* thread) {
         thread->joined = 1;
     }
 
-    // ★★ 2026-10-19：result 已经克隆到主线程堆（上面那段）⇒ 子线程那个堆可以整个释放了 ✓
+    // ★★ 2026-10-19：result 已经克隆到主线程堆（上面那段）⇒ 子线程那个堆可以放了 ✓
+    // ★ 2026-11-20：走 unpin（可能还被 channel 槽引用着，由最后一个槽释放 ✓）
     if (thread->dead_heap) {
-        gc_free_detached(thread->dead_heap);
+        void* dh = thread->dead_heap;
         thread->dead_heap = NULL;
+        gc_dead_heap_unref(dh);
     }
 
     // 从 active_threads 中移除
@@ -1209,12 +1209,34 @@ ThreadState thread_get_state(ObjThread* thread) {
 // ----------------------------------------------------------------------------
 static ObjChannel* g_channel_all_head = NULL;
 
+// ----------------------------------------------------------------------------
+// 槽位的“放进 / 取走”（★ 2026-11-20）
+//   放进时必须先登记 owner（本线程的发送记录）：这个克隆分配在**本线程堆**上，
+//   线程退出时会把整堆摘下来，靠这条记录上的 refs 才知道“还有几个槽压着它”✓
+//   取走时把 owner 一起摘出来，由调用方在**解锁之后** gc_dead_heap_unref（可能是整堆 free，
+//   不要在持有 channel mutex 时做 ✓）
+// ----------------------------------------------------------------------------
+static void channel_slot_put(ObjChannel* ch, int idx, Value v) {
+    void* rec = gc_dead_heap_record();
+    ch->buffer[idx] = v;
+    if (ch->buffer_owner) ch->buffer_owner[idx] = rec;
+    if (rec) gc_dead_heap_ref(rec);
+}
+
+static void* channel_slot_take(ObjChannel* ch, int idx) {
+    void* rec = ch->buffer_owner ? ch->buffer_owner[idx] : NULL;
+    ch->buffer[idx] = val_null();
+    if (ch->buffer_owner) ch->buffer_owner[idx] = NULL;
+    return rec;
+}
+
 void channel_free_all(void) {
     ObjChannel* ch = __atomic_exchange_n(&g_channel_all_head, NULL, __ATOMIC_ACQ_REL);
     while (ch) {
         ObjChannel* next = ch->all_next;
         if (!ch->released) {
             if (ch->buffer) free(ch->buffer);
+            if (ch->buffer_owner) free(ch->buffer_owner);
             platform_mutex_destroy(&ch->mutex);
             platform_cond_destroy(&ch->not_empty);
             platform_cond_destroy(&ch->not_full);
@@ -1238,7 +1260,9 @@ ObjChannel* channel_new(int capacity) {
     }
 
     channel->buffer = (Value*)calloc(channel->capacity, sizeof(Value));
+    channel->buffer_owner = (void**)calloc(channel->capacity, sizeof(void*));
     if (!channel->buffer) {
+        free(channel->buffer_owner);
         free(channel);
         return NULL;
     }
@@ -1270,13 +1294,38 @@ void channel_ref(ObjChannel* channel) {
 
 void channel_unref(ObjChannel* channel) {
     if (!channel) return;
+    void* small[8];
+    void** owners = small;
+    int n = 0;
     platform_mutex_lock(&channel->mutex);
     channel->ref_count--;
     if (channel->ref_count <= 0) {
+        // ★ 2026-11-20：把还压着的槽位一起放掉（否则那些子线程堆的引用计数永远减不到 0，
+        //   那些整堆就永远不释放 —— 正是本次修的那条泄漏 ✓）
+        if (channel->buffer_owner) {
+            if (channel->capacity > 8) {
+                void** big = (void**)malloc(sizeof(void*) * (size_t)channel->capacity);
+                if (big) owners = big;
+            }
+            if (owners == small && channel->capacity > 8) {
+                // malloc 失败：宁可不减计数（漏这几个堆）也不能让 owner 悬空 ✓
+            } else {
+                for (int i = 0; i < channel->capacity; i++) {
+                    if (channel->buffer_owner[i]) {
+                        owners[n++] = channel->buffer_owner[i];
+                        channel->buffer_owner[i] = NULL;
+                    }
+                }
+            }
+        }
         platform_mutex_unlock(&channel->mutex);
         if (channel->buffer) {
             free(channel->buffer);
             channel->buffer = NULL;
+        }
+        if (channel->buffer_owner) {
+            free(channel->buffer_owner);
+            channel->buffer_owner = NULL;
         }
         platform_mutex_destroy(&channel->mutex);
         platform_cond_destroy(&channel->not_empty);
@@ -1286,6 +1335,9 @@ void channel_unref(ObjChannel* channel) {
         // 打上 released 标记后，由进程收尾的 channel_free_all() 只释放结构体。
         channel->buffer = NULL;
         channel->released = 1;
+        // 解锁后再减引用：减到 0 会 free 整个子线程堆，别在持锁时做 ✓
+        for (int i = 0; i < n; i++) { gc_dead_heap_unref(owners[i]); }
+        if (owners != small) free(owners);
         return;
     }
     platform_mutex_unlock(&channel->mutex);
@@ -1309,7 +1361,6 @@ void channel_close(ObjChannel* channel) {
 #define CHANNEL_CLONE_REJECTED(orig, cloned) (!val_is_null(orig) && val_is_null(cloned))
 
 int channel_send(ObjChannel* channel, Value value) {
-    gc_note_channel_use();          // ★ 本线程用过 channel ⇒ 退出时不能整堆释放（见 object_thread.c ✓）
     Value cloned = value_clone_for_channel(value);
     if (CHANNEL_CLONE_REJECTED(value, cloned)) return -3;   // -3 = 克隆被拒（异常已登记）
 
@@ -1329,7 +1380,7 @@ int channel_send(ObjChannel* channel, Value value) {
         return -1;
     }
 
-    channel->buffer[channel->tail] = cloned;
+    channel_slot_put(channel, channel->tail, cloned);        // 连同 owner 一起登记 ✓
     gc_write_barrier((Object*)channel, cloned);
     channel->tail = (channel->tail + 1) % channel->capacity;
     channel->count++;
@@ -1368,13 +1419,15 @@ Value channel_receive(ObjChannel* channel) {
     Value re_cloned = value_clone_for_channel(value);
     gc_set_enabled(saved_gc_enabled);
 
-    channel->buffer[channel->head] = val_null();
+    void* owner = channel_slot_take(channel, channel->head);
     channel->head = (channel->head + 1) % channel->capacity;
     channel->count--;
 
     platform_cond_signal(&channel->not_full);
     platform_mutex_unlock(&channel->mutex);
 
+    // 槽已清空 ⇒ 减引用（减到 0 会整堆 free，所以放在解锁之后 ✓）
+    gc_dead_heap_unref(owner);
     return re_cloned;
 }
 
@@ -1399,13 +1452,14 @@ int channel_try_take(ObjChannel* channel, Value* out) {
     Value re_cloned = value_clone_for_channel(value);
     gc_set_enabled(saved_gc_enabled);
 
-    channel->buffer[channel->head] = val_null();
+    void* owner = channel_slot_take(channel, channel->head);
     channel->head = (channel->head + 1) % channel->capacity;
     channel->count--;
 
     platform_cond_signal(&channel->not_full);
     platform_mutex_unlock(&channel->mutex);
 
+    gc_dead_heap_unref(owner);       // 同上：解锁后再减 ✓
     *out = re_cloned;
     return 1;
 }
@@ -1415,7 +1469,6 @@ int channel_try_take(ObjChannel* channel, Value* out) {
 //   为什么要它：`send` 在缓冲满时会**无限阻塞**，一个忘记取值的消费者就能让生产者永久卡死
 //   （服务端停机、UI 线程上报进度这类场景最怕）。有了超时就能放弃并走降级路径。
 int channel_send_for(ObjChannel* channel, Value value, int timeout_ms) {
-    gc_note_channel_use();
     Value cloned = value_clone_for_channel(value);   // 克隆在发送方堆；超时丢弃时由本线程 GC 回收 ✓
     if (CHANNEL_CLONE_REJECTED(value, cloned)) return -3;   // 同上：被拒时不许入队
 
@@ -1444,7 +1497,7 @@ int channel_send_for(ObjChannel* channel, Value value, int timeout_ms) {
         return -1;
     }
 
-    channel->buffer[channel->tail] = cloned;
+    channel_slot_put(channel, channel->tail, cloned);   // 连同 owner 一起登记 ✓
     gc_write_barrier((Object*)channel, cloned);
     channel->tail = (channel->tail + 1) % channel->capacity;
     channel->count++;
@@ -1455,7 +1508,6 @@ int channel_send_for(ObjChannel* channel, Value value, int timeout_ms) {
 }
 
 int channel_try_send(ObjChannel* channel, Value value) {
-    gc_note_channel_use();          // ★ 同上
     Value cloned = value_clone_for_channel(value);
     if (CHANNEL_CLONE_REJECTED(value, cloned)) return -3;   // 同上
 
@@ -1466,7 +1518,7 @@ int channel_try_send(ObjChannel* channel, Value value) {
         return -1;
     }
 
-    channel->buffer[channel->tail] = cloned;
+    channel_slot_put(channel, channel->tail, cloned);   // 连同 owner 一起登记 ✓
     gc_write_barrier((Object*)channel, cloned);
     channel->tail = (channel->tail + 1) % channel->capacity;
     channel->count++;
@@ -1506,13 +1558,15 @@ Value channel_try_receive(ObjChannel* channel) {
     Value re_cloned = value_clone_for_channel(value);
     gc_set_enabled(saved_gc_enabled);
 
-    channel->buffer[channel->head] = val_null();
+    void* owner = channel_slot_take(channel, channel->head);
     channel->head = (channel->head + 1) % channel->capacity;
     channel->count--;
 
     platform_cond_signal(&channel->not_full);
     platform_mutex_unlock(&channel->mutex);
 
+    // 槽已清空 ⇒ 减引用（减到 0 会整堆 free，所以放在解锁之后 ✓）
+    gc_dead_heap_unref(owner);
     return re_cloned;
 }
 
