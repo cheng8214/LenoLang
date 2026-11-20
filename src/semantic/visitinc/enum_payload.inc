@@ -455,6 +455,15 @@ static int sem_enum_payload_rewrite_call(Semantic* s, Ast* ast) {
         return 1;
     }
 
+    // ★ 2026-11-20 修（偶发 0xC0000005 根因）：`mname` / `ename` 指向 **callee 内部**的
+    //   字符串，而 callee 在两行后就被 `ast_free` 了 —— 之后 emit 里还要
+    //   `strdup(mname)`（写 enum_payload_member）和拼报错文案 ⇒ **读已释放内存**。
+    //   实测触发：`Array[Res[int]] arr = []` + `arr.add(Res.ok(2))`，
+    //   语义阶段偶发崩溃（`strdup` 沿着被复用的堆块一直读到未映射页）；
+    //   崩溃率随堆布局变化（同一文件 2/10 ~ 10/10），`--check` 有时是绿的。
+    //   ⇒ 先复制一份再用。
+    char* mname_saved = mname ? strdup(mname) : NULL;
+
     AstList args = ast->u.call.args;
     // 丢掉旧的调用信息（callee 与 args 外壳；arg_eval 只在命名实参下才有）
     ast_free(callee);
@@ -464,7 +473,9 @@ static int sem_enum_payload_rewrite_call(Semantic* s, Ast* ast) {
         type_free(ast->cached_type);
         ast->cached_type = NULL;
     }
-    sem_payload_emit_struct_init(s, ast, &v, mi, args, mname, expl, expl_n);
+    sem_payload_emit_struct_init(s, ast, &v, mi, args,
+                                 mname_saved ? mname_saved : mname, expl, expl_n);
+    if (mname_saved) free(mname_saved);
     return 1;
 }
 
