@@ -678,28 +678,31 @@ static Value str_find(int argc, Value* args) {
 //   "没有 rfind ⇒ 按点切开取最后一段"。
 //   语义与 `find` 逐条对称：
 //     · 返回**字符索引**（不是字节偏移），找不到 ⇒ -1
-//     · 可选第 3 参 `before` 是**上界（不含）**：只在 [0, before) 里找最后一次出现
-//       （与 find 的 `start` 起点对称；也支持负数，从末尾数）
+//     · 可选第 3 参 `last` 是**上界（含）**（2026-11-20 起；原为 `before`＝不含）：
+//       允许的匹配**起点** ≤ `last`（与 `find` 的 `start` 起点对称；负数从末尾数）
+//       —— 全语言的索引区间统一成闭区间，见 docs/区间口径约定.md ✓
 //     · 空模式 ⇒ 返回上界处（对称于 find 的"空模式返回起点"）
 //     · 允许重叠匹配（"aaaa".rfind("aa") ⇒ 2，与 Python 一致）
+//   ⚠ 迁移注意（v3.2.44 起）：老写法 `rfind(pat, before)` 的 before 是**不含**的，
+//     新口径 `last` 是**含**的 ⇒ 想保持"只在 [0, n) 里找"要传 `n - 1`。
 static Value str_rfind(int argc, Value* args) {
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     ObjString* pattern = (ObjString*)val_as_obj(args[1]);
     int char_len = str->char_len;
 
-    // 上界（字符索引，不含）；默认 = 整串
-    int before = char_len;
+    // 上界（字符索引，**含**）—— 允许的匹配起点不能超过它；默认 = 整串末尾
+    int last = char_len;
     if (argc >= 3 && val_is_int(args[2])) {
-        before = val_as_int(args[2]);
-        if (before < 0) before = char_len + before;   // 与 find 的负起点同口径
+        last = val_as_int(args[2]);
+        if (last < 0) last = char_len + last;         // 与 find 的负起点同口径
     }
-    if (before > char_len) before = char_len;
-    if (before < 0) before = 0;
+    if (last > char_len) last = char_len;
+    if (last < -1) last = -1;                         // 夹到 -1：区间空 ⇒ 下面直接 -1
 
-    if (pattern->len == 0) return val_int(before);    // 空模式：对称于 find 返回 start
-    if (before == 0) return val_int(-1);
+    if (pattern->len == 0) return val_int(last);       // 空模式：对称于 find 返回 start
+    if (last < 0) return val_int(-1);
 
-    int byte_limit = utf8_char_offset(str->chars, str->len, before);   // 搜索区间 [0, byte_limit)
+    int byte_limit = utf8_char_offset(str->chars, str->len, last + 1);  // 起点必须 < byte_limit
 
     int found_byte = -1;
     const char* p = str->chars;
@@ -707,7 +710,7 @@ static Value str_rfind(int argc, Value* args) {
         const char* hit = strstr(p, pattern->chars);
         if (!hit) break;
         int off = (int)(hit - str->chars);
-        if (off + pattern->len > byte_limit) break;   // 后面的出现只会更靠后 ⇒ 可以停
+        if (off >= byte_limit) break;                 // 起点超过上界（含）⇒ 可以停
         found_byte = off;
         p = hit + 1;                                  // +1 而不是 +len：允许重叠匹配
     }

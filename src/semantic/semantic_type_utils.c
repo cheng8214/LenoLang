@@ -2559,3 +2559,31 @@ void semantic_free_generic_requirements(Semantic* s) {
     s->pending_count = 0;
     s->pending_capacity = 0;
 }
+
+// ============================================================================
+// 字段"改过名"的迁移提示（2026-11-20）
+// ----------------------------------------------------------------------------
+// 为什么单独一张表：字段不存在时编译器只会说「struct 'X' 没有字段 'y'」+ 相似名建议，
+//   而"这个字段是**改名**了、新名字是什么、旧值怎么换算"只有编译器知道。少这一句，用户
+//   要么猜名字，要么把旧语义的 `-1` 留在原地 ⇒ **静默差一格**（最坏的那种）。
+// 记录：`RegexMatch.end`（半开，v3.2.7～v3.2.43）⇒ `RegexMatch.last`（闭区间末位，v3.2.44 起）
+//   —— 语言口径统一成闭区间，见 docs/区间口径约定.md ✓
+// ⚠ 报错入口有两处（visit_field_access.inc 与 semantic_type.c 的推断分支）⇒ 都先问这里，
+//   文案**逐字一致** ⇒ 编译器按文案去重，用户只看到一条 ✓
+// ⚠ 仓内 + 下游项目都迁移完成后这条可删（删之前 grep 一遍 `\.end\b` 确认没人再写）✓
+// ============================================================================
+const char* semantic_renamed_field_hint(const char* type_name, const char* field_name) {
+    if (!type_name || !field_name) return NULL;
+    static const struct { const char* type_name; const char* old_name; const char* msg; } TBL[] = {
+        { "RegexMatch", "end",
+          "struct 'RegexMatch' 没有字段 'end' —— 它**改名**了：2026-11-20 起下标口径统一成"
+          "**闭区间**，闭区间末位叫 'last'（== 旧 end - 1）。切片写 `s[m.start : m.last]`；"
+          "确实要\"不含末尾\"的旧值请写 `m.last + 1`" },
+    };
+    for (size_t i = 0; i < sizeof(TBL) / sizeof(TBL[0]); i++) {
+        if (strcmp(TBL[i].type_name, type_name) == 0 && strcmp(TBL[i].old_name, field_name) == 0) {
+            return TBL[i].msg;
+        }
+    }
+    return NULL;
+}

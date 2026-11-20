@@ -44,6 +44,11 @@ const char* semantic_method_owner(Semantic* s, const char* name);
 //   文案两处一致 ⇒ 编译器按文案去重 ⇒ 用户只看到一条 ✓
 void semantic_check_union_field(Semantic* s, Ast* ast);
 
+// ★ 2026-11-20：字段**改名**的迁移提示（实现见 semantic_type_utils.c）——
+//   「struct 没有字段 'x'」这个报错有两处入口（访问器 / 类型推断），两处都**先问它**：
+//   返回非 NULL 就改报这一句（点明新名字与换算），否则走通用文案 + 相似名 ✓
+const char* semantic_renamed_field_hint(const char* type_name, const char* field_name);
+
 // ★ pri：私有成员的字段访问检查（实现见 semantic_visit_ast.c ✓）
 //   非 static：semantic_type.c 的 infer_expr_type 里也要调它 ——
 //   因为只有那里跑得够晚，导入模块的符号表才**已经懒加载** ✓（实测早查会拿到 NULL ✗）

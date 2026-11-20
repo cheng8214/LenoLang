@@ -218,6 +218,7 @@ const NativeStructSpec* native_find_module_struct_spec(const char* module_name, 
 //   用途：`use dirs.写错的名字` 的"可用类型"诊断（照 native_builtin_module_hint 的风格）。
 int native_list_module_struct_specs(const char* module_name, const char** out_names, int max);
 
+
 // 取模块方法的返回类型规格（编译期；未声明规格 ⇒ NULL）
 const NativeTypeSpec* native_get_module_method_return_spec(const char* module_name, const char* method_name);
 

@@ -676,6 +676,7 @@
 | [threads使用指南.md](threads使用指南.md) | 线程 / `Channel`（与 `module_threads_api.md` 有重叠） | ✅ |
 | [并发选择指引.md](并发选择指引.md) | async / threads / Channel 怎么选 | ✅ |
 | [类型收窄与绑定语法改进.md](类型收窄与绑定语法改进.md) | `is` 收窄与 `=>` 绑定的语义与用法 | ✅ |
+| [区间口径约定.md](区间口径约定.md) | **下标/整数区间一律闭区间**的唯一口径来源：切片 / `for a:b` / `switch case` / `RegexMatch.last` / `rfind(last)`；含 2026-11-20 的 `end` ⇒ `last` 迁移表 | ✅ |
 | [FFI使用指南.md](FFI使用指南.md) | FFI / clib 调用全流程 | 🟡 版本历史里有一条 JIT 记录已过时 |
 | [加密算法示例指南.md](加密算法示例指南.md) | `examples/` 里纯 Leno 密码学算法导览 | ✅ |
 | [Leno跨模块clib开发经验.md](Leno跨模块clib开发经验.md) | 跨模块 clib 的踩坑与写法 | ✅ |

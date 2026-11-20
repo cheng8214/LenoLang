@@ -307,25 +307,28 @@ strings.len("abc")   // 返回 3
 "x^a".find("^a", 0, true)   // 1   （plain=true ⇒ 当字面量找）
 ```
 
-#### `rfind(pattern, before?)` ★ 2026-11-10 新增
+#### `rfind(pattern, last?)` ★ 2026-11-10 新增（2026-11-20 上界改闭区间）
 
 **反向**查找：返回子串**最后一次**出现的位置。与 `find` 逐条对称：
 
-- `before` (int, 可选): **上界（不含）** —— 只在 `[0, before)` 里找最后出现；负数从末尾数
+- `last` (int, 可选): **上界（含）** —— 只找"匹配起点 ≤ `last`"的最后一次；负数从末尾数
+  （★ 2026-11-20 起；原参数叫 `before` 且**不含** —— 全语言的索引区间统一成闭区间，
+  见 `docs/区间口径约定.md` ✓。等价换算：旧 `before = n` ⇔ 新 `last = n - 1`）
 - 空模式 ⇒ 返回上界处（`find` 的空模式返回起点）
 - **允许重叠匹配**：`"aaaa".rfind("aa")` ⇒ 2（与 Python 一致）
 - 返回**字符索引**（不是字节偏移），找不到 ⇒ -1
 
 ```leno
 "a.b.c".rfind(".")          // 3   ← 取扩展名的分界点
-"a.b.c".rfind(".", 3)       // 1   ← 只在 [0,3) 里找
+"a.b.c".rfind(".", 3)       // 3   ← 起点 ≤ 3 ⇒ 就是末位那个点（含）
+"a.b.c".rfind(".", 2)       // 1   ← 起点 ≤ 2 ⇒ 只剩第 1 位
 "abcabc".rfind("b")         // 4
 "中文中文".rfind("中文")     // 2   （字符索引，不是 6）
 "abc".rfind("z")            // -1
 ```
 
 > 为什么补：`find` 只有正向版 ⇒ "取最后一个 `.` / `/` / `?`" 只能 `split` 后倒着拼
-> （Aria `downloads.leno`），或手写反向循环。**模块式 `strings.rfind(s, pat, before?)` 与实例式同一实现。**
+> （Aria `downloads.leno`），或手写反向循环。**模块式 `strings.rfind(s, pat, last?)` 与实例式同一实现。**
 
 #### `byte_find(pattern, start?)`
 

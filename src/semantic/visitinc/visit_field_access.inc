@@ -207,6 +207,13 @@
                             //   ⇒ 统一后编译器按文案合并重复（输出里的"已合并重复"✓）⇒ 只报一条 ✓✓
                             //   顺带带上 struct 名 ✓（比原来裸的 "struct 没有字段 'x'" 更能定位 ✓）
                             const char* skind = (obj_type->kind == TYPE_CSTRUCT) ? "cstruct" : "struct";
+                            // ★ 2026-11-20：**改名过**的字段先报迁移提示（如 RegexMatch.end ⇒ last）
+                            //   否则用户只看到"没有字段 'end'"，猜不到新名字与换算 ✓
+                            const char* renamed = semantic_renamed_field_hint(
+                                obj_type->struct_name, field_name);
+                            if (renamed) {
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "%s", renamed);
+                            } else {
                             // ★ 2026-11-11：字段名拼错时给相似名提示（与"方法拼错"同款）
                             const char** fnames = (const char**)malloc(
                                 sizeof(char*) * struct_sym->struct_field_count);
@@ -220,6 +227,7 @@
                                      skind, obj_type->struct_name ? obj_type->struct_name : "?", field_name,
                                      fhint);
                             free(fnames);
+                            }
                         }
 
                         // 注意：单层字段访问（如 o.inner）不需要检查 null 默认值
@@ -230,14 +238,20 @@
                         // native struct（v3.2.3）：字段存在时上面的 infer_field_type 已把索引补上；
                         // 到这里还 < 0 ⇒ 名字真的不存在，给出比 codegen 兜底更准的报错
                         if (ast->u.field_access.field_index < 0) {
-                            const NativeStructSpec* nspec = native_find_struct_spec(obj_type->struct_name);
-                            const char* fhint = (nspec && nspec->field_count > 0)
-                                ? get_similar_in_names((const char**)nspec->field_names,
-                                                       nspec->field_count, field_name)
-                                : "";
-                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                     "struct '%s' 没有字段 '%s'%s",
-                                     obj_type->struct_name, field_name, fhint);
+                            const char* renamed = semantic_renamed_field_hint(
+                                obj_type->struct_name, field_name);
+                            if (renamed) {
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "%s", renamed);
+                            } else {
+                                const NativeStructSpec* nspec = native_find_struct_spec(obj_type->struct_name);
+                                const char* fhint = (nspec && nspec->field_count > 0)
+                                    ? get_similar_in_names((const char**)nspec->field_names,
+                                                           nspec->field_count, field_name)
+                                    : "";
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "struct '%s' 没有字段 '%s'%s",
+                                         obj_type->struct_name, field_name, fhint);
+                            }
                         }
                     } else if (!struct_sym && obj_type->kind == TYPE_CSTRUCT && obj_type->struct_name) {
                         // 从全局 cstruct 定义表查找（跨模块导入的 cstruct）

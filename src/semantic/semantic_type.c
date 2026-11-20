@@ -3175,6 +3175,40 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                         recv->struct_name, key, recv->struct_name);
                                 }
                             }
+                        } else {
+                            // ★ 2026-11-20：**native struct**（`regexs.RegexMatch`、`dirs.DirEntry` …）
+                            //   的字段表。这条"索引路"此前只认 `def_sym`（脚本 struct 的符号）⇒
+                            //   native 类型**整块跳过** ⇒ `ms[0].end` / `ms[0].nope` 编译期**零诊断**，
+                            //   运行期才报「struct 不存在字段 'x'」（实测：`find_all(...)[0].end`
+                            //   就是这么漏过去的 ✗ —— 而它正是最容易写的一种形态）。
+                            //   判据与访问器那条、以及上面的脚本分支**逐字一致** ⇒ 去重命中 ✓
+                            const NativeStructSpec* nss = native_find_struct_spec(recv->struct_name);
+                            if (nss) {
+                                int known = 0;
+                                for (int fi = 0; fi < nss->field_count; fi++) {
+                                    if (nss->field_names[fi] &&
+                                        strcmp(nss->field_names[fi], key) == 0) {
+                                        known = 1;
+                                        break;
+                                    }
+                                }
+                                if (!known) {
+                                    const char* renamed =
+                                        semantic_renamed_field_hint(recv->struct_name, key);
+                                    if (renamed) {
+                                        error_add_at_fmt_dedup(ERR_SEMANTIC, ast->line, ast->column,
+                                                               "%s", renamed);
+                                    } else {
+                                        const char* fhint = (nss->field_count > 0)
+                                            ? get_similar_in_names((const char**)nss->field_names,
+                                                                   nss->field_count, key)
+                                            : "";
+                                        error_add_at_fmt_dedup(ERR_SEMANTIC, ast->line, ast->column,
+                                                               "struct '%s' 没有字段 '%s'%s",
+                                                               recv->struct_name, key, fhint);
+                                    }
+                                }
+                            }
                         }
                     }
                     if (recv) type_free(recv);
@@ -3976,6 +4010,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         //   ⇒ 走**谓词去重版**入口（不必自己开缓冲 ✓）
                         // ★ 2026-11-11：相似名提示与访问器那条**逐字一致**（同一份字段表 + 同一个
                         //   提示函数 ⇒ 文案相同 ⇒ 去重仍然命中 ✓）
+                        // ★ 2026-11-20：**改名过**的字段（如 RegexMatch.end ⇒ last）先报迁移提示 ——
+                        //   与访问器那条（visit_field_access.inc）**逐字相同** ⇒ 去重仍然命中 ✓
+                        const char* renamed2 = semantic_renamed_field_hint(obj_type->struct_name, fname);
+                        if (renamed2) {
+                            error_add_at_fmt_dedup(ERR_SEMANTIC, ast->line, ast->column, "%s", renamed2);
+                        } else {
                         const char** fnames2 = (const char**)malloc(
                             sizeof(char*) * def_sym->struct_field_count);
                         for (int fi = 0; fi < def_sym->struct_field_count; fi++) {
@@ -3987,6 +4027,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                                                "struct '%s' 没有字段 '%s'%s",
                                                obj_type->struct_name, fname, fhint2);
                         free(fnames2);
+                        }
                     }
                 }
             }

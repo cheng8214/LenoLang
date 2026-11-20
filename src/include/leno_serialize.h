@@ -216,7 +216,13 @@
 //   当目标签名调用、缺的实参静默变 null）。
 //   为什么必须 bump：规格是**变长尾随字节** —— 旧 VM 不认识 TYPE_FUNCTION 规格 ⇒ 会把后面的
 //   签名当成下一条指令（整条字节码流错位），所以旧 .lenb / .lenomc 必须整体失效重编。
-#define LENO_BIN_VERSION    0x0003022B  // v3.2.43（2026-11-17）—— 类型规格新增 TYPE_FUNCTION
+// v3.2.44（2026-11-20）：**下标口径统一成闭区间**（不改字节码布局，但改 native struct 字段）。
+//   `RegexMatch` 的字段从 `{ start, end, text }` 变成 `{ start, last, text }` —— 1 号位
+//   的含义由"不含末尾"变成"含末尾"。字段号是**编译期**解析后写进指令的（OP_GET_FIELD 的 B 位），
+//   旧 .lenb / .lenomc 里编进去的 1 号位会读到 `last` ⇒ 静默差一格 ✗
+//   ⇒ 必须整体失效重编（本版不新增/不改 opcode 布局，所以只需版本号挡下 ✓）。
+#define LENO_BIN_VERSION    0x0003022C  // v3.2.44（2026-11-20）—— RegexMatch.end ⇒ last（闭区间）
+                                        // v3.2.43（2026-11-17）—— 类型规格新增 TYPE_FUNCTION
                                         //   （函数签名：形参个数 + 各形参规格 + 返回类型）
                                         // v3.2.42（2026-11-15）—— OP_STRUCT_DEF 字段元数据
                                         //   追加 ARRAY/DICT 的递归类型规格（布局变了）
@@ -465,7 +471,9 @@
 // v45（2026-11-09）：OP_STRUCT_DEF 的字段元数据多一个 `element_struct_name`
 //   （见 LENO_BIN_VERSION v3.2.29）。模块字节码里是同一份布局 ⇒ 必须同步升，
 //   否则旧 .lenomc 会被当成新格式读，字段定义整体错位。
-#define LENO_MODCACHE_VERSION  0x0000003B  // v58 - 同 LENO_BIN_VERSION v3.2.43（类型规格新增
+#define LENO_MODCACHE_VERSION  0x0000003C  // v59 - 同 LENO_BIN_VERSION v3.2.44（RegexMatch 字段
+                                            //   顺序变了 ⇒ 旧 .lenomc 里的字段号会读错一格）
+                                            // v58 - 同 LENO_BIN_VERSION v3.2.43（类型规格新增
                                             //   TYPE_FUNCTION：函数签名随指令尾随字节走）
                                             // v57 - 同 v3.2.42（OP_STRUCT_DEF 字段元数据追加
                                             //   ARRAY/DICT 的递归类型规格）

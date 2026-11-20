@@ -107,25 +107,27 @@ regexs.find("中文字abc", "abc")            // 3 ✓（按字符；按字节�
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
 | `start` | `int` | 匹配起始位置（0-based，按**字符**计 ✓，2026-10-10 起；原按字节 ✗） |
-| `end` | `int` | 匹配结束位置（0-based，**不含** ✓，同样按字符 ✓） |
+| `last` | `int` | 匹配**末位**位置（0-based，按字符，**含** ✓ —— 与切片 / `for a:b` 同一闭区间口径） |
 | `text` | `string` | 匹配到的子串 |
 
 ```leno
 var matches = regexs.find_all("abc123def456", "[0-9]+")
-// [RegexMatch{start: 3, end: 6, text: "123"}, RegexMatch{start: 9, end: 12, text: "456"}]
+// [RegexMatch{start: 3, last: 5, text: "123"}, RegexMatch{start: 9, last: 11, text: "456"}]
 
 for matches to m {
     io.print(m.text + " @" + m.start)     // 字段类型已知 ⇒ 不做收窄（m.text 是 string、m.start 是 int）
+    var seg = "abc123def456"[m.start : m.last]   // ⇒ "123"：直接切，不用 -1 ✓
 }
 ```
 
-> ⚠ **v3.2.7 起返回结构体、不再是 `dict`**：字段名与旧字典键**逐字相同** ⇒ `m.text` / `m.start`
-> 这类调用点**不用改**；要改的是 `m["text"]` 下标式与 `if m is Dict` 收窄 —— 编译期就会挡住。
-> 为什么不用 `Dict[string, ...]`：三个键**类型不齐**（`start`/`end` 是 int、`text` 是 string），
-> 同质的 `Dict` 表达不了"这个键 int、那个键 string"（与 `dirs.stat` 改 `DirInfo` 同一判断，见实例十三/二十二）。
-> ⚠ `start` / `end` **2026-10-10 起是**字符**下标** ✓（与 `strings.find` / 切片 / `.len()` 同口径 ✓；
-> 原来按字节 ✗ ⇒ 含中文时拿 `start` 去切片必然错位 ✗）。**切片要注意 `end` 不含**：
-> `s[m.start : m.end - 1]` ✓（本语言切片是闭区间 ✓）；实测 `"a中b中"` 找 `"中"` ⇒ `start` = 1, 3 ✓。
+> ★ **2026-11-20：`end` 已删除，改名 `last`（闭区间末位）** —— 全语言的下标/整数区间统一成
+> **闭区间**（切片 / `for a:b` / `switch case a:b` / `strings.slice` 同款），`RegexMatch` 是当时
+> 唯一一处"叫 `end` 却**不含**末尾"的例外。删除而不是改语义，是为了让旧代码**编译期报错**：
+> `m.end` ⇒ 「struct 'RegexMatch' 没有字段 'end' —— 它改名了…」（不会静默差一格 ✗）。
+> 换算：旧 `end` = 新 `last + 1`；空匹配时 `last = start - 1`（切片得空串 ✓）。
+> ⚠ 字节码版本 v3.2.43 ⇒ **v3.2.44**、模块缓存 v58 ⇒ **v59**（字段号含义变了 ⇒ 旧产物整体失效重编 ✓）。
+> ⚠ `start` / `last` **2026-10-10 起是**字符**下标** ✓（与 `strings.find` / 切片 / `.len()` 同口径 ✓；
+> 原来按字节 ✗ ⇒ 含中文时拿 `start` 去切片必然错位 ✗）；实测 `"a中b中"` 找 `"中"` ⇒ `start` = 1, 3 ✓。
 > ⚠ native struct 名（`RegexMatch`）**不能当类型标注**（不在符号表里）；让编译器推断
 > （`var m = matches[0]`）再按字段用即可。
 

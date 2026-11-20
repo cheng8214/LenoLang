@@ -1051,7 +1051,18 @@ static const NativeTypeSpec S_RX_INT             = { NTYPE_INT,    NULL, NULL, N
 static const NativeTypeSpec S_REGEXMATCH_SPEC    = { NTYPE_STRUCT, "RegexMatch", NULL, NULL, 0, -1 };
 static const NativeTypeSpec S_REGEXMATCH_ARR_SPEC = { NTYPE_ARRAY, NULL, &S_REGEXMATCH_SPEC, NULL, 0, -1 };
 
-static const char* REGEXMATCH_FIELD_NAMES[] = { "start", "end", "text" };
+// ★ 2026-11-20：**下标口径统一成闭区间** —— 字段从 `{ start, end, text }` 改成 `{ start, last, text }`。
+//   为什么删 `end` 而不是把它的语义改成"含"：
+//     · 改成"含"不会报错，存量代码 `s[m.start : m.end - 1]` 会**静默少取最后 1 个字符**、
+//       `m.end - m.start` 算长度会静默差 1 ✗ —— 正是本项目最不能接受的那类错。
+//     · 删掉 ⇒ 旧代码在**编译期**就报「struct 'RegexMatch' 没有字段 'end'」，并给出改名提示
+//       （见 semantic 的 visit_field_access.inc）⇒ 迁移是响亮的 ✓
+//   `last` = 闭区间末位（0-based 字符，**含**）。空匹配时 `last = start - 1`
+//   （`s[m.start : m.last]` 得空串，与 VM 的"end < start ⇒ 空"一致 ✓）。
+//   「不含末尾」的旧值要的话写 `m.last + 1`（显式算术，一眼看得出边界）✓
+//   ⚠ 字段顺序保持 `start` 在 0、`text` 在 2 ⇒ 只有 1 号位的含义变了；旧 `.lenb` / `.lenomc`
+//     里编进指令的字段号会读错，所以 LENO_BIN_VERSION / LENO_MODCACHE_VERSION 同步 bump ✓
+static const char* REGEXMATCH_FIELD_NAMES[] = { "start", "last", "text" };
 static const NativeTypeSpec* REGEXMATCH_FIELD_TYPES[] = { &S_RX_INT, &S_RX_INT, &S_RX_STRING };
 static const NativeStructSpec REGEXMATCH_STRUCT_SPEC = {
     "regexs", "RegexMatch", 3, REGEXMATCH_FIELD_NAMES, REGEXMATCH_FIELD_TYPES
@@ -1108,8 +1119,10 @@ static Value regex_find_all(int argc, Value* args) {
         int b_end   = (int)(end   - str->chars);
         int c_start = utf8_char_index(str->chars, str->len, b_start);
         int c_end   = utf8_char_index(str->chars, str->len, b_end);
-        native_struct_set(m, "start", val_int(c_start >= 0 ? c_start : b_start));   // 0-based 字符
-        native_struct_set(m, "end",   val_int(c_end   >= 0 ? c_end   : b_end));     // 0-based 字符，不含
+        int f_start = (c_start >= 0 ? c_start : b_start);
+        int f_end   = (c_end   >= 0 ? c_end   : b_end);   // 内部量：**不含**末尾（= 闭区间末位 + 1）
+        native_struct_set(m, "start", val_int(f_start));  // 0-based 字符
+        native_struct_set(m, "last",  val_int(f_end - 1)); // 0-based 字符，**含**（空匹配 ⇒ start - 1）
         native_struct_set(m, "text",  val_obj((Object*)str_copy(start, (int)(end - start))));
 
         arr_push_custom(result, m_val);

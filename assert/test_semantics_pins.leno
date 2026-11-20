@@ -178,7 +178,8 @@ main() {
     //     只是"与切片 / `.len()` / `strings.find` 不一致" ✗ ⇒ 现在统一到**字符** ✓。
     //   ⚠ 例子必须**能区分**两种口径 ✗（"中文字abc" ✓ 而不是 "abc中文def" ✗）——
     //     这条教训值钱：**例子选错 ⇒ 结论错了还被当成"实测过"** ✓
-    //   ⚠ `end` 仍是**不含**（开区间尾巴 ✓），而切片是**闭区间** ⇒ 用法 `s[m.start : m.end-1]` ✓
+    //   ⚠ **2026-11-20 起下标口径统一成闭区间**：字段叫 `last`（末位，含）⇒ `s[m.start : m.last]` ✓
+    //     （旧写法 `m.end - 1` 里的 `end` 字段**已删**，旧代码会编译期报错并给出改名提示 ✓）
     var p16 = dirs.join(work, "regex_offsets.leno")
     files.write(p16, "import regexs" + n
         + "main() {" + n
@@ -186,7 +187,7 @@ main() {
         + "    var ms = regexs.find_all(\"a中b中\", \"中\")" + n
         + "    var s = \"a中b中\"" + n
         + "    print(_str(c) + \"|\" + _str(ms[0].start) + \",\" + _str(ms[1].start)" + n
-        + "        + \"|\" + s[ms[0].start : ms[0].end - 1] + \"\\n\")" + n
+        + "        + \"|\" + s[ms[0].start : ms[0].last] + \"\\n\")" + n
         + "}" + n)
     ce.expect_ok(p16, "find/find_all 都按字符（3|1,3|中，且切片对得上）", "3|1,3|中")
 
