@@ -1,7 +1,7 @@
 // test_thread_http.leno — 多线程并发发 HTTP 请求（离线，走本机服务端）
 //
 // 这个用例曾经被迫删除：FFI 回调在子线程里只能成功第一次（`vm_call_value` 把
-// stop_frame_cnt 写到了**全局主 VM** 上，见 LenoDocsSrc/site/多线程struct与模块全局变量问题记录.html 第八节），
+// stop_frame_cnt 写到了**全局主 VM** 上，见 LenoDocsSrc/site/archive/多线程struct与模块全局变量问题记录.html 第八节），
 // 表现为 `statusCode=200` 但 `body=""`，两个并发线程直接 0xC0000005。
 //
 // 运行时修好（2026-10-06，`src/vm/vm.c` 的 vm_call_value 改用 `vm_ptr->stop_frame_cnt`）后，

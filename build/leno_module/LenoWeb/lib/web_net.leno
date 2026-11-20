@@ -31,7 +31,7 @@ int _g_curlGlobalReady = core.globalInit(Global.ALL)
 //
 // 早先的实现用模块级全局 `Response? _currentResp`，但**模块级全局在多线程间是共享的**
 // （`ObjModule.globals` 不随 `threads.start()` 深拷贝，见
-//  LenoDocsSrc/site/多线程struct与模块全局变量问题记录.html）⇒ 两个线程同时请求会互相覆盖响应体（串台）。
+//  LenoDocsSrc/site/archive/多线程struct与模块全局变量问题记录.html）⇒ 两个线程同时请求会互相覆盖响应体（串台）。
 //
 // 现在改为：每个 HttpClient 在 init() 里建自己的累加器，由**闭包捕获**交给回调
 // （2026-10-06 实测：ffi.callback 支持闭包，可捕获并回写 struct 实例；实例赋值是共享语义）。

@@ -9,7 +9,7 @@
 //
 // ★★ 2026-11-15 修（Aria 服务端实测崩溃）：CRC 表**不能**放模块级可变变量。
 //
-//   Leno 的线程模型（见 LenoDocsSrc/site/threads使用指南.html 第 2/4 条、LenoDocsSrc/site/多线程struct与模块全局变量问题记录.html §八）：
+//   Leno 的线程模型（见 LenoDocsSrc/site/threads使用指南.html 第 2/4 条、LenoDocsSrc/site/archive/多线程struct与模块全局变量问题记录.html §八）：
 //     · 每个子线程 = **独立 VM + 独立 GC + 独立堆**；
 //     · **模块级 `var`（ObjModule.globals）是所有线程同一份槽**（进程级 loaded_modules 共享，
 //       有意不隔离）⇒ 往那个槽里写"本线程堆里的对象"，就是**跨堆引用**：

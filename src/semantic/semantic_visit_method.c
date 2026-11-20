@@ -378,7 +378,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                         //   ✗ 此前把整句按"裸字段名"重写成 `self["inner"] = v` —— 最后那个成员被丢掉，
                         //     于是报出「字段 'inner' 类型不匹配: 期望 'struct Inner'，实际 'float'」
                         //     这种**指错靶子**的假错：合法代码被拒，照报错去查 RHS / 字段声明都查不出病因
-                        //     （LenoMusic 的 `volSld.value = v` 就是撞在这 ✓ 见 LenoDocsSrc/site/Leno报错提示改进计划.html B6）
+                        //     （LenoMusic 的 `volSld.value = v` 就是撞在这 ✓ 见 LenoDocsSrc/site/archive/Leno报错提示改进计划.html B6）
                         Ast* tgt = ast->u.assign.targets ? ast->u.assign.targets[i] : NULL;
                         if (tgt && tgt->kind == AST_INDEX) {
                             Ast* nested_value = ast->u.assign.value;

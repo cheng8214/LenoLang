@@ -19,7 +19,7 @@
 //
 // 【无模块级可变状态】
 //   刻意不缓存 DLL 句柄：`LenoWeb` 的模块级全局在多线程下是**共享**的
-//   （见 LenoDocsSrc/site/多线程struct与模块全局变量问题记录.html），缓存的库句柄会成为竞态源。
+//   （见 LenoDocsSrc/site/archive/多线程struct与模块全局变量问题记录.html），缓存的库句柄会成为竞态源。
 //   转码一次/响应，`ffi.load` 命中的是已加载模块（OS 计数 +1，微秒级），代价可忽略。
 
 import maths

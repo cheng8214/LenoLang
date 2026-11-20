@@ -424,7 +424,7 @@ main() {
 > `src/vm/vm.c` 的 `vm_call_value` 把停止条件写到了**全局主 VM** 上（宏 `vm` 在该处已不在作用域），
 > 另有"回调槽位分配竞态"与"每客户端调用 `curl_global_init`（非线程安全）"两处。
 > 三处均已修；证据与验证见
-> [`LenoDocsSrc/site/多线程struct与模块全局变量问题记录.html`](../../../docs/多线程struct与模块全局变量问题记录.html) 第八节。
+> [`LenoDocsSrc/site/archive/多线程struct与模块全局变量问题记录.html`](../../../docs/多线程struct与模块全局变量问题记录.html) 第八节。
 > 回归用例：`examples/tests/test_thread_http.leno`、`examples/tests/test_ffi_callback_thread.leno`。
 
 ## 动态渲染：无头浏览器（2026-10-07 新增）

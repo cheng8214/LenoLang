@@ -192,7 +192,7 @@ switch cmd {
 > 按值排序的二叉比较树**（O(log n)），低于 16 个仍是线性链（每条 case 一条融合比较）。
 > 实测 100 个 case 命中最后一个：66ms → 21ms（300k 次）。所以：
 > **直接用 switch 就行，不用再为"分支多"手写分档**；只有"热路径且永远命中第一个 case"
-> 这种极端分布，手写 `if` 才快几毫秒。详见 `LenoDocsSrc/site/性能_分支与枚举.html`。
+> 这种极端分布，手写 `if` 才快几毫秒。详见 `LenoDocsSrc/site/archive/性能_分支与枚举.html`。
 
 ---
 

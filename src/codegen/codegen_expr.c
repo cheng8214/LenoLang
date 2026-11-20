@@ -2120,7 +2120,7 @@ static void gen_method_call(CodeGen* gen, Ast* obj_ast, const char* mname,
     //   **链式接收者**（`m.mk().f(x)`、`new T().f(x)`、`f().g()`）不会插。
     //   而下面补默认值原先一律按"含 self"的坐标写槽位 ⇒ 链式形态整体错一格：
     //   `m.mkCalc().plus()` 会先把 nil 填到 `plus` 的形参槽、真默认值填到**没人读的**下一格 ⇒
-    //   运行期形参是 null（静默错值 ✗，见 LenoDocsSrc/site/多线程struct与模块全局变量问题记录.html §9.3）。
+    //   运行期形参是 null（静默错值 ✗，见 LenoDocsSrc/site/archive/多线程struct与模块全局变量问题记录.html §9.3）。
     //   这里先归一化：不含 self 时**补一个 self 副本**（一条 MOV，不重复求值接收者），
     //   使布局恒为 `R[base]=receiver、R[base+1]=self、R[base+2..]=实参`
     //   —— 正是 VM 侧 OP_INVOKE_METHOD_TYPED 的口径（R[A]=receiver、实参在 R[A+1..A+B]，

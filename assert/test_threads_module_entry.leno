@@ -39,7 +39,7 @@ main() {
     //   ① 的 add_base 与 ③ 的 indirect→add_base 各 +1 ⇒ 2。
     //   ⚠ 这条断言是**有意**的：它把"模块级可变状态跨线程共享"钉成显式契约
     //     （与 `_ParseCtx` 那种"把状态收进实例"的写法互为对照，见
-    //     LenoDocsSrc/site/多线程struct与模块全局变量问题记录.html §四）。若哪天做了线程隔离，这条会红 —— 那时再改它。
+    //     LenoDocsSrc/site/archive/多线程struct与模块全局变量问题记录.html §四）。若哪天做了线程隔离，这条会红 —— 那时再改它。
     assert_eq(m.calls(), 2, "⑤模块级可变状态被子线程改到 ⇒ 共享（已知口径，TH5 待办）")
 
     print("test_threads_module_entry passed")

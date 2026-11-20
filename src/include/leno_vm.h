@@ -850,7 +850,7 @@ void chunk_write(Chunk* chunk, uint8_t byte, int line);
 // 经验值：大多数函数的局部变量不超过 8 个
 // 性能修复：8 太小——7 参函数（如 sphereHit 16 槽、trace 18 槽）每次调用
 // 都会 malloc/free，光追测试中 1600 万次调用的堆分配开销是输给 Python 的主因
-// （见 LenoDocsSrc/site/函数调用性能优化_调用帧与多返回值解构.html）。
+// （见 LenoDocsSrc/site/archive/函数调用性能优化_调用帧与多返回值解构.html）。
 // ---------------------------------------------------------------------------
 // 32 → 64（2026-09-22，i5-14400F；依据见 LenoDocsSrc/site/待办与路线图.html ⑤-o）：
 //   槽位数是**寄存器高水位**（`func->local_count = gen->max_reg`，含表达式临时寄存器），
