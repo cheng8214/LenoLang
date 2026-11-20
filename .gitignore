@@ -66,6 +66,8 @@ android/app/assets/probe_data/
 #   （两份同样的 1.8MB 二进制进仓库没有意义，而且会跟模块里那份悄悄走岔）
 android/app/jniLibs/*/*.so
 
-# 各模块**交叉编译的中间目录**（CMake 构建树：对象文件 + 未 strip 的 .so，可达上百 MB）
-#   源码在 src/<库名>/，产物在 lib/android/<abi>/，中间过程不入库
-build/leno_module/*/src/build/
+# 模块**原生源码**已迁出仓库（2026-11-20，唯一副本在 D:\CLeno\LenoMoudleSrc\<模块>\src\）
+#   ⇒ 重编时临时拷回的 src/ 不再入库（否则一次 `git add -A` 又把 7000+ 个文件收回去 ✗）
+#   详见 build/leno_module/README.md 的「原生源码已迁出」一节；确需重新纳入用 `git add -f`
+build/leno_module/*/src/
+# （上面这条覆盖了原来的 build/leno_module/*/src/build/ —— CMake 构建树同样不入库）

@@ -1,5 +1,29 @@
 # leno_module —— 模块区与模块级测试
 
+## ⚠ 模块的**原生源码**（`src/`）已迁出本仓库（2026-11-20）
+
+```
+D:\CLeno\LenoMoudleSrc\<模块名>\src\      ← 唯一的原生源码副本（C / C++ / CMake / 构建脚本）
+```
+
+- 本仓库的 `build/leno_module/<模块>/` **只剩 Leno 侧资产**：`lib/`（`.leno` + 预编译 `.so` / `.dll`）、
+  `examples/`、`test/`、`docs/`、`leno.toml`。**没有 `src/`**（共删除 7193 个受 Git 跟踪的文件）。
+- 归档侧**只留 `src/`** —— 那边的 `lib/` / `examples/` / `test/` / `docs/` / `leno.toml` 已删，
+  要看文档/示例/用例请回本仓库。
+- 只有 **4 个模块**有原生源码：`LenoSDL3`（6785 文件）、`LenoWeb`（6049）、`LenoQR`（11）、
+  `LenoMusic`（7）。其余 18 个是纯 `.leno` 模块，archive 里对应目录是空的。
+- ⚠ **要用/重编这些模块**：`lib/` 里的预编译库仍在 ⇒ 直接 `import` 照常能用；
+  但**重新构建原生库**（改了 `.c` / 升 SDL3 上游 / 换平台）必须先拷回：
+
+  ```bat
+  :: 举例：重编 LenoSDL3
+  xcopy /E /I D:\CLeno\LenoMoudleSrc\LenoSDL3\src build\leno_module\LenoSDL3\src
+  :: ……按模块自己的构建脚本产出 SDL3.dll 等，拷回 LenoSDL3\lib\
+  :: 编完可以把 src 再删掉（仓库不再跟踪它）
+  ```
+
+- Git 历史里仍保留迁移前的 `src/`（本次删除之前的提交），需要单文件时也可以从历史取。
+
 ## 两层断言，别混
 
 | 层 | 位置 | 跑什么 | 入口 |
