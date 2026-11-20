@@ -13,7 +13,7 @@
 //
 // 为什么是 struct 不是 enum —— **2026-11-10 复核过两次，结论没变，理由见下**：
 //   · enum 现在**能带载荷**了（`enum Msg { progress(int done, int total) }`，
-//     见 docs/idioms.md §3 与 docs/enum载荷_设计草案.md）⇒ 旧注释"enum 只存 int 常量"已过期；
+//     见 LenoDocsSrc/site/idioms.html §3 与 LenoDocsSrc/site/enum载荷_设计草案.html）⇒ 旧注释"enum 只存 int 常量"已过期；
 //   · **泛型载荷 enum 现在完整可用了**（2026-11-10，步 1~3）：声明、构造（类型实参从
 //     上下文推断）、匹配都通 —— `enum Result[T] { ok(T v) err(int c) }` 本身能写；
 //   · 但 **enum 不能挂方法**：`extend Result { func isOk() … }` 会报

@@ -10,7 +10,7 @@
 //      模块函数可以直接作线程入口，库内部起线程不再崩/不再死等 ✓
 //      （当年在库模块（web_cdp）里起线程的症状：进程直接崩、或线程从未运行而主线程在
 //        channel.receive() 上死等 ⇒ 命令挂十几分钟无输出 —— 根因是协程首帧漏设
-//        frame->module，见 docs/线程并发能力修复追踪.md 的 TH2 ✓）
+//        frame->module，见 LenoDocsSrc/site/线程并发能力修复追踪.html 的 TH2 ✓）
 //      ⇒ 本例仍按"调用方起线程"组织（库只提供 tab 原语 createTarget / renderOn / closeTarget ✓），
 //        这是**组织方式的选择**，不再是语言约束 ✓
 //

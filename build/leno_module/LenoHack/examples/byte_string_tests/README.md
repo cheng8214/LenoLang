@@ -183,8 +183,8 @@ Unicode 文本中两种返回值的区别：
 
 ## 相关文档
 
-- [strings 模块文档](../../../../docs/module_strings.md) — `byte_find()`、`byte()`、`byte_slice()`、`byte_len()` 等 API 说明
-- [files 模块文档](../../../../docs/module_files.md) — `files.open`、`f.read`、`f.write`、`f.seek` 等 API 说明
+- [strings 模块文档](../../../../docs/module_strings.html) — `byte_find()`、`byte()`、`byte_slice()`、`byte_len()` 等 API 说明
+- [files 模块文档](../../../../docs/module_files.html) — `files.open`、`f.read`、`f.write`、`f.seek` 等 API 说明
 
 ## 技术背景
 

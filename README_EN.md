@@ -13,7 +13,7 @@ and can also write cross-platform GUIs directly (with a bundled SDL3 module).
 
 Leno was born from a love of and exploration into programming language design; it is not perfect, but it is a joy to work on.
 
-<img src="docs/images/dashboard-main.png" width="880" alt="LenoSDL3 dashboard: sidebar layout / widget composition / line chart / custom-drawn Canvas ring">
+<img src="assets/screenshots/dashboard-main.png" width="880" alt="LenoSDL3 dashboard: sidebar layout / widget composition / line chart / custom-drawn Canvas ring">
 
 > The image above is a **real running screenshot** of `leno_gui/应用/数据看板/` (captured with its `DSHOT` headless screenshot hook, not a design mockup) —
 > a single codebase demonstrates layout driving whole pages, sidebar navigation switching pages, widget composition and custom Canvas drawing.
@@ -327,7 +327,7 @@ The other three pages of the same dashboard app (all captured with the headless 
 
 | Usage stats (table + line chart) | Daily check-in (`Calendar` widget + Canvas ring) | Settings (form / switches / input boxes) |
 | --- | --- | --- |
-| <img src="docs/images/dashboard-usage.png" width="270" alt="Usage stats page"> | <img src="docs/images/dashboard-checkin.png" width="270" alt="Daily check-in page"> | <img src="docs/images/dashboard-settings.png" width="270" alt="Settings page"> |
+| <img src="assets/screenshots/dashboard-usage.png" width="270" alt="Usage stats page"> | <img src="assets/screenshots/dashboard-checkin.png" width="270" alt="Daily check-in page"> | <img src="assets/screenshots/dashboard-settings.png" width="270" alt="Settings page"> |
 
 One rendering detail is worth explaining: SDL's 2D primitive pipeline **does no anti-aliasing**, so rounded rectangles and diagonal lines
 are changed to "the CPU computes alpha by coverage and writes it into a texture; the GPU only samples" — smoothness comes from the pixel content, not limited by the rasterization algorithm.
@@ -424,7 +424,7 @@ Leno/
 ├── leno_lsp/                   # LSP language server (C implementation + .vsix plugin)
 ├── assert/                     # assertion tests (814 .leno files, entry point run_tests.leno)
 ├── examples/                   # example code (813 .leno files)
-├── docs/                       # documentation (91 .md + 4 screenshots; see docs/INDEX.md)
+├── assets/screenshots/         # screenshots used by these READMEs (the docs themselves live elsewhere)
 ├── resources/leno.rc           # Windows resources (icon / version info)
 ├── sources_core.txt  sources_vm.txt  sources_compiler.txt   # build source file lists
 └── build.sh  build.bat  build_vm.sh  build_vm.bat
@@ -448,26 +448,31 @@ Leno/
 
 ## Documentation
 
-**📚 [Full documentation index (`docs/INDEX.md`)](docs/INDEX.md)** — classification, status, and "which sections are outdated" all live there. Only the most-used links are kept below:
+**The docs site (HTML, 95 pages, full-text search) lives in the separate repo `LenoDocsSrc`** —
+this repository no longer carries documentation:
 
-**Getting Started and Guides**
-- [Leno Tutorial](docs/Leno入门教程.md) (Chinese) — complete syntax reference (with an in-depth type system guide)
-- [FAQ](docs/FAQ.md) (Chinese) · [Leno Language Specification Draft](docs/Leno_规范草稿.md) (Chinese) · [Import Guide](docs/import使用指南.md) (Chinese)
-- [Async/Await Getting Started Guide](docs/async_await入门指南.md) (Chinese) · [Threads Guide](docs/threads使用指南.md) (Chinese) · [Concurrency Selection Guide](docs/并发选择指引.md) (Chinese)
-- [FFI Guide](docs/FFI使用指南.md) (Chinese) · [Package Management and Installation Guide](docs/包管理与安装使用指南.md) (Chinese) · [Single-File Packing Guide](docs/单文件打包使用指南.md) (Chinese)
+```
+D:\CLeno\LenoDocsSrc\
+├── *.md                ← sources (edit these only)
+├── site\index.html     ← generated site (entry; press / to search)
+└── build_html.py       ← generator
+```
 
-**Module API Reference** (`docs/module_*.md`, 18 in total — see the index; all Chinese)
-- [io](docs/module_io.md) · [files](docs/module_files.md) · [strings](docs/module_strings.md) · [arrays](docs/module_arrays.md) · [dicts](docs/module_dicts.md) · [types](docs/module_types.md) · [times](docs/module_times.md) · [jsons](docs/module_jsons.md) · [sys](docs/module_sys.md) · [sockets](docs/module_sockets.md) · [cstructs](docs/module_cstructs.md) · [ffi](docs/module_ffi_api.md)
+- **Edit / add docs**: edit the `.md` files → `cd D:\CLeno\LenoDocsSrc && python build_html.py`
+  (rebuilds `site/` from scratch; see its `README.md` for conventions)
+- Code comments reference docs as `LenoDocsSrc/site/<name>.html`
+- Module-owned docs stay at `build/leno_module/*/docs/*.md` (e.g.
+  [Common APIs and Pitfall Quick Reference](build/leno_module/LenoSDL3/docs/SDL3常用API与易踩坑速查.md))
 
-**GUI (LenoSDL3)**
-- [Common APIs and Pitfall Quick Reference](build/leno_module/LenoSDL3/docs/SDL3常用API与易踩坑速查.md) (Chinese) — layout `{basis, grow}` semantics, drawing-layer order, anti-aliasing scope
-- [Widget Optimization Checklist](build/leno_module/LenoSDL3/docs/SDL3控件优化清单.md) (Chinese)
-- [Pixel Direct-Write Rendering Optimization](docs/LenoSDL3像素直写渲染优化.md) (Chinese) · [Diagnosing Flicker Caused by Excessive Clipping](docs/LenoSDL3_裁剪过多导致闪烁排查记录.md) (Chinese)
-- Regression cases: `build/leno_module/LenoSDL3/examples/图形绘制/` (anti-aliasing, clock) + `其他测试/` (drawing order, layout dump)
+Most-used pages (all under `LenoDocsSrc/site/`):
 
-**Performance, Internals and Roadmap**
-- [TODO and Roadmap](docs/待办与路线图.md) (Chinese; the master backlog) · [Performance Optimization Notes](docs/性能优化记录.md) (🟡 stack-VM era) · [Bytecode Optimization Analysis](docs/字节码优化分析.md) (🟡)
-- [Differences Between Register-based and Stack-based](docs/寄存式与栈式的差异清单.md) (📜 archived) · [JIT-era docs (archived)](docs/archive/) — JIT is no longer in the codebase
+| File | Contents |
+|---|---|
+| `Leno入门教程.html` | complete syntax reference (in-depth type system guide) |
+| `语言陷阱速查.html` | symptom → cause → fix: pitfalls across language / compiler / modules / build |
+| `module_*.html` | per-module API reference (18 pages) |
+| `待办与路线图.html` | master backlog + batch history |
+| `性能优化记录.html` · `字节码优化分析.html` | 🟡 stack-VM era, historical |
 
 ## License
 

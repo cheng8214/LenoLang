@@ -1,6 +1,6 @@
 // test_threads_join_for.leno —— TH9：`t.join_for(ms)` 带超时的 join（回归）
 //
-// 背景（见 docs/线程并发能力修复追踪.md 的 TH9）：`join()` 是无限等待，
+// 背景（见 LenoDocsSrc/site/线程并发能力修复追踪.html 的 TH9）：`join()` 是无限等待，
 //   线程卡在阻塞 IO（recv / 文件 / FFI）时主线程只能干等。
 //   新增 `join_for(ms): bool`：true = 已结束并收尾；false = 超时（线程继续跑，状态不变）。
 //   ⚠ 负数 = 无限等（等价 join，但只给 bool）；线程出错时与 join 一样抛异常。

@@ -95,7 +95,7 @@
 
         // cstruct 数组字段视图：切片 → 物化成普通 Array（文档承诺"语法与普通数组一致"）
         //   ★ 2026-11-02：此前视图只支持逐元素索引，OP_SLICE 直接落到「切片: 对象必须
-        //   是数组或字符串」⇒ `cstruct.values[2:5]` 跑不通（docs/module_cstructs.md §数组
+        //   是数组或字符串」⇒ `cstruct.values[2:5]` 跑不通（LenoDocsSrc/site/module_cstructs.html §数组
         //   字段切片 的示例因此是坏的）。切出的元素与索引读取同口径：标量按 C 布局读，
         //   嵌套 cstruct 给**非拥有视图**（指向父对象内存，不 free）。
         if (val_is_obj(obj_val) && val_as_obj(obj_val)->type == OBJ_CSTRUCT_ARRAY_VIEW) {

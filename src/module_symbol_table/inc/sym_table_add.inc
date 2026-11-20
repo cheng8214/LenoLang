@@ -663,7 +663,7 @@ const char* module_symbol_table_hint(ModuleSymbolTable* table, const char* name)
 
 
 // ============================================================================
-// 跨模块 extend 登记（2026-11-02，见 docs/struct_extend_设计草案.md 第 12 节）
+// 跨模块 extend 登记（2026-11-02，见 LenoDocsSrc/site/struct_extend_设计草案.html 第 12 节）
 // ----------------------------------------------------------------------------
 // 调用方（`lib/page_download.leno`）：`extend player.Player { func paint_dl }`
 //   ⇒ 往**本模块**符号表登记一条"我扩展了 player.Player 的这些方法"。

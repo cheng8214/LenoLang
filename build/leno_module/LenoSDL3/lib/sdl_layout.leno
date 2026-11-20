@@ -781,7 +781,7 @@ func _add_keys(): Array[string] {
 //   参数个数不同，`.leno` 直跑与单文件 `.lenb` 两条路都正确 ✓；若真命中那条路径，编译器会
 //   **当场报"参数过多"**而不是静默 ✗）。
 //   现在编译器对"**个数不同**的同名撞车"会正确落到**自由函数** ✓（见
-//   `docs/LenoSDL3_打包后窗口句柄下发静默失效排查记录.md` §九）⇒ 本函数与
+//   `LenoDocsSrc/site/LenoSDL3_打包后窗口句柄下发静默失效排查记录.html` §九）⇒ 本函数与
 //   `sdl_window.leno` 里的 `Window._passWindowHandle(Widget)` 同名**完全没问题** ✓
 //   （个数不同 ✓、本函数是模块级、调用点也都在模块级函数体内 ✓）
 func _passWindowHandle(Widget c, Ptr[u8] hwnd, int ww, int hh) {
@@ -790,7 +790,7 @@ func _passWindowHandle(Widget c, Ptr[u8] hwnd, int ww, int hh) {
     //   方法剪成 `<dce-cut>` 空桩 ⇒ 调用方静默 no-op ✗）被迫拆成"每支一个类型" ✗ —— 那条已在
     //   编译器侧治本（codegen_stmt.c 的 gen_switch 记类型引用 + 合并 case 体内方法名按通配登记 ✓
     //   + dce.c 的名字通配默认安全档 ✓），详见
-    //   `docs/LenoSDL3_打包后窗口句柄下发静默失效排查记录.md` §九 ✓
+    //   `LenoDocsSrc/site/LenoSDL3_打包后窗口句柄下发静默失效排查记录.html` §九 ✓
     //   ⇒ 现在合并写法与单类型写法**都正确** ✓，按可读性挑就行 ✓
     switch c {
         case is Edit { c.set_window(hwnd); return }

@@ -254,7 +254,7 @@ main() {
     var od2 = ce.expect_ok(pd2, "对照组：加括号 / not in / 比较 / not is 守卫", "true|false|true")
     ce.expect_no_warning(od2, "对照组：六种形状都不该报", "[not的优先级陷阱]")
 
-    // ==== E. 语言摩擦清单 M1…M5b（2026-10-11 修 ✓；出处 docs/语言摩擦与隐式契约清单.md）====
+    // ==== E. 语言摩擦清单 M1…M5b（2026-10-11 修 ✓；出处 LenoDocsSrc/site/语言摩擦与隐式契约清单.html）====
 
     // E1（M3）：方法里写 `this` ⇒ 必须报，且**顺带提示 self** ✓
     //   （旧行为：只报"未定义的变量: this"、一个字不提 self ✗ —— 与 contains()→has() 同类洞 ✓）

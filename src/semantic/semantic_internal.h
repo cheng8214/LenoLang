@@ -31,7 +31,7 @@ TypeInfo* infer_field_type(Semantic* s, TypeInfo* obj_type, const char* field_na
 int sem_cstruct_array_field(Semantic* s, Ast* expr, TypeKind* out_elem);
 // 「struct 有没有这个方法」的唯一判据（2026-10-28）：func_table 的 "Struct::method"（含跨模块
 //   占位符）+ struct 定义 AST 的 methods[]。给"成员方法当函数值取"那类检查用
-//   （`h.track_row_like` 在访问器与推断两条路上都要判，见 docs/待修_编译与语义问题.md §3）
+//   （`h.track_row_like` 在访问器与推断两条路上都要判，见 LenoDocsSrc/site/待修_编译与语义问题.html §3）
 int semantic_struct_has_method(Semantic* s, const char* struct_name, const char* method_name);
 // 报错增强用：`name` 是本编译单元里哪个 struct 的方法名（没有 ⇒ NULL）。
 //   给"裸写成员方法名当值"的未定义变量诊断补一条能看懂的出路说明（§3）
@@ -215,7 +215,7 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
 // ============================================================================
 int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line);
 
-// ★ US1（2026-10-12，见 docs/类型可见性与use逃生阀修复追踪.md）：
+// ★ US1（2026-10-12，见 LenoDocsSrc/site/类型可见性与use逃生阀修复追踪.html）：
 //   `use m.Sym` 的**唯一实现**（原来整段分派体长在 visitinc/visit_module.inc 的 case AST_USE 里）。
 //   抽出来的目的：**类型位置写限定名**（`m.Pt`）走的是**同一条路径** ⇒ 报错文案、可用性判据、
 //   重复导入的宽容度三条不可能与源码 `use` 漂移 ✓。

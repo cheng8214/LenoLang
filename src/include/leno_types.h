@@ -313,7 +313,7 @@ typedef enum {
     TOK_LPAREN, TOK_RPAREN, TOK_LBRACE, TOK_RBRACE,
     TOK_LBRACKET, TOK_RBRACKET,
     TOK_COMMA, TOK_SEMI, TOK_COLON, TOK_DOT,
-    TOK_AT,            // '@' —— 注解前缀（2026-10-31，见 docs/注解系统与optkeys设计草案.md）
+    TOK_AT,            // '@' —— 注解前缀（2026-10-31，见 LenoDocsSrc/site/注解系统与optkeys设计草案.html）
     TOK_IF, TOK_ELSE, TOK_EIF, TOK_THEN, TOK_FUNC, TOK_RETURN, TOK_WHILE, TOK_FOR, TOK_TO, TOK_BREAK, TOK_CONTINUE,
     TOK_SWITCH, TOK_CASE, TOK_DEFAULT,
     TOK_VAR, TOK_CONST, TOK_TRUE, TOK_FALSE, TOK_NULL,
@@ -443,7 +443,7 @@ struct TypeInfo {
     int param_count;         // 函数参数数量
     // 结构体类型相关
     char* struct_name;       // 结构体名称 / face 名称 / cstruct/clib/cfunc 名称
-    // ★ US1（2026-10-12，见 docs/类型可见性与use逃生阀修复追踪.md）：类型名**在源码里带的
+    // ★ US1（2026-10-12，见 LenoDocsSrc/site/类型可见性与use逃生阀修复追踪.html）：类型名**在源码里带的
     //   模块前缀**（`m.Pt` 里的 `m` —— 写的是**模块别名**，不是模块真名 ✓）。
     //   · 语义：只在"解析阶段"有意义 —— `resolve_alias_in_type()` 见到它就等价执行一次
     //     **隐式 `use m.Pt`**（复用同一实现 ⇒ 报错文案与可用性判据不可能漂移 ✓），
@@ -553,7 +553,7 @@ typedef enum {
     //     紧跟的 `if r != null` 会触发「struct 与 null 比较」误报；正确写法得手写
     //     `ExecResult? r = _exec(...)` —— 这与 `var` 的语义（"跟随返回值类型"）矛盾，
     //     实际踩到的地方只好留注释绕开（sdl_capture.leno / screenshot_hotkey.leno，
-    //     见 docs/待修_编译与语义问题.md §1）。
+    //     见 LenoDocsSrc/site/待修_编译与语义问题.html §1）。
     //   为什么用 tag 而不是给 NativeTypeSpec 加 int 字段：全仓 40+ 处规格都是**位置式**
     //     初始化，加字段会让它们全部触发 -Wmissing-field-initializers（实测 40 条噪音），
     //     而"没写就是非可空"正是我们要的默认值 ⇒ 用包装 tag 表达，既有规格逐字不变 ✓

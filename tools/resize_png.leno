@@ -43,7 +43,7 @@ func resize_one(string src, int wantW, int wantH, string outDir, bool inplace, b
         print("  ✗ 解码失败：" + src + "\n")
         return false
     }
-    // Dict 取值用 **`get(k, 默认值)`** —— 返回类型由默认值实参推断（见 docs/module_dicts.md）：
+    // Dict 取值用 **`get(k, 默认值)`** —— 返回类型由默认值实参推断（见 LenoDocsSrc/site/module_dicts.html）：
     //   `get("w", 0)` → int、`get("h", 0.0)` → float、`get("s", "")` → string
     //   ⇒ 不用 _int()/_str() 收窄 ✓（只有 `d["k"]` 和**不带默认值**的 get 才是 any ✗）
     int sw = d.get("w", 0)

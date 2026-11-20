@@ -1867,7 +1867,7 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
 }
 
 // ============================================================================
-// 跨模块 extend 登记（2026-11-02，见 docs/struct_extend_设计草案.md 第 12 节）
+// 跨模块 extend 登记（2026-11-02，见 LenoDocsSrc/site/struct_extend_设计草案.html 第 12 节）
 // ----------------------------------------------------------------------------
 // 只处理**跨模块**写法（`extend player.Player`）：同文件的 extend 在语义阶段就并进
 // 目标 struct 的 methods 数组了，不需要进符号表。

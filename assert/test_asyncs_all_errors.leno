@@ -1,5 +1,5 @@
 // test_asyncs_all_errors.leno —— T4 判据：`asyncs.all` 的**失败**语义（C8）
-//   台账：docs/待办与路线图.md 的 §T4（方向 (b)：不吞错 ✓）
+//   台账：LenoDocsSrc/site/待办与路线图.html 的 §T4（方向 (b)：不吞错 ✓）
 //
 // 改之前（C8）：失败的 Future `completed` 也是 1、`result` 是 null ⇒ `all([失败f])` 返回
 //   `[null]` —— 与"成功但值是 null"**无法区分** ✗，错误还要**拖到 `asyncs.run()`** 才炸

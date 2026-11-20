@@ -1,5 +1,5 @@
 // `extend` 跨模块（2026-11-02）：方法写在 page 模块里，主程序调用
-// 设计：docs/struct_extend_设计草案.md 第 12 节
+// 设计：LenoDocsSrc/site/struct_extend_设计草案.html 第 12 节
 //
 // 覆盖：无参方法 / 带参方法 / 读字段 / 改字段（改的必须是同一个对象）/
 //       **泛型 struct**（签名/方法体里的 T 由目标类型参数解析）/ 默认参数 /

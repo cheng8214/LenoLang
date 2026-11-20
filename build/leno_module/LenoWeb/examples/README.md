@@ -86,5 +86,5 @@ main() {
 
 > 这条曾经走不通（子线程里 FFI 回调"只能成功第一次"、并发直接崩），根因在运行时
 > `src/vm/vm.c` 的 `vm_call_value` 写错了对象，外加两处并发竞态；三处均已修。
-> 详见 `docs/多线程struct与模块全局变量问题记录.md` 第八节。
+> 详见 `LenoDocsSrc/site/多线程struct与模块全局变量问题记录.html` 第八节。
 > 回归用例：`tests/test_ffi_callback_thread.leno`（运行时层）、`tests/test_thread_http.leno`（LenoWeb 层）。

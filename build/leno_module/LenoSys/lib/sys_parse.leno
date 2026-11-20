@@ -348,7 +348,8 @@ export func parse_dpkg_status(string text): Array {
 export func parse_xbel_recents(string text, int max): Array[string] {
     Array[string] out = []
     // ⚠ `regexs.find_all` 返回的是 `Array[RegexMatch]`（结构体，非字符串 ✗）
-    //   `RegexMatch { int start, int end, string text }` ⇒ 取 `.text` ✓（字段类型编译期已知 ✓）
+    //   `RegexMatch { int start, int last, string text }` ⇒ 取 `.text` ✓（字段类型编译期已知 ✓）
+    //   ⚠ 2026-11-20：原 `end`（半开）已改名 `last`（**闭区间末位**，含）⇒ 切片直接 `s[start : last]` ✓
     var hits = regexs.find_all(text, "href=\"file:[^\"]+\"")
     for hits to hit {
         string h = hit.text

@@ -781,8 +781,8 @@ cb()
 ### ①-c ★ 别为"绕开类型收窄"把配置结构拍扁（2026-10-08 实测更正）
 
 曾流传"`jsons.decode` 取回来的嵌套结构难收窄 ⇒ 干脆把配置拍成 `key → 裸串`" ✗。
-**实测这几条都正常，不必绕** ✓（详见 `docs/module_jsons.md` 注意事项 8 与
-`docs/类型收窄与绑定语法改进.md`）：
+**实测这几条都正常，不必绕** ✓（详见 `LenoDocsSrc/site/module_jsons.html` 注意事项 8 与
+`LenoDocsSrc/site/类型收窄与绑定语法改进.html`）：
 
 ```leno
     jsons.write_file(p, {version: 1, arr: ["x", "y"]})   // ✓ 字面量字段里直接放数组
@@ -947,7 +947,7 @@ tbl.on_cell_draw(func(Renderer r, int row, int col, float x, float y, float w, f
 `Card` = 「图片 + 标题 + 副标题 + 角标 + **可挂子控件的内容区**」的网格单元（`sdl_card.leno`）。
 为什么不能用 `Panel` 拼：Panel 的子控件走**窗口绝对坐标**、`Panel.set_pos()` 只挪自己（`sdl_panel.leno:99`），
 而 GridLayout / ScrollView 只会对**子控件本身**调 `set_pos` ⇒ 卡里的图和字**原地不动** ✗。
-设计文档：`docs/LenoSDL3_Card卡片控件设计文档.md`；首个使用方：`leno_gui\应用\影视海报墙\`。
+设计文档：`LenoDocsSrc/site/LenoSDL3_Card卡片控件设计文档.html`；首个使用方：`leno_gui\应用\影视海报墙\`。
 
 ### ⛔ 纹理绘制的 dst 必须是 `SDL_FRect` —— 传 `SDL_Rect` 画面直接"空掉"（实测 ✓）
 
@@ -1737,7 +1737,7 @@ build\leno.exe leno_gui\自测\test_theme_switch.leno
 ⚠ 旧说法"它把当前结构体上下文当成 `BadgeSpec` 了 / `self` 被切成 B"**不准确** ✗：
 `B` 若有**同名字段**，同样**响亮报错**、**不会**静默取到 B 的值 ✓。
 完整边界表（6 条，含"取外层而不是 B 的同名值"这条防静默错值的钉子）与真因见
-`docs/语言摩擦与隐式契约清单.md` 的 **M11**（✅ 已修）/ `docs/语言陷阱速查.md` ㉟ ✓
+`LenoDocsSrc/site/语言摩擦与隐式契约清单.html` 的 **M11**（✅ 已修）/ `LenoDocsSrc/site/语言陷阱速查.html` ㉟ ✓
 
 ### ✅ 卡片里别留"每帧测量"
 
@@ -1983,7 +1983,8 @@ l.on_click(func() { open() })
 ## Table 直接吃「记录（struct）」（2026-11-10，P1）
 
 行一直是 Array[Array[string]]（纯位置）⇒ 应用里到处是
-ows.add([s.title, s.artist, s.album]) 这种"**列顺序即契约**"的写法：插一列就要改所有
+
+ows.add([s.title, s.artist, s.album]) 这种"**列顺序即契约**"的写法：插一列就要改所有
 构造点，漏一处就是**串列**（不报错，看着像数据错了）。
 
 现在可以让表格按**字段名**绑列：

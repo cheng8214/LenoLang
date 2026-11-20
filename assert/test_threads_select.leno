@@ -1,6 +1,6 @@
 // test_threads_select.leno —— TH13：多路等待 `threads.select([ch1, ch2], timeout_ms)`（回归）
 //
-// 背景（见 docs/线程并发能力修复追踪.md 的 TH13）：
+// 背景（见 LenoDocsSrc/site/线程并发能力修复追踪.html 的 TH13）：
 //   多个 Channel 一起等（actor / reactor、worker 池同时等任务与停机信号）此前只能用
 //   `try_receive` + sleep 手搓轮询。现在给一个模块函数：返回第一个有数据的通道
 //   `{index, value}`，超时给 null。

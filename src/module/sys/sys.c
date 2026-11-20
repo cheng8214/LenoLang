@@ -81,7 +81,7 @@ static const NativeTypeSpec S_EXECRESULT_SPEC = { NTYPE_STRUCT, "ExecResult", NU
 //   此前只能表达非可空 ⇒ `var r = _exec(...)` 推成非可空 `ExecResult`，紧跟的
 //   `if r != null` 报「struct 与 null 比较」误报 —— sdl_capture.leno / 
 //   screenshot_hotkey.leno 里为此专门写成 `ExecResult? r = _exec(...)` 并留注释绕开
-//   （见 docs/待修_编译与语义问题.md §1）。包一层 NTYPE_NULLABLE 即可，无需改结构体。
+//   （见 LenoDocsSrc/site/待修_编译与语义问题.html §1）。包一层 NTYPE_NULLABLE 即可，无需改结构体。
 static const NativeTypeSpec S_EXECRESULT_NSPEC = { NTYPE_NULLABLE, NULL, &S_EXECRESULT_SPEC, NULL, 0, -1 };
 
 // ⚠ 为什么保留 `output` 又加 `out`/`err`（而不是把 output 改成"仅 stdout"）：
@@ -320,7 +320,7 @@ static Value native_console(int argCount, Value* args) {
 
 // ==================== 环境变量的 UTF-8 边界（2026-10-14） ====================
 // 事故：`_env("X", "中文")` **写失败**（返回 false），子进程里该变量 UNDEF；而纯 ASCII 值、
-//   含换行的值、8000 字节的长值全都好好的。定位过程见 docs/module_sys.md 的"已知坑"一节。
+//   含换行的值、8000 字节的长值全都好好的。定位过程见 LenoDocsSrc/site/module_sys.html 的"已知坑"一节。
 // 根因：老实现走 `_putenv_s`（**窄口**）。Windows 上它要把 UTF-8 字节按 **ANSI 代码页**
 //   （本机 CP936）转成宽字符再设进环境块 —— UTF-8 的"中文"在 GBK 下不是合法序列 ⇒ 转换失败、
 //   变量从没进 Win32 环境块 ⇒ 子进程什么都看不到 ✗。更坏的是它**同时**更新了 CRT 自己的窄副本

@@ -225,7 +225,7 @@ static Value channel_method_len(int argc, Value* args) {
 // ★ 两条判据（都在**主线程**把话说清楚，别让用户从 join() 的垃圾文案里猜）：
 //   ① 所属模块必须**已初始化**（TH2，2026-10-12）：
 //      模块函数现在可以直接作线程入口 ✓（根因只是协程首帧漏设 `frame->module`，
-//      见 `docs/线程并发能力修复追踪.md` 的 TH2）。模块对象由 `loaded_modules` **进程级缓存**共享，
+//      见 `LenoDocsSrc/site/线程并发能力修复追踪.html` 的 TH2）。模块对象由 `loaded_modules` **进程级缓存**共享，
 //      init_chunk 主线程已跑过 ⇒ globals / 函数槽都在 ✓。**唯一例外**是模块此刻还没初始化
 //      （不在入口脚本的 import 链上）⇒ globals 全空、进去只会拿到一堆 null、报错毫无线索 ✗
 //      ⇒ 这里明确拦住（正常流程下不可能发生 ✓）。
@@ -369,7 +369,7 @@ static Value threads_sleep(int argc, Value* args) {
 // 设计取向：**不加新对象类型、不加新关键字**（语言对"新特性"的一贯取向是够用就行 ✓）
 //   ⇒ "凑齐 N 个线程"用 `join_all(Array[Thread])`、"分 N 份并行"用 `parallel_for(n, f)`、
 //     "并行 map"用 `map(arr, f)` —— 三个普通模块函数，零类型系统改动。
-// 见 `docs/线程并发能力修复追踪.md` 的 TH3 ✓
+// 见 `LenoDocsSrc/site/线程并发能力修复追踪.html` 的 TH3 ✓
 
 // 等一组线程结束（“WaitGroup”的等价物）—— `Array[Thread]`，返回真正 joined 的个数（int）
 //   ⚠ 某个线程出错时：`thread_join` 会登记异常但**不跳转** ⇒ 这里把**剩下的也等完**再让异常浮出来
@@ -479,7 +479,7 @@ static Value threads_map(int argc, Value* args) {
 // ==================== 线程局部存储（TH5，2026-10-12）====================
 //
 // 为什么需要：**模块级可变 `var` 是跨线程共享的**（`ObjModule.globals` 挂进程级
-//   `loaded_modules` 缓存，**有意不隔离** —— 见 docs/线程并发能力修复追踪.md 的「明确不做」表）
+//   `loaded_modules` 缓存，**有意不隔离** —— 见 LenoDocsSrc/site/线程并发能力修复追踪.html 的「明确不做」表）
 //   ⇒ 库想"每个线程一份状态"时此前没有现成手段（只能把状态收进实例、由调用方传进来）。
 //
 // 实现要点：存储挂在 **VM 结构体**上（`vm->thread_local_store`）——

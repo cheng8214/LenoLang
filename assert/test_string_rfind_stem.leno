@@ -6,7 +6,7 @@
 //   · 没有 stem ⇒ basename + extname + 切片 三件套反复出现。
 // 口径：rfind 返回**字符索引**、找不到 -1、允许重叠；
 //       可选第 3 参 `last` 是**上界（含）**（2026-11-20 起；原 `before` 是**不含**：
-//       全语言索引区间统一成闭区间，见 docs/区间口径约定.md）；
+//       全语言索引区间统一成闭区间，见 LenoDocsSrc/site/区间口径约定.html）；
 //       stem 与 extname **严格互补**（stem + extname == basename）。
 import strings
 import dirs

@@ -234,7 +234,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
             }
             // 如果已经转换为字段访问，跳过常量检查
             if (ast->kind == AST_FIELD_ACCESS) break;
-            // ★ 成员方法当**函数值**取（2026-10-28，docs/待修_编译与语义问题.md §3）：
+            // ★ 成员方法当**函数值**取（2026-10-28，LenoDocsSrc/site/待修_编译与语义问题.html §3）：
             //   方法体内裸写本 struct 的**方法名**（不是调用，见 AST_CALL 分支；也不是字段，
             //   上面那段已处理并 break）⇒ 改写成 `self["方法名"]`（AST_INDEX + 字符串下标）。
             //   为什么这样能拿到一等函数值：运行期 VM 的 OP_INDEX 对 **struct + 字符串下标**
@@ -378,7 +378,7 @@ static void transform_method_body_ex(Ast* ast, char** field_names, int field_cou
                         //   ✗ 此前把整句按"裸字段名"重写成 `self["inner"] = v` —— 最后那个成员被丢掉，
                         //     于是报出「字段 'inner' 类型不匹配: 期望 'struct Inner'，实际 'float'」
                         //     这种**指错靶子**的假错：合法代码被拒，照报错去查 RHS / 字段声明都查不出病因
-                        //     （LenoMusic 的 `volSld.value = v` 就是撞在这 ✓ 见 docs/Leno报错提示改进计划.md B6）
+                        //     （LenoMusic 的 `volSld.value = v` 就是撞在这 ✓ 见 LenoDocsSrc/site/Leno报错提示改进计划.html B6）
                         Ast* tgt = ast->u.assign.targets ? ast->u.assign.targets[i] : NULL;
                         if (tgt && tgt->kind == AST_INDEX) {
                             Ast* nested_value = ast->u.assign.value;

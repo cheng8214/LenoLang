@@ -2,7 +2,7 @@
 //
 // 背景：`value_clone_for_channel` 原先只认 标量 / string / Array / Dict / Channel，
 //   struct 一律走 default 报「不能跨线程传递此类型」⇒ 想让并发库跑起来只能把 struct
-//   **拍平成 Array[string]** 在接收侧手工重建（见 docs/线程并发能力修复追踪.md 的 TH1）。
+//   **拍平成 Array[string]** 在接收侧手工重建（见 LenoDocsSrc/site/线程并发能力修复追踪.html 的 TH1）。
 //   现在：struct 走**深克隆 + 接收侧按定义重建**（`channel_clone_struct`）。
 //
 // 判据（每条都在下面钉住）：

@@ -5,7 +5,7 @@
 //   A/B 口径（照 §五 第 6 条）：同机同轮、同一 exe，只换模块库——
 //     上一版用 `git checkout -- build/leno_module/LenoSDL3/lib/sdl_renderer.leno` 取回，
 //     跑完 `Copy-Item` 还原；两次都要跑一遍，且**对调顺序**再下结论 ✓
-//   实测留档：docs\待办与路线图.md ⑤-an-2（描边环 1062.6 → 149.3ms；实心圆 945.9 → 153.6ms）
+//   实测留档：LenoDocsSrc/site/待办与路线图.html ⑤-an-2（描边环 1062.6 → 149.3ms；实心圆 945.9 → 153.6ms）
 import "SDL3" as SDL3
 use SDL3.(Event, Renderer)
 

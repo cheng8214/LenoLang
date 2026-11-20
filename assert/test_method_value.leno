@@ -1,4 +1,4 @@
-// test_method_value.leno —— 成员方法当**一等函数值**用（docs/待修_编译与语义问题.md §3 的回归用例）
+// test_method_value.leno —— 成员方法当**一等函数值**用（LenoDocsSrc/site/待修_编译与语义问题.html §3 的回归用例）
 //
 // 修前：`hk.onTrack = track_row_like` 报「未定义的变量: track_row_like」（看不出它其实是方法），
 //   只能写成 `hk.onTrack = func(Song s2, Button b) { track_row_like(s2, b) }` 这层壳。

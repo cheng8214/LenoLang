@@ -194,7 +194,7 @@ TypeInfo* infer_return_type_from_body(Semantic* s, Ast* body) {
 }
 
 // ============================================================================
-// 「成员方法当一等函数值」的类型（2026-10-28，docs/待修_编译与语义问题.md §3）
+// 「成员方法当一等函数值」的类型（2026-10-28，LenoDocsSrc/site/待修_编译与语义问题.html §3）
 // ----------------------------------------------------------------------------
 // 用途：`hk.onTrack = track_row_like`（方法体内裸名）与 `h.track_row_like`（显式路径）的
 //   **静态类型** —— 返回 TYPE_FUNCTION，**参数表不含 self**：运行期 VM 取到的
@@ -2553,7 +2553,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 }
                 if (callee_type) type_free(callee_type);
             }
-            // ★ M2（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：**函数类型字段**的调用
+            // ★ M2（2026-10-11，见 LenoDocsSrc/site/语言摩擦与隐式契约清单.html）：**函数类型字段**的调用
             //   按**声明签名**推返回类型 ✓ —— 信息是现成的：字段声明写着 `func():string outdirOf`
             //   ✓，此前却退化成 `any` ✗ ⇒ 调用点必须手写 `var d = f()  return d as string` 收窄 ✗，
             //   而且报错只说"实际 any"、看不出"明明声明了返回类型" ✗（拆分 LenoMusic 时真撞 ✓）。
@@ -3048,7 +3048,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             "或用 x as T 安全转换（如 raw as Dict[string, any]，不匹配给 null）\n"
                             "  注意: 收窄到**裸**容器（如 Dict）取出的元素仍是 any；"
                             "要按类型取元素请收窄到带泛型参数的容器（如 Dict[string, any]、Array[string]），"
-                            "见 docs/类型收窄与绑定语法改进.md",
+                            "见 LenoDocsSrc/site/类型收窄与绑定语法改进.html",
                             var_name, member_name, var_name, var_name, member_name);
                     }
                     ast->cached_type = type_new(TYPE_ANY);
@@ -3375,7 +3375,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                             "如 raw as Dict[string, any]\n"
                             "  注意: 收窄到**裸**容器（如 Dict/Array）取出的元素仍是 any；"
                             "要按类型取元素请收窄到带泛型参数的容器（如 Dict[string, any]、Array[string]），"
-                            "见 docs/类型收窄与绑定语法改进.md";
+                            "见 LenoDocsSrc/site/类型收窄与绑定语法改进.html";
                         if (var_name && field_name) {
                             error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                 "不能在 any 类型 '%s' 上直接访问字段 '%s'\n"
@@ -3473,7 +3473,7 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                         return type_copy(ast->cached_type);
                     }
 
-                    // ★ 成员方法当**函数值**取（2026-10-28，docs/待修_编译与语义问题.md §3）：
+                    // ★ 成员方法当**函数值**取（2026-10-28，LenoDocsSrc/site/待修_编译与语义问题.html §3）：
                     //   `h.track_row_like` / 方法体内裸名（前处理已改写成 `self["方法名"]`）
                     //   在字段表里查不到 ⇒ 再看是不是本 struct 的方法。
                     //   类型 = **不含 self** 的函数签名（bound method 已绑接收者 ✓）；

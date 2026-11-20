@@ -7,7 +7,7 @@
 //   ⚠ 线程类脚本可能挂死 ⇒ 建议套超时壳：
 //     build\leno.exe tools\run_timeout.leno 180000 build\leno.exe tools\threads_bench.leno
 //
-// 每段量什么、以及历史基线（2026-11-14 实测）见 `docs\线程并发能力修复追踪.md` 的 TH18：
+// 每段量什么、以及历史基线（2026-11-14 实测）见 `LenoDocsSrc/site/线程并发能力修复追踪.html` 的 TH18：
 //   · spawn      —— 空线程 spawn+join（固定成本 ~190us，其中 145us 是方法表重注册）
 //   · par        —— parallel_for 固定开销
 //   · channel    —— 缓冲/无缓冲、int/短串/struct 的每条消息成本

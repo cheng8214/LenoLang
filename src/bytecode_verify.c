@@ -11,7 +11,7 @@
 //
 // 长度规则必须与 codegen 的发射顺序、debug.c 的反汇编、VM 的读取顺序**三处一致**；
 // 任何一处漏掉一条变长指令，后面整段网格就错位（历史事故：dump 后半段全是 OP_NOP）。
-// 详见 docs/VM字节码校验与崩溃防护设计方案.md。
+// 详见 LenoDocsSrc/site/VM字节码校验与崩溃防护设计方案.html。
 //
 // ★★ 新增 opcode 时**必须**在下面的 `switch (op)` 里加一个 case（完整步骤见
 //    `leno_vm.h` 里 OpCode 枚举末尾的「新增 opcode 的必做清单」）。

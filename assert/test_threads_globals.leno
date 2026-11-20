@@ -1,6 +1,6 @@
 // test_threads_globals.leno —— TH8：入口脚本的全局对象跨线程**各自一份**（回归）
 //
-// 背景（见 docs/线程并发能力修复追踪.md 的 TH8）：
+// 背景（见 LenoDocsSrc/site/线程并发能力修复追踪.html 的 TH8）：
 //   旧行为是"把全局变量表逐个 Value 抄过去"⇒ 标量独立、**对象共享**
 //   ⇒ 子线程 `arr.add(4)` / `box.set` 主线程全看得见（跨堆引用 ⇒ 偶发 0xC0000374）。
 //   现在：string / Array / Dict / struct / 闭包 克隆进子线程堆；

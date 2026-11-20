@@ -53,7 +53,7 @@ AST_RETURN_MULTI,  // 多值返回: return a, b, c
     AST_STRUCT_DEF,    // struct 定义
     AST_EXTEND_DEF,    // extend 声明（顶层：把 target struct 的方法写到别处，2026-11-02）
                        //   语义：只加方法，不加字段；方法被合并进目标 struct 的 methods 数组 ⇒
-                       //   调用/可见性/codegen 与"写在 struct 里"完全等价（见 docs/struct_extend_设计草案.md）
+                       //   调用/可见性/codegen 与"写在 struct 里"完全等价（见 LenoDocsSrc/site/struct_extend_设计草案.html）
     AST_FACE_DEF,      // face 定义
     AST_CSTRUCT_DEF,   // cstruct 定义（C 布局结构体）
     AST_CLIB_DEF,       // clib 定义（C 库函数签名声明）
@@ -131,7 +131,7 @@ void type_guard_list_free(TypeGuardList* list);
 
 // ==================== 注解（2026-10-31）====================
 //   `@optkeys([...])` 这类**编译期元数据**，挂在声明节点上（func / struct / var / const）。
-//   设计见 docs/注解系统与optkeys设计草案.md ✓
+//   设计见 LenoDocsSrc/site/注解系统与optkeys设计草案.html ✓
 //   ⚠ 一期只接受**字面量参数**（字符串 / 数字 / 布尔 / 字符串数组）——
 //     一旦允许表达式就要引入"注解求值"，失败语义与顺序全得设计，收益不值当 ✓
 typedef struct AstAnno {
@@ -363,7 +363,7 @@ struct Ast {
             Ast** const_values;       // 关联常量值表达式数组
             int const_count;          // 关联常量数量
             // ★ 2026-11-10（P4 enum 载荷 步 2/6）：这个 struct 是**编译器合成的**
-            //   （目前只有"带载荷 enum 降级"这一种，见 docs/enum载荷_设计草案.md）。
+            //   （目前只有"带载荷 enum 降级"这一种，见 LenoDocsSrc/site/enum载荷_设计草案.html）。
             //   为 1 时跳过面向用户源码的诊断（字段未初始化 / 与 native 或导入模块同名 …）——
             //   用户根本没写这个 struct，报给他也无处可改 ✓
             int is_synthetic;
@@ -436,7 +436,7 @@ struct Ast {
             //     member_param_types[0]  = [int, int]
             //   不带载荷的老写法 ⇒ 三个数组为 NULL（或对应项 count = 0），
             //   **旧行为一个字节都不变**（成员仍然是 int 常量，见 visit_module.inc 的改写）。
-            //   设计见 docs/enum载荷_设计草案.md：语义阶段会把它降级成"隐藏 struct + tag"。
+            //   设计见 LenoDocsSrc/site/enum载荷_设计草案.html：语义阶段会把它降级成"隐藏 struct + tag"。
             char*** member_param_names;      // [member][param] 参数名
             TypeInfo*** member_param_types;  // [member][param] 参数类型
             int* member_param_counts;        // 每个成员的参数个数

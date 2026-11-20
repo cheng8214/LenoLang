@@ -1,6 +1,6 @@
 // test_nested_field_assign.leno —— 嵌套成员赋值（`字段.成员 = 值`）回归
 //
-// 条目：B6 / 改进 5（docs/Leno报错提示改进计划.md）、语言陷阱速查 §三 ㉙
+// 条目：B6 / 改进 5（LenoDocsSrc/site/Leno报错提示改进计划.html）、语言陷阱速查 §三 ㉙
 //
 // 修之前（2026-10-11 之前）：基座是**本 struct 的字段**时（`inner.value = 1.0`），
 //   semantic_visit_method.c 的"裸字段名 ⇒ self[字段] = 值"重写会把**末级成员丢掉**，

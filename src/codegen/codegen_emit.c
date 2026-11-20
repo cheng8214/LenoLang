@@ -417,7 +417,7 @@ static void report_jump_overflow(CodeGen* gen, int pos, int offset, int limit) {
 
 // T34：寄存器号越过 8 位上限 ⇒ **编译硬错误**（T34 之前只 fprintf 告警、随后照样把 &0xFF
 //   截断后的字节码写下去 ✗ ⇒ "编译成功但产物错"，是最坏的一档 ✓）。
-//   立项与判据见 docs/待办与路线图.md 的「寄存器号 8 位上限」一节：语料扫查（体积最大的 40 个文件）触发数 = **0** ✓
+//   立项与判据见 LenoDocsSrc/site/待办与路线图.html 的「寄存器号 8 位上限」一节：语料扫查（体积最大的 40 个文件）触发数 = **0** ✓
 //   ⇒ 升级成硬错误不会卡住现有代码 ✓
 //   背景：指令里的 A/B/C 各 8 位 ⇒ 寄存器号 ≥ 256 无法寻址（历史事故：SDL 的 Window.run
 //   寄存器高水位 655 ⇒ 循环变量被截断到别的槽位 ⇒ 现象却是「数组索引必须是数字」✗）
@@ -444,13 +444,13 @@ void codegen_reg_overflow_error(OpCode op, int a, int b, int c, int line) {
                  "单个 struct / face 最多 255 个字段（字段索引 8 位，且 struct 定义头里的字段数是 1 字节），"
                  "超出的字段无法寻址；请把该 struct 拆成几个小 struct"
                  "（或把一部分状态放到模块级变量 / 单独的结构体里）"
-                 "（详见 docs/待办与路线图.md 的「寄存器号 8 位上限」一节）",
+                 "（详见 LenoDocsSrc/site/待办与路线图.html 的「寄存器号 8 位上限」一节）",
                  (int)op, a, b, c);
         return;
     }
     error_add_fmt(ERR_SEMANTIC, line,
              "寄存器号超出 8 位上限（opcode %d：A=%d B=%d C=%d）：单个函数的寄存器高水位不能超过 255；"
-             "请把该函数拆小、或把长表达式拆成多条语句（详见 docs/待办与路线图.md 的「寄存器号 8 位上限」一节）",
+             "请把该函数拆小、或把长表达式拆成多条语句（详见 LenoDocsSrc/site/待办与路线图.html 的「寄存器号 8 位上限」一节）",
              (int)op, a, b, c);
 }
 

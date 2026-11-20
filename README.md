@@ -13,7 +13,7 @@ Leno 是一门**带静态类型检查的脚本语言** —— 由 C 实现，编
 
 Leno 诞生于对编程语言设计的热爱与探索，虽非完美，但乐在其中。
 
-<img src="docs/images/dashboard-main.png" width="880" alt="LenoSDL3 数据看板：侧栏布局 / 控件组合 / 折线图 / Canvas 自绘圆环">
+<img src="assets/screenshots/dashboard-main.png" width="880" alt="LenoSDL3 数据看板：侧栏布局 / 控件组合 / 折线图 / Canvas 自绘圆环">
 
 > 上图是 `leno_gui/应用/数据看板/` 的**真实运行截图**（用它的 `DSHOT` 无头截图钩子拍的，不是设计稿）——
 > 一份代码同时演示了布局驱动整页、侧栏导航切页、控件组合与 Canvas 自绘。
@@ -327,7 +327,7 @@ main() {
 
 | 用量统计（表格 + 折线图） | 每日签到（`Calendar` 控件 + Canvas 圆环） | 设置（表单 / 开关 / 输入框） |
 | --- | --- | --- |
-| <img src="docs/images/dashboard-usage.png" width="270" alt="用量统计页"> | <img src="docs/images/dashboard-checkin.png" width="270" alt="每日签到页"> | <img src="docs/images/dashboard-settings.png" width="270" alt="设置页"> |
+| <img src="assets/screenshots/dashboard-usage.png" width="270" alt="用量统计页"> | <img src="assets/screenshots/dashboard-checkin.png" width="270" alt="每日签到页"> | <img src="assets/screenshots/dashboard-settings.png" width="270" alt="设置页"> |
 
 渲染上有一处细节值得说明：SDL 的 2D 图元管线**不做抗锯齿**，所以圆角矩形与斜线
 改为「CPU 按覆盖率算好 alpha 写进纹理，GPU 只做采样」——平滑来自像素内容，不受光栅算法限制。
@@ -425,7 +425,7 @@ Leno/
 ├── leno_lsp/                   # LSP 语言服务器（C 实现 + .vsix 插件）
 ├── assert/                     # 断言测试（814 个 .leno，入口 run_tests.leno）
 ├── examples/                   # 示例代码（813 个 .leno）
-├── docs/                       # 文档（91 篇 .md + 4 张截图；索引见 docs/INDEX.md）
+├── assets/screenshots/         # README 用的截图（文档本体不在这里）
 ├── resources/leno.rc           # Windows 资源（图标 / 版本信息）
 ├── sources_core.txt  sources_vm.txt  sources_compiler.txt   # 构建源文件清单
 └── build.sh  build.bat  build_vm.sh  build_vm.bat
@@ -449,27 +449,30 @@ Leno/
 
 ## 文档
 
-**📚 [完整文档索引（`docs/INDEX.md`）](docs/INDEX.md)** —— 分类、状态、以及"哪些段落已过时"都在那儿。下面只留最常用的几条：
+**文档站（HTML，95 篇，带全文搜索）在独立仓库 `LenoDocsSrc`**，本仓库不再带文档：
 
-**入门与指南**
-- [Leno 入门教程](docs/Leno入门教程.md) —— 完整语法参考（含类型系统详解）
-- [语言陷阱速查](docs/语言陷阱速查.md) —— **症状 → 病因 → 怎么办**：语言 / 编译器 / 模块 / 构建层踩过的坑（带报错原文与复现方式）
-- [FAQ](docs/FAQ.md) · [Leno 语言规范草稿](docs/Leno_规范草稿.md) · [Import 使用指南](docs/import使用指南.md)
-- [Async/Await 入门指南](docs/async_await入门指南.md) · [Threads 使用指南](docs/threads使用指南.md) · [并发选择指引](docs/并发选择指引.md)
-- [FFI 使用指南](docs/FFI使用指南.md) · [包管理与安装使用指南](docs/包管理与安装使用指南.md) · [单文件打包使用指南](docs/单文件打包使用指南.md)
+```
+D:\CLeno\LenoDocsSrc\
+├── *.md                ← 源（改文档只改这里）
+├── site\index.html     ← 生成好的站点（入口；按 / 聚焦搜索）
+└── build_html.py       ← 生成器
+```
 
-**模块 API 参考**（`docs/module_*.md`，共 18 篇，全量见索引）
-- [io](docs/module_io.md) · [files](docs/module_files.md) · [strings](docs/module_strings.md) · [arrays](docs/module_arrays.md) · [dicts](docs/module_dicts.md) · [types](docs/module_types.md) · [times](docs/module_times.md) · [jsons](docs/module_jsons.md) · [sys](docs/module_sys.md) · [sockets](docs/module_sockets.md) · [cstructs](docs/module_cstructs.md) · [ffi](docs/module_ffi_api.md)
+- **改/加文档**：改 `*.md` → `cd D:\CLeno\LenoDocsSrc && python build_html.py`
+  （会整目录重建 `site/`；细节与约定见那边的 `README.md`）
+- 代码注释里引用文档写 `LenoDocsSrc/site/<名字>.html`
+- 模块自带的文档仍在 `build/leno_module/*/docs/*.md`（如
+  [常用 API 与易踩坑速查](build/leno_module/LenoSDL3/docs/SDL3常用API与易踩坑速查.md)）
 
-**GUI（LenoSDL3）**
-- [常用 API 与易踩坑速查](build/leno_module/LenoSDL3/docs/SDL3常用API与易踩坑速查.md) —— 布局 `{basis, grow}` 语义、绘制层先后、抗锯齿范围
-- [控件优化清单](build/leno_module/LenoSDL3/docs/SDL3控件优化清单.md)
-- [像素直写渲染优化](docs/LenoSDL3像素直写渲染优化.md) · [裁剪过多导致闪烁排查](docs/LenoSDL3_裁剪过多导致闪烁排查记录.md)
-- 回归用例：`build/leno_module/LenoSDL3/examples/图形绘制/`（抗锯齿、时钟）+ `其他测试/`（绘制顺序、布局 dump）
+最常用的几篇（都在 `LenoDocsSrc/site/` 下）：
 
-**性能 · 实现记录 · 路线图**
-- [待办与路线图](docs/待办与路线图.md)（**待办总表 + 历史批次记录**）· [性能优化记录](docs/性能优化记录.md)（🟡 栈式时代）· [字节码优化分析](docs/字节码优化分析.md)（🟡）
-- [寄存器式与栈式的差异清单](docs/寄存式与栈式的差异清单.md)（📜 已归档）· [JIT 系文档（已归档）](docs/archive/)（JIT 已不在代码中）
+| 文件 | 内容 |
+|---|---|
+| `Leno入门教程.html` | 完整语法参考（含类型系统详解） |
+| `语言陷阱速查.html` | **症状 → 病因 → 怎么办**：语言 / 编译器 / 模块 / 构建层踩过的坑 |
+| `module_*.html` | 各模块 API 参考（18 篇） |
+| `待办与路线图.html` | 待办总表 + 历史批次记录 |
+| `性能优化记录.html` · `字节码优化分析.html` | 🟡 栈式时代，历史参考 |
 
 ## 许可证
 

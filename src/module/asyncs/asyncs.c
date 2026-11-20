@@ -195,7 +195,7 @@ static Value native_async_yield(int arg_count, Value* args) {
 // asyncs.all(futures) - 收集**已完成** Future 的结果，返回结果数组
 //   ⚠ 注释与文案口径（2026-10-10 修）：
 //   · 上面那行原写"**等待**所有 Future 完成" ✗ —— **假的** ✗：本函数不会等待（native 调用
-//     没有协程挂起能力），文档 `docs/module_asyncs.md:229` 的契约也是"**收集多个已完成**
+//     没有协程挂起能力），文档 `LenoDocsSrc/site/module_asyncs.html:229` 的契约也是"**收集多个已完成**
 //     Future 的结果" ✓ ⇒ 注释已按实现与文档改准 ✓。
 //   · 更要紧的是"**没完成就塞 null**" ✗（静默给错值 ✓ 实测踩过：不先 await 直接 all
 //     ⇒ 全 null，看起来像"任务没返回"而不是"你没等它" ✗）⇒ 现在**抛错** ✓
@@ -352,7 +352,7 @@ static Value native_async_timeout(int arg_count, Value* args) {
 }
 
 // ============================================================================
-// 查询类 API（文档 docs/module_asyncs.md 承诺过，但两侧引擎长期都没实现）
+// 查询类 API（文档 LenoDocsSrc/site/module_asyncs.html 承诺过，但两侧引擎长期都没实现）
 // ----------------------------------------------------------------------------
 // 以前 `asyncs.current()` / `is_done()` / `get_result()` 在文档里有签名、有示例、
 // 甚至有"调用注意"，但注册表里只有 sleep/run/yield/all/timeout ⇒ 照文档写必然报

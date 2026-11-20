@@ -17,7 +17,7 @@ static int cur_ident_is(Parser* p, const char* word) {
 
 // ==================== 注解（2026-10-31）====================
 //   语法：`@名字` / `@名字(字面量)` / `@名字([字符串, ...])`
-//   设计见 docs/注解系统与optkeys设计草案.md ✓
+//   设计见 LenoDocsSrc/site/注解系统与optkeys设计草案.html ✓
 //   ⚠ 一期只收**字面量参数**：允许表达式就要引入"注解求值"（失败语义/顺序/循环依赖），
 //     收益不值当 —— 报错文案明确写"注解参数必须是字面量" ✓
 
@@ -785,7 +785,7 @@ Ast* parse_statement(Parser* p) {
                             }
                         }
                         if (qualified_decl) {
-                            // ★ US1（2026-10-12，见 docs/类型可见性与use逃生阀修复追踪.md）：
+                            // ★ US1（2026-10-12，见 LenoDocsSrc/site/类型可见性与use逃生阀修复追踪.html）：
                             //   `模块.类型 变量名 = ...` **现在是合法声明** ✓ ——
                             //   交给下面的普通声明路径（`parse_var_decl_internal` ⇒ `parse_type`
                             //   里吃下 `m.Pt` 并记进 TypeInfo.module_qualifier ✓，

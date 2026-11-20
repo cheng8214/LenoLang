@@ -7,7 +7,7 @@
 //   两条判据：① 与 A 逐字节等价（本脚本的 16 组尺寸×lw 扫描直接给结论 ✓）
 //             ② 单档耗时（A/B/C/D/E/G 并排 ✓）—— 两个杠杆必须分开量，否则说不清是谁的功劳 ✓
 //   跑法：leno <本文件>（约 10s，无需窗口）
-//   结论留档：docs\待办与路线图.md ⑤-an-2（含变体选型表与"跳透明"那个坑 ✗）
+//   结论留档：LenoDocsSrc/site/待办与路线图.html ⑤-an-2（含变体选型表与"跳透明"那个坑 ✗）
 import "SDL3" as SDL3
 use SDL3.(PixelBuffer)
 import ffi

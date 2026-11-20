@@ -227,7 +227,7 @@ int is_type_keyword(LenoTokenType type) {
            type == TOK_FUNC;
 }
 
-// ★ M5a（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：「use 列表里这个名字不是模块导出类型」
+// ★ M5a（2026-10-11，见 LenoDocsSrc/site/语言摩擦与隐式契约清单.html）：「use 列表里这个名字不是模块导出类型」
 //   的定向提示 —— **单一实现**，`use 批量导入` 与 `use 单模式` 两个入口共用 ✓
 //   实测（2026-10-11）：`use SDL3.(…, Thread)` 报的是"use 批量导入期望类型名" ✗ ——
 //   `Thread` 是**内建类型**（Leno 自带、不属于任何模块 ✓），用户看不出"该把这个名字删掉" ✓

@@ -1,6 +1,6 @@
 // test_var_nullable_infer.leno —— `var` 接收**可空返回值**时必须保留可空性
 //
-// 来源：docs/待修_编译与语义问题.md §1（2026-10-28）。当时的现象是
+// 来源：LenoDocsSrc/site/待修_编译与语义问题.html §1（2026-10-28）。当时的现象是
 //   `var ucw = cellBuilder(...)`（cellBuilder 声明返回 `Widget?`）之后
 //   `if ucw != null { ... continue }` 恒真 ⇒ 回调返回 null 的那一列整列不绘制。
 //   排查结论（2026-10-28，本文件即证据）：

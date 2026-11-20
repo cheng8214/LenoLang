@@ -1,6 +1,6 @@
 // test_channel_generic.leno —— TH4：`Channel[T]`（回归）
 //
-// 背景（见 docs/线程并发能力修复追踪.md 的 TH4）：`ch.receive()` 的静态类型原先恒为 `any`
+// 背景（见 LenoDocsSrc/site/线程并发能力修复追踪.html 的 TH4）：`ch.receive()` 的静态类型原先恒为 `any`
 //   ⇒ `var x: int = ch.receive()` 要显式转换、多返回值解构被拒；代码里为此留过一句
 //   「语言里没有 `Channel[T]` 标注」（`src/module/threads/threads.c`，已作废）。
 //   现在：`Channel[T]` 里的 T = **`receive()` 的返回类型**（走 element_type 槽，与 `Thread[T]` 同口径），

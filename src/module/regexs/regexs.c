@@ -813,7 +813,7 @@ static bool m_chain(ReNode* node, const char* pos, ReCtx* ctx, const char** out)
             //   文档写的是"匹配任意单个字符"，而按字节前进会让 `extract("中文", ".")`
             //   返回**半个汉字**（0xE4，非法 UTF-8，打印成 `�`）—— 静默错值 ✗。
             //   字符类（`[...]` / `\w` / `\d`）仍是**按 ASCII 字节**判（引擎本来就是逐字节的），
-            //   这一点在 docs/module_regexs.md 的"注意事项"里写明。
+            //   这一点在 LenoDocsSrc/site/module_regexs.html 的"注意事项"里写明。
             if (*pos) {
                 int clen = re_utf8_char_len_at(pos);
                 ok = m_chain(node->next, pos + clen, ctx, out);

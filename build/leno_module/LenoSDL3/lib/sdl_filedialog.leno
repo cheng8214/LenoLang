@@ -19,7 +19,7 @@
 //         default_location: "." })
 //
 // 回调在主线程返回。若用 win.run() 事件循环，跨线程回调会在每帧 clib 调用后
-// 自动泵送执行（详见 docs/FFI使用指南.md 7.4 跨线程回调），无需额外处理。
+// 自动泵送执行（详见 LenoDocsSrc/site/FFI使用指南.html 7.4 跨线程回调），无需额外处理。
 
 import ffi
 import dirs

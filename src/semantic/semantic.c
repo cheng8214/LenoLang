@@ -205,7 +205,7 @@ void semantic_init(Semantic* s, Ast* root) {
 }
 
 // ============================================================================
-// extend 合并（2026-11-02，设计见 docs/struct_extend_设计草案.md）
+// extend 合并（2026-11-02，设计见 LenoDocsSrc/site/struct_extend_设计草案.html）
 // ----------------------------------------------------------------------------
 // 把顶层 block 里的 `extend X { func ... }` 的方法**追加进目标 struct 的 methods 数组**
 // ⇒ 调用解析 / 字段可见性 / codegen 全部自动复用"写在 struct 里"的那套逻辑 ✓

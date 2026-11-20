@@ -1,8 +1,26 @@
 # AGENTS.md —— 写 Leno 代码的默认形态
 
 > 面向在本仓库（及其下游项目）里**生成 Leno 代码**的 AI。
-> 只写结论 + 最小可复制片段；每条论证见 [`docs/idioms.md`](docs/idioms.md)。
+> 只写结论 + 最小可复制片段；每条论证见 [`LenoDocsSrc/site/idioms.html`](LenoDocsSrc/site/idioms.html)。
 > 所有条目都在 `build\leno.exe` 上实测过。
+
+---
+
+## 0. 文档：**不在本仓库**，在独立仓库 `LenoDocsSrc`
+
+```
+D:\CLeno\LenoDocsSrc\
+├── *.md                ← 唯一的源（改文档只改这里）
+├── archive\  images\
+├── site\               ← 生成好的 HTML 站点（index.html + 95 篇 + 搜索索引，**产物**）
+└── build_html.py       ← 生成器
+```
+
+- **本仓库没有 `docs/`**。要看文档：打开 `D:\CLeno\LenoDocsSrc\site\index.html`（带全文搜索）。
+- 改/加文档：改 md → `cd D:\CLeno\LenoDocsSrc && python build_html.py`（整目录重建 `site/`）。
+- 代码注释里引用文档写 `LenoDocsSrc/site/<名字>.html`（如 `LenoDocsSrc/site/语言陷阱速查.html`）；
+  引用**模块自带**文档仍写 `.md`（`build/leno_module/*/docs/*.md` 没转 HTML）。
+- 别手改 `site/*.html`：下次生成会覆盖，且 3 MB 搜索索引会与正文不一致。
 
 ---
 
@@ -112,7 +130,7 @@ x.dur = _int(d.get("dur", "0"))
 > （数组保长度、字典保键），字典的**键**转不了就丢掉该项。`Array[any]` / `Dict[K,any]` 才原样。
 > ⚠ **容器套容器也递归**（2026-11-15 起）：`Array[Array[int]]` / `Dict[K, Array[T]]` /
 > `Array[Dict[K,V]]` / `Dict[K, Dict[K2,V2]]` 逐层按同口径转换（字节码 v3.2.42 起字段带
-> 完整声明类型树；序列化同步带）。内层写 `any` 仍原样（详见 `docs/module_jsons.md` 的表）。
+> 完整声明类型树；序列化同步带）。内层写 `any` 仍原样（详见 `LenoDocsSrc/site/module_jsons.html` 的表）。
 
 **能用字符串转数字**（`"269"` → `int 269`、`"8.5"` → `8.5`、`"1"` → `true`）——
 因为 **SQLite 的 `column_text` / CSV 的列全是字符串**。但反过来**不做**：
@@ -174,7 +192,7 @@ switch cmd {
 > 按值排序的二叉比较树**（O(log n)），低于 16 个仍是线性链（每条 case 一条融合比较）。
 > 实测 100 个 case 命中最后一个：66ms → 21ms（300k 次）。所以：
 > **直接用 switch 就行，不用再为"分支多"手写分档**；只有"热路径且永远命中第一个 case"
-> 这种极端分布，手写 `if` 才快几毫秒。详见 `docs/性能_分支与枚举.md`。
+> 这种极端分布，手写 `if` 才快几毫秒。详见 `LenoDocsSrc/site/性能_分支与枚举.html`。
 
 ---
 
@@ -379,9 +397,9 @@ main() {
 | `File` | 不能跨线程，但**运行期**才炸（见下面第 2 条）|
 | 闭包**捕获**的东西（局部变量 / 局部 struct / `self`）| **一律是副本** |
 
-> ⚠ `docs/threads使用指南.md` 的表里原来写着「struct 实例：需要序列化，暂不支持」——
+> ⚠ `LenoDocsSrc/site/threads使用指南.html` 的表里原来写着「struct 实例：需要序列化，暂不支持」——
 > 那是 **2026-10-12 之前**的状态，已过期（本次已改）。别再据此把 struct 拆成数组数组。
-> 权威清单在 `docs/module_threads_api.md` 的「可传递类型」表。
+> 权威清单在 `LenoDocsSrc/site/module_threads_api.html` 的「可传递类型」表。
 
 **三条必须记住的**
 
@@ -483,7 +501,7 @@ build\leno.exe --check <file>
 | `jsons.fill(枚举值, json)` 反向填充 | 没有（载荷"属于哪个成员"是运行期概念）⇒ 用 `switch` 分派 |
 | struct ↔ JSON 自动转换 | 没有，手写 `as` 收窄 + 字段赋值 |
 | `switch` 穷尽性检查 | 没有，用 `default` 兜底 |
-| 函数局部量 > 255 | **编译期报错**（不会静默），需拆函数。寄存器号保持 8 位是**量过之后的决定**（四个项目 1.6 万个函数最高只用 134，见 `docs/待办与路线图.md` 的 P3 后半）；高水位 ≥ 200 时会先给 `WARN_REG_PRESSURE` 预警 |
+| 函数局部量 > 255 | **编译期报错**（不会静默），需拆函数。寄存器号保持 8 位是**量过之后的决定**（四个项目 1.6 万个函数最高只用 134，见 `LenoDocsSrc/site/待办与路线图.html` 的 P3 后半）；高水位 ≥ 200 时会先给 `WARN_REG_PRESSURE` 预警 |
 | struct 字段 > 65535 | 编译期报错；**255 不再是上限**（2026-11-10 起字段索引走宽索引指令 `OP_*_FIELD_W`） |
 | 自定义可遍历对象（`for` 吃 `has_next/next`） | **未实现**，先 `toArray()` 或手动 `while` |
 

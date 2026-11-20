@@ -1,6 +1,6 @@
 // test_channel_closure.leno —— TH10：闭包 / 函数跨线程（回归）
 //
-// 背景（见 docs/线程并发能力修复追踪.md 的 TH10）：
+// 背景（见 LenoDocsSrc/site/线程并发能力修复追踪.html 的 TH10）：
 //   `value_clone_for_channel()` 原本把 `OBJ_CLOSURE` / `OBJ_FUNCTION` 归为"不能跨线程"，
 //   后果是"主线程建好的路由表（handler 闭包）/ 一组回调"传不进线程 —— LenoHTTP 只能每线程 buildApp。
 //   现在：`function`（只读字节码）直接共享，`upvalue` 递归 clone 成 closed upvalue。

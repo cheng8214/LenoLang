@@ -18,7 +18,7 @@ Array[Color] _CHART_PALETTE = [
 ]
 
 // ★ 2026-11-01：删掉自建的 _cmin/_cmax/_clampf（maths 里就是这三条，白抄一遍）
-//   ⇒ 统一用 maths.min / maths.max / maths.clamp（单次调用只贵 1~4ns，见 docs/module_maths.md ✓）
+//   ⇒ 统一用 maths.min / maths.max / maths.clamp（单次调用只贵 1~4ns，见 LenoDocsSrc/site/module_maths.html ✓）
 
 // 计算「漂亮」的上界（1/2/5 ×10^n）
 func _niceMax(float v): float {

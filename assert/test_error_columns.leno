@@ -57,7 +57,7 @@ main() {
         "调用不存在的方法落点", "没有方法 'test_nonexist'", 14, 7)
 
     // col16 是这批里**唯一需要先修编译器**的一例：`{1.5: v}` 此前**静默编译通过**
-    // （浮点键没被拦 —— 循环头注释、报错文案与 docs/module_dicts.md 三处口径都是"字符串/标识符/整数"）
+    // （浮点键没被拦 —— 循环头注释、报错文案与 LenoDocsSrc/site/module_dicts.html 三处口径都是"字符串/标识符/整数"）
     // ⇒ 2026-09-28 在 parser 的字典键分支补了浮点拦截 + **错误恢复**（吃掉本 dict 剩余 token 到 '}'，
     // 否则 1 处笔误会连着报"期望换行"+"期望表达式"两条级联噪声）。
     ce.expect_error_at("assert/error_col/col16_dict_key.leno",

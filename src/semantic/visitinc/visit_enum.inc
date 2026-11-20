@@ -20,7 +20,7 @@
                             "带载荷 enum '%s' 不支持这个位置 —— 它必须声明在**文件顶层**"
                             "（不能写在函数/块里）：编译器要把它降级成**同名的** "
                             "`struct { tag; p0; … }`，只在顶层做这件事。"
-                            "见 docs/enum载荷_设计草案.md",
+                            "见 LenoDocsSrc/site/enum载荷_设计草案.html",
                             ast->u.enum_def.name);
                         break;
                     }

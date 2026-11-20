@@ -2,10 +2,10 @@
 //
 // 为什么单独一个文件：被 import 的模块里的函数，其 `func->module != NULL`
 //   —— 正是原先被 `threads.start` 硬拦的那一类（判据见
-//   `docs/语言摩擦与隐式契约清单.md` 的 M1）。
+//   `LenoDocsSrc/site/语言摩擦与隐式契约清单.html` 的 M1）。
 //   ⚠ 本文件**故意带模块级可变状态**（`_g_calls`）：它是"模块 globals **跨线程共享**"
 //   这一已知口径的活样本（我们不隔离模块 globals，见
-//   `docs/线程并发能力修复追踪.md` 的「明确不做」表与 TH5）。
+//   `LenoDocsSrc/site/线程并发能力修复追踪.html` 的「明确不做」表与 TH5）。
 //   ⚠ 文件名不以 `test_` 开头 ⇒ run_tests.leno 不会把它当用例跑 ✓
 
 import threads
@@ -30,7 +30,7 @@ export func indirect(int v): int {
 // ⚠ 形参名不能叫 `from` / `to` —— 它们是 `for A : B` 的**关键字**（实测报「期望参数名」）
 func _sum_worker(int lo, int hi): int {
     var s = 0
-    // ⚠ `for A : B` 是**闭区间**（见 docs/threads使用指南.md 的注意事项）
+    // ⚠ `for A : B` 是**闭区间**（见 LenoDocsSrc/site/threads使用指南.html 的注意事项）
     for lo : hi to var i {
         s = s + i
     }

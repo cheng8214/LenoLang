@@ -984,7 +984,7 @@ Ast* parse_dict(Parser* p) {
         } else if (p->lex.current.type == TOK_NUM) {
             // 整数键（通过 parse_number 解析，自动处理 int/bigint）
             // ★ v3.2.8：**浮点数不能作键** —— 循环头的注释（"字符串、标识符(转为字符串)、整数"）、
-            //   下面的报错文案（"…或整数"）与 docs/module_dicts.md（"字典的键必须是字符串"）三处
+            //   下面的报错文案（"…或整数"）与 LenoDocsSrc/site/module_dicts.html（"字典的键必须是字符串"）三处
             //   口径一致，而实现此前把 TOK_NUM **整份**交给 parse_number ⇒ `{1.5: v}` **静默编译通过**
             //   （实测：examples/验证/error_column_tests/test16_dict_key.leno 的期望错误不再出现）。
             key_ast = parse_number(p);

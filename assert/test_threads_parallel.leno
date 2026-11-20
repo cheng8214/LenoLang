@@ -1,6 +1,6 @@
 // test_threads_parallel.leno —— TH3：并行原语（回归）
 //
-// 见 docs/线程并发能力修复追踪.md 的 TH3。三个原语（都是普通模块函数，**不加新类型/关键字**）：
+// 见 LenoDocsSrc/site/线程并发能力修复追踪.html 的 TH3。三个原语（都是普通模块函数，**不加新类型/关键字**）：
 //   `threads.join_all(Array[Thread])` → int（真正 joined 的个数）—— "WaitGroup" 的等价物
 //   `threads.parallel_for(int n, func f)` → int（真正起来的线程数）；f(index) 一个参数
 //   `threads.map(Array, func f)` → Array[回调返回]；f(item, index) 两个参数（与 arrays.map 同口径）

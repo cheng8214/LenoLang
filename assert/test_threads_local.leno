@@ -1,6 +1,6 @@
 // test_threads_local.leno —— TH5：线程局部存储 `threads.local_*`（回归）
 //
-// 背景（见 docs/线程并发能力修复追踪.md 的 TH5）：**模块级可变 `var` 是跨线程共享的**
+// 背景（见 LenoDocsSrc/site/线程并发能力修复追踪.html 的 TH5）：**模块级可变 `var` 是跨线程共享的**
 //   （`ObjModule.globals` 挂进程级 `loaded_modules` 缓存，**有意不隔离** —— 见该文的「明确不做」表）
 //   ⇒ 库想"每个线程一份状态"时此前没有现成手段（只能把状态收进实例、由调用方传进来）。
 //   现在补三个函数：`local_get(key, default)` / `local_has(key)` / `local_set(key, value)`。

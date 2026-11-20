@@ -4,7 +4,7 @@
 //   改造前后**逐行比对**即可判定观感是否回归 ✓（本项目两次蒙版优化都是这样验的 ✓）
 //   覆盖两类半径：「正好落在阶梯档位上」（拉伸比 1.0）与「档位中点」（拉伸比最大 ✓）
 //   跑法：set AASHOT=<路径.png> && leno <本文件>     ← AASHOT 可选，给了就同时存 PNG 供人眼复核 ✓
-//   结论留档：docs\待办与路线图.md ⑤-an（阶梯）、⑤-an-2（预热）；同族脚本 test_aa_radii / test_aa_clock ✓
+//   结论留档：LenoDocsSrc/site/待办与路线图.html ⑤-an（阶梯）、⑤-an-2（预热）；同族脚本 test_aa_radii / test_aa_clock ✓
 import "SDL3" as SDL3
 use SDL3.(Event, Renderer, SDL_SurfaceInfo, SDL_Vertex)
 import ffi

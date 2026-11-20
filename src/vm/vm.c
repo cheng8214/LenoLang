@@ -1780,7 +1780,7 @@ static inline int64_t vm_bigint_as_i64(Value v) {
 //                 拿它做顺序比较会把 `x > 0` 判成 false（实测，本函数存在的理由）；
 //   · float     ⇒ 同理走通用比较；
 //   · 其它类型  ⇒ 保持改动前行为（静态类型是 int 却拿到 struct/string，属**另一个**
-//                 既有问题：泛型 face 实参不做适配，见 docs/待办与路线图.md）。
+//                 既有问题：泛型 face 实参不做适配，见 LenoDocsSrc/site/待办与路线图.html）。
 //
 // kind：0 `<`  1 `>`  2 `<=`  3 `>=`  4 `==`
 // 返回：1 = 已算出（写 *out）；0 = 不可比较（调用方按原有文案报错）

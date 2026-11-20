@@ -294,7 +294,7 @@ void semantic_register_struct_from_module(Semantic* s, const ModuleStructSymbol*
 }
 
 // ============================================================================
-// 跨模块 extend 的方法占位符（2026-11-02，设计见 docs/struct_extend_设计草案.md 第 12 节）
+// 跨模块 extend 的方法占位符（2026-11-02，设计见 LenoDocsSrc/site/struct_extend_设计草案.html 第 12 节）
 // ----------------------------------------------------------------------------
 // 场景：`lib/page_download.leno` 里 `extend player.Player { func paint_dl }`，
 //   主程序 import 了 page_download，要能 `p.paint_dl()`。
@@ -494,7 +494,7 @@ void semantic_undefined_type_hint(Semantic* s, const char* type_name, char* buf,
 //   其余一律走 `default:` ⇒ 运行期抛「不能跨线程传递此类型」✗。
 //   ⚠ 这条拦截**必须**留着 ✗：跨堆引用会让收尾时同一块内存被两个堆各释放一次 ⇒
 //     `0xC0000374` **堆损坏**（object_thread.c 的 dict 键那处自带实测 ✓）。
-// ★ 2026-10-12（TH1，见 docs/线程并发能力修复追踪.md）：**struct 已从拦截名单摘掉** ✓
+// ★ 2026-10-12（TH1，见 LenoDocsSrc/site/线程并发能力修复追踪.html）：**struct 已从拦截名单摘掉** ✓
 //   —— 运行期那条闸门已能为 struct 深克隆 ✓（`channel_clone_struct`），静态拦截反而成了
 //   拦正确代码的误报 ✗。**cstruct 仍然拦** ✓：cstruct 实例是**裸 C 内存**（里面可能是
 //   指针 / 句柄 / 别人 malloc 的缓冲区 ✓），没有可安全克隆的语义 ⇒ 只能拦 ✓。
@@ -568,7 +568,7 @@ void semantic_check_not_precedence(Ast* operand, int line, int column, int kind)
 
 // ============================================================================
 // ============================================================================
-// ★ M4（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：**模块别名 vs 同名符号**的遮蔽告警
+// ★ M4（2026-10-11，见 LenoDocsSrc/site/语言摩擦与隐式契约清单.html）：**模块别名 vs 同名符号**的遮蔽告警
 //   —— **单一实现**（struct 字段与变量声明两个登记点共用 ✓）
 // ----------------------------------------------------------------------------
 // 实测（拆分 LenoMusic 当天 ✓）：入口脚本里
@@ -1373,7 +1373,7 @@ const char* get_similar_name_hint(Scope* scope, const char* name) {
         if (kw[0]) return kw;
     }
 
-    // ★ M3（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：`this` 是**最常见的顺手词**
+    // ★ M3（2026-10-11，见 LenoDocsSrc/site/语言摩擦与隐式契约清单.html）：`this` 是**最常见的顺手词**
     //   （C++/Java/C# 习惯 ✓），而 Leno 的实例自引用叫 **`self`** ⇒ 专门给一条提示 ✓。
     //   必须放在"相似名搜索"**之前** ✗：`this` 与作用域里任何变量都不像（编辑距离 ≥3）
     //   ⇒ 走相似名那条路永远给不出提示 ✓（实测：方法里写 `return this` 只报
@@ -2567,7 +2567,7 @@ void semantic_free_generic_requirements(Semantic* s) {
 //   而"这个字段是**改名**了、新名字是什么、旧值怎么换算"只有编译器知道。少这一句，用户
 //   要么猜名字，要么把旧语义的 `-1` 留在原地 ⇒ **静默差一格**（最坏的那种）。
 // 记录：`RegexMatch.end`（半开，v3.2.7～v3.2.43）⇒ `RegexMatch.last`（闭区间末位，v3.2.44 起）
-//   —— 语言口径统一成闭区间，见 docs/区间口径约定.md ✓
+//   —— 语言口径统一成闭区间，见 LenoDocsSrc/site/区间口径约定.html ✓
 // ⚠ 报错入口有两处（visit_field_access.inc 与 semantic_type.c 的推断分支）⇒ 都先问这里，
 //   文案**逐字一致** ⇒ 编译器按文案去重，用户只看到一条 ✓
 // ⚠ 仓内 + 下游项目都迁移完成后这条可删（删之前 grep 一遍 `\.end\b` 确认没人再写）✓

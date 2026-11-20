@@ -96,7 +96,7 @@
 //     模块自己定的标准见 `sdl_table.leno`：「裁剪深度…仍为 2 层（Tab + body）…不引入额外 flush，
 //     避免 D3D 闪烁」✓。本示例 19 个 Panel **全部 `clip:false`**（子控件按构造不会溢出），
 //     Tab 也 `clip:false` ⇒ **每页最多只剩 1 层裁剪**（ScrollView 自己那层）✓。
-//     ★ 完整排查记录（机制/证据/自查清单/怎么量）：`docs/LenoSDL3_裁剪过多导致闪烁排查记录.md` ✓
+//     ★ 完整排查记录（机制/证据/自查清单/怎么量）：`LenoDocsSrc/site/LenoSDL3_裁剪过多导致闪烁排查记录.html` ✓
 //   · `for A : B to v` 是**闭区间**（含 B）⇒ `for 0 : 3 to ci` 是 0/1/2/3 **四次** ✓（不是三次 ✗）
 //     （曾误判成"左闭右开"，把渲染器的圆角循环改成 `0 : 4` ⇒ ci=4 不匹配任何 case ⇒ `null` 崩 ✗）；
 //   · 一屏能放下的页面**别留半截**：内容高要 ≤ 735（本页曾 786 ⇒ 卡片底部/日志框被**窗口底边**切掉 ✗，
@@ -286,7 +286,7 @@ func nav_item(Panel side, float y, string text, int idx) {
     NAVS.add(b)
     style_nav(b, idx == CUR_PAGE)
     // `idx` 是**函数参数**（循环外）⇒ by-upvalue 捕获 ⇒ 每个导航项各记各的那一份 ✓
-    //   ⚠ 别写成"按值捕获" ✗（那是**循环体内声明**的变量才有的形态，见 docs/语言陷阱速查.md ㊱ ✓）
+    //   ⚠ 别写成"按值捕获" ✗（那是**循环体内声明**的变量才有的形态，见 LenoDocsSrc/site/语言陷阱速查.html ㊱ ✓）
     b.on_click(func():void { set_page(idx) })
     side.add(b)
 }

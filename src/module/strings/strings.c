@@ -680,7 +680,7 @@ static Value str_find(int argc, Value* args) {
 //     · 返回**字符索引**（不是字节偏移），找不到 ⇒ -1
 //     · 可选第 3 参 `last` 是**上界（含）**（2026-11-20 起；原为 `before`＝不含）：
 //       允许的匹配**起点** ≤ `last`（与 `find` 的 `start` 起点对称；负数从末尾数）
-//       —— 全语言的索引区间统一成闭区间，见 docs/区间口径约定.md ✓
+//       —— 全语言的索引区间统一成闭区间，见 LenoDocsSrc/site/区间口径约定.html ✓
 //     · 空模式 ⇒ 返回上界处（对称于 find 的"空模式返回起点"）
 //     · 允许重叠匹配（"aaaa".rfind("aa") ⇒ 2，与 Python 一致）
 //   ⚠ 迁移注意（v3.2.44 起）：老写法 `rfind(pat, before)` 的 before 是**不含**的，
@@ -1912,7 +1912,7 @@ static Value str_from_bytes(int argc, Value* args) {
 //   `LenoWeb/lib/web_ws.leno`（WS 握手要 `Sec-WebSocket-Accept` 的编码、截图要解码）、
 //   以及音乐下载器 / Trae签到 各一份。而 `web_ws` 这种"做分帧"的模块不该为了编解码去依赖
 //   一个**加密库** ⇒ core scalar codec 归核心标准库（与 to_hex/from_hex 同族，正是
-//   `docs/单一事实来源与重复实现收敛.md` 的取向）。
+//   `LenoDocsSrc/site/单一事实来源与重复实现收敛.html` 的取向）。
 //   ★ 同日收口结果：`LenoCrypto/lib/crypto_base64.leno`、`examples/crypto/base64.leno`
 //     **已删除**，`LenoWeb/lib/web_ws.leno` 改薄封装，音乐下载器 / Trae签到 直连 `strings.*`
 //     ⇒ 四份实现收敛为**这一份** ✓（注释改动，不影响已构建的二进制）

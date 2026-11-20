@@ -11,7 +11,7 @@
 //   var t = csv.parseTable(text)                 // CsvTable{header, rows}
 //   var recs = csv.toDicts(t.header, t.rows)     // [{a:"1", b:"2"}]
 //
-//   // ③ 文件（会失败的两个返回 Result[T]，见 docs/错误与空值契约.md）
+//   // ③ 文件（会失败的两个返回 Result[T]，见 LenoDocsSrc/site/错误与空值契约.html）
 //   Result[CsvTable] d = csv.load("data.csv", ",", true)
 //   if d.isErr() { print(d.errText()) }
 //   Result[int] w = csv.save("out.csv", rows, ",", true)   // 写出的字节数

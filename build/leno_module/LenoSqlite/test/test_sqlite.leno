@@ -10,7 +10,7 @@
 //
 // ⚠ 这里的 `forEach` 回调**都显式 `return true`**：跨模块调用时"无返回值"的回调
 //   不会报类型错（编译器已知缺陷），会被当作 false ⇒ 只跑第一行。
-//   见 docs/待办与路线图.md 五-1。
+//   见 LenoDocsSrc/site/待办与路线图.html 五-1。
 import "sqlite3" as db
 import files
 import "Result" as res

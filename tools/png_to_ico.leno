@@ -1,7 +1,7 @@
 // png_to_ico.leno — 把一张 PNG **原样**封进 ICO 容器（给 resource.toml 的 `[pack] icon` 用 ✓）
 //
 // 为什么需要它：打包 exe 时 Windows **只认 .ico** —— 图标是 PE 资源（RT_GROUP_ICON / RT_ICON），
-//   PNG/JPG 必须先转成 ICO 容器 ✗（见 docs/单文件打包使用指南.md §4.2 ✓）
+//   PNG/JPG 必须先转成 ICO 容器 ✗（见 LenoDocsSrc/site/单文件打包使用指南.html §4.2 ✓）
 // 但 ICO 里的图像数据是**原样搬运**的 ✓ ⇒ 直接把 PNG 字节塞进 ICO 容器就行，
 //   **不需要解码、不需要重新编码** ✓✓ ⇒ 本工具也就**不依赖 SDL3**，只写 22 字节头 + 原 PNG ✓
 //

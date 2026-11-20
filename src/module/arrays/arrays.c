@@ -78,7 +78,7 @@ static int array_shrink(ObjArray* arr) {
 //       ⇒ 统一 float，把转换交给调用点，是这里唯一不撒谎的写法 ✓
 //   元素不是数字 ⇒ **抛错并指出第几个**（不默默跳过 —— 静默错数据比报错难查得多 ✗）
 //   ⚠ 不配套做 `sorted` / 数组版 `min`/`max`：前者 `arr.copy().sort()` 已能表达、
-//     后者 `maths.min/max(...)` 已有 ⇒ 再加就是同一件事两种写法 ✗（见 docs/module_arrays.md ✓）
+//     后者 `maths.min/max(...)` 已有 ⇒ 再加就是同一件事两种写法 ✗（见 LenoDocsSrc/site/module_arrays.html ✓）
 static Value arr_sum(int argc, Value* args) {
     (void)argc;
     ObjArray* arr = (ObjArray*)val_as_obj(args[0]);

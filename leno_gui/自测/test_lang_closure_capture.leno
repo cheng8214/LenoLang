@@ -1,7 +1,7 @@
 // leno_gui/自测/test_lang_closure_capture.leno — 闭包捕获语义探针（**六种形态** A~F 一次测完 ✓）
 //   问题：Leno 的闭包到底"捕获什么、什么时候取值"？ 拿它当"动态文案"会不会冻住？
 //   判据：A/B/C 应读到**新值**（实时 ✓）；D 是 0/1/2（循环量每轮独立 ✓）；E 是 2/2/2（外层共享变量共用末值 ✗）；
-//         F 是 1/2/3（真 upvalue：创建者返回后仍存活可变 ✓）。结论记在 docs/语言陷阱速查.md §闭包 ✓
+//         F 是 1/2/3（真 upvalue：创建者返回后仍存活可变 ✓）。结论记在 LenoDocsSrc/site/语言陷阱速查.html §闭包 ✓
 // 用法：build\leno.exe leno_gui\自测\test_lang_closure_capture.leno
 var G = "G1"                                   // ① 模块级变量
 

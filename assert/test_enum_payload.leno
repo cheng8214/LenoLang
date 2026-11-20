@@ -1,4 +1,4 @@
-// test_enum_payload.leno —— 带载荷 enum（P4 最后一项，草案见 docs/enum载荷_设计草案.md）
+// test_enum_payload.leno —— 带载荷 enum（P4 最后一项，草案见 LenoDocsSrc/site/enum载荷_设计草案.html）
 //
 // 语言形态：
 //   enum Msg { progress(int done, int total)  finished(string path)  failed(string why, int code) }

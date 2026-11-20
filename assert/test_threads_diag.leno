@@ -1,6 +1,6 @@
 // test_threads_diag.leno —— TH11：线程诊断（current_id / error）
 //
-// 背景（见 docs/线程并发能力修复追踪.md 的 TH11）：
+// 背景（见 LenoDocsSrc/site/线程并发能力修复追踪.html 的 TH11）：
 //   · 没有线程 id ⇒ 日志分不清是哪个 worker；
 //   · fire-and-forget 线程抛异常时，错误只存在 `thread_obj->error_msg` 里，
 //     没人 join 就永远看不到（症状是"任务静默没结果"）。

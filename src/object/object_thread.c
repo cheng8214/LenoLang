@@ -208,7 +208,7 @@ static void channel_clone_reject(int type_tag) {
     native_throw_error(msg);
 }
 
-// struct 实例深克隆（跨线程）—— TH1（2026-10-12，见 docs/线程并发能力修复追踪.md）
+// struct 实例深克隆（跨线程）—— TH1（2026-10-12，见 LenoDocsSrc/site/线程并发能力修复追踪.html）
 // ----------------------------------------------------------------------------
 // 为什么现在能做：struct **定义**的子线程快照机制早就落地（`struct_def_import_from_thread` ✓）
 //   ⇒ 接收侧一定查得到类型定义，重建实例没有障碍 ✓。

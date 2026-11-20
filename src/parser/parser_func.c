@@ -341,7 +341,7 @@ static TypeInfo* parse_base_type(Parser* p) {
         
         lexer_next(&p->lex);
 
-        // ★ US1（2026-10-12，见 docs/类型可见性与use逃生阀修复追踪.md）：**模块限定类型名**
+        // ★ US1（2026-10-12，见 LenoDocsSrc/site/类型可见性与use逃生阀修复追踪.html）：**模块限定类型名**
         //   `m.Pt` —— 第一个标识符是**模块别名**，真正的类型名在点号后面。
         //   解析器只负责把**两个名字都记下来**（`module_qualifier` = `m`）；"去模块符号表查类型"
         //   留给语义层（解析器不该知道模块加载状态 ✓；而类型名归一化有单一入口
@@ -823,7 +823,7 @@ Ast* parse_alias_stmt(Parser* p) {
     lexer_next(&p->lex); // 跳过 alias
 
     if (p->lex.current.type != TOK_IDENT) {
-        // ★ M5b（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：旧文案只有"期望别名名称" ✗
+        // ★ M5b（2026-10-11，见 LenoDocsSrc/site/语言摩擦与隐式契约清单.html）：旧文案只有"期望别名名称" ✗
         //   实测（2026-10-11）：写 `Outer alias = o`（想声明变量、名字顺手用了保留字 `alias` ✗）
         //   会**一头撞进别名声明这条路** ⇒ 报"期望别名名称"，用户完全看不出"是名字碰到了保留字" ✓
         //   ⇒ 这里把两条出路都说清：① 真要写别名 ⇒ `alias 名字 = 类型` ✓；
@@ -1372,7 +1372,7 @@ Ast* parse_destruct_decl(Parser* p, TypeInfo* base_type, int is_const, int line,
 //   （`x, y = 1, 2`），但 Leno 的**声明**解构**必须写形状**（`var[...]` / `var{...}` / 空的 `var[]`）
 //   ⇒ `(` 在 var 路径被当成表达式开头（报「期望变量名」）、在 const 路径被当成类型开头
 //   （报「期望类型 (int, float, ...)」）—— 两条都指向别处、看不出真因 ✗
-//   （实测踩点：写 Leno 版批量替换脚本时；文档见 docs/Leno入门教程.md「与 Python 对照」一节）
+//   （实测踩点：写 Leno 版批量替换脚本时；文档见 LenoDocsSrc/site/Leno入门教程.html「与 Python 对照」一节）
 //   顺带点出另一条容易混的：`a, b = ...` 是**并行赋值**，只能改**已存在**的变量 ✓
 static void error_destruct_shape_hint(Parser* p) {
     error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
@@ -1448,7 +1448,7 @@ Ast* parse_var_decl_internal(Parser* p) {
             // `var (a, b) = ...` ⇒ 定向提示（文案与 const 路径共用，见 error_destruct_shape_hint）
             error_destruct_shape_hint(p);
         } else {
-            // ★ M5b（2026-10-11，见 docs/语言摩擦与隐式契约清单.md）：**保留字撞名**要说清 ✓
+            // ★ M5b（2026-10-11，见 LenoDocsSrc/site/语言摩擦与隐式契约清单.html）：**保留字撞名**要说清 ✓
             //   实测（2026-10-11）：`Outer alias = o` 报的是普通语法错"期望变量名" ✗
             //   —— 看不出问题出在 `alias` 是**保留字**上，白烧一轮编译 ✓。
             //   判据用 lexer 反查（不是类型关键字的那批也覆盖 ✓：struct / for / const / return …）
@@ -3866,7 +3866,7 @@ static int64_t eval_const_expr(Ast* expr, int* ok) {
 // 定下来（跨模块 `use mod.E` 与模块限定访问都取自这里）。历史上它为此复刻了一整套词法 +
 // 递归下降求值器，语义靠手工与解析器维持对齐 —— 反复漂移且都是**静默错值**
 // （`0b`、`not`、除零，每次都只在 use 路径错）。现在它直接调这里：词法与语法都是语言本身的
-// 那一套，不再有第二份实现（见 docs/单一事实来源与重复实现收敛.md 的 Phase 1）。
+// 那一套，不再有第二份实现（见 LenoDocsSrc/site/单一事实来源与重复实现收敛.html 的 Phase 1）。
 //
 // 约定：
 //   - text 必须是 NUL 结尾的稳定缓冲区（内部复制一份给 Lexer，调用方缓冲区的生命周期无关）；
@@ -4022,7 +4022,7 @@ Ast* parse_enum_stmt(Parser* p) {
         lexer_next(&p->lex);
 
         // ★ 2026-11-10（P4，步 1）：**带载荷成员**的语法 `name(type a, type b)`
-        //   · 只解析形状，语义阶段才决定怎么降级（见 docs/enum载荷_设计草案.md）
+        //   · 只解析形状，语义阶段才决定怎么降级（见 LenoDocsSrc/site/enum载荷_设计草案.html）
         //   · 老写法 `name` / `name = 3` 完全不经过这里 ⇒ 行为零变化
         char** pnames = NULL;
         TypeInfo** ptypes = NULL;
@@ -4259,7 +4259,7 @@ Ast* parse_enum_stmt(Parser* p) {
 }
 
 // ============================================================================
-// extend 声明（2026-11-02，设计见 docs/struct_extend_设计草案.md）
+// extend 声明（2026-11-02，设计见 LenoDocsSrc/site/struct_extend_设计草案.html）
 // ----------------------------------------------------------------------------
 // 语法：extend [模块名.]StructName { func ... }
 //   作用：把 struct 的方法体**搬到别处**（不产生子类型、不改布局、不加字段）。

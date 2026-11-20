@@ -433,7 +433,7 @@ Python 压测（Windows x64，同一台机器）：
 
 ## 能力缺口与路线
 
-见 [`docs/LenoWeb能力缺口与修复路线.md`](../../../docs/LenoWeb能力缺口与修复路线.md)：
+见 [`LenoDocsSrc/site/LenoWeb能力缺口与修复路线.html`](../../../docs/LenoWeb能力缺口与修复路线.html)：
 并发（`Socket` 跨线程）、multipart、Range/缓存头、中间件、路径参数等，都写了修法与验收标准。
 
 ## 下一步

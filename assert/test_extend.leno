@@ -1,5 +1,5 @@
 // `extend` —— 把 struct 的方法写到别处（2026-11-02）
-// 设计：docs/struct_extend_设计草案.md
+// 设计：LenoDocsSrc/site/struct_extend_设计草案.html
 //
 // 覆盖：基本用法 / 定义顺序无关 / 多个 extend 块 / 跨块访问 pri 字段与方法 /
 //       改字段 / extend 方法互相调用 / **泛型 struct**（方法里直接引用 T）/

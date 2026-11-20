@@ -95,7 +95,7 @@ main() {
     assert_eq(m.BIG_NEG + 1, -2999999999)
 
     // === ④ 同族「(int) 截断」：enum 迭代取值 > 2^31 不得被截断 ===
-    // （这正是 docs/枚举求值与模块符号表问题.md 的 ENUM-4 类；一并钉住 ✓）
+    // （这正是 LenoDocsSrc/site/枚举求值与模块符号表问题.html 的 ENUM-4 类；一并钉住 ✓）
     int sum = 0
     int cnt = 0
     for BigFlag to f {

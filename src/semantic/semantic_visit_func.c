@@ -362,7 +362,7 @@ int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
     //   递归（下面的泛型实参/元素类型）里再遇到同名 ⇒ 循环引用（见下面那段）。
     char* pushed_alias = NULL;
 
-    // ★ US1（2026-10-12，见 docs/类型可见性与use逃生阀修复追踪.md）：**模块限定类型名** `m.Pt`
+    // ★ US1（2026-10-12，见 LenoDocsSrc/site/类型可见性与use逃生阀修复追踪.html）：**模块限定类型名** `m.Pt`
     //   （解析器记在 `module_qualifier` 里，见 parser_func.c 的 parse_base_type）。
     //   语义 = **隐式 `use m.Pt`** ⇒ 直接复用 `use` 的**唯一实现**（报错文案 / 可用性判据 /
     //   重复导入的宽容度三条都不可能漂移 ✓），随后**清空前缀** ⇒ 下面那段（以及所有下游校验点

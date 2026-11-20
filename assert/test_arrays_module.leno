@@ -74,7 +74,7 @@ main()
     assert_eq(e_mod.len(), 0)
 
     // ⑤ 运行时**类型名**在 clear()/copy() 后保持（2026-09-27 复测）
-    //   背景：`docs/寄存式与栈式的差异清单.md` 的 E7 记过一条"数组字面量没设运行时 type_info ⇒
+    //   背景：`LenoDocsSrc/site/寄存式与栈式的差异清单.html` 的 E7 记过一条"数组字面量没设运行时 type_info ⇒
     //   clear() 后元素类型名 `Array[int]` → `Array`"的退化（当时两套实现一致）。现已不复现
     //   —— 这里把它锁住，防回潮。（那条记录的证据文件 `examples/array/基本 clear.leno` 已随目录删除）
     Array[int] tinfo = [1, 2, 3]

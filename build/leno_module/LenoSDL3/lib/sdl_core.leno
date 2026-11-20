@@ -474,14 +474,14 @@ export const SDL_Color_SIZE  = 4
 // 注（历史，别重踩 ✓）：曾在此加过 winmm `timeBeginPeriod(1)` 想"修帧率" ✗ ——
 //   实测本机 sleep 本来就是准的（同运行内对照：60×`SDL_Delay(16)` = 995ms ⇒ 16.6ms/次 ✓），
 //   而当时"上限 60 只跑到 31.8fps"是**测量把约 0.9s 进程启动耗时算进了帧时间**导致的误判 ✗
-//   ⇒ 该方案（含 `SDL_DelayPrecise` 包装）已整段移除；结论与方法论见 docs/Leno语言改进建议.md ✓
+//   ⇒ 该方案（含 `SDL_DelayPrecise` 包装）已整段移除；结论与方法论见 LenoDocsSrc/site/Leno语言改进建议.html ✓
 
 // ==================== DLL 加载 ====================
 // ★ 2026-11-19 起库文件**按平台分目录**存放（原来是 lib/ 下平铺，与 LenoSqlite 等对齐）：
 //     lib/win/SDL3.dll / SDL3_image.dll / SDL3_ttf.dll / libwebp-7.dll …
 //     lib/linux/SDL3.so / SDL3_image.so / SDL3_ttf.so / libwebp.so.7 …
 //     lib/android/<abi>/…   ← 双 ABI 产物已入库（2026-11-19）；开窗需要 SdlActivity 宿主，
-//                              见 android/app/java/com/leno/app/SdlActivity.java 与 docs/Android正经App路线.md 5.4
+//                              见 android/app/java/com/leno/app/SdlActivity.java 与 LenoDocsSrc/site/Android正经App路线.html 5.4
 //
 // 为什么传**平台相对路径**而不是裸文件名：库现在在 lib/ 的子目录里，裸名只会命中
 //   「模块目录/<名>」这一层，拼不到子目录 ✗

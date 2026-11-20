@@ -19,12 +19,12 @@
 //   card.set_content(bar)
 //   card.set_selected(true)
 //
-// 设计文档：`docs/LenoSDL3_Card卡片控件设计文档.md`（尺寸模型 / 状态优先级 / 裁剪预算都在那）
+// 设计文档：`LenoDocsSrc/site/LenoSDL3_Card卡片控件设计文档.html`（尺寸模型 / 状态优先级 / 裁剪预算都在那）
 //
 // 四条不变式（改本文件时必须守住）：
 //   ① 图片永不挤掉文字与内容区（见 layout() 的 maxIH ✓）
 //   ② **整卡每帧 0 次 pushClipRect、0 次 malloc**（图片溢出一律靠**源矩形裁切**解决 ✓；
-//      这正是"裁剪过多会闪"那条记录（docs/LenoSDL3_裁剪过多导致闪烁排查记录.md）的正解 ✓）
+//      这正是"裁剪过多会闪"那条记录（LenoDocsSrc/site/LenoSDL3_裁剪过多导致闪烁排查记录.html）的正解 ✓）
 //   ③ `hover_lift` 只影响绘制，不改 x/y（hit-test 与布局容器的 set_pos 都不能被污染 ✓）
 //   ④ **圆角图片（`image_radius>0`）每帧 0 次离屏合成** —— 必须走 `rrTex` 缓存 ✓
 //      （现合成的代价是"关裁剪 + 切 render target + `SDL_RenderClear` + 贴回" ✗；
@@ -287,7 +287,7 @@ export struct Card impl Widget, Themeable {
             //   整段被 `default:` 静默跳过 ⇒ 值里的裸字段名没被改写成 `self.字段` ⇒ 报"未定义变量" ✗。
             //   现在**直接写裸名就行** ✓（`var b = new BadgeSpec(text = badge, …)` ✓）。
             //   ⚠ 它**从来不是**"self 被切成 X"：X 有同名字段时也照样响亮报错、不会静默取值 ✓
-            //   （6 条边界 + 真因见 docs/语言摩擦与隐式契约清单.md 的 M11 ✓）
+            //   （6 条边界 + 真因见 LenoDocsSrc/site/语言摩擦与隐式契约清单.html 的 M11 ✓）
             //   ↓ 下面这段"先 new 再逐字段赋值"**保留无妨**（等价写法），但**不再是必须的** ✓
             BadgeSpec b0 = new BadgeSpec()
             b0.text = badge

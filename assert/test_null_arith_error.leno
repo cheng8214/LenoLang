@@ -1,6 +1,6 @@
 // test_null_arith_error.leno —— T11：null 不能参与运算（**运行期**那一半）
 //
-// 规则来源：`docs/Leno入门教程.md` 的运算符类型规则明写「bool 和 null 不能参与算术运算」，
+// 规则来源：`LenoDocsSrc/site/Leno入门教程.html` 的运算符类型规则明写「bool 和 null 不能参与算术运算」，
 // 且「值类型字段必须指定默认值」一节写明：不写默认值的值类型字段初值是 **null**，
 // 参与算术会「编译警告或运行时报错」。
 //

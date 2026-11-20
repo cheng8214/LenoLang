@@ -1,6 +1,6 @@
 // cstruct 数组字段切片回归（2026-11-02）
 // 修前：ObjCStructArrayView 只支持逐元素索引，OP_SLICE 落到
-// 「切片: 对象必须是数组或字符串」⇒ docs/module_cstructs.md 的示例跑不通。
+// 「切片: 对象必须是数组或字符串」⇒ LenoDocsSrc/site/module_cstructs.html 的示例跑不通。
 // 现在切片物化成普通 Array（标量按 C 布局读），语法与普通数组一致。
 cstruct SliceT {
     u32 values[6]

@@ -13,7 +13,7 @@
 //   · yield 扇出 2000 协程 ×100 次    4269 ns/次 → 226 ns/次（原来的 O(N²) 没了）
 //   · sleep(1) 扇出 2000 协程          13.5 ms → 2.0 ms
 //   · all() 收集 2000 个 Future        3.56 ms → 0.13 ms
-//   机理：就绪队列改环形缓冲 + in_ready 标志、定时器改二叉最小堆（见 docs\module_asyncs.md 性能提示）
+//   机理：就绪队列改环形缓冲 + in_ready 标志、定时器改二叉最小堆（见 LenoDocsSrc/site/module_asyncs.html 性能提示）
 //
 // 读法：同机、同时段比趋势，别抠单次小数（±10% 属正常波动）。
 

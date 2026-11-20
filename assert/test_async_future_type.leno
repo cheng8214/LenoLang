@@ -1,5 +1,5 @@
 // test_async_future_type.leno —— T3 判据：`Future` 带上**元素类型**（C3 + C6）
-//   台账：docs/待办与路线图.md 的 §T3
+//   台账：LenoDocsSrc/site/待办与路线图.html 的 §T3
 //
 // 改了什么（2026-10-12）：给 `TYPE_FUTURE` 加 `element_type` 槽（与 TH4 的
 //   `Channel[T]` / `Thread[T]` **同一范式** ✓），并在四处填/用它：

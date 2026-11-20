@@ -1032,7 +1032,7 @@ static TypeInfo* native_type_spec_to_info_impl(const NativeTypeSpec* spec, TypeI
     //   为什么不给 NativeTypeSpec 加 int 字段：全仓 40+ 处规格是位置式初始化，
     //   加字段会全部触发 -Wmissing-field-initializers（详见 leno_types.h 的 NTYPE_NULLABLE 说明）。
     //   `var r = _exec(...)` 的可空性就靠这里带上 ⇒ `r != null` 不再误报
-    //   「struct 与 null 比较」（见 docs/待修_编译与语义问题.md §1）。
+    //   「struct 与 null 比较」（见 LenoDocsSrc/site/待修_编译与语义问题.html §1）。
     //   ⚠ 只影响**编译期推断**：规格不进字节码 ⇒ 不必升 LENO_BIN_VERSION ✓
     //   ⚠ 必须在 type_new 之前处理：type_new 可能给出**驻留**实例（不可 free / 不可改）
     if (spec->tag == NTYPE_NULLABLE) {

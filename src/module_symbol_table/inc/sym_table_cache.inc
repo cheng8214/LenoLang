@@ -3,7 +3,7 @@
 // 与模块编译缓存（.lenomc）共享 .lenocache/ 目录和相同的失效判定机制
 // ============================================================================
 
-// ⚠ 版本号登记表：docs/单一事实来源与重复实现收敛.md 第七节
+// ⚠ 版本号登记表：LenoDocsSrc/site/单一事实来源与重复实现收敛.html 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
 #define LENOSYMC_VERSION 0x0000002C  // v44 (2026-11-10): enum 成员追加「载荷参数个数 + 参数类型」（P4 enum 载荷跨模块）
@@ -237,7 +237,7 @@ break;
 }
 
 // （原先这里有一份自己的「文本模式读文件 + 算哈希」实现，2026-09-16 收敛到 serialize.c 的
-//   module_source_snapshot_now —— 见 docs/单一事实来源与重复实现收敛.md 的 Phase 3）
+//   module_source_snapshot_now —— 见 LenoDocsSrc/site/单一事实来源与重复实现收敛.html 的 Phase 3）
 
 // 序列化 ModuleSymbolTable 到文件
 static int sym_cache_serialize(const char* cache_path, ModuleSymbolTable* table,

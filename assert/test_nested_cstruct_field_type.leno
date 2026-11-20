@@ -1,7 +1,7 @@
 // 嵌套 cstruct 字段的跨模块类型传导 —— 回归测试
 //
 // 背景（2026-09-18 实测，S2 族"同一份检查各处认的名字集合不一致"第 4 例）：
-//   `docs/module_cstructs.md` 明确记载 **嵌套 cstruct** 是支持的写法
+//   `LenoDocsSrc/site/module_cstructs.html` 明确记载 **嵌套 cstruct** 是支持的写法
 //   （`cstruct Rect { Point top_left }`），语料里也在用
 //   （`examples/import/win_process/win_process_str16.leno` 的
 //     `cstruct LUID_AND_ATTRIBUTES { LUID Luid ... }`）。

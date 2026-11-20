@@ -10,7 +10,7 @@
 //      ⚠ 文本模式（`"r"` / `"w"`）会**静默翻译行尾**（Windows：写 `\n` → `\r\n`、读 `\r\n` → `\n`）
 //      ⇒ "读 → 改 → 写回"会把 **LF 文件变成 CRLF**（实测 6 字节 → 9 字节；纯 CRLF 文件因为
 //      两侧对称翻译反而"看着没事"，极难查）。该问题已在本仓库修掉（`files.write`/`read` 改二进制、
-//      护栏 `assert/test_files_bytes.leno`），详见 `docs/module_files.md` 的「字节保真」一节。
+//      护栏 `assert/test_files_bytes.leno`），详见 `LenoDocsSrc/site/module_files.html` 的「字节保真」一节。
 //   ② **BOM 原样保留**：`files.read` 是**文本语义**（会剥掉 UTF-8 BOM，那是给
 //      正则/比较/数字解析用的好意），但**写回**时没人替你补 ⇒ 往返一趟 BOM 就没了。
 //      所以本工具走原始字节 + 自己记着 BOM 长度。

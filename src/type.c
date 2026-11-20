@@ -95,7 +95,7 @@ TypeInfo* type_thread_generic(TypeInfo* element_type) {
     return type;
 }
 
-// ★ T3（2026-10-12，见 docs/待办与路线图.md 的 §T3）：`Future[T]` —— T = `await` 解包出来的类型。
+// ★ T3（2026-10-12，见 LenoDocsSrc/site/待办与路线图.html 的 §T3）：`Future[T]` —— T = `await` 解包出来的类型。
 //   与 type_channel_generic / type_thread_generic 同形（同一范式：`element_type` 槽 ✓）。
 //   为什么需要：此前 `Future` **不带元素类型** ⇒ `await X` 只能靠"被等待的表达式恰好是个调用"
 //   再去挖声明返回类型的启发式（semantic_type.c 的 AST_AWAIT）⇒ 只要 Future 来自

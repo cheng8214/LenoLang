@@ -235,7 +235,7 @@ void gc_init(void) {
     gc.extra_root_count = 0;
     gc.extra_root_capacity = 0;
 
-    // ---- 测试钩子：确定性触发 GC（默认全关，见 docs/GC与分配优化.md §8.35）----
+    // ---- 测试钩子：确定性触发 GC（默认全关，见 LenoDocsSrc/site/GC与分配优化.html §8.35）----
     gc.young_threshold_pinned = 0;
     gc.force_every = 0;
     gc.force_count = 0;
@@ -319,7 +319,7 @@ void gc_release_thread_aux(void) {
 //
 // 目标：消除高频小对象（struct 实例如 Hit、闭包、短字符串头等）的系统
 // malloc/free 开销（对象版光线追踪实测：Hit 分配 ~114ns vs Python pymalloc
-// ~84ns 的主要差距来源，见 docs/函数调用性能优化_调用帧与多返回值解构.md 方向 5）
+// ~84ns 的主要差距来源，见 LenoDocsSrc/site/函数调用性能优化_调用帧与多返回值解构.html 方向 5）
 //
 // 设计：
 //   - 仅池化 [16B, 256B] 的对象，按 16B 对齐分 16 个 size-class
@@ -343,7 +343,7 @@ void gc_release_thread_aux(void) {
 #define GC_POOL_CLASSES      (GC_POOL_MAX_SIZE / GC_POOL_ALIGN)  // 16 类
 #define GC_POOL_BLOCK_SLOTS  64                       // 每块槽数
 /* 池持有内存上限。**32MB 是实测的饱和点**（§8.74 的 A/B，见
- * docs/GC与分配优化.md）：
+ * LenoDocsSrc/site/GC与分配优化.html）：
  *   new Pair(2 字段)  4MB=110ns → 16MB=70ns → 32MB=68ns → 64MB=70ns
  *   new Big (6 字段)  4MB=170ns → 16MB=96ns → 32MB=89ns → 64MB=90ns
  * 注意上限只是**天花板**：池按需增长，小程序的常驻内存不受影响；

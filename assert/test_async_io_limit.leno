@@ -1,6 +1,6 @@
 // test_async_io_limit.leno —— TH14：async 并发上限不再是 64（回归）
 //
-// 背景（见 docs/线程并发能力修复追踪.md 的 TH14）：
+// 背景（见 LenoDocsSrc/site/线程并发能力修复追踪.html 的 TH14）：
 //   `sockets.c` 的异步 I/O 表原本是**固定 64 项**的静态数组，第 65 个并发挂起的
 //   `arecv`/`aaccept` 会直接报「注册异步 I/O 失败（可能已达上限）」—— 64 个连接就到顶。
 //   现在按需翻倍扩容。
