@@ -1,0 +1,135 @@
+// test_scroll_touch.leno —— 触摸拖动滚动 + 惯性（Android 上唯一的滚动手势）回归
+//
+// 背景（2026-11-21）：手机上既没有滚轮，也抓不住 12px 宽的滚动条 ⇒ 原来列表/表格
+//   **完全滚不动**（不是"难用"，是"没有任何一个手势能滚"）。补的是：
+//   手指按住内容往上拖 ⇒ 内容跟手；抬起后按最后一拍速度继续滑（惯性衰减）。
+//   只对手指生效（`Event.isTouchLike()`）—— 桌面鼠标左键拖动有别的语义（拖选文字/拖选行），
+//   被这条功能抢走就等于把桌面弄坏了，所以这一条必须**反证**：鼠标拖动滚动值必须纹丝不动 ✓
+//
+// 断言：
+//   ① 手指拖动 ⇒ scrollY 跟着变（位移与手指等量）
+//   ② 抬手后惯性继续滑（松手那一帧之后 scrollY 还会涨）
+//   ③ 惯性会停（不会一直滑到边界再空转）—— 等足够多帧后数值稳定
+//   ④ **鼠标**拖动（非触摸）⇒ scrollY 保持 0（桌面行为零变化）
+//   ⑤ 手指轻点（位移小于阈值）⇒ 不滚动（否则子控件永远点不中）
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_scroll_touch.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, ScrollView, Label)
+
+int gFail = 0
+int gFrame = 0
+float gY0 = 0.0
+float gY1 = 0.0
+float gYStop1 = 0.0
+ScrollView? gSV = null
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+func sv_y(): float {
+    if gSV == null { return -1.0 }
+    return gSV.get_scroll_y()
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "scroll touch test", w: 400, h: 300})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    // 视口 400x300，内容 400x1200 ⇒ 可滚 900
+    var sv = SDL3.createScrollView({x: 0, y: 0, w: 400, h: 300, content_w: 400, content_h: 1200})
+    var content = SDL3.createVBox({x: 0, y: 0, w: 400, h: 1200, spacing: 4})
+    for 20 to i {
+        Label lb = SDL3.createLabel({text: "行 " + _str(i)})
+        content.add(lb, {grow: 0, shrink: 0, align: 0, basis: 40})
+    }
+    sv.set_content(content)
+    gSV = sv
+    win.setRootAt(sv, 0, 0)
+
+    win.setOverlay(func(Renderer r) {
+        gFrame = gFrame + 1
+        // ---- 手指按下（视口内 200,200）----
+        if gFrame == 2 {
+            SDL3.testTouchDown(win.getID(), 200.0, 200.0)
+        }
+        // ---- 一帧一个 move，每帧上移 30（共 6 拍 ⇒ 180）----
+        if gFrame >= 3 and gFrame <= 8 {
+            float k = _float(gFrame - 2)
+            SDL3.testTouchMove(win.getID(), 200.0, 200.0 - k * 30.0)
+        }
+        // ---- 拖动结束：先记下位置 ----
+        if gFrame == 9 {
+            gY0 = sv_y()
+            check(gY0 > 170.0 and gY0 < 190.0, "手指拖动 ⇒ scrollY 跟手（约 180，实际 " + _str(gY0) + "）")
+        }
+        // ---- 抬手 ----
+        if gFrame == 10 {
+            SDL3.testTouchUp(win.getID(), 200.0, 20.0)
+        }
+        // ---- 惯性若干帧后应继续前进 ----
+        if gFrame == 14 {
+            gY1 = sv_y()
+            check(gY1 > gY0 + 5.0, "抬手后惯性继续滑（" + _str(gY0) + " → " + _str(gY1) + "）")
+        }
+        // ---- 等惯性自然停下：连续两帧位置相同才算停（原来是拿变量跟自己比 = 白过 ✗）----
+        if gFrame == 44 {
+            gYStop1 = sv_y()
+        }
+        if gFrame == 48 {
+            float a = sv_y()
+            check(maths.abs(a - gYStop1) < 0.01, "惯性最终停下（44→48 帧位置一致：" + _str(gYStop1) + " / " + _str(a) + "）")
+            check(a > gY1, "惯性是**往前**滑的，不是回弹（" + _str(gY1) + " → " + _str(a) + "）")
+        }
+        // ---- ④ 鼠标拖动（非触摸）⇒ 不许滚 ----
+        if gFrame == 49 {
+            sv.set_scroll(0.0, 0.0)
+            SDL3.markFrameRedraw()
+        }
+        if gFrame == 50 {
+            SDL3.testMouseAt(win.getID(), 200.0, 200.0, true)
+        }
+        if gFrame >= 51 and gFrame <= 54 {
+            float k2 = _float(gFrame - 50)
+            SDL3.testMoveAt(win.getID(), 200.0, 200.0 - k2 * 30.0)
+        }
+        if gFrame == 55 {
+            SDL3.testMouseAt(win.getID(), 200.0, 20.0, false)
+        }
+        if gFrame == 58 {
+            check(maths.abs(sv_y()) < 0.01, "鼠标拖动**不**滚动（桌面左键语义零变化，实际 " + _str(sv_y()) + "）")
+        }
+        // ---- ⑤ 手指轻点（位移 < 阈值 6px）⇒ 不滚 ----
+        if gFrame == 59 {
+            SDL3.testTouchDown(win.getID(), 200.0, 200.0)
+        }
+        if gFrame == 60 {
+            SDL3.testTouchMove(win.getID(), 200.0, 197.0)
+        }
+        if gFrame == 61 {
+            SDL3.testTouchUp(win.getID(), 200.0, 197.0)
+        }
+        if gFrame == 64 {
+            check(maths.abs(sv_y()) < 0.01, "手指轻点（位移<阈值）不滚动（子控件仍可点）")
+            print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+            SDL3.requestExit()
+        }
+        if gFrame < 64 { SDL3.markFrameRedraw() }
+    })
+
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}

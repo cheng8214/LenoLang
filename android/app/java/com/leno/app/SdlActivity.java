@@ -47,6 +47,43 @@ public class SdlActivity extends org.libsdl.app.SDLActivity {
     /** 把可写目录交给 VM（否则 Android 上 _tmpdir() 会退到不存在的 /tmp）。 */
     static native void setDataDir(String dir);
 
+    /**
+     * 把真实屏幕密度（densityDpi/160）交给框架。
+     *
+     * <p>为什么非得由 Java 给：SDL 3.4.20 的 Android 后端既没实现
+     * {@code SDL_GetWindowDisplayScale}（恒 1.0），也没给
+     * {@code SDL_DisplayMode.pixel_density} 赋值（恒 1.0）。实测 AVD
+     * （720x1280 / 420dpi）两者都是 1.0，而窗口高度 1217 又确实是物理像素
+     * ⇒ 框架拿 1.0 就等于没做任何适配（13px 字只有 5dp，手指点不中）。
+     * {@code getDisplayMetrics().density} 才是那个 2.625。
+     */
+    static native void setAndroidDensity(float density);
+
+    /**
+     * 往 SDL 事件队列投一条 <b>AC_BACK</b> 键事件（scancode 282）。
+     *
+     * <p>为什么要自己投：{@code SDL_HINT_ANDROID_TRAP_BACK_BUTTON} 只是让
+     * {@code SDLActivity.onBackPressed()} 不调 {@code super}（不 finish Activity），
+     * 它<b>不会</b>产生任何 SDL 事件 —— 只设 hint 的话按返回键毫无反应。
+     * 所以由这里补一条真事件，交给框架做"分层返回"（关弹层 → 关窗口 → 退出）。
+     */
+    static native void injectBackKey();
+
+    /**
+     * 返回键：<b>不</b>退出 Activity，改为交给 VM 处理。
+     *
+     * <p>原来的行为（不重写）：系统直接 {@code finish()} ⇒ "设置弹窗开着按返回，
+     * 整个程序没了、状态全丢"。现在 VM 里 {@code run()} 会分层处理：
+     * 先让下拉框/对话框消费，再关最上层的虚拟弹窗，最后才关窗口。
+     * 用户想真正退出时，VM 会把主窗口关掉 ⇒ {@code SDL_main} 返回 ⇒ Activity 自然结束。
+     */
+    @Override
+    public void onBackPressed() {
+        injectBackKey();
+        // 刻意不调 super.onBackPressed()：那一句就是 finish()。
+        // （trapBack hint 已在 core.init 里设为 1，这里再显式拦一层，双保险 ✓）
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         // 先把 .lenb 落到应用私有目录：assets 里的条目 native 侧没有 fd 可读，
@@ -115,6 +152,8 @@ public class SdlActivity extends org.libsdl.app.SDLActivity {
         // 在 SDLThread 上、nativeRunMain 之前调用：此时 libleno.so 已由
         // loadLibraries() 加载，JNI 符号可解析，且 VM 还没开始跑字节码。
         setDataDir(getFilesDir().getAbsolutePath());
+        // 同一时机把密度推进去 —— 框架的第一个 Window 就要用（再晚就来不及了）
+        setAndroidDensity(getResources().getDisplayMetrics().density);
         super.main();
     }
 

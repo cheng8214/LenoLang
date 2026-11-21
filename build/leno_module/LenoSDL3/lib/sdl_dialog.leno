@@ -14,14 +14,34 @@ import "sdl_titlebar.leno" as tbar; use tbar.(TitleBar, createTitleBar)   // 公
 // 不再使用 setAlwaysOnTop（会导致切到其他应用时对话框仍浮在最上层）；
 // 改用 raise() 在创建时提升到前台，由 OS 自然管理窗口焦点。
 export func createDialogWindow(Dict style): Window {
+    // ★ 2026-11-21：**Android 没有第二个顶层窗口**（一个 Activity 只有一个 Surface）
+    //   ⇒ 自动降级成"虚拟子窗口"：不建 OS 窗口，画进自己的离屏纹理，由父窗口合成。
+    //   桌面分支**一行不动**（真窗口能 Alt-Tab / 独立最小化 / 多显示器 / 系统输入法，
+    //   这些在浮层里全要自己重做 ⇒ 不拿它换 ✓）。
+    if _os() == "android" {
+        var vwin = wnd.createVirtualWindow(style)
+        if not vwin.ok {
+            print("[LenoSDL3] 虚拟对话框创建失败（ok=false）：" + core.getError() + "\n")
+        }
+        return vwin
+    }
     var existingFlags = style.get("flags", 0)
     // 模态对话框默认隐藏任务栏图标（UTILITY 窗口）+ 首帧隐藏消除闪现
     style["flags"] = (existingFlags | WindowFlag.UTILITY | WindowFlag.HIDDEN)
     var win = wnd.createWindow(style)
+    // 恢复原始的 flags，避免污染调用方的 style 字典（失败路径也要还原 ✓）
+    style["flags"] = existingFlags
+    // ★ 2026-11-21：建窗失败必须**大声报**，不能静默继续。
+    //   实测路径：`init` 里 `ok = handle != null`（sdl_window.leno:683），而这里从不判 ok
+    //   ⇒ null 句柄会一路传给 raise / SDL_SyncWindow / getSize / createRenderer，
+    //     布局被压成 0×0、窗口 ID 变 0 ⇒ 调用方看到的就是"点了没反应、窗口静默不出现"。
+    //   Android 上 SDL 只有一个顶层窗口，第二个原生窗口拿不到句柄，正是走这条路。
+    if not win.ok {
+        print("[LenoSDL3] 对话框窗口创建失败（ok=false）：" + core.getError() + "\n")
+        return win
+    }
     win.raise()
     win._dialogHidden = true
-    // 恢复原始的 flags，避免污染调用方的 style 字典
-    style["flags"] = existingFlags
     return win
 }
 
@@ -49,11 +69,24 @@ export func restoreFocus(int parentWid) {
 //   ⚠ 先前这里写"正常窗口标志（出现在任务栏）" ✗ —— 实测：非模态弹窗（含音乐下载器那个
 //     下载窗口 ✓）在任务栏多出一条，看着像另一个程序 ✗ ⇒ 与模态那条统一：带 UTILITY ✓
 export func createModelessDialog(Dict style): Window {
+    // ★ 2026-11-21：同 createDialogWindow —— Android 走虚拟子窗口（见上面那段说明 ✓）
+    if _os() == "android" {
+        var vwin2 = wnd.createVirtualWindow(style)
+        if not vwin2.ok {
+            print("[LenoSDL3] 虚拟非模态对话框创建失败（ok=false）：" + core.getError() + "\n")
+        }
+        return vwin2
+    }
     var existingFlags = style.get("flags", 0)
     style["flags"] = (existingFlags | WindowFlag.UTILITY | WindowFlag.HIDDEN)
     var win = wnd.createWindow(style)
-    win._dialogHidden = true
     style["flags"] = existingFlags
+    // ★ 2026-11-21：同 createDialogWindow —— 建窗失败要出声（见上面那段说明 ✓）
+    if not win.ok {
+        print("[LenoSDL3] 非模态对话框窗口创建失败（ok=false）：" + core.getError() + "\n")
+        return win
+    }
+    win._dialogHidden = true
     return win
 }
 
@@ -265,7 +298,10 @@ export func msgBox(string title, Array[string] lines, string okText, string canc
     runModal(dlg,
         func(Event ev): bool {
             if ev.isQuit() or ev.isWindowClose() { return false }
-            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            // ★ 2026-11-21：Android 返回键在这里等价于 ESC = "取消这个对话框" ✓
+            //   （不声明消费也没关系：返回 false 会走关闭流程；但声明了才能在
+            //     非模态场景下让主循环知道"这一层已经处理过了" ✓）
+            if ev.isDismissKey() { ev.consumeDismiss(); return false }
             return not done
         },
         // 外框底色/描边（公共件 ✓，理由见 dialogFramePaint 的注释：不能用与页面同色的 bg ✗）

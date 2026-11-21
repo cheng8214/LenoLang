@@ -1,0 +1,158 @@
+// test_android_back.leno —— Android 返回键分层返回 + 生命周期回归
+//
+// 背景（2026-11-21，真机实测暴露）：
+//   Android 上按返回键，SDL 默认直接 finish 掉 Activity ⇒ "设置弹窗开着按返回，
+//   整个程序没了、状态全丢" ✗。框架做了两件事：
+//     ① core.init 里设 `SDL_ANDROID_TRAP_BACK_BUTTON=1`（拦住 SDL 的默认退出）
+//     ② run() 里做**分层返回**：先让弹层/对话框消费（`ev.consumeDismiss()`），
+//        没人消费才关最上层虚拟子窗口，再没人消费才关窗口
+//
+// 本测试用**桌面可注入**的方式验证这套路由（AC_BACK 在桌面不会自然出现，
+//   但事件内容和 Android 完全一样 ⇒ 同一段代码、同一条路径 ✓）：
+//   ① 弹层自己处理返回键 ⇒ 弹窗关闭，主窗口**不许**跟着关
+//   ② 弹层声明"我消费了"但**不关自己** ⇒ 主循环必须停手（不许替它关窗口）★这条区分两条路径
+//   ③ 后台期间**真的不出帧**（切后台后白烧电是真机实测到的浪费），回前台自动恢复
+//   ④ RENDER_DEVICE_RESET ⇒ 不崩，之后还能正常出帧
+//   ⑤ 没有弹层 ⇒ AC_BACK 关主窗口（run() 返回）
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_android_back.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Button)
+
+int gFail = 0
+int gFrame = 0
+int gDlgId = 0
+Window? gDlg = null
+int gFrameAtBg = -1
+bool gConsumeOnly = false     // 弹窗只声明消费、不关自己（第②阶段用）
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+// 弹窗的事件处理：与 `sdl_dialog.leno` 里 runModal 的内联处理器**逐行同义** ——
+//   关窗返回 false；ESC/返回键先声明"这层我处理了"再返回 false（关闭自己）
+//   `gConsumeOnly` 时只声明消费、保持开着（模拟"下拉框收起了自己"这类不是窗口的层 ✓）
+func dlgEvent(Event ev): bool {
+    if ev.isWindowClose() { return false }
+    if ev.isDismissKey() {
+        ev.consumeDismiss()
+        if gConsumeOnly { return true }
+        return false
+    }
+    return true
+}
+
+func buildDialog() {
+    var dlg = SDL3.createVirtualWindow({title: "弹窗", w: 420, h: 300})
+    var root = SDL3.createVBox({x: 0, y: 0, w: 420, h: 300, pad_x: 16, pad_y: 16, spacing: 8})
+    Button b = SDL3.createButton({w: 160, h: 40, text: "弹窗按钮"})
+    root.add(b, {grow: 0, shrink: 0, align: 0})
+    dlg.setRootAt(root, 0, 0)
+    gDlgId = dlg.getID()
+    gDlg = dlg
+    SDL3.runModal(dlg, dlgEvent, func(Renderer r) {})   // 主循环已在跑 ⇒ 立即返回（只登记）✓
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "android-back test", w: 800, h: 520})
+    if not win.ok {
+        print("[FAIL] 建主窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var root = SDL3.createVBox({x: 0, y: 0, w: 800, h: 520, pad_x: 20, pad_y: 20, spacing: 10})
+    Button mb = SDL3.createButton({w: 200, h: 40, text: "主按钮"})
+    root.add(mb, {grow: 0, shrink: 0, align: 0})
+    win.setRoot(root)
+
+    win.setOverlay(func(Renderer r) {
+        gFrame = gFrame + 1
+
+        // ---- ① 模态弹窗 + AC_BACK ⇒ 只关弹窗 ----
+        if gFrame == 2 {
+            buildDialog()
+            check(SDL3.isVirtual(gDlgId), "前置：虚拟弹窗已登记")
+        }
+        if gFrame == 4 {
+            SDL3.testKeyDown(win.getID(), 282)        // 282 = SDL_SCANCODE_AC_BACK
+        }
+        if gFrame == 7 {
+            check(not SDL3.isVirtual(gDlgId), "AC_BACK 关掉了模态弹窗（主窗口没跟着关 ✓）")
+        }
+
+        // ---- ③ 后台停绘 + 回前台恢复 ----
+        //   注入 BACKGROUND 后**不应该再出帧**；用定时器（在事件循环里跑，不依赖出帧 ✓）
+        //   在 400ms 后注入 FOREGROUND，靠"帧号只 +1"证明后台期间一帧都没画 ✓
+        if gFrame == 8 {
+            check(not SDL3.isBackgrounded(), "前置：初始不在后台")
+            gFrameAtBg = gFrame
+            SDL3.testGlobalEvent(0x104)               // DID_ENTER_BACKGROUND（0x104）
+            win.addTimerOnce(400, func() {
+                SDL3.testGlobalEvent(0x106)           // DID_ENTER_FOREGROUND（0x106）
+            })
+        }
+        if gFrameAtBg >= 0 and gFrame > gFrameAtBg and gFrameAtBg != -2 {
+            check(not SDL3.isBackgrounded(), "回前台后 isBackgrounded() 为假")
+            check(gFrame == gFrameAtBg + 1,
+                "后台期间**一帧没画**（帧号 " + _str(gFrameAtBg) + " ⇒ " + _str(gFrame) + "，只 +1 ✓）")
+            gFrameAtBg = -2                            // 只断言一次
+        }
+
+        // ---- ④ 渲染设备重置：不许崩，且之后还能继续画 ----
+        if gFrame == 12 {
+            SDL3.testGlobalEvent(0x2001)              // RENDER_DEVICE_RESET
+        }
+        if gFrame == 14 {
+            check(true, "RENDER_DEVICE_RESET 之后仍在出帧（没崩）")
+        }
+
+        // ---- ② 弹层"我只消费、不关自己" ⇒ 主循环必须停手（不许替它关窗口）----
+        if gFrame == 16 {
+            gConsumeOnly = true
+            buildDialog()
+            SDL3.markFrameRedraw()
+        }
+        if gFrame == 18 {
+            SDL3.testKeyDown(win.getID(), 282)
+        }
+        if gFrame == 21 {
+            check(SDL3.isVirtual(gDlgId),
+                "弹层声明消费后，主循环**没有**替它关任何窗口（consumeDismiss 生效 ✓）")
+            // 收掉它，好让最后一步走"没有弹层"的分支
+            var d = gDlg
+            if d != null { d.requestClose() }
+        }
+
+        // ---- ⑤ 无弹层时 AC_BACK ⇒ 关主窗口（run() 返回）----
+        if gFrame == 24 {
+            SDL3.testKeyDown(win.getID(), 282)
+        }
+
+        if gFrame < 46 { SDL3.markFrameRedraw() }
+
+        // 兜底：AC_BACK 万一没生效（回归），别让测试挂死 —— 到点自己收尾并判失败 ✓
+        if gFrame == 45 {
+            print("[FAIL] 超时：无弹层时 AC_BACK 没有关掉窗口\n")
+            gFail = gFail + 1
+            SDL3.requestExit()
+        }
+    })
+
+    bool finished = win.run(
+        func(Event ev): bool { return true },
+        func(Renderer r) {})
+
+    print("[INFO] run() 返回 " + _str(finished) + "（最后帧 " + _str(gFrame) + "）\n")
+    check(finished, "无弹层时 AC_BACK ⇒ 主窗口关闭、run() 正常返回")
+    print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+}

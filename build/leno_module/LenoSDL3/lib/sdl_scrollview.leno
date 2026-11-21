@@ -64,6 +64,16 @@ export struct ScrollView impl Widget, Themeable {
     pri float vThumbY = 0.0, vThumbH = 0.0      // 竖直滚动条拇指几何（每帧计算）
     pri float hThumbX = 0.0, hThumbW = 0.0      // 水平滚动条拇指几何
 
+    // ★ 2026-11-21：**触摸拖动滚动 + 惯性**（Android 上唯一的滚动手势）
+    //   为什么必须加：手机上既没有滚轮，也抓不住 12px 宽的滚动条 ⇒ 原来列表/表格**完全滚不动**。
+    //   只对"手指"生效（`ev.isTouchLike()`）：桌面鼠标左键拖动有别的语义，不能抢 ✓
+    //   panSt：0 空闲 / 1 按下了但还没超过阈值（保持子控件的点击不受影响）/ 2 拖动中
+    pri int panSt = 0
+    pri float panX0 = 0.0, panY0 = 0.0          // 按下点（判阈值用）
+    pri float panLastX = 0.0, panLastY = 0.0    // 上一拍位置（算增量）
+    pri float panV = 0.0, panH = 0.0            // 抬起瞬间速度（px/帧，带符号）
+    pri float panThr = 6.0                      // 起拖阈值：小于它算点击（否则子按钮点不动 ✗）
+
     pri bool autoW = false, autoH = false      // 自动内容尺寸标志（content_w/h < 0 时启用）
     // ── 内容尺寸「跟随视图」（自适应布局用 ✓）──
     //   `fit_w`：内容宽 = 视图宽 − 滚动条宽（= 旧写法 `content_w: w - 12` ✓，但会**跟着窗口变**）
@@ -211,6 +221,9 @@ export struct ScrollView impl Widget, Themeable {
     // 程序化滚动：立即到位（并取消进行中的平滑动画，否则会被旧目标拽回去 ✗ = "来回跳"）
     func set_scroll(float sx, float sy) {
         smoothAnim = false
+        // ★ 2026-11-21：程序化定位同时**掐掉触摸惯性** —— 否则"设到 0"之后残余速度
+        //   还会把内容又推走 8px（实测：测试里 set_scroll(0,0) 后一帧变成 8.7 ✗）
+        panV = 0.0; panH = 0.0; panSt = 0
         scrollX = sx; scrollY = sy
         targetX = sx; targetY = sy
         clampScroll()
@@ -302,6 +315,31 @@ export struct ScrollView impl Widget, Themeable {
         //   看起来就是"还原后布局没变、要动一下鼠标才恢复" ✗ —— 用户实测抓到 ✓）
         if not firstThisFrame and scrollX == syncedX and scrollY == syncedY and w == syncedW and h == syncedH { return }
         frameSynced = cur
+        // ★ 2026-11-21：触摸惯性 —— 手指抬起后按最后一拍的速度继续滑，每帧衰减 10%
+        //   只在 panSt==0（已松手）时推进；速度低于阈值即停（否则永远差零点几像素 ⇒ 一直重绘空转 ✗）
+        if firstThisFrame and panSt == 0 and (maths.abs(panV) > 0.4 or maths.abs(panH) > 0.4) {
+            float iy = panV
+            float ix = panH
+            if not showV() { panV = 0.0; iy = 0.0 }
+            if not showH() { panH = 0.0; ix = 0.0 }
+            float y0 = scrollY
+            float x0 = scrollX
+            scrollY = scrollY + iy
+            scrollX = scrollX + ix
+            clampScroll()
+            // 撞到边界：夹取后没走到预期位置 ⇒ 立刻归零（否则会"顶着"边界无限请求重绘 ✗）
+            if maths.abs(scrollY - (y0 + iy)) > 0.5 { panV = 0.0 }
+            if maths.abs(scrollX - (x0 + ix)) > 0.5 { panH = 0.0 }
+            // 衰减 0.86/帧 ⇒ 一甩大约再滑"初始速度 × 7"的距离、约 0.4s 停住
+            //   （0.90 衰减在 60fps 下要 40 帧才停，手感"滑不完"，实测偏拖沓 ✗）
+            panV = panV * 0.86
+            panH = panH * 0.86
+            if maths.abs(panV) < 0.4 { panV = 0.0 }
+            if maths.abs(panH) < 0.4 { panH = 0.0 }
+            smoothAnim = false
+            targetX = scrollX; targetY = scrollY
+            core.requestRedraw()
+        }
         syncedX = scrollX; syncedY = scrollY
         syncedW = w; syncedH = h
         if fitW { _contentW = w - barW }
@@ -476,7 +514,8 @@ export struct ScrollView impl Widget, Themeable {
         if not _loaded or not enabled or not visible { return }
         // 失焦兜底：拖拽中途 Alt+Tab / 切走窗口会**丢掉 up 事件** ⇒ 捕获状态必须归零，
         //   否则 `innerDown` 永远为真、闸门永久敞开（= 这篇修复白做 ✗）
-        if ev.isWindowFocusLost() { innerDown = false; mouseIn = false; barHover = false }
+        if ev.isWindowFocusLost() { innerDown = false; mouseIn = false; barHover = false
+            panSt = 0; panV = 0.0; panH = 0.0 }   // ★ 丢 up 事件 ⇒ 拖动状态也要归零（否则"粘手" ✗）
         sync()
         // 滚动条交互优先于内容
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
@@ -500,6 +539,54 @@ export struct ScrollView impl Widget, Themeable {
         }
         if ev.isMouseMotion() and (dragV != 0 or dragH != 0) {
             var[float, float](_dx2, _dy2) = ev.mousePos(); scrollbarDrag(_dx2, _dy2); core.markFrameRedraw(); return
+        }
+        // ★ 2026-11-21：**手指按住内容拖动 = 滚动**（手机上唯一的滚动手势）
+        //   拖动阈值 panThr：手指轻微抖动不算拖（否则列表行/按钮就"点不中"了 ✗）
+        if ev.isTouchLike() {
+            if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+                var[float, float](px0, py0) = ev.mousePos()
+                if px0 >= x and px0 <= x + w and py0 >= y and py0 <= y + h {
+                    panSt = 1; panX0 = px0; panY0 = py0
+                    panLastX = px0; panLastY = py0
+                    panV = 0.0; panH = 0.0
+                    smoothAnim = false       // 手指 1:1 跟手，不能有平滑插值抢方向盘 ✓
+                    return
+                }
+            } else if ev.isMouseMotion() and panSt != 0 {
+                var[float, float](pmx, pmy) = ev.mousePos()
+                if panSt == 1 {
+                    float jx = maths.abs(pmx - panX0)
+                    float jy = maths.abs(pmy - panY0)
+                    if jx > panThr or jy > panThr { panSt = 2 }
+                }
+                if panSt == 2 {
+                    float ddx = pmx - panLastX
+                    float ddy = pmy - panLastY
+                    panLastX = pmx; panLastY = pmy
+                    // 手指上移（ddy<0）⇒ 内容跟着上移 ⇒ 偏移增大 ✓（与滚轮同号约定）
+                    if showV() { scrollY = scrollY - ddy }
+                    if showH() { scrollX = scrollX - ddx }
+                    clampScroll()
+                    panV = -ddy; panH = -ddx        // 这一拍的位移即"抬起时的速度"
+                    // 夹一下：极快的一甩（或掉帧后的大位移）不该变成"飞出去"✗
+                    if panV > 60.0 { panV = 60.0 }
+                    if panV < -60.0 { panV = -60.0 }
+                    if panH > 60.0 { panH = 60.0 }
+                    if panH < -60.0 { panH = -60.0 }
+                    smoothAnim = false
+                    targetX = scrollX; targetY = scrollY
+                    core.markFrameRedraw()
+                    return
+                }
+            } else if ev.isMouseButtonUp() and panSt != 0 {
+                bool wasPan = (panSt == 2)
+                panSt = 0
+                if wasPan {
+                    // 惯性交给 `sync()` 逐帧推进（这里只负责"松手"）
+                    core.markFrameRedraw()
+                    return
+                }
+            }
         }
         // 滚轮：悬停视口内才滚动
         if ev.isMouseWheel() {

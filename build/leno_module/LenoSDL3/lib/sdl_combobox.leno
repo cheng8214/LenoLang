@@ -400,7 +400,9 @@ export struct ComboBox impl Widget, Themeable {
         //     两边都处理会互相抵消：实测 Enter 被处理两次 ⇒ 下拉"开了又关"、`isOpen()` 仍是 false ✗
         if focused and ev.isKeyDown() {
             int _sc = ev.scancode()
-            if _sc == core.Scancode.ESCAPE { if open { close(); core.markFrameRedraw() } }
+            if ev.isDismissKey() {
+                if open { close(); core.markFrameRedraw(); ev.consumeDismiss() }
+            }
             eif _sc == core.Scancode.DOWN or _sc == core.Scancode.UP or _sc == core.Scancode.HOME or _sc == core.Scancode.END { nudge_sel(_sc) }
         }
 

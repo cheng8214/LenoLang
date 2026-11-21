@@ -16,6 +16,15 @@
 //   ⇒ 所有偏移、CRC、压缩数据、数据描述符全部不动，只替换名字里那些字节。
 //   这比"解包重打包"安全得多（重打包会破坏 aapt2 的压缩结果与对齐）。
 //
+// ★ 2026-11-21 修复（真机前踩到，卡了一轮构建）：
+//   原实现是 `f.read()` 把**整个 APK 读成一个 string**，改完再整份写回。
+//   APK 里全是压缩二进制，String 遇到非法 UTF-8 / NUL 会替换或丢弃字节
+//   ⇒ 写回的文件比原来短（实测 `musicdl_gui.lenb` 少 1~14 字节，且差值不稳定），
+//   签名阶段报 `Unexpected size of uncompressed data`（apksigner 直接失败）。
+//   现在改成 **seek + read(n) 分段读、就地 write 等长名字**：
+//   · 只解析 EOCD / 中央目录头 / 名字（都是数字和 ASCII 路径 ⇒ 不会踩非法序列）
+//   · 写回只用 seek 定位 + 等长覆盖，**整份文件永不被重组** ✓
+//
 // 边界:
 //   · 只认 EOCD + 中央目录（不支持 zip64）——APK 打包链路不会碰到
 //   · 本地头按中央目录里的 loff 定位，逐个改；不依赖条目物理顺序
@@ -37,29 +46,6 @@ func _die(string msg) {
     _exit(1)
 }
 
-func _readBin(string path): string {
-    var f = files.open(path, "rb")
-    var s = f.read()
-    f.close()
-    return s
-}
-
-func _findEocd(string s): int {
-    int n = strings.byte_len(s)
-    if n < 22 { return -1 }
-    int lo = n - 22 - 65535
-    if lo < 0 { lo = 0 }
-    var i = n - 22
-    while i >= lo {
-        if strings.byte(s, i) == 0x50 and strings.byte(s, i + 1) == 0x4B
-            and strings.byte(s, i + 2) == 0x05 and strings.byte(s, i + 3) == 0x06 {
-            return i
-        }
-        i = i - 1
-    }
-    return -1
-}
-
 // 名字里若含反斜杠，返回"换成斜杠后"的等长串；否则返回 null
 func _fixedName(string raw): string? {
     int n = strings.byte_len(raw)
@@ -74,6 +60,14 @@ func _fixedName(string raw): string? {
     return strings.from_bytes(b)
 }
 
+// 从 fp 的 off 处读 n 字节（**分段读，绝不整文件入内存** ✓）
+func _at(File fp, int off, int n): string {
+    fp.seek(off)
+    var s = fp.read(n)
+    if strings.byte_len(s) < n { _die("读取越界：偏移 " + _str(off) + " 长度 " + _str(n)) }
+    return s
+}
+
 main() {
     Array[string] a = []
     for _args() to x { a.add(_str(x)) }
@@ -84,79 +78,70 @@ main() {
     string apk = a[0]
     if not files.exists(apk) { _die("APK 不存在：" + apk) }
 
-    var raw = _readBin(apk)
-    int n = strings.byte_len(raw)
-    int eocd = _findEocd(raw)
-    if eocd < 0 { _die("不是 zip：找不到 EOCD：" + apk) }
+    var fp = files.open(apk, "r+b")
+    fp.seek(0, "end")
+    int n = fp.tell()
+    if n < 22 { _die("文件太小，不是 zip：" + apk) }
 
-    int count = _u16(raw, eocd + 10)
-    int cdOff = _u32(raw, eocd + 16)
+    // ---- 找 EOCD：只在尾部最多 64KB+22 里找（EOCD 注释最长 64KB）----
+    int tailLen = n
+    if tailLen > 66000 { tailLen = 66000 }
+    int tailOff = n - tailLen
+    var tail = _at(fp, tailOff, tailLen)
+    int eocdRel = -1
+    var i = tailLen - 22
+    while i >= 0 {
+        if strings.byte(tail, i) == 0x50 and strings.byte(tail, i + 1) == 0x4B
+            and strings.byte(tail, i + 2) == 0x05 and strings.byte(tail, i + 3) == 0x06 {
+            eocdRel = i
+            i = -1                       // 找到就停
+        } else {
+            i = i - 1
+        }
+    }
+    if eocdRel < 0 { _die("不是 zip：找不到 EOCD：" + apk) }
+    int eocd = tailOff + eocdRel
+
+    var eh = _at(fp, eocd, 22)
+    int count = _u16(eh, 10)
+    int cdOff = _u32(eh, 16)
     if count == 0xFFFF or cdOff == 0xFFFFFFFF { _die("不支持 zip64") }
 
-    // 要改的字节位置（每条名字的起始偏移 + 新名字）
-    Array[int] at = []
-    Array[string] with_ = []
     var pos = cdOff
     var hits = 0
 
     for 0:count-1 to idx {
-        if _u32(raw, pos) != 0x02014b50 { _die("第 " + _str(idx + 1) + " 个中央目录项签名不对") }
-        int nlen = _u16(raw, pos + 28)
-        int elen = _u16(raw, pos + 30)
-        int clen = _u16(raw, pos + 32)
-        int loff = _u32(raw, pos + 42)
-        string name = strings.byte_slice(raw, pos + 46, pos + 46 + nlen - 1)
+        var ch = _at(fp, pos, 46)
+        if _u32(ch, 0) != 0x02014b50 { _die("第 " + _str(idx + 1) + " 个中央目录项签名不对") }
+        int nlen = _u16(ch, 28)
+        int elen = _u16(ch, 30)
+        int clen = _u16(ch, 32)
+        int loff = _u32(ch, 42)
+        var name = _at(fp, pos + 46, nlen)
 
         var fixed = _fixedName(name)
         if fixed != null {
             hits = hits + 1
-            // 中央目录里的名字
-            at.add(pos + 46)
-            with_.add(fixed)
+            // 中央目录里的名字（等长覆盖 ✓）
+            fp.seek(pos + 46)
+            fp.write(fixed)
             // 本地头里的名字（长度以本地头自己为准，可能与 CD 不同）
-            int lnlen = _u16(raw, loff + 26)
-            string lname = strings.byte_slice(raw, loff + 30, loff + 30 + lnlen - 1)
+            var lh = _at(fp, loff, 30)
+            int lnlen = _u16(lh, 26)
+            var lname = _at(fp, loff + 30, lnlen)
             var lfixed = _fixedName(lname)
             if lfixed != null {
-                at.add(loff + 30)
-                with_.add(lfixed)
+                fp.seek(loff + 30)
+                fp.write(lfixed)
             }
         }
         pos = pos + 46 + nlen + elen + clen
     }
 
+    fp.close()
     if hits == 0 {
         print("  = 条目名无需修正（没有反斜杠）\n")
-        return
+    } else {
+        print("  ~ 条目名反斜杠 → 斜杠：" + _str(hits) + " 条（就地改，文件长度不变）\n")
     }
-
-    // 按偏移升序拼回整份文件（一个条目两处，位置天然单调，但 loff 不保证升序 ⇒ 排序）
-    int total = at.len()
-    for 0:total-1 to i {
-        for i+1:total-1 to j {
-            if at[j] < at[i] {
-                int t = at[i]
-                at[i] = at[j]
-                at[j] = t
-                string ts = with_[i]
-                with_[i] = with_[j]
-                with_[j] = ts
-            }
-        }
-    }
-
-    Array[string] parts = []
-    var cur = 0
-    for 0:total-1 to i {
-        int o = at[i]
-        string nw = with_[i]
-        if o < cur { _die("补丁区间重叠（偏移 " + _str(o) + "）—— 文件结构异常") }
-        parts.add(strings.byte_slice(raw, cur, o - 1))
-        parts.add(nw)
-        cur = o + strings.byte_len(nw)
-    }
-    parts.add(strings.byte_slice(raw, cur, n - 1))
-
-    files.write(apk, strings.join(parts, ""))
-    print("  ~ 条目名反斜杠 → 斜杠：" + _str(hits) + " 条\n")
 }

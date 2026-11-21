@@ -2012,3 +2012,172 @@ tb.set_rows(rows)
 - 表头仍是给人看的中文：**字段名与列名不强行统一**，映射只写一次，就在表头旁边
 - 底层是 _field(obj, name)（按名字取 struct 字段，缺失给 null）；语言禁止在 ny 上索引，
   所以这个口子是显式开的，不要用它绕类型检查做别的事
+
+## 附录 F：虚拟子窗口 —— Android 上的"弹窗"（2026-11-21 ✓）
+
+**问题**：Android 一个 Activity 只有一个顶层窗口（SurfaceView）。`SDL_CreateWindow` 拿不到
+第二个**可显示**的窗口 ⇒ 原来的 `createDialogWindow` 建出来的对话框在 Android 上
+`handle == null`，而工厂又从不判 `ok` ⇒ 后面 `raise / SDL_SyncWindow / getSize / createRenderer`
+全在 null 上跑，布局被压成 0×0 ⇒ 表现是"点了没反应、窗口静默不出现"，且**零日志**。
+
+**结论**：`createDialogWindow` / `createModelessDialog` 在 `_os() == "android"` 时
+自动返回**虚拟子窗口**（不建 OS 窗口，画进离屏纹理，由父窗口合成）。桌面分支一行不动 ——
+真窗口能 Alt-Tab / 独立最小化 / 多显示器 / 系统输入法，这些在浮层里全要重做，不值得换。
+
+``leno
+// 应用侧：什么都不用改，还是这两句
+var dlg = SDL3.createDialogWindow({title: "设置", w: 560, h: 330})
+dlg.setRootAt(root, 0, 0)
+dlg.run(onEvent, onRender)
+``
+
+想显式用（桌面也能用来做内嵌弹层）：
+
+``leno
+var dlg = SDL3.createVirtualWindow({title: "设置", w: 560, h: 330})   // 主窗口必须已 registerOnly/run
+``
+
+口径（都是实测过的）：
+
+- **坐标与尺寸都是它自己的**：`getSize()` 返回 `{w,h}` 声明值，不是主窗口的；
+  控件树仍在 `0,0` 起算 ⇒ 桌面布局原样可用，不需要重排
+- **合成**：等比缩到父窗口客户区（留 16px 边，只缩不放、最小 0.25）+ 投影 + 1px 描边；
+  模态时先铺 `黑色 60%` 遮罩。顺序是"控件 → 弹层 → toast/tip → **弹窗** → overlay → present"
+- **事件**：SDL 事件带的是父窗口 ID ⇒ 框架把 `wid` 换成子窗口的合成 ID（`0x40000000` 起，
+  与 SDL 的 windowID 不重叠），并给 `Event` 设几何偏移（减左上角、除缩放）⇒ 控件命中判断零改动
+- **模态**：走原来的 `pushModal`/`_modalTop`；模态时所有事件都投给弹窗，点弹窗外=没命中任何控件
+  ⇒ 下层主窗口收不到（与非虚拟模态窗一致）
+- **非模态**：只有落在它矩形内的指针事件才归它，主窗口其余部分照常可点
+- **销毁**：虚拟窗口的 `handle`/`Renderer` 都是**父窗口的** ⇒ 4 条收尾路径统一走
+  `_destroyEntry(i)`，只销毁自己的纹理，绝不 `SDL_DestroyWindow`
+
+已知边界（先如实写着，别当没看见）：
+
+- ~~缩放是整块贴图 ⇒ 文字会略软~~ **已修（2026-11-21 真机实测后）**：离屏纹理现在按
+  **物理像素**分配（`逻辑尺寸 × 父窗口密度`，见 `_virtEnsureTex`），渲染时用同一个倍数缩放，
+  合成时再等比缩到屏幕 ⇒ 文字按屏幕原生分辨率栅格化，不再发软 ✓
+- 弹窗里的 `set_widget_opacity` 暂不生效（`_drawTree` 的 opac 数组对虚拟窗口传空 ⇒ 一律 1.0）
+- `overlay`（`setOverlay`）**在弹窗之上**：截图钩子因此能拍到弹窗（Android 只能靠截图取证 ✓），
+  代价是 HUD 会压在弹窗上 —— 需要反过来就在 overlay 回调里判断 `SDL3.isVirtual(wid)` 后跳过
+- 弹窗里的 `Edit` 要打字：Android 上仍由应用自己调 `SDL3.startTextInput(dlg.getHandle())`
+  （框架在 `registerOnly` 里已对 Android 跳过无条件开输入法 ✓）
+- `dlg.hide()/show()/minimize()` 等对虚拟窗口是**空操作**（否则会把主窗口藏掉 ✗）
+
+回归：`test/test_virtual_window.leno`（6 条行为断言 + 两张 PNG：普通态与模态态）
+``
+leno build\leno_module\LenoSDL3\test\test_virtual_window.leno
+``
+
+## 附录 G：Android 真机实测 —— 密度、弹窗、触摸滚动（2026-11-21 ✓）
+
+环境：AVD `leno`，720×1280 / 420dpi（密度 **2.625**），Android 11 (API 30)，x86_64，
+SDL3 3.4.20。以下每条都是**跑出来的**，不是推断。
+
+### G1 屏幕密度：两个"看起来对"的 API 都是假的
+
+| API | 桌面 | Android（实测） |
+|---|---|---|
+| `SDL_GetWindowDisplayScale(win)` | 真值（1.0 / 1.5） | **恒 1.0**（后端未实现）✗ |
+| `SDL_DisplayMode.pixel_density` | 真值 | **恒 1.0**（Android 不赋值）✗ |
+| Java `getDisplayMetrics().density` | — | **2.625** ✓ |
+
+而同一时刻 `SDL_GetWindowSize` 报的是 **720×1217**（物理像素，已扣 24dp 状态栏）——
+所以"尺寸是物理的、密度却报 1.0"，只按 SDL 算就等于什么都没适配：
+13px 字只有 4.95dp、40px 按钮只有 15.2dp（Material 要求最小 48dp）。
+
+**现在的做法**：Java 宿主在 `main()` 里把密度推进来，走 SDL hint：
+
+```
+SdlActivity.java:  setAndroidDensity(getResources().getDisplayMetrics().density)
+leno_jni.c:        dlopen("libSDL3.so") → SDL_SetHint("LENO_ANDROID_DENSITY", "2.6250")
+sdl_core.leno:     getPlatformDensity() 先读 hint，再退 pixel_density，最后 1.0
+```
+
+为什么用 hint 而不是新 builtin：它只是字符串键值对，两边各一行就通，
+不必为一个 float 去改 VM 的 builtin 表或加一套函数指针缓存。
+
+**桌面一律不换算**（`_resolveDensity` 里 `_os() != "android" ⇒ 1.0`）：
+Windows/macOS 的 `getSize` 已经是逻辑点，再除 1.5 会缩成 2/3 ✗。
+
+### G2 密度层落地后的坐标语义（真机读数）
+
+```
+getSize()          = 274 × 464      ← 逻辑（应用只该看这个）
+getSizeInPixels()  = 720 × 1217     ← 物理
+比值 2.6277 ≈ 密度 2.625（差 0.003 是取整：720/274）
+```
+
+三个触点缺一不可：
+1. `Window.getSize()` 除密度、`setSize()` 乘密度（否则布局按物理像素算，全错）
+2. `Renderer.setDensity(d)` ⇒ `beginFrame()` 把 `setScale` 设成 `dens`（或 `ssaaScale*dens`）
+   ⇒ 所有绘制调用继续用**逻辑坐标**，落到物理像素上自动放大
+3. 事件坐标除密度（`event.setGeometryOffset(0,0,dens)`）⇒ 控件命中判断零改动
+
+### G3 ★ `SDL_SetRenderTarget` 会把渲染缩放重置为 1.0
+
+**这是本轮最难抓的一个**。症状：Android 上虚拟弹窗的内容只画进离屏纹理**左上角 1/dens
+的一块**，其余全黑；桌面（dens=1.0）永远正常。
+
+根因不在虚拟窗口，在渲染器的 `setScale` 短路：
+
+```
+setScale(sx,sy):  if sx == bxSx and sy == bxSy { return true }   // 值没变就不下发
+```
+
+`SDL_SetRenderTarget()` 之后 SDL 侧的 scale 变成 1.0，但 `bxSx/bxSy` 缓存还是 2.625 ⇒
+调用方 `setScale(2.625, 2.625)` 被短路 ⇒ SDL 一直停在 1.0 ⇒ 逻辑 420×300 只画进
+1103×788 纹理的左上 420×300。
+
+**修复**：`setRenderTarget` 里把缓存同步成 SDL 的实际值（`bxSx = bxSy = 1.0`），
+让缓存永远诚实。不要在调用点写 `setScale(1,1); setScale(dens,dens)` 绕过 —— 那只是
+把同一颗雷留给下一个调用方。
+
+同源修正：`clear()` 的 SSAA 分支原来只设 `ssaaScale`，漏了密度 ⇒ 一清屏坐标空间就缩回
+1/dens。已改成 `ssaaScale * dens`（与 `enableSSAA` / `resizeSSAA` / `beginFrame` 一致）。
+
+### G4 触摸拖动滚动（手机上唯一的滚动手势）
+
+手机上既没有滚轮、也抓不住 12px 宽的滚动条 ⇒ 补"手指按住内容拖动"，抬手带惯性：
+
+- 判定：`Event.isTouchLike()` —— SDL 把触摸合成成鼠标事件时 `which == SDL_TOUCH_MOUSEID
+  (0xFFFFFFFF)`；motion/button 两个结构里 `which` 都在偏移 20，可共用
+- 兜底：`_ptrTouch`（窗口在 `dens > 1` 时置位）⇒ 驱动不给标记时也当手指
+- **桌面不受影响**：鼠标左键拖动在桌面有"拖选"语义，`isTouchLike()` 为假 ⇒ 拖动滚动不触发
+  （回归测试里专门有一条负向断言：鼠标拖 120px，`scrollY` 必须纹丝不动）
+- 阈值 6px：小于它算点击，否则列表行/按钮永远点不中
+- 惯性：`v = 位移/帧`，每帧 `v *= 0.86`，`|v| < 0.4` 停；撞边界立即归零（否则会"顶着"
+  边界无限请求重绘）；`set_scroll()` 会掐掉惯性（程序化定位不该被残余速度推走 8px）
+
+真机验证（`adb shell input swipe 360 900 360 400 300`）：
+`scrollY 0 → 270`，截图里列表已滚到"第 4 行 ~ 第 10 行"，文字清晰。
+
+### G5 SDL 的 Java 宿主源码必须与 `libSDL3.so` **完全同版本**
+
+构建脚本要 `build/leno_module/LenoSDL3/src/sdl3/android-project/.../org/libsdl/app/*.java`。
+这个目录被清掉后如果随手拿最新版 SDL 的 Java 补上，装上去会弹：
+
+```
+SDL Error
+Error: SDL C/Java version mismatch (expected 3.5.0, got 3.4.20)
+```
+
+且 `SdlActivity` 直接停在错误弹窗、**`leno_sdl_main` 一行都不跑**（连日志都没有）。
+取的时候要按 `.so` 的版本取（`release-3.4.20` 分支），并核对
+`SDLActivity.java` 里的 `SDL_MAJOR/MINOR/MICRO_VERSION` 三个常量。
+
+### G6 探针别按**帧数**计时
+
+模拟器是软件渲染（SwiftShader），720×1217 全屏重绘只有 **~2fps**
+（实测：frame 5 → frame 8 花了 1.5 秒）。"跑 130 帧"会变成 60 多秒，
+按 5400 帧更是 45 分钟。`s3_vdialog` / `s4_scroll` 已统一改成 `getTicks()` 计时。
+
+### 回归资产
+
+```
+android/app/assets/s2_scale.leno    密度分岔探针（打印 size / pixels / contentScale / pixelDensity）
+android/app/assets/s3_vdialog.leno  密度 + 虚拟弹窗端到端（6 条 OK/NG，停留 20s 供截图）
+android/app/assets/s4_scroll.leno   真机触摸滚动（配合 input swipe，看 SCROLL 日志）
+
+bash android/build_android.sh                    # 需 ABIS=x86_64 才能在本机模拟器跑
+bash android/run_probes.sh s2_scale s3_vdialog
+```

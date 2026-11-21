@@ -1,0 +1,129 @@
+// test_density.leno —— 密度层（逻辑像素 ↔ 物理像素）回归
+//
+// 背景（2026-11-21）：Android 上 SDL 给的窗口尺寸和事件坐标**都是物理像素**
+//   （`SDL_GetWindowDisplayScale` ≈ 2.75），而框架所有布局/字体/命中判断都按逻辑像素写。
+//   不换算的后果：13px 字在 2.75x 屏上只有 4.7dp（看不清）、40px 按钮 = 14.5dp（手指点不中）。
+//   框架侧的解法是把密度收敛成**唯一一个换算点**：`Window.getSize()` 除、`setSize()` 乘、
+//   `Renderer.setDensity()` 让绘制按逻辑坐标落到物理像素、事件坐标反向除。
+//   ⚠ 桌面**不**换算（SDL 已给逻辑尺寸，再除会缩成 1/1.5）—— 所以这里用 `setDensityOverride`
+//     强制 2.75，在桌面上跑**与 Android 完全相同**的那条代码路径 ✓
+//
+// 断言（全部是行为断言；2.75 是非整数值，顺带验证四舍五入）：
+//   ① getSize() 返回**逻辑**尺寸（1100x825 物理 ⇒ 400x300 逻辑）
+//   ② Renderer.getDensity() == 2.75（渲染器真的拿到了密度）
+//   ③ 按**物理**坐标点主窗口按钮 ⇒ 按钮回调触发（坐标被除回逻辑值）
+//   ④ 按**物理**坐标点虚拟子窗口按钮 ⇒ 弹窗回调触发（弹性偏移 × 密度 反解正确）
+//   ⑤ 负向对照：物理坐标落在按钮外的点 ⇒ 计数不变（不是"全都命中"的假通过）
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_density.leno
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Button)
+
+int gFail = 0
+int gFrame = 0
+int gMainClicks = 0
+int gDlgClicks = 0
+Window? gDlg = null
+
+// 本测试固定用 2.75（真实安卓手机常见密度，且**非整数** ⇒ 顺带验证取整）
+const float DENS = 2.75
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+func buildDialog() {
+    // 逻辑 300x200；父窗口逻辑 400x300 ⇒ 合成缩放 s = min(1, (400-32)/300, (300-32)/200) = 1.0
+    //   合成位置 dx = (400-300)/2 = 50、dy = 50（逻辑）
+    var dlg = SDL3.createVirtualWindow({title: "密度弹窗", w: 300, h: 200})
+    var root = SDL3.createVBox({x: 0, y: 0, w: 300, h: 200, pad_x: 16, pad_y: 16, spacing: 8})
+    Button b = SDL3.createButton({w: 160, h: 40, text: "弹窗按钮"})
+    // 按钮逻辑矩形 (16,16)-(176,56) ⇒ 中心 (96,36)
+    b.on_click(func() { gDlgClicks = gDlgClicks + 1; SDL3.markFrameRedraw() })
+    root.add(b, {grow: 0, shrink: 0, align: 0})
+    dlg.setRootAt(root, 0, 0)
+    gDlg = dlg
+    dlg.run(func(Event ev): bool { return not ev.isWindowClose() }, func(Renderer r) {})
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    // ★ 强制密度：桌面默认 1.0，这里模拟 Android 的 2.75（同一行代码，两条路都测得到 ✓）
+    SDL3.setDensityOverride(DENS)
+
+    // 物理 1100x825 / 2.75 = 逻辑 400x300（整除，便于核对）
+    var win = SDL3.createWindow({title: "density test", w: 1100, h: 825})
+    if not win.ok {
+        print("[FAIL] 建主窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var root = SDL3.createVBox({x: 0, y: 0, w: 400, h: 300, pad_x: 20, pad_y: 20, spacing: 10})
+    Button mb = SDL3.createButton({w: 200, h: 40, text: "主按钮"})
+    // 逻辑矩形 (20,20)-(220,60) ⇒ 物理 (55,55)-(605,165)
+    mb.on_click(func() { gMainClicks = gMainClicks + 1; SDL3.markFrameRedraw() })
+    root.add(mb, {grow: 0, shrink: 0, align: 0})
+    win.setRoot(root)
+
+    win.setOverlay(func(Renderer r) {
+        gFrame = gFrame + 1
+        // ---- 第 2 帧：尺寸/密度断言 ----
+        if gFrame == 2 {
+            var sz = win.getSize()
+            check(sz.w == 400 and sz.h == 300,
+                "getSize() 返回逻辑尺寸 400x300（物理 1100x825 ÷ 2.75），实际 " + _str(sz.w) + "x" + _str(sz.h))
+            var px = win.getSizeInPixels()
+            check(px.w == 1100 and px.h == 825,
+                "getSizeInPixels() 仍是物理尺寸 1100x825，实际 " + _str(px.w) + "x" + _str(px.h))
+            check(r.getDensity() == DENS,
+                "Renderer.getDensity() == 2.75，实际 " + _str(r.getDensity()))
+        }
+        // ---- 第 4 帧：按**物理**坐标点主按钮（逻辑 150,40 ⇒ 物理 412.5,110）----
+        if gFrame == 4 {
+            SDL3.testClickAt(win.getID(), 412.5, 110.0)
+        }
+        if gFrame == 7 {
+            check(gMainClicks == 1, "物理坐标点主按钮 ⇒ 回调触发（坐标已除回逻辑值）")
+        }
+        // ---- 第 8 帧：负向对照 —— 物理坐标落在按钮**右外侧**（逻辑 250,40 ⇒ 物理 687.5,110）----
+        if gFrame == 8 {
+            SDL3.testClickAt(win.getID(), 687.5, 110.0)
+        }
+        if gFrame == 11 {
+            check(gMainClicks == 1, "按钮外的物理点不触发回调（不是'全都命中'的假通过）")
+        }
+        // ---- 第 12 帧：建虚拟子窗口 ----
+        if gFrame == 12 {
+            buildDialog()
+            var dw = gDlg?.getSize()
+            check(dw != null and dw.w == 300 and dw.h == 200, "虚拟窗口 getSize() 是**自己的**逻辑尺寸 300x200")
+        }
+        // ---- 第 16 帧：按物理坐标点弹窗按钮 ----
+        //   弹窗合成原点（逻辑 50,50）+ 按钮中心（逻辑 96,36）⇒ 逻辑 146,86 ⇒ 物理 401.5,236.5
+        if gFrame == 16 {
+            SDL3.testClickAt(win.getID(), 401.5, 236.5)
+        }
+        if gFrame == 19 {
+            check(gDlgClicks == 1, "物理坐标点弹窗按钮 ⇒ 弹窗回调触发（合成偏移×密度 反解正确）")
+            check(gMainClicks == 1, "落进弹窗的那一下没有漏给主窗口")
+        }
+        // ---- 第 21 帧：截图留证（弹窗应清晰居中；dummy 驱动下此步会失败但断言仍然有效）----
+        if gFrame == 21 {
+            print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+            SDL3.requestExit()
+        }
+        if gFrame < 21 { SDL3.markFrameRedraw() }
+    })
+
+    win.run(
+        func(Event ev): bool { return true },
+        func(Renderer r) {})
+}

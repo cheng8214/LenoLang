@@ -259,7 +259,8 @@ export func pickColor(Dict opts, func(Color):void onPick) {
         func(Event ev): bool {
             if ev.isQuit() { return false }
             if ev.isWindowClose() { return false }
-            if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { return false }
+            // ★ 2026-11-21：Android 返回键 = ESC = 取消取色（不写回）✓
+            if ev.isDismissKey() { ev.consumeDismiss(); return false }
             return true
         },
         func(Renderer r) { })

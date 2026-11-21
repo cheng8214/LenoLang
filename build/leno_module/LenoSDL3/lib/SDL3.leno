@@ -396,11 +396,22 @@ export func testClickAt(int wid, float x, float y): bool      { return wnd.testC
 export func testRightClickAt(int wid, float x, float y): bool { return wnd.testRightClickAt(wid, x, y) }
 export func testMouseAt(int wid, float x, float y, bool pressed): bool { return wnd.testMouseAt(wid, x, y, pressed) }
 export func testMoveAt(int wid, float x, float y): bool       { return wnd.testMoveAt(wid, x, y) }
+// ★ 2026-11-21：注入**手指**触点（自测用，与 Android 真实手指同一条代码路径 ✓）
+//   ⚠ 一帧一个事件：down → move ×N → up（同帧多条 motion 会被主循环合并成一条 ✗）
+export func testTouchDown(int wid, float x, float y): bool { return wnd.testTouchDown(wid, x, y) }
+export func testTouchUp(int wid, float x, float y): bool   { return wnd.testTouchUp(wid, x, y) }
+export func testTouchMove(int wid, float x, float y): bool { return wnd.testTouchMove(wid, x, y) }
 // ★ 2026-11-01：注入一次鼠标滚轮（`dy` 负 = 向下滚）—— 验"滚到底自动加载" ✓
 export func testWheelAt(int wid, float x, float y, float dy): bool { return wnd.testWheelAt(wid, x, y, dy) }
 export func testFocusLost(int wid): bool                      { return wnd.testFocusLost(wid) }
 // ★ 2026-10-13：注入一次按键（焦点链 Tab / Shift+Tab / Enter / Space 的自动回归要用 ✓）
 export func testKeyDown(int wid, int scancode, int mod = 0): bool { return wnd.testKeyDown(wid, scancode, mod) }
+// ★ 2026-11-21：注入一条**全局事件**（生命周期 / 渲染设备重置）——
+//   这些在桌面上永远不会自然发生，却决定手机上会不会白烧电、离屏纹理会不悬空 ⇒ 要能自动化 ✓
+//   例：`testGlobalEvent(EventType.DID_ENTER_BACKGROUND)`
+export func testGlobalEvent(int evType): bool                 { return wnd.testGlobalEvent(evType) }
+// 当前是否处于"后台"（切出去后框架停止出帧 ✓）
+export func isBackgrounded(): bool                            { return wnd.isBackgrounded() }
 export func testFocusGained(int wid): bool                    { return wnd.testFocusGained(wid) }
 // ★ 2026-10-13：读**上一次真正应用**的光标 kind（-1 = 从未应用过 ✓）——
 //   "悬停是手型、按下去不能变成箭头"这条回归要用 ✓（用法见 `leno_gui/自测/test_cursor_press.leno`）
@@ -472,6 +483,12 @@ export func exitApp() { wnd.requestExit() }
 export func frameTotal(): int        { return wnd.frameTotal() }
 export func timerDump(): string      { return tm.debugDump() }
 export func getError(): string       { return core.getError() }
+
+// ★ 2026-11-21：主屏像素密度（物理 / 逻辑）。
+//   Android 上 = densityDpi/160（720x1280@420dpi ⇒ 2.625）；桌面 100% ⇒ 1.0。
+//   应用一般**不需要**自己调 —— 框架的 `Window.getSize()` / `Renderer` 已按它换算 ✓
+//   （`contentScale` 在 Android 上不可信：`SDL_GetWindowDisplayScale` 实测恒返回 1.0）
+export func getDisplayPixelDensity(): float { return core.getDisplayPixelDensity() }
 export func delay(int ms)            { core.delay(ms) }
 export func getTicks(): int          { return core.getTicks() }
 // 本机可用的渲染驱动名（排查/自测用：看 SDL_RENDER_DRIVER 这类名字对应哪个真实驱动 ✓）
@@ -566,6 +583,22 @@ export func hasClipboardText(): bool { return core.hasClipboardText() }
 //   （路径要用 res_dir()：单文件打包后资源解包到缓存目录，script_dir() 取不到 ✓）
 // ★ 2026-10-31：键表即原 `wnd.Window.init()` 里那句内联白名单（实现读完这 7 个键就不再看了）
 @optkeys(["title:string", "w:num", "h:num", "flags:int", "resizable:bool", "aa:float", "icon"])
+// ★ 2026-11-21：虚拟子窗口（不建 OS 窗口，画进离屏纹理，由主窗口合成）。
+//   用途：Android 这类"一个 Activity 只有一个顶层窗口"的平台；桌面上也可显式用来做内嵌弹层。
+//   要求：主窗口**已经** registerOnly/run（要借它的 Renderer 与合成位置）。
+@optkeys(["title:string", "w:num", "h:num"])
+export func createVirtualWindow(Dict opts): Window { return wnd.createVirtualWindow(opts) }
+
+// 该窗口 ID 是否是虚拟子窗口（虚拟窗口没有 OS 窗口句柄，`getID()` 是框架发的合成 ID ✓）
+export func isVirtual(int wid): bool { return wnd.isVirtual(wid) }
+
+// ★ 2026-11-21：**强制密度**（0 = 按平台自动判断）。
+//   正常应用**不要调用**：Android 上框架会自动从显示器取值（`SDL_GetWindowDisplayScale`，
+//   典型 2.75），桌面恒 1.0（桌面 SDL 已给逻辑尺寸，再除会缩小界面 ✗）。
+//   只有测试/调试需要"在桌面上跑 Android 的坐标换算路径"时才设它 ✓
+export func setDensityOverride(float v) { wnd.setDensityOverride(v) }
+export func getDensityOverride(): float { return wnd.getDensityOverride() }
+
 export func createWindow(Dict opts): Window    {
     var win = wnd.createWindow(opts)
     string iconPath = opts.get("icon", "")

@@ -587,7 +587,12 @@ export struct MenuBar impl Widget, Themeable {
         // ★ 2026-10-29 反哺：整体 hover（菜单条自身被悬停；展开后的事件处理逻辑不受影响 ✓）
         hover = mx >= x and mx <= x + w and my >= y and my <= y + h
 
-        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { close(); return }
+        // ★ 2026-11-21：ESC **和** Android 返回键都收（`isDismissKey`）——
+        //   手机上按返回键的期望就是"收起这个下拉"，不是"退出程序" ✓
+        if ev.isDismissKey() {
+            if open >= 0 { close(); ev.consumeDismiss() }   // 真关掉了才声明消费 ✓
+            return
+        }
 
         if ev.isMouseMotion() {
             int prevHoverTop = hoverTop, prevHoverItem = hoverItem

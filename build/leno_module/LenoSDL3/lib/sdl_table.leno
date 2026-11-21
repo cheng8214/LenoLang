@@ -1577,12 +1577,13 @@ export struct Table impl Widget, Themeable {
         if editing {
             _edit.process(ev)
             if ev.isKeyDown() and ev.scancode() == core.Scancode.RETURN { commit_edit() }
-            eif ev.isKeyDown() and ev.scancode() == core.Scancode.ESCAPE {
-                // Esc 取消编辑（不提交）
+            eif ev.isDismissKey() {
+                // Esc / Android 返回键：取消编辑（不提交）
                 editing = false
                 editRow = -1; editCol = -1
                 _lastClickTime = -100000
                 _edit.blur()
+                ev.consumeDismiss()      // 这一层已经用掉了 ⇒ 别让主循环接着关窗口 ✓
             }
             eif ev.isKeyDown() and ev.scancode() == core.Scancode.TAB {
                 // Tab 跳到下一个可编辑单元格

@@ -228,7 +228,204 @@ Array[bool]            _runTransparent = []    // 各窗口是否透明（跳过
 Array[RenderCallback]  _runOverlays = []    // 各窗口叠加层回调（在所有控件/弹层/Tooltip 之上、present 之前调用）
 Array[Array[Shortcut]]  _runShortcuts = []    // 各窗口快捷键列表
 Array[func():bool]       _runShortcutGuards = [] // 各窗口快捷键守卫回调
+// ★ 2026-11-21：**虚拟子窗口**（不向 OS 申请窗口的"对话框"）
+//   为什么需要：Android 上一个 Activity 只有一个顶层窗口（SurfaceView），
+//   `SDL_CreateWindow` 拿不到第二个可显示的窗口 ⇒ 弹窗静默不出现（见 sdl_dialog 的 ok 检查）。
+//   做法：子窗口有自己的控件树 / 事件 / 模态状态，但**渲染目标**是自己的离屏纹理，
+//   由父窗口在它客户区里合成（等比缩放 + 遮罩）。控件树坐标仍是自己的 0,0 ⇒ 弹窗布局零改动。
+//   ★ 状态用**并行数组**（不用 Dict）：裸 Dict 的元素类型被"第一次写入"定死，
+//     而这里要同时装 bool/int/float/Ptr ⇒ 用 `Dict[..., any]` 又处处要窄化，反而更容易错。
+//   ⚠ 必须与 `_runWids` **下标对齐**：所有增删都跟其它 `_run*` 一起做（见 registerOnly / 关闭路径）。
+Array[bool]             _runVOn     = []   // 是不是虚拟子窗口
+Array[int]              _runVParent = []   // 父窗口 ID（0 = 无）
+Array[Dict]             _runVTexD   = []   // 离屏纹理（每项 {} 或 {tex: Ptr[u8]}；逻辑尺寸 dw×dh）
+Array[float]            _runVX      = []   // 合成左上角（父窗口客户区坐标）
+Array[float]            _runVY      = []
+Array[float]            _runVS      = []   // 合成缩放（1.0 = 原尺寸）
+Array[int]              _runVDrawn  = []   // 已合成帧数（诊断用 ✓）
+Array[float]            _runDens    = []   // ★ 每窗口的**密度**（物理像素/逻辑像素；桌面恒 1.0）
 var _runLoopActive = false    // 主循环是否已在运行
+
+// ---- 虚拟子窗口的取用助手（下标必须有界：并行数组在关闭路径上是逐条 remove 的）----
+func _virtOn(int i): bool {
+    if i < 0 or i >= _runVOn.len() { return false }
+    return _runVOn[i]
+}
+func _virtParentOf(int i): int {
+    if i < 0 or i >= _runVParent.len() { return 0 }
+    return _runVParent[i]
+}
+func _virtTexOf(int i): Ptr[u8] {
+    if i < 0 or i >= _runVTexD.len() { return null }
+    var t = _runVTexD[i].get("tex", null)
+    if t is Ptr[u8] { return t }
+    return null
+}
+func _virtSetTex(int i, Ptr[u8] t) {
+    if i < 0 or i >= _runVTexD.len() { return }
+    if t == null { _runVTexD[i] = {} } else { _runVTexD[i]["tex"] = t }
+}
+func _virtXOf(int i): float {
+    if i < 0 or i >= _runVX.len() { return 0.0 }
+    return _runVX[i]
+}
+func _virtYOf(int i): float {
+    if i < 0 or i >= _runVY.len() { return 0.0 }
+    return _runVY[i]
+}
+func _virtSOf(int i): float {
+    if i < 0 or i >= _runVS.len() { return 1.0 }
+    return _runVS[i]
+}
+// 窗口 ID → 在 `_runWids` 里的下标（-1 = 不是运行中的窗口）
+func _virtIndex(int wid): int {
+    for _runWids.len() to i {
+        if _runWids[i] == wid { return i }
+    }
+    return -1
+}
+
+// ★ 2026-11-21：某个窗口的**最上层虚拟子窗口**（后注册的在上层，与绘制顺序一致 ✓）
+//   返回 0 = 没有。Android 返回键的分层返回第一步就靠它（见 run() 里的兜底）
+func _virtTopOf(int parentWid): int {
+    int i = _runWids.len() - 1
+    while i >= 0 {
+        if _virtOn(i) and _virtParentOf(i) == parentWid { return _runWids[i] }
+        i = i - 1
+    }
+    return 0
+}
+
+// ★ 2026-11-21：向某窗口投递一条"请求关闭"（**异步**：下一轮 poll 才处理 ⇒ 不打断当前派发 ✓）
+//   与 `Window.requestClose()` 走同一条路：会先登记"这是程序自己发的"⇒ `isUserClose()` 返回 false，
+//   于是"关闭到托盘/关闭前询问"那类逻辑不会被误当成用户点 X ✓
+//   ⚠ 虚拟子窗口也能用：它的合成 ID 同样会被 SDL_PushEvent 带出去（框架按 wid 找索引 ✓）
+func _postClose(int wid) {
+    if wid <= 0 { return }
+    event.markSelfClose(wid)
+    var e = SDL_Event.malloc()
+    e.window.type = core.EventType.WINDOW_CLOSE_REQUESTED
+    e.window.windowID = wid
+    _lib.SDL_PushEvent(e)
+    e.free()
+}
+
+// ★ 2026-11-21：**应用是否在后台**（Android 切出去后为真）。
+//   后台时停止出帧：surface 已经销毁，`SDL_RenderPresent` 既无意义又白烧电
+//   （实测模拟器上后台仍按 2fps 空转 ⇒ 手机上是实打实的掉电 ✗）。
+//   桌面永不进入这个状态（收不到 DID_ENTER_BACKGROUND）⇒ 行为零变化 ✓
+var _backgrounded = false
+export func isBackgrounded(): bool { return _backgrounded }
+
+// ★ 2026-11-21：**GPU 上下文丢失后的离屏资源重建**（Android 切后台回来 / 驱动重启）。
+//   为什么不能"就地 Destroy"：设备重置后所有纹理句柄都已失效，拿悬空句柄去
+//   SDL_DestroyTexture 是未定义行为（实测会崩）⇒ 一律**直接丢弃指针**再重新创建 ✓
+func _resetOffscreen() {
+    // ① 先清虚拟子窗口的纹理指针（它们建在**父窗口**的渲染器上，下面统一重建）
+    for _runWids.len() to i {
+        if _virtOn(i) { _virtSetTex(i, null) }
+    }
+    // ② 真窗口：SSAA 离屏纹理重建（无 SSAA 的直接 false，无需动作 ✓）
+    for _runWids.len() to i {
+        if _virtOn(i) { continue }
+        _runRens[i].rebuildSSAA()
+    }
+    // ③ 虚拟子窗口：按"逻辑尺寸 × 父窗口密度"重新分配（与 `_virtEnsureTex` 同一算式 ⇒
+    //    私有字段 `_virtTexW/H` 不必同步，也不会被误判成"尺寸变了要重建" ✓）
+    for _runWids.len() to i {
+        if not _virtOn(i) { continue }
+        int pi = _virtIndex(_virtParentOf(i))
+        if pi < 0 { continue }
+        float td = _densOfWid(_virtParentOf(i))
+        if td < 1.0 { td = 1.0 }
+        int tw = maths.roundi(_float(_runW[i]) * td)
+        int th = maths.roundi(_float(_runH[i]) * td)
+        if tw < 1 { tw = 1 }
+        if th < 1 { th = 1 }
+        Ptr[u8] t = _runRens[pi].createTexture(core.PIXELFORMAT_RGBA8888, 2, tw, th)
+        if t == null {
+            print("[LenoSDL3] 设备重置后虚拟子窗口纹理重建失败：" + core.getError() + "\n")
+        } else {
+            _lib.SDL_SetTextureScaleMode(t, core.ScaleMode.LINEAR)
+        }
+        _virtSetTex(i, t)
+    }
+}
+// 虚拟子窗口的合成 ID 发号器：与 SDL 的 windowID 不重叠（SDL 用小的自增数）
+var _virtIdNext = 0x40000000
+// 该窗口 ID 是否是虚拟子窗口
+export func isVirtual(int wid): bool {
+    int i = _virtIndex(wid)
+    return i >= 0 and _virtOn(i)
+}
+
+// ★ 2026-11-21：**密度层** —— 逻辑像素 ↔ 物理像素的唯一换算点。
+//   为什么必须有：Android 上 SDL 给的窗口尺寸和事件坐标**都是物理像素**
+//   （`SDL_GetWindowDisplayScale` ≈ 2.75），而框架所有布局/字体/命中判断都按逻辑像素写。
+//   不换算的话：13px 字在 2.75x 屏上只有 4.7dp（小到看不清）、40px 按钮 = 14.5dp（远低于
+//   Material 的 48dp 最小触控尺寸）—— 界面"能用但手指点不中"。
+//   ⚠ **只在 Android 上除**：桌面 Windows/macOS 的 `SDL_GetWindowSize` 已经返回逻辑点
+//     （HiDPI 下 getSize < getSizeInPixels），再除一次界面会缩成 1/1.5 ✗（已验证：桌面 contentScale=1.5 时
+//     getSize 仍是逻辑值）。
+var _densForce = 0.0     // 0 = 按平台自动判断；>0 = 强制（测试用：桌面也能跑 Android 的代码路径 ✓）
+// 强制密度（0 恢复自动）。仅在测试/调试里用 —— 正常应用不要调。
+export func setDensityOverride(float v) { _densForce = if v > 0.0 then v else 0.0 }
+export func getDensityOverride(): float { return _densForce }
+
+// 按平台/显示器算出密度（1.0 = 不需要换算）
+//   ⚠ 只用 `SDL_DisplayMode.pixel_density`：`SDL_GetWindowDisplayScale` 在 **Android 上恒为 1.0**
+//     （后端没实现）。实测 AVD 720x1280 / 420dpi 上它返回 1.0，照它算密度 = 什么都没做 ✗
+//     （这个是模拟器实测抓到的，桌面永远看不到 —— 桌面那个 API 是对的）
+func _resolveDensity(): float {
+    if _densForce > 0.0 { return _densForce }
+    // ★ 桌面**一律不换算**：SDL 在 Windows/macOS 上的 getSize 已经是逻辑点，
+    //   即使显示器是 150% 也不该再除（否则界面缩成 2/3 ✗）
+    if _os() != "android" { return 1.0 }
+    float v = core.getPlatformDensity()
+    if v < 1.0 { return 1.0 }
+    if v > 6.0 { return 6.0 }      // 兜底：荒唐值别把界面缩没了
+    return v
+}
+
+// 某窗口 ID 的密度（1.0 = 不做换算；窗口未注册/虚拟子窗口 ⇒ 1.0，子窗口活在父窗口的逻辑空间里 ✓）
+func _densOfWid(int wid): float {
+    int i = _virtIndex(wid)
+    if i < 0 or i >= _runDens.len() { return 1.0 }
+    return _runDens[i]
+}
+
+// ★ 2026-11-21：这个 SDL 事件该投给哪个虚拟子窗口（返回子窗口的合成 ID；0 = 不投）
+//   为什么要改投：虚拟子窗口没有 OS 窗口 ⇒ 事件里的 windowID 永远是**父窗口**的，
+//   不换 ID 的话 `_runWids[j] == wid` 永远匹配不到子窗口那一项（控件全都收不到事件 ✗）。
+func _virtHitTarget(int wid, Event ev): int {
+    // 模态：栈顶是虚拟子窗口 ⇒ **所有**事件都归它
+    //   （点在弹窗外也一样：落进"没命中任何控件"⇒ 表现就是模态挡住了下层 ✓）
+    if _isModal() {
+        int mt = _modalTop()
+        if _virtIndex(mt) >= 0 { return mt }
+        return 0
+    }
+    // 非模态（如音乐下载窗）：只有落在它矩形内的指针事件才归它 ⇒ 主窗口其余部分照常可点 ✓
+    if not (ev.isMouseMotion() or ev.isMouseButtonDown() or ev.isMouseButtonUp() or ev.isMouseWheel()) {
+        return 0
+    }
+    var[float, float](mx, my) = ev.mousePos()
+    if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
+    // 倒序：后注册的在上层（与绘制顺序一致 ✓）
+    int i = _runWids.len() - 1
+    while i >= 0 {
+        if _virtOn(i) and _virtParentOf(i) == wid {
+            float x = _virtXOf(i)
+            float y = _virtYOf(i)
+            float s = _virtSOf(i)
+            float ex = x + _float(_runW[i]) * s
+            float ey = y + _float(_runH[i]) * s
+            if mx >= x and mx <= ex and my >= y and my <= ey { return _runWids[i] }
+        }
+        i = i - 1
+    }
+    return 0
+}
 
 // [诊断] 控件树绘制（含 Canvas/图片/文字）累计微秒 + 累计帧数 —— 只在基准模式打印
 int _profDrawUs = 0
@@ -290,6 +487,24 @@ var _outH = 0.0
 func _dropOverlayState(int wid) {
     if _moWid == wid { _moWid = -1; _moWidget = null; _moW = 0.0; _moH = 0.0 }
     if _outWid == wid { _outWid = -1; _outCb = null; _outArmed = false; _outW = 0.0; _outH = 0.0 }
+}
+
+// ★ 2026-11-21：销毁"第 i 个运行期窗口"的全部资源（主循环里 4 条收尾路径共用）
+//   为什么必须收敛到一处：虚拟子窗口的 `handle` / `Renderer` 都是**父窗口的**
+//   ⇒ 照原样 `SDL_DestroyWindow(_runHnds[i])` 会把主窗口炸掉 ✗（4 处各改一遍极容易漏 ✓）
+func _destroyEntry(int i) {
+    var ws = _runWidgets[i]
+    if ws != null { for ws to w { w.dispose() } }
+    var rt = _runRoots[i]
+    rt?.dispose()
+    if _virtOn(i) {
+        Ptr[u8] t = _virtTexOf(i)
+        if t != null { _lib.SDL_DestroyTexture(t); _virtSetTex(i, null) }
+        return                       // 不碰 SDL 窗口 / 不碰 Renderer / 不递减 _windowCount ✓
+    }
+    _runRens[i].destroy()
+    _lib.SDL_DestroyWindow(_runHnds[i])
+    _windowCount -= 1
 }
 
 // ★ 2026-11-08 诊断：累计渲染帧数。配合 timer.debugDump() 可以判断
@@ -492,9 +707,21 @@ export func testKeyDown(int wid, int scancode, int mod = 0): bool {
     return r
 }
 
+// 注入一条**全局事件**（无 windowID；自测用 ✓ 2026-11-21 补）
+//   为什么要：生命周期（切后台/回前台）与渲染设备重置在桌面上**永远不会自然发生**，
+//   但它们决定了手机会不会白烧电、离屏纹理会不悬空 ⇒ 必须能自动化回归 ✓
+//   evType 传 `core.EventType.DID_ENTER_BACKGROUND` 这类常量
+export func testGlobalEvent(int evType): bool {
+    var e = SDL_Event.malloc()
+    e.type = evType
+    bool r = _lib.SDL_PushEvent(e)
+    e.free()
+    return r
+}
+
 // 投递一条鼠标按键事件（内部用；SDL_Event 缓冲取 128 字节 ✓）
 //   ⚠ 模块级"私有"只用 `_` 前缀即可 —— 写成 `pri func` 会被解析器判成语法错误 ✗（实测 ✓）
-func _pushMouseEvent(bool pressed, int wid, float x, float y, int button = 1): bool {
+func _pushMouseEvent(bool pressed, int wid, float x, float y, int button = 1, int which = 0): bool {
     var e = SDL_Event.malloc()
     if pressed {
         e.button.type = core.EventType.MOUSE_BUTTON_DOWN
@@ -504,11 +731,36 @@ func _pushMouseEvent(bool pressed, int wid, float x, float y, int button = 1): b
         e.button.down = 0
     }
     e.button.windowID = wid
-    e.button.which = 0
+    e.button.which = which                          // 0 = 真鼠标 / 0xFFFFFFFF = 触摸合成（见 isTouchLike ✓）
     e.button.button = button                        // 1 = 左键 / 2 = 中键 / 3 = 右键（默认左键 ✓）
     e.button.clicks = 1
     e.button.x = x
     e.button.y = y
+    bool r = _lib.SDL_PushEvent(e)
+    e.free()
+    return r
+}
+
+// ★ 2026-11-21：注入**手指**触点（自测用）。为什么必须专门造一套：
+//   `Event.isTouchLike()` 靠 SDL 的 `which` 标记区分手指和鼠标，而 `testMouseAt` 注入的
+//   which=0 会被当成鼠标 ⇒ "拖动内容滚动"/惯性这条代码路径**根本走不到** ✗（等于没测）。
+//   用 SDL_TOUCH_MOUSEID = 0xFFFFFFFF 注入 ⇒ 与 Android 上真实手指完全同一条路 ✓
+//   ⚠ 用法：**一帧一个事件**（down → move × N → up），别一口气全推 ——
+//     主循环会把同帧的多条 motion 合并成最后一条 ⇒ 每帧位移失真、速度/惯性也就测不准 ✗
+export func testTouchDown(int wid, float x, float y): bool {
+    return _pushMouseEvent(true, wid, x, y, 1, 0xFFFFFFFF)
+}
+export func testTouchUp(int wid, float x, float y): bool {
+    return _pushMouseEvent(false, wid, x, y, 1, 0xFFFFFFFF)
+}
+export func testTouchMove(int wid, float x, float y): bool {
+    var e = SDL_Event.malloc()
+    e.motion.type = core.EventType.MOUSE_MOTION
+    e.motion.windowID = wid
+    e.motion.which = 0xFFFFFFFF      // 触摸合成标记
+    e.motion.state = 1               // 左键按下中
+    e.motion.x = x
+    e.motion.y = y
     bool r = _lib.SDL_PushEvent(e)
     e.free()
     return r
@@ -551,6 +803,16 @@ export func registerRun(Ptr[u8] hdl, int wid, Renderer ren, EventHandler onEvent
 export struct Window {
     Ptr[u8] handle    // SDL_Window 指针
     bool ok = false       // 窗口是否创建成功（显式初值，消 [字段未初始化] 警告）
+    // ★ 2026-11-21：虚拟子窗口（见 `_runVirt` 那段说明）
+    bool virt = false         // 本窗口不拥有 OS 窗口：渲染到自己的离屏纹理，由父窗口合成
+    pri int _virtID = 0       // 合成窗口 ID（不与 SDL 的 windowID 冲突：从 0x40000000 起发 ✓）
+    pri int virtLW = 0        // 逻辑宽（= opts 的 w；与父窗口尺寸无关 ✓）
+    pri int virtLH = 0        // 逻辑高
+    pri int _virtTexW = 0     // 纹理实际尺寸（创建时 = 逻辑尺寸）
+    pri int _virtTexH = 0
+    // ★ 2026-11-21：本窗口的**密度**（物理像素 / 逻辑像素）。桌面恒 1.0，Android ≈ 2.75
+    //   作用：`getSize()` 除、`setSize()` 乘、Renderer 的 setScale 乘 ⇒ 应用永远只见逻辑像素 ✓
+    pri float _dens = 1.0
     int _w = 0; int _h = 0; pri float aaScale = 0.0
     // 最大渲染帧率（0 = 不限制）。2026-09-25 由 **30 调到 60**：
     //   实测（dummy 驱动、每帧主动请求重绘 ⇒ 完全由上限决定）：
@@ -613,6 +875,7 @@ export struct Window {
         //   onEvent 里分不清是谁关的 —— 于是"登录成功后关闭对话框"被当成"用户关窗"，
         //   在 force 模式下直接 requestExit() 把整个程序退了（实测 ✗）。
         //   现在用 `Event.isUserClose()` 区分；标记在事件被消费时清掉。
+        // ★ 2026-11-21：投递动作抽到模块级 `_postClose`（返回键的分层返回也要用它 ✓）
         int wid = getID()
         event.markSelfClose(wid)        // 登记"这是程序自己发的关闭"，供 Event.isUserClose() 判断 ✓
         var e = SDL_Event.malloc()                      // 128 字节、零初始化
@@ -679,14 +942,32 @@ export struct Window {
         var aaOpt = opts.get("aa", 0.0)
         if aaOpt is bool { if aaOpt { aaScale = 2.0 } }
         else { float a = aaOpt; if a > 0.0 { aaScale = a } }
+        // ★ 2026-11-21：虚拟子窗口 —— **不建 OS 窗口**（Android 上一个 Activity 只有一个顶层窗口，
+        //   第二个 `SDL_CreateWindow` 拿不到可显示的窗口）。`ok` 在这里表示"参数合法"，
+        //   真正能否合成由父窗口决定（见 `_registerVirtual`：找不到父窗口才置 false）。
+        if virt or opts.get("virtual", false) {
+            virt = true
+            _virtIdNext = _virtIdNext + 1
+            _virtID = _virtIdNext
+            virtLW = w; virtLH = h
+            _w = w; _h = h
+            handle = null
+            ok = true
+            return true
+        }
         handle = _lib.SDL_CreateWindow(title, w, h, flags)
         ok = handle != null
-        if ok { _windowCount = _windowCount + 1 }
+        // ★ 2026-11-21：窗口句柄有了才能问显示器密度（Android ≈2.75，桌面 100% ⇒ 1.0）
+        //   放在这里而不是 registerOnly：`getSize()` 在 registerOnly 之前就会被调用（如下面的
+        //   `SDL_SyncWindow` 之后取实际尺寸），那时 `_dens` 必须已经是对的 ✓
+        if ok { _dens = _resolveDensity(); _windowCount = _windowCount + 1 }
         return ok
     }
-
     // 获取窗口 ID
+    // ★ 2026-11-21：虚拟子窗口没有 OS 窗口（handle 为 null）⇒ 返回自己发的合成 ID，
+    //   否则 `SDL_GetWindowID(null)` 恒为 0 ⇒ 与"全局事件"撞号、模态栈全乱。
     func getID(): int {
+        if virt { return _virtID }
         return _lib.SDL_GetWindowID(handle)
     }
 
@@ -701,16 +982,30 @@ export struct Window {
 
     // 设置窗口标题
     func setTitle(string title): bool {
+        if virt { return true }        // 无 OS 窗口 ⇒ 标题由自绘标题栏显示
         return _lib.SDL_SetWindowTitle(handle, title)
     }
 
     // 设置窗口大小
+    // ★ 虚拟子窗口：改的是**逻辑尺寸**（纹理 + 根布局），不是父窗口 ✓
     func setSize(int w, int h): bool {
-        return _lib.SDL_SetWindowSize(handle, w, h)
+        if virt {
+            virtLW = w; virtLH = h
+            _w = w; _h = h
+            _virtResizeTex()
+            var rt = root
+            if rt != null { rt.set_size(_float(w) - rootX, _float(h) - rootY) }
+            return true
+        }
+        // ★ 2026-11-21：应用传的是逻辑像素 ⇒ Android 上乘回物理像素（桌面 _dens=1.0 原样 ✓）
+        int pw = w; int ph = h
+        if _dens > 1.0 { pw = maths.roundi(_float(w) * _dens); ph = maths.roundi(_float(h) * _dens) }
+        return _lib.SDL_SetWindowSize(handle, pw, ph)
     }
 
     // 获取窗口真实像素尺寸（HiDPI 时大于逻辑尺寸）
     func getSizeInPixels(): Size {
+        if virt { Size dv = {w: virtLW, h: virtLH}; return dv }
         SDL_Point pt = SDL_Point.malloc()
         _lib.SDL_GetWindowSizeInPixels(handle, &pt.x, &pt.y)
         Size d = {w: pt.x, h: pt.y}
@@ -718,11 +1013,28 @@ export struct Window {
     }
 
     // 获取窗口逻辑尺寸（绘图坐标系使用的尺寸，不受 HiDPI 放大影响）
+    // ★ 虚拟子窗口：返回**自己的**逻辑尺寸（不是父窗口的 ✓ 否则布局会被撑成父窗口大小）
+    // ★ 2026-11-21：Android 上 SDL_GetWindowSize 给的是**物理像素**（2.75x 屏 ⇒ 720x1280 的窗口
+    //   会报 720x1280，而逻辑只有 262x465）⇒ 这里除以 _dens。桌面 _dens=1.0 ⇒ 原样返回（零回归 ✓）
     func getSize(): Size {
+        if virt { Size dv2 = {w: virtLW, h: virtLH}; return dv2 }
         SDL_Point pt = SDL_Point.malloc()
         _lib.SDL_GetWindowSize(handle, &pt.x, &pt.y)
         Size d = {w: pt.x, h: pt.y}
+        if _dens > 1.0 {
+            d.w = maths.roundi(_float(pt.x) / _dens)
+            d.h = maths.roundi(_float(pt.y) / _dens)
+            if d.w < 1 { d.w = 1 }
+            if d.h < 1 { d.h = 1 }
+        }
         pt.free(); return d
+    }
+
+    // ★ 2026-11-21：窗口所在显示器的**内容缩放**（逻辑像素 = 物理像素 / 该值）
+    //   Android 恒 > 0（约 2.75~3.5）；桌面按系统缩放给（100% ⇒ 1.0）。
+    //   虚拟子窗口借父窗口句柄 ⇒ 返回父窗口所在显示器的缩放（合成时也按它换算 ✓）
+    func getContentScale(): float {
+        return core.getWindowDisplayScale(handle)
     }
 
     // 设置窗口位置
@@ -862,17 +1174,30 @@ export struct Window {
     func setFullscreen(bool v): bool { return _lib.SDL_SetWindowFullscreen(handle, v) }
 
     // 前置窗口并获取焦点
-    func raise(): bool       { return _lib.SDL_RaiseWindow(handle) }
+    func raise(): bool       { if virt { return true } return _lib.SDL_RaiseWindow(handle) }
 
     // 窗口状态控制
-    func show(): bool        { return _lib.SDL_ShowWindow(handle) }
-    func hide(): bool        { return _lib.SDL_HideWindow(handle) }
-    func maximize(): bool    { return _lib.SDL_MaximizeWindow(handle) }
-    func minimize(): bool    { return _lib.SDL_MinimizeWindow(handle) }
-    func restore(): bool     { return _lib.SDL_RestoreWindow(handle) }
+    // ★ 虚拟子窗口：这些操作**不能透到父窗口**（否则 `dlg.hide()` 会把主窗口藏掉 ✗）
+    func show(): bool        { if virt { return true } return _lib.SDL_ShowWindow(handle) }
+    func hide(): bool        { if virt { return true } return _lib.SDL_HideWindow(handle) }
+    func maximize(): bool    { if virt { return true } return _lib.SDL_MaximizeWindow(handle) }
+    func minimize(): bool    { if virt { return true } return _lib.SDL_MinimizeWindow(handle) }
+    func restore(): bool     { if virt { return true } return _lib.SDL_RestoreWindow(handle) }
 
     // 销毁窗口（同时释放所有控件资源：字体等，避免窗口关闭后字体泄漏）
     func destroy() {
+        // ★ 2026-11-21：虚拟子窗口没有 OS 窗口，只销毁自己那块离屏纹理
+        if virt {
+            if ok {
+                timer.unregisterByWindow(getID())
+                core.requestRedraw()
+                for widgets to w { w.dispose() }
+                root?.dispose()
+                _virtDropTex()
+                ok = false
+            }
+            return
+        }
         if ok {
             // ★ 2026-11-08：先注销本窗口的定时器（必须在 DestroyWindow 之前取 ID）
             timer.unregisterByWindow(getID())
@@ -1613,6 +1938,8 @@ export struct Window {
 
     // 仅注册窗口（不启动主循环），用于多窗口场景：先逐个 registerOnly，最后 run() 启动循环
     func registerOnly(EventHandler onEvent, RenderCallback onRender) {
+        // ★ 2026-11-21：虚拟子窗口走独立注册（不建 Renderer、不 SyncWindow、不取父窗口尺寸）
+        if virt { _registerVirtual(onEvent, onRender); return }
         // ★ Android：SDL_StartTextInput 会**立刻弹出软键盘**，而且键盘把 Surface 挤小
         //   ⇒ 窗口高度从 1217 变成 ~600、所有控件位置全错（实测截图：键盘占了下半屏）。
         //   桌面必须有它（Edit 控件靠 SDL_EVENT_TEXT_INPUT 收字），所以只在非 Android 上无条件开；
@@ -1628,6 +1955,12 @@ export struct Window {
         Size actualSz = getSize()
         _w = actualSz.w; _h = actualSz.h
         Renderer ren = renderer.createRenderer(handle)
+        // ★ 2026-11-21：密度交给渲染器 —— 它把 setScale 乘进 dens（SSAA 时是 ssaaScale*dens）
+        //   ⇒ 之后所有绘制调用继续用**逻辑坐标**，落到物理像素上自动放大 ✓（桌面 1.0 = 不变 ✓）
+        ren.setDensity(_dens)
+        // ★ 密度 > 1 ⇒ 这是移动平台，指针就是手指 ⇒ 让控件放开"拖动内容滚动"这类手势
+        //   （桌面密度 1.0 ⇒ 保持 false ⇒ 鼠标左键拖动语义不变 ✓）
+        if _dens > 1.0 { event.setPointerIsTouch(true) }
         if aaScale > 0.0 { ren.enableSSAA(actualSz.w, actualSz.h, aaScale) }
         // ★ 同步根布局到实际窗口尺寸（setRootAt 在 run() 前调用，此时窗口可能已被系统改变尺寸）
         if root != null {
@@ -1654,6 +1987,7 @@ export struct Window {
         _runWids.add(getID())
         _runHnds.add(handle)
         _runRens.add(ren)
+        _runDens.add(_dens)          // ★ 密度（事件坐标换算要用；桌面 1.0）
         _runEvts.add(onEvent)
         _runRends.add(onRender)
         _runWidgets.add(widgets)    // 统一关联控件列表
@@ -1671,6 +2005,253 @@ export struct Window {
         _runOverlays.add(_overlay)           // 叠加层回调（可空）
         _runShortcuts.add(_shortcuts)          // 快捷键列表
         _runShortcutGuards.add(shortcutGuard) // 快捷键守卫
+        _runVOn.add(false); _runVParent.add(0); _runVTexD.add({})
+        _runVX.add(0.0); _runVY.add(0.0); _runVS.add(1.0); _runVDrawn.add(0)
+    }
+
+    // ★ 2026-11-21：注册虚拟子窗口（见 `_runVirt` 上方那段说明）
+    //   与 registerOnly 的唯一差别：**不碰 SDL 窗口/Renderer**，渲染目标是一块自己的离屏纹理。
+    pri func _registerVirtual(EventHandler onEvent, RenderCallback onRender) {
+        // 父窗口 = 第一个**非虚拟**的已注册窗口（= 主窗口）。
+        // 设计上不要求调用方传 parent：弹窗总是"主窗口已经跑起来之后"才创建 ✓
+        int pj = -1
+        for _runWids.len() to j {
+            if not _virtOn(j) { pj = j; break }
+        }
+        if pj < 0 {
+            print("[LenoSDL3] 虚拟子窗口注册失败：没有可用的父窗口（主窗口必须先 registerOnly/run）\n")
+            ok = false
+            return
+        }
+        int pwid = _runWids[pj]
+        handle = _runHnds[pj]              // 借用父窗口句柄（控件 `_bind_window` 要非空 ✓）
+        Renderer pren = _runRens[pj]
+        _runWids.add(getID()); _runHnds.add(handle); _runRens.add(pren)
+        _runEvts.add(onEvent); _runRends.add(onRender)
+        _runWidgets.add(widgets); _runWidgetZ.add(widgetZ)
+        _runMenus.add(menus)
+        MenuBar? cb = ctxBar
+        if cb is MenuBar { _runCtxBar.add(cb); _runCtxIdx.add(ctxIdx) }
+        else { _runCtxBar.add(menu.createMenuBar({})); _runCtxIdx.add(-1) }
+        _runRoots.add(root); _runRootX.add(rootX); _runRootY.add(rootY)
+        _runW.add(virtLW); _runH.add(virtLH)
+        _runDialogHidden.add(false)        // 无 OS 窗口 ⇒ 不涉及"首帧后 show"
+        _runTransparent.add(false)
+        _runOverlays.add(_overlay)
+        _runShortcuts.add(_shortcuts); _runShortcutGuards.add(shortcutGuard)
+        _runVOn.add(true); _runVParent.add(pwid); _runVTexD.add({})
+        _runVX.add(0.0); _runVY.add(0.0); _runVS.add(1.0); _runVDrawn.add(0)
+        // ★ 密度：虚拟子窗口活在**父窗口的逻辑空间**里 ⇒ 自己不再做换算（1.0）；
+        //   物理分辨率只在建离屏纹理时用父窗口的密度（见 `_virtTexDens`）✓
+        _runDens.add(1.0)
+        _virtEnsureTex(pren)
+        // 根布局：**按自己的逻辑尺寸**铺（父窗口大小与它无关 ⇒ 桌面布局原样可用 ✓）
+        if root != null {
+            root.set_pos(rootX, rootY)
+            root.set_size(_float(virtLW) - rootX, _float(virtLH) - rootY)
+        }
+    }
+
+    // 虚拟子窗口：确保离屏纹理存在、尺寸与逻辑尺寸一致
+    // ★ 2026-11-21：虚拟子窗口离屏纹理的**物理**倍率 = 父窗口密度
+    //   （纹理按逻辑尺寸建会在大屏上被放大 ⇒ 文字糊；按物理像素建 + 按 density 缩放绘制 ⇒ 清晰 ✓）
+    pri func _virtTexDens(): float {
+        int i = _virtIndex(getID())
+        if i < 0 { return 1.0 }
+        float d = _densOfWid(_virtParentOf(i))
+        if d < 1.0 { return 1.0 }
+        return d
+    }
+
+    pri func _virtEnsureTex(Renderer ren) {
+        int i = _virtIndex(getID())
+        if i < 0 or ren == null { return }
+        float td = _virtTexDens()
+        int tw = maths.roundi(_float(virtLW) * td)
+        int th = maths.roundi(_float(virtLH) * td)
+        if tw < 1 { tw = 1 }
+        if th < 1 { th = 1 }
+        Ptr[u8] old = _virtTexOf(i)
+        if old != null and _virtTexW == tw and _virtTexH == th { return }
+        if old != null { _lib.SDL_DestroyTexture(old) }
+        _virtTexW = tw; _virtTexH = th
+        // ACCESS_TARGET = 2（同 SSAA 的用法）；线性缩放 ⇒ 缩到手机宽度时文字不发块 ✓
+        Ptr[u8] t = ren.createTexture(core.PIXELFORMAT_RGBA8888, 2, tw, th)
+        if t == null {
+            print("[LenoSDL3] 虚拟子窗口离屏纹理创建失败：" + core.getError() + "\n")
+        } else {
+            _lib.SDL_SetTextureScaleMode(t, core.ScaleMode.LINEAR)
+        }
+        _virtSetTex(i, t)
+    }
+
+    pri func _virtResizeTex() {
+        int i = _virtIndex(getID())
+        if i < 0 { return }
+        _virtEnsureTex(_runRens[i])
+    }
+
+    pri func _virtDropTex() {
+        int i = _virtIndex(getID())
+        if i < 0 { return }
+        Ptr[u8] t = _virtTexOf(i)
+        if t != null { _lib.SDL_DestroyTexture(t); _virtSetTex(i, null) }
+    }
+
+    // ==================== 控件树绘制（2026-11-21 从 run() 抽出）====================
+    // 为什么抽出来：虚拟子窗口要复用**同一套**绘制顺序（根 → 控件按 z → 弹层 → toast/tip → 叠加层）。
+    // 复制一份必然漂移（弹层/焦点环/toast 以后还会加东西），所以只能抽 ☑
+    //   opac：控件级不透明度数组（主循环传 self.widgetOpac，行为与抽取前逐字一致 ✓）
+    //   ⚠ 虚拟子窗口传空数组 ⇒ 弹窗里 `set_widget_opacity` 暂不生效（该特性极少用，先如实标注 ✓）
+    pri func _drawTree(int i, Renderer ren, Array[float] opac) {
+        // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
+        //   ★ 按窗口隔离：设上下文 ⇒ 只清/只登记**本窗口**那一块（别的窗口不受影响 ✓ 见 sdl_core ✓）
+        core.setDispatchWindow(_runWids[i])
+        core.clearPopupCapture()
+        // 先渲染根布局控件（背景层），再渲染 _widgets（按 z 值排序后层叠）
+        var rootWid = _runRoots[i]
+        rootWid?.render(ren)
+        // 自动渲染该窗口的所有控件（z 值小的先画，大的后画；同 z 值保持添加顺序）
+        // ★ 跳过已作为 root 渲染的控件，避免双重渲染导致闪烁
+        //   （如 TabControl 既被 setRoot 又在 _widgets 中，双重渲染时
+        //     第二次的内容区背景覆盖第一次 Table 内容 → 闪一下背景再画 Table）
+        var ws = _runWidgets[i]
+        var wz = _runWidgetZ[i]
+        int wn = ws.len()
+        if wn > 0 {
+            // 构建排序索引（稳定排序：同 z 值保持原始顺序）
+            Array[int] order = []
+            for wn to k { order.add(k) }
+            // 选择排序（控件数量通常 < 50，不需要复杂排序算法）
+            for wn to k {
+                int minIdx = k
+                int j = k + 1
+                while j < wn {
+                    if wz[order[j]] < wz[order[minIdx]] { minIdx = j }
+                    j = j + 1
+                }
+                if minIdx != k {
+                    int tmp = order[k]; order[k] = order[minIdx]; order[minIdx] = tmp
+                }
+            }
+            for wn to k {
+                var w = ws[order[k]]
+                if rootWid != null and w == rootWid { continue }
+                // ★ 2026-10-13：控件级不透明度 —— **只在此处包一层** ✓（控件侧零改动 ✓）
+                //   `op >= 1.0` 是绝大多数控件的路径 ⇒ 不引入任何多余调用 ✓
+                float op = 1.0
+                int oi = order[k]
+                if oi >= 0 and oi < opac.len() { op = opac[oi] }
+                if op >= 1.0 {
+                    w.render(ren)
+                } else {
+                    ren.setAlphaScale(op)
+                    w.render(ren)
+                    ren.setAlphaScale(1.0)      // 必须还原 ⇒ 否则后面所有绘制都跟着淡 ✗
+                }
+                // ★ 2026-10-13：聚焦 ring —— 由**控件自绘**、窗口只叫一下 ✓
+                //   （控件自检 `focused` ⇒ 没聚焦时是空调用 ✓；ring 放在 opacity 之后 ⇒ 环始终清晰 ✓）
+                switch w {
+                    case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox, ComboBox, TabControl, Table, TreeView { w.draw_focus_ring(ren) }
+                }
+            }
+        }
+        // 第二遍：所有展开的下拉框画在最上层（按窗口隔离；含经 panel/tab/布局添加的，由 registerComboBox 兜底）
+        cbb.renderComboBoxes(ren, _runHnds[i])
+        // 第二遍：所有展开的下拉菜单画在最上层
+        var mns = _runMenus[i]
+        for mns to mn { mn.renderPopup(ren) }
+        // ★ 第二遍：TitleBar 的嵌入式 MenuBar 弹层（set_center_menu 嵌入的菜单下拉）
+        var ws2 = _runWidgets[i]
+        for ws2 to w2 {
+            if w2 is TitleBar { TitleBar tb2 = w2; tb2.renderPopup(ren) }
+        }
+        // 第二遍：所有展开的控件内嵌右击上下文菜单（Edit 经 panel.add 添加时未进 _menus，
+        // 在此兜底绘制到最上层，避免被同级控件遮挡）
+        menu.renderContextMenus(ren, _runHnds[i], _runW[i], _runH[i])
+        core.clearDispatchWindow()      // 本窗口的弹层都登记完了 ⇒ 撤上下文 ✓
+        // Toast 浮层（2026-10-30）：在控件与弹层之后、Tooltip 之前。
+        //   tick 是全局状态更新，每帧只需一次（在首个窗口时调用，同 tipTick ✓）
+        if i == 0 { tst.toastTick(_runWids[i]) }
+        tst.toastRender(ren, _runW[i], _runH[i], _runWids[i])
+        // Tooltip 浮层：在所有控件与弹层之后绘制，浮在最上层；不拦截输入
+        if i == 0 { tip.tipTick() }
+        tip.tipRender(ren, _runW[i], _runH[i], _runWids[i])
+        // ★ 2026-11-21：虚拟子窗口合成（**在叠加层之前**）
+        //   为什么放在 overlay 下面：overlay 的契约是"盖住一切"（HUD / 截图钩子），
+        //   把弹窗塞到它上面会让所有现有应用的截图钩子拍不到弹窗（Android 上只能靠截图取证 ✗）。
+        //   代价：HUD 会压在弹窗上 —— 这是刻意的，HUD 是"临时信息"，弹窗是"交互层"，
+        //   真要弹在 HUD 之上，可以在 overlay 回调里自己 `SDL3.isVirtual()` 判断后跳过绘制 ✓
+        _renderVirtChildren(i, ren)
+        // 叠加层：在所有控件/弹层/Tooltip 之上绘制（拖拽浮动框等），present 之前最后一遍
+        var _ovl = _runOverlays[i]
+        if _ovl != null { _ovl(ren) }
+    }
+
+    // ★ 2026-11-21：把本窗口的虚拟子窗口合成上来
+    //   顺序（实测确认）：父控件 → 弹层 → toast/tip → **本函数** → 父窗口 overlay → present
+    //   为什么在 overlay 之后：弹窗是"最上层"，而 overlay 的契约是"盖住一切"（HUD/截图钩子）——
+    //   两者冲突时以**弹窗**为准（点不到的 HUD 等于不存在），截图钩子因此也能截到弹窗 ✓
+    pri func _renderVirtChildren(int pi, Renderer ren) {
+        int pw = _runW[pi]; int ph = _runH[pi]
+        if pw <= 0 or ph <= 0 { return }
+        bool _anyV = false
+        for _runWids.len() to j {
+            if not _virtOn(j) { continue }
+            if _virtParentOf(j) != _runWids[pi] { continue }
+            int dw = _runW[j]; int dh = _runH[j]
+            if dw <= 0 or dh <= 0 { continue }
+            // 等比缩到父窗口客户区（留 16px 边），**只缩不放**：桌面尺寸的弹窗在手机上整屏可见
+            float m = 16.0
+            float sx = (_float(pw) - 2.0 * m) / _float(dw)
+            float sy = (_float(ph) - 2.0 * m) / _float(dh)
+            float s = maths.min(1.0, maths.min(sx, sy))
+            if s < 0.25 { s = 0.25 }        // 兜底：极小屏也别缩成一条缝
+            float dx = (_float(pw) - _float(dw) * s) * 0.5
+            float dy = (_float(ph) - _float(dh) * s) * 0.5
+            _runVX[j] = dx; _runVY[j] = dy; _runVS[j] = s
+            Ptr[u8] tex = _virtTexOf(j)
+            if tex == null { continue }
+            // ① 画进自己的离屏纹理：坐标是**子窗口自己的 0,0**（控件树零改动 ⇒ 桌面布局原样可用）
+            //   ★ 密度：纹理按物理像素建（见 `_virtEnsureTex`）⇒ 这里必须按同一个倍率缩放，
+            //     否则子窗口只会画到纹理左上角 1/d 的区域（实测：Android 上弹窗内容缩在一角）
+            float _td = _densOfWid(_virtParentOf(j))
+            if _td < 1.0 { _td = 1.0 }
+            ren.setRenderTarget(tex)
+            // 注：`setRenderTarget` 已把缩放缓存同步成 SDL 的实际值（1.0）⇒ 这一行会真正下发 ✓
+            ren.setScale(_td, _td)
+            Theme th = theme.getTheme()
+            ren.setColor(th.bg)
+            ren.fillRect(0, 0, _float(dw), _float(dh))
+            try {
+                _runRends[j](ren)
+            } catch e {
+                print("[错误] 虚拟子窗口渲染异常: " + e)
+            }
+            _drawTree(j, ren, [])
+            // ② 回到父窗口的渲染目标
+            //   ⚠ 必须先显式 `setRenderTarget(null)`：`beginFrame()` 只在开了 SSAA 时才设目标，
+            //     否则它是空操作 —— 那就会把后面的遮罩/贴图**继续画进弹窗纹理**里（实测：整块不显示 ✗）
+            ren.setRenderTarget(null)
+            ren.setScale(1.0, 1.0)
+            ren.beginFrame()        // 开了 SSAA ⇒ 切回它的离屏纹理 + 缩放（逻辑坐标不变 ✓）
+            // ③ 模态遮罩 + 阴影 + 等比贴图
+            if _isModal() and _modalTop() == _runWids[j] {
+                ren.setColorFloat(0.0, 0.0, 0.0, 0.6)
+                ren.fillRect(0, 0, _float(pw), _float(ph))
+            }
+            // 投影：弹窗底色常与主窗口同色（同一个 theme）⇒ 没有阴影就看不出"这是一块弹窗"（实测 ✓）
+            ren.setColorFloat(0.0, 0.0, 0.0, 0.45)
+            ren.fillRect(dx + 3.0, dy + 4.0, _float(dw) * s, _float(dh) * s)
+            ren.drawTextureAt(tex, dx, dy, _float(dw) * s, _float(dh) * s)
+            // 1px 描边：暗色主题下也能看出边界
+            ren.setColorFloat(1.0, 1.0, 1.0, 0.12)
+            ren.drawRect(dx - 0.5, dy - 0.5, _float(dw) * s + 1.0, _float(dh) * s + 1.0)
+            _runVDrawn[j] = _runVDrawn[j] + 1
+            core.dropWindowRedraw(_runWids[j])
+            _anyV = true
+        }
+        if _anyV { core.setDispatchWindow(_runWids[pi]) }   // 合成时改过派发上下文 ⇒ 还原
     }
 
     // 运行主循环（回调模式，支持多窗口）
@@ -1711,8 +2292,17 @@ export struct Window {
         //   正常情况下此处尺寸应与 registerOnly 时一致。此检测作为安全网，防止极端时序下
         //   registerOnly 到 run() 之间窗口尺寸再次变化（如用户快速操作）。
         for _runWids.len() to i {
+            if _virtOn(i) { continue }     // 虚拟子窗口：句柄是父窗口的 ⇒ 取它的尺寸会把弹窗布局撑成主窗口 ✗
             SDL_Point pt = SDL_Point.malloc()
             _lib.SDL_GetWindowSize(_runHnds[i], &pt.x, &pt.y)
+            // ★ 密度：Android 上这里给的是物理像素 ⇒ 立刻换成逻辑像素（下游全部按逻辑使用 ✓）
+            float _ds1 = if i < _runDens.len() then _runDens[i] else 1.0
+            if _ds1 > 1.0 {
+                pt.x = maths.roundi(_float(pt.x) / _ds1)
+                pt.y = maths.roundi(_float(pt.y) / _ds1)
+                if pt.x < 1 { pt.x = 1 }
+                if pt.y < 1 { pt.y = 1 }
+            }
             if pt.x != _runW[i] or pt.y != _runH[i] {
                 _runRens[i].resizeSSAA(pt.x, pt.y)
                 _runW[i] = pt.x; _runH[i] = pt.y
@@ -1887,7 +2477,11 @@ export struct Window {
             //   为什么补睡安全：这里 `ev.has=false`（没有事件），SDL 的等待本来就会被新事件唤醒；
             //   补睡只是把"下一帧"推到节流窗口末端 —— 那本来就是它该出帧的时刻 ✓
             if not ev.has and _benchFrames <= 0 {
-                if _needRedraw and not _inputEvent {
+                if _backgrounded {
+                    // ★ 2026-11-21：后台不按帧率醒来（否则手机上是 60 次/秒的空转 ⇒ 实打实掉电）。
+                    //   100ms 一拍只为兜住"前台事件丢了"这种异常；正常情况事件一到立刻醒 ✓
+                    core.delay(100)
+                } else if _needRedraw and not _inputEvent {
                     int _remMs = _throttleMs - (core.getTicks() - _lastRenderTicks)
                     if _remMs > 1 { core.delay(_remMs - 1) }
                 } else if not _needRedraw and _wakeWait < 5 {
@@ -1911,19 +2505,49 @@ export struct Window {
             int _profEv0 = core.getPerfCounter()
             while ev.has {
                 if _trOn { _trEvs = _trEvs + 1 }
+                // ★ 2026-11-21：每个事件开头清"取消/返回键已消费"标记（见 sdl_event 的说明）——
+                //   只在**同一个事件**内有效，绝不跨事件残留 ✓
+                event.clearDismissHandled()
                 // 鼠标移动(motion)不强制整窗重绘：光标为 OS 级、hover 变化已由控件
                 // markFrameRedraw() 请求重绘；否则每次移动都触发全窗清屏+全控件重绘，
                 // 偶发呈现异常会让控件（如表）整块露出背景而“闪一下”。
                 // 滚轮/点击/resize/键盘等非 motion 事件仍强制重绘。
                 if not ev.isMouseMotion() { _inputEvent = true }   // wid 还没取（下面 1798 才取）⇒ 那里再记归属
+
+                // ★★ 2026-11-21：**Android 生命周期 / GPU 上下文重置**（桌面永不出现 ⇒ 零影响）
+                //   ① 切后台 ⇒ 停止出帧（surface 已销毁，present 无意义且白烧电）
+                //   ② 回前台 ⇒ 强画一帧（后台期间画面/动画都停在旧状态，不重画就是"回来一片残影"✗）
+                //   ③ 渲染设备重置 ⇒ 离屏纹理句柄全部失效，必须**重建**而不是只重画
+                //   ⚠ 一律 `ev.poll(); continue`：这些事件没有 windowID，掉进下面的普通派发
+                //     只会被当成"未知事件"白跑一遍控件树（还会把 wid 记成 0 ⇒ 全脏帧 ✓）
+                if ev.isEnteredBackground() {
+                    _backgrounded = true
+                    ev.poll(); continue
+                }
+                if ev.isEnteredForeground() {
+                    _backgrounded = false
+                    _needRedraw = true
+                    _pendingFull = true        // 强制一次全窗口整画（后台期间可能错过了 resize ✓）
+                    core.markFrameRedraw()
+                    ev.poll(); continue
+                }
+                if ev.isRenderDeviceReset() {
+                    _resetOffscreen()
+                    _needRedraw = true
+                    _pendingFull = true
+                    ev.poll(); continue
+                }
+                // 渲染目标内容被清空：纹理**还在**，只需重画（不必重建 ⇒ 别调 _resetOffscreen 白重建一轮）
+                if ev.isRenderTargetsReset() {
+                    _needRedraw = true
+                    _pendingFull = true
+                    ev.poll(); continue
+                }
+
                 if ev.isQuit() {
                     for _runWids.len() to i {
                         // 根销毁：退出前先释放所有控件资源（字体等），沿父子树递归清理
-                        var ws = _runWidgets[i]
-                        if ws != null { for ws to w { w.dispose() } }
-                        _runRens[i].destroy()
-                        _lib.SDL_DestroyWindow(_runHnds[i])
-                        _windowCount -= 1
+                        _destroyEntry(i)
                     }
                     ev.uninit()
                     if _windowCount <= 0 { core.quit() }
@@ -1931,6 +2555,24 @@ export struct Window {
                     return true          // 本调用真的跑完了整个循环 ✓
                 }
                 int wid = ev.windowID()
+                // ★ 2026-11-21：**虚拟子窗口的事件改投**（它没有 OS 窗口 ⇒ SDL 事件带的是父窗口 ID）
+                //   ① 命中哪个子窗口 → 把 wid 换成它的合成 ID（模态时 = 栈顶那个，语义自动正确 ✓）
+                //   ② 坐标换成**子窗口自己的局部坐标**（-= 记录左上角，/= 缩放）⇒ 控件命中判断零改动 ✓
+                //   ★ 密度：SDL 给的事件坐标是**物理像素** ⇒ 先除密度变成父窗口的逻辑坐标
+                //     （桌面 _dens=1.0 ⇒ `(v-0)/1` 恒等，行为零变化 ✓）
+                float _pd = _densOfWid(wid)
+                event.setGeometryOffset(0.0, 0.0, _pd)
+                int _vwHit = _virtHitTarget(wid, ev)
+                if _vwHit > 0 {
+                    int _vj = _virtIndex(_vwHit)
+                    if _vj >= 0 {
+                        // 合成偏移/缩放都是**逻辑坐标** ⇒ 反解要带上密度：
+                        //   子局部 = (物理px/密度 - x) / s = (px - x*密度) / (s*密度) ✓
+                        event.setGeometryOffset(
+                            _virtXOf(_vj) * _pd, _virtYOf(_vj) * _pd, _virtSOf(_vj) * _pd)
+                        wid = _vwHit
+                    }
+                }
                 // ★ 2026-11-17：非 motion 事件 ⇒ 记"需要重绘"，并把**归属窗口**记下来
                 //   （原来只置 `_hadEvent`，渲染时一律 `_fullFrame = true` ⇒ 一个窗口的点击
                 //    会把所有窗口整窗重画，浮窗/对话框跟着白烧 CPU ✗）
@@ -1997,13 +2639,7 @@ export struct Window {
                                 tip.tipClear()
                             }
                             // 根销毁：关闭窗口前先释放所有控件资源（字体等），沿父子树递归清理
-                            var ws = _runWidgets[i]
-                            if ws != null { for ws to w { w.dispose() } }
-                            var rt = _runRoots[i]
-                            rt?.dispose()
-                            _runRens[i].destroy()
-                            _lib.SDL_DestroyWindow(_runHnds[i])
-                            _windowCount -= 1
+                            _destroyEntry(i)
                             core.dropPopupCaptures(_runWids[i])   // 窗口没了 ⇒ 它那块弹层捕获区也清掉 ✓
                             _dropOverlayState(_runWids[i])        // 浮层/点外部状态同样是按窗口的 ✓
                             // ★ 2026-11-08：窗口自己的定时器一并注销（必须在 remove 之前取 wid）
@@ -2015,6 +2651,10 @@ export struct Window {
                             _runCtxBar.remove(i); _runCtxIdx.remove(i)
                             _runDialogHidden.remove(i); _runTransparent.remove(i)
                             _runOverlays.remove(i)
+                            // ★ 虚拟子窗口状态（必须与 _runWids 对齐 ✓）
+                            _runVOn.remove(i); _runVParent.remove(i); _runVTexD.remove(i)
+                            _runVX.remove(i); _runVY.remove(i); _runVS.remove(i); _runVDrawn.remove(i)
+                            _runDens.remove(i)          // ★ 密度表必须同步移除（否则下标整体错位 ✗）
                             _runShortcuts.remove(i); _runShortcutGuards.remove(i)
                             // ★ 2026-11-18：窗口级动画限速的两张表也要跟着删（下标必须对齐）
                             if i < _winGap.len() { _winGap.remove(i) }
@@ -2121,6 +2761,25 @@ export struct Window {
                     }
                 }
                 core.clearDispatchWindow()      // 派发上下文用完即撤（回到"无窗口"态 ✓）
+
+                // ★★ 2026-11-21：Android 返回键的**分层返回**兜底。
+                //   上面那一整段派发里，凡是真关掉了东西的控件都会调 `ev.consumeDismiss()`
+                //   （下拉框 / 菜单 / 弹出菜单 / 表格编辑 / 模态对话框）⇒ 到这里标记为真，
+                //   说明这个键已经被**最上层**用掉了，直接结束，不许再往上关 ✗
+                //   没人用掉才往上升一层，顺序按 Android 惯例：
+                //     ① 还有虚拟子窗口（非模态弹窗，如设置/关于）⇒ 关最上层那个
+                //     ② 否则 ⇒ 请求关闭本窗口（与 requestClose 同一条路 ⇒ "关闭到托盘"照样生效 ✓）
+                //   ⚠ 只在 isBackKey() 时执行：桌面 ESC 不走这里（ESC 在桌面的语义是"取消当前控件"，
+                //     按一下 ESC 就把窗口关掉是灾难 ✗）
+                if ev.isBackKey() and not event.dismissHandled() {
+                    int _bkTop = _virtTopOf(wid)
+                    if _bkTop > 0 {
+                        _postClose(_bkTop)          // 关弹窗：下一轮 poll 走正常关闭流程（含栈弹出/焦点恢复 ✓）
+                    } else {
+                        _postClose(wid)
+                    }
+                }
+
                 // 窗口缩放：重建 SSAA 离屏纹理 + 更新逻辑尺寸 + 驱动根布局跟随
                 // ★ 不在此处理 WINDOW_MAXIMIZED/WINDOW_RESTORED 事件：这些事件触发时窗口可能尚在
                 //   动画过程中，SDL_GetWindowSize 返回的是最终尺寸而非当前实际尺寸，此时重建 SSAA
@@ -2131,6 +2790,14 @@ export struct Window {
                         if _runWids[k] == wid {
                             SDL_Point pt = SDL_Point.malloc()
                             _lib.SDL_GetWindowSize(_runHnds[k], &pt.x, &pt.y)
+                            // ★ 密度：物理像素 → 逻辑像素（下游 resizeSSAA/布局/夹紧全按逻辑 ✓）
+                            float _ds2 = if k < _runDens.len() then _runDens[k] else 1.0
+                            if _ds2 > 1.0 {
+                                pt.x = maths.roundi(_float(pt.x) / _ds2)
+                                pt.y = maths.roundi(_float(pt.y) / _ds2)
+                                if pt.x < 1 { pt.x = 1 }
+                                if pt.y < 1 { pt.y = 1 }
+                            }
                             _runRens[k].resizeSSAA(pt.x, pt.y)
                             // ★ 更新逻辑尺寸（背景填充 + Tooltip 夹紧依赖此值）
                             _runW[k] = pt.x; _runH[k] = pt.y
@@ -2190,17 +2857,16 @@ export struct Window {
             if _exitRequested {
                 _exitRequested = false
                 for _runWids.len() to _qi {
-                    var _qws = _runWidgets[_qi]
-                    if _qws != null { for _qws to _qw { _qw.dispose() } }
-                    _runRens[_qi].destroy()
-                    _lib.SDL_DestroyWindow(_runHnds[_qi])
-                    _windowCount -= 1
+                    _destroyEntry(_qi)
                 }
                 // 清空注册表：窗口都已销毁 ⇒ 不能留下失效句柄（run() 返回后应用可能再次 run() ✓）
                 _runWids = []; _runHnds = []; _runRens = []; _runEvts = []; _runRends = []
                 _runWidgets = []; _runWidgetZ = []; _runMenus = []; _runCtxBar = []; _runCtxIdx = []
                 _runRoots = []; _runRootX = []; _runRootY = []; _runW = []; _runH = []
                 _runDialogHidden = []; _runTransparent = []; _runOverlays = []
+                _runVOn = []; _runVParent = []; _runVTexD = []          // ★ 虚拟子窗口状态
+                _runVX = []; _runVY = []; _runVS = []; _runVDrawn = []   //（与 _runWids 同生共死 ✓）
+                _runDens = []                                              // ★ 密度表（同上 ✓）
                 _runShortcuts = []; _runShortcutGuards = []
                 _winGap = []; _lastDrawAt = []     // ★ 窗口级动画限速表（2026-11-18）
                 // 浮层/点外部状态也归零（否则下次 run() 会带着上一次窗口的矩形 ✓）
@@ -2256,7 +2922,9 @@ export struct Window {
             if _needRedraw and not _fullFrame and not core.hasWindowRedraw() {
                 _fullFrame = true
             }
-            if _needRedraw {
+            // ★ 2026-11-21：后台时**不出帧**（Android surface 已销毁）。
+            //   `_needRedraw` 保留不清 ⇒ 回前台那一拍自然会画（不必额外再置一次 ✓）
+            if _needRedraw and not _backgrounded {
                 int now = core.getTicks()
                 // ★ 输入类事件（滚轮/点击/键盘/resize）**不等节流**，立刻出一帧：
                 //   节流本来是为了压制动画/motion 的 CPU 占用，但把它套在用户输入上，
@@ -2279,8 +2947,17 @@ export struct Window {
                     if _sizeSyncRemaining > 0 {
                         _sizeSyncRemaining = _sizeSyncRemaining - 1
                         for _runWids.len() to fi {
+                            if _virtOn(fi) { continue }   // 同上：虚拟子窗口尺寸与父窗口无关 ✓
                             SDL_Point fpt = SDL_Point.malloc()
                             _lib.SDL_GetWindowSize(_runHnds[fi], &fpt.x, &fpt.y)
+                            // ★ 密度：物理像素 → 逻辑像素（与上面两处同规则 ✓）
+                            float _ds3 = if fi < _runDens.len() then _runDens[fi] else 1.0
+                            if _ds3 > 1.0 {
+                                fpt.x = maths.roundi(_float(fpt.x) / _ds3)
+                                fpt.y = maths.roundi(_float(fpt.y) / _ds3)
+                                if fpt.x < 1 { fpt.x = 1 }
+                                if fpt.y < 1 { fpt.y = 1 }
+                            }
                             if fpt.x != _runW[fi] or fpt.y != _runH[fi] {
                                 _runRens[fi].resizeSSAA(fpt.x, fpt.y)
                                 _runW[fi] = fpt.x; _runH[fi] = fpt.y
@@ -2307,14 +2984,25 @@ export struct Window {
                     }
                     int _gapWaitMs = 0
                     for _runWids.len() to i {
+                    // ★ 2026-11-21：虚拟子窗口**不自己出帧** —— 它没有窗口可 present，
+                    //   由父窗口那一帧在 `_renderVirtChildren` 里合成（顺序也要靠这个保证 ✓）
+                    if _virtOn(i) { continue }
                     // ★ 2026-11-17（F4）：这一帧只有"某个窗口欠一帧"时，其余窗口**整个跳过**
                     //   （不清屏、不 relayout、不 present）—— 浮窗的 20fps 不再拖着主窗口重绘。
                     //   `_fullFrame` 为真时照旧全画：事件、全局 requestRedraw、toast/tooltip、
                     //   尺寸同步这些路径都可能是"任何窗口都受影响"的 ✓
                     if not _fullFrame {
+                        // ★ 2026-11-21：**虚拟子窗口欠帧 ⇒ 父窗口这一帧也要画**
+                        //   （子窗口没有自己的 present；它只在父窗口的帧里合成 ⇒ 不把欠帧传上来
+                        //     就会出现"弹窗内部该刷新但画面不动"✗）
+                        bool _virtDirty = false
+                        for _runWids.len() to cj {
+                            if _virtOn(cj) and _virtParentOf(cj) == _runWids[i]
+                                and core.hasWindowRedrawFor(_runWids[cj]) { _virtDirty = true }
+                        }
                         // ★ 2026-11-18：先**看**请求、再判窗口级最小间隔、真画了才消费 ✓
                         //   （原来直接 takeWindowRedraw ⇒ 被节流挡下时请求已经没了，整页 60fps）
-                        if not core.hasWindowRedrawFor(_runWids[i]) { continue }
+                        if not core.hasWindowRedrawFor(_runWids[i]) and not _virtDirty { continue }
                         while _winGap.len() <= i { _winGap.add(0) }
                         while _lastDrawAt.len() <= i { _lastDrawAt.add(0) }
                         int _gapMs = _winGap[i]
@@ -2359,23 +3047,13 @@ export struct Window {
                         print("[错误] 渲染异常: " + e)
                         // 异常导致事件循环中断，手动执行清理（与 isQuit 路径一致）
                         for _runWids.len() to j {
-                            var ws = _runWidgets[j]
-                            if ws != null { for ws to w { w.dispose() } }
-                            _runRens[j].destroy()
-                            _lib.SDL_DestroyWindow(_runHnds[j])
-                            _windowCount -= 1
+                            _destroyEntry(j)
                         }
                         ev.uninit()
                         if _windowCount <= 0 { core.quit() }
                         _runLoopActive = false
                         return true          // 全部窗口销毁，循环结束 ✓
                     }
-                    // 弹层捕获区：每帧渲染前清空，由展开的下拉框在 renderPopup 里重新登记
-                    //   ★ 按窗口隔离：设上下文 ⇒ 只清/只登记**本窗口**那一块（别的窗口不受影响 ✓ 见 sdl_core ✓）
-                    core.setDispatchWindow(_runWids[i])
-                    core.clearPopupCapture()
-                    // 先渲染根布局控件（背景层），再渲染 _widgets（按 z 值排序后层叠）
-                    var rootWid = _runRoots[i]
                     // [诊断] 应用自己的 render 回调（背景/自绘叠加层）耗时
                     if _benchFrames > 0 {
                         _profCbUs = _profCbUs + _int(_float(core.getPerfCounter() - _profC0) * 1000000.0
@@ -2383,77 +3061,8 @@ export struct Window {
                     }
                     // [诊断] 本窗口"控件树绘制"耗时（present 之前那段）；基准模式下打印均值
                     int _profT0 = core.getPerfCounter()
-                    rootWid?.render(_runRens[i])
-                    // 自动渲染该窗口的所有控件（z 值小的先画，大的后画；同 z 值保持添加顺序）
-                    // ★ 跳过已作为 root 渲染的控件，避免双重渲染导致闪烁
-                    //   （如 TabControl 既被 setRoot 又在 _widgets 中，双重渲染时
-                    //     第二次的内容区背景覆盖第一次 Table 内容 → 闪一下背景再画 Table）
-                    var ws = _runWidgets[i]
-                    var wz = _runWidgetZ[i]
-                    int wn = ws.len()
-                    if wn > 0 {
-                        // 构建排序索引（稳定排序：同 z 值保持原始顺序）
-                        Array[int] order = []
-                        for wn to k { order.add(k) }
-                        // 选择排序（控件数量通常 < 50，不需要复杂排序算法）
-                        for wn to k {
-                            int minIdx = k
-                            int j = k + 1
-                            while j < wn {
-                                if wz[order[j]] < wz[order[minIdx]] { minIdx = j }
-                                j = j + 1
-                            }
-                            if minIdx != k {
-                                int tmp = order[k]; order[k] = order[minIdx]; order[minIdx] = tmp
-                            }
-                        }
-                        for wn to k {
-                            var w = ws[order[k]]
-                            if rootWid != null and w == rootWid { continue }
-                            // ★ 2026-10-13：控件级不透明度 —— **只在此处包一层** ✓（控件侧零改动 ✓）
-                            //   `op >= 1.0` 是绝大多数控件的路径 ⇒ 不引入任何多余调用 ✓
-                            float op = _opacAt(order[k])
-                            if op >= 1.0 {
-                                w.render(_runRens[i])
-                            } else {
-                                _runRens[i].setAlphaScale(op)
-                                w.render(_runRens[i])
-                                _runRens[i].setAlphaScale(1.0)      // 必须还原 ⇒ 否则后面所有绘制都跟着淡 ✗
-                            }
-                            // ★ 2026-10-13：聚焦 ring —— 由**控件自绘**、窗口只叫一下 ✓
-                            //   （控件自检 `focused` ⇒ 没聚焦时是空调用 ✓；ring 放在 opacity 之后 ⇒ 环始终清晰 ✓）
-                            switch w {
-                                case is Button, CheckBox, RadioButton, Toggle, Slider, ListBox, ComboBox, TabControl, Table, TreeView { w.draw_focus_ring(_runRens[i]) }
-                            }
-                        }
-                    }
-                    // 第二遍：所有展开的下拉框画在最上层（按窗口隔离；含经 panel/tab/布局添加的，由 registerComboBox 兜底）
-                    cbb.renderComboBoxes(_runRens[i], _runHnds[i])
-                    // 第二遍：所有展开的下拉菜单画在最上层
-                    var mns = _runMenus[i]
-                    for mns to mn { mn.renderPopup(_runRens[i]) }
-                    // ★ 第二遍：TitleBar 的嵌入式 MenuBar 弹层（set_center_menu 嵌入的菜单下拉）
-                    var ws2 = _runWidgets[i]
-                    for ws2 to w2 {
-                        if w2 is TitleBar { TitleBar tb2 = w2; tb2.renderPopup(_runRens[i]) }
-                    }
-                    // 第二遍：所有展开的控件内嵌右击上下文菜单（Edit 经 panel.add 添加时未进 _menus，
-                    // 在此兜底绘制到最上层，避免被同级控件遮挡）
-                    menu.renderContextMenus(_runRens[i], _runHnds[i], _runW[i], _runH[i])
-                    core.clearDispatchWindow()      // 本窗口的弹层都登记完了 ⇒ 撤上下文 ✓
-                    // Toast 浮层（2026-10-30）：在控件与弹层之后、Tooltip 之前。
-                    //   为什么在 tooltip 之下：tooltip 指向鼠标、是更"临时"的一层，应该压住 toast ✓
-                    //   不拦截输入（本函数不实现 process），所以不吃点击 ✓
-                    //   tick 是全局状态更新，每帧只需一次（在首个窗口时调用，同 tipTick ✓）
-                    if i == 0 { tst.toastTick(_runWids[i]) }
-                    tst.toastRender(_runRens[i], _runW[i], _runH[i], _runWids[i])
-                    // Tooltip 浮层：在所有控件与弹层之后绘制，浮在最上层；不拦截输入
-                    // tipTick 是全局状态更新，每帧只需调一次（在首个窗口时调用）
-                    if i == 0 { tip.tipTick() }
-                    tip.tipRender(_runRens[i], _runW[i], _runH[i], _runWids[i])
-                    // 叠加层：在所有控件/弹层/Tooltip 之上绘制（拖拽浮动框等），present 之前最后一遍
-                    var _ovl = _runOverlays[i]
-                    if _ovl != null { _ovl(_runRens[i]) }
+                    // 控件树 + 弹层 + toast/tip/叠加层（★ 2026-11-21 抽成方法：虚拟子窗口复用同一套）
+                    _drawTree(i, ren, widgetOpac)
                     // ★ 2026-11-18：收集本帧控件声明的"最小出帧间隔"（见 sdl_core.setFrameGap）
                     //   放在这里（控件都画完）⇒ 下一帧就用它给这个窗口限速 ✓
                     while _winGap.len() <= i { _winGap.add(0) }
@@ -2578,11 +3187,7 @@ export struct Window {
                           + "\n")
                     // 收尾：与 isQuit 路径一致（控件 dispose → 渲染器/窗口销毁 → 事件反初始化）
                     for _runWids.len() to i {
-                        var benWs = _runWidgets[i]
-                        if benWs != null { for benWs to benW { benW.dispose() } }
-                        _runRens[i].destroy()
-                        _lib.SDL_DestroyWindow(_runHnds[i])
-                        _windowCount -= 1
+                        _destroyEntry(i)
                     }
                     ev.uninit()
                     if _windowCount <= 0 { core.quit() }
@@ -2742,6 +3347,15 @@ export func dumpLayout(Widget c) {
 // 创建窗口实例，opts: {title, w, h, flags}
 export func createWindow(Dict opts): Window {
     Window win = new Window(); win.init(opts); return win
+}
+
+// ★ 2026-11-21：创建**虚拟子窗口**（不向 OS 申请窗口；画进离屏纹理，由父窗口合成）
+//   opts 与 createWindow 相同（title/w/h 只作记录），额外要求**主窗口已经注册**（registerOnly/run 之后）。
+export func createVirtualWindow(Dict opts): Window {
+    Window win = new Window()
+    win.virt = true
+    win.init(opts)
+    return win
 }
 
 

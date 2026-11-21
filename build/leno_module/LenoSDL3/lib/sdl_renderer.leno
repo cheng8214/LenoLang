@@ -268,6 +268,10 @@ const BX_TEX    = 4   // 批处理文字纹理
     Ptr[u8] handle; bool ok = false
     // 超采样抗锯齿（SSAA）：整帧渲染到 scale 倍离屏纹理，再以 1x 缩放贴回窗口得到平滑边缘
     pri Ptr[u8] ssaaTex; pri float ssaaScale = 0.0; pri int ssaaWinW = 0; pri int ssaaWinH = 0; pri bool ssaa = false
+    // ★ 2026-11-21：**屏幕密度**（物理像素 / 逻辑像素）。Android 上 SDL 报的是物理像素，
+    //   而框架里所有尺寸/字号都是逻辑像素 ⇒ 靠渲染缩放把逻辑坐标映射到物理像素。
+    //   1.0 = 不缩放（桌面默认，行为与改动前逐字一致 ✓）；2.75 = 常见 Android 屏。
+    pri float dens = 1.0
     // PixelBuffer 复用纹理（懒创建）：blitBuffer 上传用，尺寸匹配时复用
     pri Ptr[u8] pixTex; pri int pixTexW = 0; pri int pixTexH = 0
     // ── 圆角矩形抗锯齿：CPU 预生成「覆盖率蒙版」纹理，GPU 只采样 ✓ ──
@@ -425,7 +429,9 @@ const BX_TEX    = 4   // 批处理文字纹理
     // SSAA 开启时：清的是离屏高分辨率纹理，并把坐标缩放切到 scale
     func clear(): bool {
         flushBatches()
-        if ssaa { setRenderTarget(ssaaTex); setScale(ssaaScale, ssaaScale) }
+        // ★ 密度也要带上：SSAA 纹理是按"逻辑 × ssaaScale × dens"分配的（见 enableSSAA），
+        //   这里只设 ssaaScale 的话，一清屏就会把坐标空间缩回 1/dens ✗
+        if ssaa { setRenderTarget(ssaaTex); setScale(ssaaScale * dens, ssaaScale * dens) }
         return _lib.SDL_RenderClear(handle)
     }
 
@@ -438,7 +444,10 @@ const BX_TEX    = 4   // 批处理文字纹理
         _atlasFlushPending()
         if ssaa {
             setRenderTarget(null)
-            setScale(1.0, 1.0)
+            // ★ 2026-11-21：这里**不能**用 1.0 —— 目标矩形用的是逻辑尺寸（ssaaWinW/H），
+            //   而窗口是物理像素 ⇒ 缩放必须等于密度，否则画面只占左上角 1/dens 的区域
+            //   （Android 2.75x 屏上就是"内容缩在左上角一小块"，实测踩到 ✓）
+            setScale(dens, dens)
             SDL_FRect dst = _tmpRect0()          // 复用临时矩形（每帧省一次 malloc/free）
             dst.x = 0.0; dst.y = 0.0; dst.w = ssaaWinW; dst.h = ssaaWinH
             _lib.SDL_RenderTexture(handle, ssaaTex, null, _tmpR0P)
@@ -450,8 +459,11 @@ const BX_TEX    = 4   // 批处理文字纹理
     // scale 建议 2.0（=4x 像素，兼顾画质与性能）；纹理创建失败则自动回退普通渲染
     func enableSSAA(int winW, int winH, float scale): bool {
         if scale <= 0.0 { return false }
-        int tw = _int(winW * scale)
-        int th = _int(winH * scale)
+        // ★ 2026-11-21：入参 winW/winH 是**逻辑**尺寸，离屏纹理要按**物理**像素分配
+        //   ⇒ 倍率里乘上密度（桌面 dens=1.0 ⇒ 与改动前完全一致 ✓）
+        float f = scale * dens
+        int tw = _int(_float(winW) * f)
+        int th = _int(_float(winH) * f)
         if tw <= 0 or th <= 0 { return false }
         // SDL_TEXTUREACCESS_TARGET = 2
         Ptr[u8] tex = createTexture(core.PIXELFORMAT_RGBA8888, 2, tw, th)
@@ -466,17 +478,31 @@ const BX_TEX    = 4   // 批处理文字纹理
         ssaaWinW = winW; ssaaWinH = winH
         ssaa = true
         setRenderTarget(ssaaTex)
-        setScale(scale, scale)
+        setScale(f, f)
         return true
     }
 
     // 窗口缩放时重建离屏 SSAA 纹理，使其匹配新的逻辑尺寸（否则内容只覆盖旧尺寸区域）
     // 仅 SSAA 开启时有效；非 SSAA（直接绘制到窗口）由 SDL 自动跟随窗口，无需处理
+    // ★ 2026-11-21：**GPU 上下文丢失后重建离屏纹理**（Android 切后台回来 / 驱动重置 /
+    //   发来 SDL_EVENT_RENDER_DEVICE_RESET 时由窗口层调用）。
+    //   与 resizeSSAA 的关键区别：**绝不 SDL_DestroyTexture 旧句柄** —— 设备重置后它已悬空，
+    //   拿它去销毁是未定义行为（实测会崩）。直接丢指针、按记录的逻辑尺寸重新分配 ✓
+    //   无 SSAA 的窗口（只靠 density 缩放的）没有离屏纹理 ⇒ 直接 false，无需任何动作 ✓
+    func rebuildSSAA(): bool {
+        if not ssaa { return false }
+        ssaaTex = null          // 丢指针，不销毁 ✗（见上）
+        ssaa = false            // enableSSAA 成功后会重新置真；失败则保持 false ⇒ 自动降级为直绘 ✓
+        return enableSSAA(ssaaWinW, ssaaWinH, ssaaScale)
+    }
+
     func resizeSSAA(int newW, int newH): bool {
         if not ssaa { return false }
         if newW <= 0 or newH <= 0 { return false }
-        int tw = _int(newW * ssaaScale)
-        int th = _int(newH * ssaaScale)
+        // ★ 同上：newW/newH 是逻辑尺寸 ⇒ 纹理按物理像素（× dens）分配
+        float f = ssaaScale * dens
+        int tw = _int(_float(newW) * f)
+        int th = _int(_float(newH) * f)
         if tw <= 0 or th <= 0 { return false }
         Ptr[u8] tex = createTexture(core.PIXELFORMAT_RGBA8888, 2, tw, th)
         if tex == null { return false }
@@ -485,7 +511,7 @@ const BX_TEX    = 4   // 批处理文字纹理
         ssaaTex = tex
         ssaaWinW = newW; ssaaWinH = newH
         setRenderTarget(ssaaTex)
-        setScale(ssaaScale, ssaaScale)
+        setScale(f, f)
         return true
     }
 
@@ -497,31 +523,55 @@ const BX_TEX    = 4   // 批处理文字纹理
         if ssaa {
             flushBatches()
             setRenderTarget(ssaaTex)
-            setScale(ssaaScale, ssaaScale)
+            setScale(ssaaScale * dens, ssaaScale * dens)
+        } else if dens != 1.0 {
+            flushBatches()
+            setScale(dens, dens)
         }
     }
 
-    // 返回当前 SSAA 倍数（未真正开启/回退为 0.0）；供控件将字体测量与 SSAA 渲染对齐
-    func getSSAA(): float { return if ssaa then ssaaScale else 0.0 }
+    // 设置屏幕密度（逻辑→物理的缩放）。窗口注册时调一次；改完要重新 beginFrame ✓
+    func setDensity(float d) {
+        dens = if d > 0.05 then d else 1.0
+    }
+    func getDensity(): float { return dens }
+
+    // 当前的"逻辑→物理"总倍率（SSAA 与密度相乘）
+    pri func _renderFactor(): float {
+        float f = dens
+        if ssaa and ssaaScale > 0.0 { f = f * ssaaScale }
+        return f
+    }
+
+    // 返回当前渲染倍率（**SSAA 倍率 × 屏幕密度**；两者都为 1 时返回 0.0 = "不放大"）。
+    // 控件用它把字体栅格化到物理分辨率：倍率 3 时 13px 的字按 39px 出图，再缩回逻辑坐标
+    // ⇒ 密度 3 的屏上文字是**清晰的**，而不是把小位图放大 3 倍（发虚）。
+    func getSSAA(): float {
+        float f = _renderFactor()
+        if f <= 1.0001 { return 0.0 }
+        return f
+    }
 
     // 把逻辑坐标吸附到 SSAA 物理整数像素边界（physical = logical*scale 取整），
     // 避免文字/图元在亚像素位置被双线性重采样导致的发虚与滚动抖动；
     // 各互相对齐的偏移量均为整数倍 1/scale，独立吸附后仍严格对齐。
     func snapX(float v): float {
-        if ssaa and ssaaScale > 0.0 {
-            float p = v * ssaaScale
+        float f = _renderFactor()
+        if f > 1.0001 {
+            float p = v * f
             float rp = maths.roundi(p)
             if p < 0.0 { rp = _int(p - 0.5) }
-            return rp / ssaaScale
+            return rp / f
         }
         return v
     }
     func snapY(float v): float {
-        if ssaa and ssaaScale > 0.0 {
-            float p = v * ssaaScale
+        float f = _renderFactor()
+        if f > 1.0001 {
+            float p = v * f
             float rp = maths.roundi(p)
             if p < 0.0 { rp = _int(p - 0.5) }
-            return rp / ssaaScale
+            return rp / f
         }
         return v
     }
@@ -1171,7 +1221,14 @@ const BX_TEX    = 4   // 批处理文字纹理
     // 渲染到纹理（null 恢复渲染到窗口）
     func setRenderTarget(Ptr[u8] texture): bool {
         flushBatches(); bxTarget = texture
-        return _lib.SDL_SetRenderTarget(handle, texture)
+        bool ok = _lib.SDL_SetRenderTarget(handle, texture)
+        // ★ 2026-11-21：**切目标会把 SDL 侧的渲染缩放重置成 1.0**，而 `bxSx/bxSy` 缓存还
+        //   停在旧值 ⇒ 之后 `setScale(旧值)` 命中"值没变就 return"的短路 ⇒ SDL 永远停在 1.0 ✗
+        //   症状（模拟器实测）：Android 上虚拟弹窗的内容只画进纹理左上角 1/dens 的一块，
+        //   周围全黑；桌面因为 dens=1.0 恰好两边都是 1.0，所以从来不会暴露。
+        //   ⇒ 切目标后必须把缓存**诚实地**同步成 SDL 的实际值（不然后面所有 setScale 都是假的）
+        bxSx = 1.0; bxSy = 1.0
+        return ok
     }
 
     // 设置纹理透明度调制（0~255）
@@ -1378,8 +1435,19 @@ const BX_TEX    = 4   // 批处理文字纹理
     // 截取当前渲染画面（便捷重载：直接传入 x, y, w, h）
     func readPixelsAt(int x, int y, int w, int h): Ptr[u8] {
         flushBatches()
+        // ★ 2026-11-21：入参是**逻辑**坐标（与所有其它绘制调用一致），而回读的是当前渲染目标的
+        //   **物理**像素 ⇒ 必须乘上渲染倍率。不乘的话在 Android（2.75x）上截出来的只是左上角
+        //   1/2.75 的一块（实测：截图里只有一个巨大按钮的角 ✗）。
+        //   倍率取 `_renderFactor()`：SSAA 开启时目标是 ssaa 纹理（ssaaScale*dens），否则是窗口（dens）。
+        //   桌面 dens=1.0 且未开 SSAA ⇒ 倍率 1.0，行为与改动前完全一致 ✓
+        float f = _renderFactor()
         SDL_Rect rect = SDL_Rect.malloc()
-        rect.x = x; rect.y = y; rect.w = w; rect.h = h
+        if f <= 1.0001 {
+            rect.x = x; rect.y = y; rect.w = w; rect.h = h
+        } else {
+            rect.x = _int(_float(x) * f); rect.y = _int(_float(y) * f)
+            rect.w = _int(_float(w) * f); rect.h = _int(_float(h) * f)
+        }
         var surface = _lib.SDL_RenderReadPixels(handle, rect.to_ptr())
         rect.free()
         return surface

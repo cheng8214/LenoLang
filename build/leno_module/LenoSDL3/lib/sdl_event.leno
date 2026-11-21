@@ -12,6 +12,46 @@ use core.(sdl3, SDL_Event, SDL_KeyboardEvent, SDL_MouseButtonEvent, SDL_MouseMot
 
 sdl3 _lib = core.lib()
 
+// ==================== 坐标几何偏移（虚拟子窗口）====================
+// ★ 2026-11-21：虚拟子窗口寄生在父窗口里，SDL 给的事件坐标是**父窗口**的。
+//   派发前把坐标减掉子窗口左上角、再除以缩放，就变成子窗口自己的局部坐标
+//   ⇒ 所有控件的命中判断（都走 `ev.mousePos()`）**零改动** ✓
+//   默认 (0,0,1.0) ⇒ 一次三元判断都省掉（不影响普通窗口的每帧开销 ✓）
+var _geoX = 0.0
+var _geoY = 0.0
+var _geoS = 1.0
+
+export func setGeometryOffset(float dx, float dy, float s) {
+    _geoX = dx
+    _geoY = dy
+    _geoS = if s > 0.0001 then s else 1.0
+}
+
+// ★ 「这一台设备的指针就是手指」—— 由窗口在密度>1（Android/iOS 这类）时置位。
+//   桌面恒为 false ⇒ `isTouchLike()` 退化成"只看 SDL 的 which 标记"，桌面行为零变化 ✓
+var _ptrTouch = false
+export func setPointerIsTouch(bool v) { _ptrTouch = v }
+
+// ==================== 返回键的"有人接住了"标记 ====================
+// ★ 2026-11-21：Android 的 back 键要做**分层返回**（先关弹层 → 再关窗口 → 最后退出）。
+//   问题：`onEvent` 返回的是"窗口是否继续开着"，不是"这个键我处理了没有" ⇒
+//   主循环没法知道"ESC 已经被某个下拉框用掉了"，会误判成"没人处理"而接着关窗口 ✗
+//   于是用一个显式标记：真正把东西关掉的控件调用 `ev.consumeDismiss()`。
+//   主循环在派发前清零、派发后读 ⇒ 只在**同一个事件**内有效，无跨事件残留 ✓
+var _dismissHandled = false
+export func clearDismissHandled() { _dismissHandled = false }
+export func dismissHandled(): bool { return _dismissHandled }
+export func markDismissHandled() { _dismissHandled = true }
+
+func _geoMX(float v): float {
+    if _geoX == 0.0 and _geoS == 1.0 { return v }
+    return (v - _geoX) / _geoS
+}
+func _geoMY(float v): float {
+    if _geoY == 0.0 and _geoS == 1.0 { return v }
+    return (v - _geoY) / _geoS
+}
+
 export struct Event {
     Ptr[u8] raw     // SDL_Event 原始内存（128 字节）
     bool has = false    // 上次 poll 是否有事件（显式初值，消 [字段未初始化] 警告）
@@ -86,6 +126,27 @@ export struct Event {
     func isWindowMouseEnter(): bool  { return sdl3_type() == core.EventType.WINDOW_MOUSE_ENTER }
     func isWindowMouseLeave(): bool  { return sdl3_type() == core.EventType.WINDOW_MOUSE_LEAVE }
 
+    // ==================== 应用生命周期 / 渲染设备（Android 为主） ====================
+    //   为什么要有这一组：Android 上切到后台、旋转屏幕、GPU 上下文丢失都是**正常事件**，
+    //   不是异常。原来一条都没有 ⇒ 框架只能靠"看不出区别"的样子继续画（白烧电），
+    //   而 GPU 上下文真的丢了之后离屏纹理全部悬空（SSAA / 虚拟弹窗画不出来）。
+    //
+    //   ⚠ WILL_* 系列按 SDL 文档**必须**在 SDL_AddEventWatch 回调里处理，主循环拿不到；
+    //     所以这里只暴露主循环真能收到的 DID_* 与渲染事件（别提供假的 API ✓）
+
+    func isEnteredBackground(): bool  { return sdl3_type() == core.EventType.DID_ENTER_BACKGROUND }
+    func isEnteredForeground(): bool  { return sdl3_type() == core.EventType.DID_ENTER_FOREGROUND }
+    func isTerminating(): bool        { return sdl3_type() == core.EventType.TERMINATING }
+    func isLowMemory(): bool          { return sdl3_type() == core.EventType.LOW_MEMORY }
+    func isLocaleChanged(): bool      { return sdl3_type() == core.EventType.LOCALE_CHANGED }
+    func isDisplayOrientationChanged(): bool { return sdl3_type() == core.EventType.DISPLAY_ORIENTATION }
+
+    // 渲染目标内容被清空（切前台后常见）：需要重画，但**纹理本身还在** ✓
+    func isRenderTargetsReset(): bool { return sdl3_type() == core.EventType.RENDER_TARGETS_RESET }
+    // 渲染设备重置（GPU 上下文真的丢了）：**所有纹理句柄失效** ⇒ 必须重建，不能只重画 ✗
+    func isRenderDeviceReset(): bool  { return sdl3_type() == core.EventType.RENDER_DEVICE_RESET }
+    func isRenderDeviceLost(): bool   { return sdl3_type() == core.EventType.RENDER_DEVICE_LOST }
+
     // ==================== 键盘事件 ====================
 
     // 是否按键按下/抬起事件
@@ -112,12 +173,54 @@ export struct Event {
         return _lib.SDL_GetModState()
     }
 
+    // ★ 2026-11-21：Android **返回键**（系统返回手势/虚拟键）。
+    //   前置条件：`SDL_ANDROID_TRAP_BACK_BUTTON=1`（已在 core.init 里设 ✓），
+    //   否则 SDL 直接 finish 掉 Activity，这条事件根本不会出现。
+    //   只认按下（抬起也发一条，别重复触发 ✓），并且忽略长按自动重复
+    //   （按住不放连弹三层 = 用户没想这么干 ✗）
+    func isBackKey(): bool {
+        return isKeyDown() and scancode() == core.Scancode.AC_BACK and not keyRepeat()
+    }
+
+    // ★ 「取消/返回上一层」键 = 桌面 ESC **或** Android 返回键。
+    //   下拉框、菜单、弹出菜单、模态对话框原来都判 ESC 关闭；手机上没有 ESC，
+    //   用这个谓词一次性覆盖两端（桌面行为不变：AC_BACK 在桌面不可能出现 ✓）
+    func isDismissKey(): bool {
+        if not isKeyDown() or keyRepeat() { return false }
+        int sc = scancode()
+        return sc == core.Scancode.ESCAPE or sc == core.Scancode.AC_BACK
+    }
+
+    // 声明"这个返回/取消键已经被我用掉了"（真的关掉了某个东西才调 ✓）
+    //   ⇒ 主循环据此决定还要不要继续往上：关弹层 → 关虚拟窗口 → 关主窗口
+    //   ⚠ 走 export 函数而不是直接 `_dismissHandled = true`：struct 方法里写模块级 var
+    //     会让编译器在**某些 import 组合**下崩（0xC0000005，实测 app_text/app_widget 触发）
+    func consumeDismiss() { markDismissHandled() }
+
     // ==================== 鼠标事件 ====================
 
     func isMouseMotion(): bool     { return sdl3_type() == core.EventType.MOUSE_MOTION }
     func isMouseButtonDown(): bool { return sdl3_type() == core.EventType.MOUSE_BUTTON_DOWN }
     func isMouseButtonUp(): bool   { return sdl3_type() == core.EventType.MOUSE_BUTTON_UP }
     func isMouseWheel(): bool      { return sdl3_type() == core.EventType.MOUSE_WHEEL }
+
+    // ★ 2026-11-21：这个指针事件是不是**手指**（触摸合成出来的鼠标事件）。
+    //   为什么要：手机上没有滚轮、也抓不住 10px 宽的滚动条 ⇒ 列表/表格唯一的滚动手势是
+    //   "按住内容往上拖"。但桌面**不能**这么做 —— 鼠标左键拖动在桌面已有语义（选文字/拖选行），
+    //   所以"拖动滚动"只对手指开放 ✓
+    //   判定依据：SDL 把触摸合成成鼠标事件时把 `which` 设成 SDL_TOUCH_MOUSEID = 0xFFFFFFFF
+    //   （motion / button 两个结构里 `which` 都在偏移 20 ⇒ 可共用 ✓）
+    //   ★ 兜底：某些驱动/移植层不给这个标记 ⇒ `_ptrTouch`（由窗口按"密度>1 = 移动平台"置位）
+    //     为真时一律当手指。桌面（密度 1.0）恒为假 ⇒ 行为与改动前完全一致 ✓
+    func isTouchLike(): bool {
+        int t = sdl3_type()
+        if t != core.EventType.MOUSE_BUTTON_DOWN
+            and t != core.EventType.MOUSE_BUTTON_UP
+            and t != core.EventType.MOUSE_MOTION { return false }
+        if _ptrTouch { return true }
+        if t == core.EventType.MOUSE_MOTION { return ev().motion.which == 0xFFFFFFFF }
+        return ev().button.which == 0xFFFFFFFF
+    }
 
     // 鼠标位置（相对于窗口，浮点精度）
     // ★ 2026-11-14 修（Aria 实测反哺）：**滚轮事件的结构与鼠标移动不同** ——
@@ -130,7 +233,9 @@ export struct Event {
         var e = ev()
         int t = sdl3_type()
         if t == core.EventType.MOUSE_WHEEL {
-            return e.wheel.mouse_x, e.wheel.mouse_y
+            float wx = e.wheel.mouse_x
+            float wy = e.wheel.mouse_y
+            return _geoMX(wx), _geoMY(wy)
         }
         // ★ 2026-11-14：**没有鼠标坐标字段的事件**（键盘 / 文本 / 窗口 / 拖放…）
         //   `motion.x/y` 那个偏移是别的字段（KEY 事件是 scancode 区）⇒ 回退到"当前真实鼠标位置"。
@@ -141,10 +246,12 @@ export struct Event {
             and t != core.EventType.MOUSE_BUTTON_UP {
             // 解包再拼回去：跨模块直接 `return 别处的 [float,float]` 会被判"返回类型不匹配"（实测 ✓）
             var[float, float](cx, cy) = core.currentMousePos()
-            return cx, cy
+            return _geoMX(cx), _geoMY(cy)
         }
         // motion 与 button 的 x/y 偏移一致（button 靠 padding 顶到同一位置）⇒ 共用 ✓
-        return e.motion.x, e.motion.y
+        float mx = e.motion.x
+        float my = e.motion.y
+        return _geoMX(mx), _geoMY(my)
     }
 
     // 鼠标相对移动量（自上一帧的增量）
@@ -174,10 +281,10 @@ export struct Event {
     // 滚轮事件发生时的鼠标坐标（注意：滚轮事件的结构与鼠标移动不同，
     // 必须用 SDL_MouseWheelEvent.mouse_x / mouse_y，不能用 mouseX()/mouseY()）
     func wheelMouseX(): float {
-        return ev().wheel.mouse_x
+        return _geoMX(ev().wheel.mouse_x)
     }
     func wheelMouseY(): float {
-        return ev().wheel.mouse_y
+        return _geoMY(ev().wheel.mouse_y)
     }
     // ==================== 文本输入 ====================
     // 注意：必须先调用 SDL_StartTextInput() 启用文本输入，否则不会收到此事件

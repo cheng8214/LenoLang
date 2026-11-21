@@ -1,0 +1,138 @@
+// test_virtual_window.leno —— 虚拟子窗口（不建 OS 窗口的弹窗）回归
+//
+// 背景（2026-11-21）：Android 上一个 Activity 只有一个顶层窗口，`SDL_CreateWindow`
+//   拿不到第二个可显示的窗口 ⇒ 弹窗静默不出现。框架侧的解法是"虚拟子窗口"：
+//   子窗口有自己的控件树/事件/模态状态，但渲染目标是自己的离屏纹理，
+//   由父窗口在客户区里等比合成。桌面端可以显式用同一个机制（本测试就是这么跑的）。
+//
+// 本测试验证四件事（全部是**行为断言**，不依赖像素回读 —— dummy 驱动读不回来）：
+//   ① 建出来的窗口是虚拟的，`getSize()` 返回**自己的**逻辑尺寸（不是主窗口的）
+//   ② 点在弹窗内 ⇒ 事件改投给弹窗，坐标被换算成弹窗局部坐标（按钮回调被触发）
+//   ③ 非模态时，点在弹窗外 ⇒ 主窗口照常收到（不被弹窗吞掉）
+//   ④ 模态时，点在弹窗外 ⇒ 主窗口**收不到**（模态挡住下层）
+//   另外存一张 PNG（tmp_vwin.png）供人眼确认"弹窗真的合成在主窗口里"。
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_virtual_window.leno
+//   （要真实窗口驱动：本测试会截一张 PNG。无显示环境可设 SDL_VIDEODRIVER=dummy，
+//     此时截图那一步会失败但行为断言仍然有效 ✓）
+import "SDL3" as SDL3
+use SDL3.(Event, Renderer, Window, Button)
+
+int gFail = 0
+int gFrame = 0
+int gMainClicks = 0
+int gDlgClicks = 0
+bool gPhase2 = false
+Window? gDlg = null
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+// 建一个弹窗：420×300，根 VBox 里一颗按钮（左上 16,16，160×40 ⇒ 中心 96,36）
+func buildDialog(bool modal) {
+    var dlg = SDL3.createVirtualWindow({title: "弹窗", w: 420, h: 300})
+    var root = SDL3.createVBox({x: 0, y: 0, w: 420, h: 300, pad_x: 16, pad_y: 16, spacing: 8})
+    Button b = SDL3.createButton({w: 160, h: 40, text: "弹窗按钮"})
+    b.on_click(func() { gDlgClicks = gDlgClicks + 1; SDL3.markFrameRedraw() })
+    root.add(b, {grow: 0, shrink: 0, align: 0})
+    dlg.setRootAt(root, 0, 0)
+    gDlg = dlg
+    if modal {
+        var nrc = SDL3.runModal(dlg,
+            func(Event ev): bool { return not ev.isWindowClose() },
+            func(Renderer r) {})
+        if not nrc { }        // 主循环已在跑 ⇒ 立即返回，正常
+    } else {
+        dlg.run(func(Event ev): bool { return not ev.isWindowClose() }, func(Renderer r) {})
+    }
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "virtual-window test", w: 900, h: 600})
+    if not win.ok {
+        print("[FAIL] 建主窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var root = SDL3.createVBox({x: 0, y: 0, w: 900, h: 600, pad_x: 20, pad_y: 20, spacing: 10})
+    Button mb = SDL3.createButton({w: 200, h: 40, text: "主按钮"})
+    mb.on_click(func() { gMainClicks = gMainClicks + 1; SDL3.markFrameRedraw() })
+    root.add(mb, {grow: 0, shrink: 0, align: 0})
+    win.setRoot(root)
+
+    win.setOverlay(func(Renderer r) {
+        gFrame = gFrame + 1
+        // ---- 第 2 帧：建非模态虚拟弹窗 ----
+        if gFrame == 2 {
+            buildDialog(false)
+            var dw = gDlg?.getSize()
+            check(dw != null and dw.w == 420 and dw.h == 300, "虚拟窗口 getSize() 返回自己的逻辑尺寸")
+            if gDlg != null { check(SDL3.isVirtual(gDlg.getID()), "isVirtual(id) 为真") }
+        }
+        // ---- 第 4 帧：截图（弹窗应已合成进来）----
+        if gFrame == 4 {
+            var sz = win.getSize()
+            var shot = r.readPixelsAt(0, 0, sz.w, sz.h)
+            bool okShot = false
+            if shot != null { okShot = SDL3.saveImagePNG(shot, "D:/CLeno/Leno/tmp_vwin.png") }
+            print("[INFO] 截图 ok=" + _str(okShot) + "（tmp_vwin.png）\n")
+        }
+        // ---- 第 5 帧：点弹窗按钮（父窗口坐标 = 合成左上角 240,150 + 按钮中心 96,36）----
+        if gFrame == 5 {
+            SDL3.testClickAt(win.getID(), 240.0 + 96.0, 150.0 + 36.0)
+        }
+        // ---- 第 8 帧：弹窗按钮应已触发，主按钮不应触发 ----
+        if gFrame == 8 {
+            check(gDlgClicks == 1, "点弹窗内按钮 ⇒ 弹窗按钮回调触发（坐标已换算）")
+            check(gMainClicks == 0, "落进弹窗的那一下**没有**漏给主窗口")
+        }
+        // ---- 第 9 帧：点主窗口按钮（在弹窗矩形外）----
+        if gFrame == 9 {
+            SDL3.testClickAt(win.getID(), 120.0, 40.0)
+        }
+        if gFrame == 12 {
+            check(gMainClicks == 1, "非模态：弹窗外的点击照常到主窗口")
+        }
+        // ---- 第 13 帧：关掉非模态弹窗，换一个**模态**弹窗 ----
+        if gFrame == 13 and not gPhase2 {
+            gPhase2 = true
+            if gDlg != null { gDlg.requestClose() }
+        }
+        if gFrame == 16 {
+            buildDialog(true)     // 模态
+        }
+        // ---- 第 17 帧：点主窗口按钮 —— 模态弹窗应吃掉 ----
+        if gFrame == 17 {
+            SDL3.testClickAt(win.getID(), 120.0, 40.0)
+        }
+        // ---- 第 18 帧：模态态的截图（应能看到整块被压暗 + 弹窗带投影）----
+        if gFrame == 18 {
+            var sz2 = win.getSize()
+            var shot2 = r.readPixelsAt(0, 0, sz2.w, sz2.h)
+            bool ok2 = false
+            if shot2 != null { ok2 = SDL3.saveImagePNG(shot2, "D:/CLeno/Leno/tmp_vwin_modal.png") }
+            print("[INFO] 模态截图 ok=" + _str(ok2) + "（tmp_vwin_modal.png）\n")
+        }
+        if gFrame == 20 {
+            check(gMainClicks == 1, "模态：弹窗外的点击被挡住（主窗口计数不变）")
+            print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+            SDL3.requestExit()
+        }
+        // 本测试是"帧驱动"的状态机，而主循环空闲时不主动出帧（节能）⇒ 自己续下一帧
+        if gFrame < 20 { SDL3.markFrameRedraw() }
+    })
+
+    win.run(
+        func(Event ev): bool { return true },
+        func(Renderer r) {})
+}

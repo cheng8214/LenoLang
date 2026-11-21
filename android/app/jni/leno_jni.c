@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <errno.h>
@@ -308,6 +309,89 @@ Java_com_leno_app_SdlActivity_setDataDir(JNIEnv* env, jclass cls, jstring jdir) 
         LOGI("dataDir = %s", dir);
         (*env)->ReleaseStringUTFChars(env, jdir, dir);
     }
+}
+
+// ---------------------------------------------------------------------------
+// void setAndroidDensity(float density)
+//   把 Android 的**真实屏幕密度**（densityDpi / 160，例如 420dpi ⇒ 2.625）交给框架。
+//
+//   为什么必须由 Java 侧给：SDL 3.4.20 的 Android 后端**不填**这两个值 ——
+//     · SDL_GetWindowDisplayScale(win)      ⇒ 恒 1.0（后端未实现）
+//     · SDL_DisplayMode.pixel_density       ⇒ 恒 1.0（Android 没赋值）
+//   实测 AVD（720x1280 / 420dpi）两者都给 1.0，而窗口尺寸 1217 又确实是物理像素
+//   ⇒ 框架按 1.0 算就等于**什么都没适配**（13px 字只有 5dp、点不中）✗
+//   Java 的 `getResources().getDisplayMetrics().density` 才是那个 2.625 ✓
+//
+//   为什么走 SDL hint 而不是新 builtin / 函数指针表：hint 是纯字符串键值对，
+//   Leno 侧只要一行 `SDL_GetHint` 就能读（见 sdl_core.getPlatformDensity）——
+//   不必为传递一个 float 去改 VM 的 builtin 表或加一套 JNI 缓存。
+// ---------------------------------------------------------------------------
+JNIEXPORT void JNICALL
+Java_com_leno_app_SdlActivity_setAndroidDensity(JNIEnv* env, jclass cls, jfloat density) {
+    (void)env; (void)cls;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%.4f", (double)density);
+    // libSDL3.so 已由 System.loadLibrary("SDL3") 加载（SdlActivity.getLibraries 的第一个），
+    //   这里 dlopen 同一路径只是加引用计数、拿到同一个 handle ⇒ 符号可解析 ✓
+    void* h = dlopen("libSDL3.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!h) h = dlopen("libSDL3.so.0", RTLD_NOW | RTLD_GLOBAL);
+    if (!h) { LOGE("setAndroidDensity: dlopen libSDL3.so 失败: %s", dlerror()); return; }
+    int (*set_hint)(const char*, const char*) =
+        (int (*)(const char*, const char*))dlsym(h, "SDL_SetHint");
+    if (!set_hint) { LOGE("setAndroidDensity: 找不到 SDL_SetHint"); return; }
+    set_hint("LENO_ANDROID_DENSITY", buf);
+    LOGI("androidDensity = %s", buf);
+}
+
+// ---------------------------------------------------------------------------
+// void injectBackKey()
+//   把 Android 的**返回键**变成一条真正的 SDL key 事件，交给 VM 处理。
+//
+//   为什么必须自己注入（这是 SDL3 的一个坑）：
+//     `SDL_HINT_ANDROID_TRAP_BACK_BUTTON` 只是让 `SDLActivity.onBackPressed()`
+//     **不再调用 super**（不 finish Activity），它**不会**发任何事件到 SDL 队列
+//     —— 见 SDLActivity.java:731-735，那儿只有一句 `return`。
+//     实测：只设 hint 的话，按返回键**毫无反应**（比直接退出还糟）✗
+//   ⇒ 必须由宿主在 onBackPressed 里自己投一条 KEY_DOWN（scancode = AC_BACK）。
+//
+//   为什么用 SDL_GetKeyboardFocus 取 windowID：事件带 windowID=0 时框架找不到窗口，
+//   会被当成"无归属事件"直接丢掉 ⇒ 返回键无效。有焦点的那个就是该收键的窗口 ✓
+//   （Android 单窗口模型下必然拿到主窗口；桌面上这个函数只用于自测，不影响任何东西）
+// ---------------------------------------------------------------------------
+JNIEXPORT void JNICALL
+Java_com_leno_app_SdlActivity_injectBackKey(JNIEnv* env, jclass cls) {
+    (void)env; (void)cls;
+    void* h = dlopen("libSDL3.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!h) h = dlopen("libSDL3.so.0", RTLD_NOW | RTLD_GLOBAL);
+    if (!h) { LOGE("injectBackKey: dlopen libSDL3.so 失败: %s", dlerror()); return; }
+
+    int (*push_event)(void*) = (int (*)(void*))dlsym(h, "SDL_PushEvent");
+    void* (*get_focus)(void) = (void* (*)(void))dlsym(h, "SDL_GetKeyboardFocus");
+    uint32_t (*get_wid)(void*) = (uint32_t (*)(void*))dlsym(h, "SDL_GetWindowID");
+    if (!push_event) { LOGE("injectBackKey: 找不到 SDL_PushEvent"); return; }
+
+    uint32_t wid = 0;
+    if (get_focus && get_wid) {
+        void* win = get_focus();
+        if (win) wid = get_wid(win);
+    }
+    if (wid == 0) { LOGI("injectBackKey: 没有键盘焦点窗口，按无归属事件投递"); }
+
+    // SDL_Event 是 128 字节 union；SDL_KeyboardEvent 的字段偏移（SDL 3.4.x）：
+    //   type=0  windowID=16  which=24  scancode=28  key=32  repeat=40
+    //   只填必要字段，其余保持 0（timestamp 为 0 = 由 SDL 决定，没问题 ✓）
+    unsigned char buf[128];
+
+    for (int phase = 0; phase < 2; phase++) {
+        memset(buf, 0, sizeof(buf));
+        *(uint32_t*)(buf + 0)  = (phase == 0) ? 0x300u : 0x301u;   // KEY_DOWN / KEY_UP
+        *(uint32_t*)(buf + 16) = wid;
+        *(int32_t*)(buf + 28)  = 282;                              // SDL_SCANCODE_AC_BACK
+        *(int32_t*)(buf + 32)  = (int32_t)(282u | (1u << 30));      // SDLK_AC_BACK
+        *(uint8_t*)(buf + 40)  = 0;                                // repeat = false
+        push_event(buf);
+    }
+    LOGI("injectBackKey: wid=%u 已投递 AC_BACK", wid);
 }
 
 // ---------------------------------------------------------------------------

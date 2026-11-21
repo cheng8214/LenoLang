@@ -21,6 +21,27 @@ export cstruct SDL_Point {
     i32 x; i32 y
 }
 
+// ★ 2026-11-21：单个 f32 的 cstruct 出参容器（SDL 的 scale/density 类 API 要一个 float*）
+export cstruct SDL_F32Box {
+    f32 v
+}
+
+// ★ 2026-11-21：显示器当前模式。**只有 `pixel_density` 这一项是我们要的** ——
+//   它是 SDL3 里唯一在 Android 上真能拿到屏幕密度的字段（2.625、2.75…）。
+//   为什么不用 `SDL_GetWindowDisplayScale`：实测 AVD（720x1280 / 420dpi）上它返回 **1.0** ✗
+//   （Android 后端没实现），照它算密度等于没做适配 —— 这个坑是模拟器上实测抓到的。
+export cstruct SDL_DisplayMode {
+    u32 displayID
+    u32 format
+    i32 w
+    i32 h
+    f32 pixel_density   // ★ 偏移 16：物理像素 / 逻辑像素（Android 上 = densityDpi/160）
+    f32 refresh_rate
+    i32 refresh_rate_numerator
+    i32 refresh_rate_denominator
+    Ptr[u8] internal
+}
+
 // ==================== 各事件类型 cstruct（替换手动偏移读取） ====================
 
 export cstruct SDL_KeyboardEvent {
@@ -158,6 +179,10 @@ export alias GlyphInfo  = Dict[string, int]
 
 clib sdl3 {
     bool SDL_SetHint(str8 name, str8 value)
+    // ★ 2026-11-21：读回 hint —— Android 宿主用它把真实屏幕密度（densityDpi/160）交给框架。
+    //   为什么走 hint 而不是新增 JNI 绑定：它是纯字符串键值对，两边各一行就能通，
+    //   不必为此改 VM 的 builtin 表、也不必给 leno_jni.c 加一套函数指针缓存 ✓
+    str8 SDL_GetHint(str8 name)
 
     bool SDL_Init(u32 flags)
     void SDL_Quit()
@@ -174,6 +199,10 @@ clib sdl3 {
     bool SDL_SetWindowResizable(Ptr[u8] window, bool resizable)
     bool SDL_SetWindowBordered(Ptr[u8] window, bool bordered)
     bool SDL_GetWindowSize(Ptr[u8] window, Ptr[i32] w, Ptr[i32] h)
+    bool SDL_GetWindowDisplayScale(Ptr[u8] window, Ptr[f32] scale)
+    // ★ 2026-11-21：桌面模式（含 pixel_density）—— Android 上拿屏幕密度的唯一可靠来源 ✓
+    bool SDL_GetDesktopDisplayMode(u32 displayID, Ptr[u8] mode)
+    bool SDL_GetCurrentDisplayMode(u32 displayID, Ptr[u8] mode)
     bool SDL_GetWindowPosition(Ptr[u8] window, Ptr[i32] x, Ptr[i32] y)
     bool SDL_SyncWindow(Ptr[u8] window)
 
@@ -362,6 +391,20 @@ export enum WindowFlag {
 
 export enum EventType {
     QUIT                   = 0x100
+    // ★ 2026-11-21：**应用生命周期 / 渲染设备状态**（只在 Android/iOS 上出现，桌面永不触发 ⇒ 零影响）
+    //   取值按 SDL 3.4.20 的枚举顺序（QUIT 后面连续 7 个）：0x100 之后依次 +1
+    //   ⚠ 别照 SDL2 的头文件抄：SDL3 在 QUIT 与 TERMINATING 之间没有空位，整体前移 2
+    TERMINATING            = 0x101
+    LOW_MEMORY             = 0x102
+    WILL_ENTER_BACKGROUND  = 0x103
+    DID_ENTER_BACKGROUND   = 0x104
+    WILL_ENTER_FOREGROUND  = 0x105
+    DID_ENTER_FOREGROUND   = 0x106
+    LOCALE_CHANGED         = 0x107
+    DISPLAY_ORIENTATION    = 0x151
+    RENDER_TARGETS_RESET   = 0x2000
+    RENDER_DEVICE_RESET    = 0x2001
+    RENDER_DEVICE_LOST     = 0x2002
     KEY_DOWN               = 0x300
     KEY_UP                 = 0x301
     MOUSE_MOTION           = 0x400
@@ -425,6 +468,10 @@ export enum Scancode {
 
     // 系统键
     PRINTSCREEN = 70; SCROLLLOCK = 71; PAUSE = 72
+
+    // ★ 2026-11-21：Android **返回键**（= SDL_SCANCODE_AC_BACK，官方头文件是 282 不是 270）
+    //   桌面键盘产生不了这个扫描码 ⇒ 只在移动端出现
+    AC_BACK = 282
 
     // 小键盘
     NUMLOCKCLEAR = 83; KP_DIVIDE = 84; KP_MULTIPLY = 85
@@ -556,6 +603,11 @@ export func init(int flags = 32): bool {
     //     "SDL_MOUSE_FOCUS_CLICKTHROUGH" ✓ 在、"SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH" ✗ 不在。
     //     （同一个坑：sdl_renderer.leno 里那两条 `SDL_HINT_RENDER_DRIVER` 就是错名字 ⇒ 一直是空操作 ✗）
     l.SDL_SetHint("SDL_MOUSE_FOCUS_CLICKTHROUGH", "1")
+    // ★★ 2026-11-21：**拦住 Android 的返回键**（默认 false ⇒ 按 back 直接 finish 掉 Activity，
+    //   VM 连一条事件都收不到 ⇒ "弹窗开着按返回，整个程序没了、状态全丢" ✗）。
+    //   置 1 之后 SDL 不再替我们退出，而是发 SDL_EVENT_KEY_DOWN（scancode = AC_BACK）⇒
+    //   由框架做分层返回（关弹层 → 关窗口 → 退出）。桌面无此键 ⇒ 一行分支都不用加 ✓
+    l.SDL_SetHint("SDL_ANDROID_TRAP_BACK_BUTTON", "1")
     return l.SDL_Init(flags)
     }
 
@@ -643,6 +695,55 @@ export func getWindowSize(Ptr[u8] window): [int, int] {
     int w = pt.x; int h = pt.y; pt.free()
     return w, h
 }
+// ★ 2026-11-21：窗口所在显示器的**内容缩放**（Windows 150% / Android 3x 之类）。
+//   为什么需要：框架里所有尺寸/字号都是"逻辑像素"，而 Android 的 `SDL_GetWindowSize`
+//   返回的是**物理像素** ⇒ 不除这个数，1080×2400 的手机上 13px 的字只有 ~4dp（看不清）。
+//   Android 上恒 > 0（3.0 左右）；桌面上开了系统缩放也会 > 0，取不到时返回 1.0 ✓
+export func getWindowDisplayScale(Ptr[u8] window): float {
+    if window == null { return 1.0 }
+    SDL_F32Box box = SDL_F32Box.malloc()
+    box.v = 0.0
+    bool ok = lib().SDL_GetWindowDisplayScale(window, &box.v)
+    float v = box.v
+    box.free()
+    if not ok or v <= 0.0 { return 1.0 }
+    return v
+}
+// ★ 2026-11-21：**平台真实密度** —— Android 适配唯一该用的那个值。
+//   来源优先级（实测定下来的，别改顺序）：
+//     ① SDL hint `LENO_ANDROID_DENSITY` —— 由 Android 宿主 Java 侧
+//        `getResources().getDisplayMetrics().density` 塞进来（AVD 上 = 2.625）
+//        **这是唯一在 Android 上真正拿到值的来源** ✓
+//     ② `SDL_DisplayMode.pixel_density` —— 桌面 100%/150% 都对；但 **Android 后端不填**
+//        （实测 AVD 上给 1.0，和 ① 差了 2.625 倍 ✗）
+//     ③ 兜底 1.0（dummy 驱动 / 无显示器）
+//   ⚠ **不要**用 `SDL_GetWindowDisplayScale`：Android 后端没实现，实测恒返回 1.0 ✗
+export func getPlatformDensity(): float {
+    sdl3 l = lib()
+    if l == null { return 1.0 }
+    // ① Java 宿主给的（Android）
+    string hs = l.SDL_GetHint("LENO_ANDROID_DENSITY")
+    if hs != "" {
+        float hv = _float(hs)
+        if hv >= 1.0 and hv <= 8.0 { return hv }
+    }
+    // ② 显示器模式里的（桌面）
+    int did = _int(l.SDL_GetPrimaryDisplay())
+    if did != 0 {
+        SDL_DisplayMode md = SDL_DisplayMode.malloc()
+        bool ok = l.SDL_GetDesktopDisplayMode(did, md.to_ptr())
+        if not ok { ok = l.SDL_GetCurrentDisplayMode(did, md.to_ptr()) }
+        float v = md.pixel_density
+        md.free()
+        if ok and v >= 1.0 and v <= 8.0 { return v }
+    }
+    return 1.0
+}
+
+// 兼容旧名：`getDisplayPixelDensity()` 就是"平台真实密度"
+//   （原本只查 SDL_DisplayMode，实测 Android 上拿不到 ⇒ 统一收敛到 getPlatformDensity ✓）
+export func getDisplayPixelDensity(): float { return getPlatformDensity() }
+
 // ★ 2026-11-16：**某块显示器的可用区**（已扣任务栏；任务栏在上下左右都算对 ✓）
 //   返回 x, y, w, h（**虚拟桌面**坐标：副屏在主屏左边/上边时是负值 ⇒ 别假设 ≥ 0 ✓）
 //   取不到（dummy 视频驱动 / 显示器刚拔掉）⇒ w/h 返回 0，调用方自己兜底 ✓

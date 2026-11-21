@@ -448,7 +448,7 @@ export struct PopMenu {
         if not open { return true }
         if ev.isWindowClose() { hide(); return true }
         if ev.isWindowFocusLost() { hide(); return true }        // 失焦即关（点别处/Alt+Tab ✓）
-        if ev.isKeyDown() and ev.scancode() == Scancode.ESCAPE { hide(); return true }
+        if ev.isDismissKey() { hide(); ev.consumeDismiss(); return true }
         if ev.isMouseMotion() {
             var[float, float](mx, my) = ev.mousePos()
             int hit = hit(mx, my)
