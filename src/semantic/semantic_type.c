@@ -1068,11 +1068,23 @@ static void warn_nullable_arith_site(Semantic* s, Ast* node, int line, int colum
     }
 }
 
+// ★ 2026-11-21：该操作数是不是"**确定为 null**"的普通变量（T11 的 `is_null_value`）？
+//   用途：同一行**已经**要报「变量 'n' 的值确定为 null」这条**错误**时，别再叠一条
+//   「可空类型运算」**警告** —— 实测 `int? n = null` + `n + 1` 会同时给两条，
+//   同一个问题两种严重度，读者会以为是两件事 ✗（本项目"不静默"≠"多报一遍"）
+static int ast_var_is_known_null(Semantic* s, Ast* node) {
+    if (!node || node->kind != AST_VAR || !node->u.var.name) return 0;
+    Symbol* sym = scope_resolve(s->current, node->u.var.name);
+    return (sym && sym->is_null_value) ? 1 : 0;
+}
+
 static void check_nullable_arith(Semantic* s, Ast* lhs, Ast* rhs,
                                  TypeInfo* left, TypeInfo* right, int line, int column) {
-    if (is_nullable_value_kind(left) && !ast_var_is_nonnull(s, lhs)) {
+    if (is_nullable_value_kind(left) && !ast_var_is_nonnull(s, lhs) &&
+        !ast_var_is_known_null(s, lhs)) {
         warn_nullable_arith_site(s, lhs, line, column);
-    } else if (is_nullable_value_kind(right) && !ast_var_is_nonnull(s, rhs)) {
+    } else if (is_nullable_value_kind(right) && !ast_var_is_nonnull(s, rhs) &&
+               !ast_var_is_known_null(s, rhs)) {
         warn_nullable_arith_site(s, rhs, line, column);
     }
 }
