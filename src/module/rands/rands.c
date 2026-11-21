@@ -1,4 +1,5 @@
 #include "include/native.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
@@ -140,8 +141,15 @@ static Value rands_ints(int argc, Value* args) {
         // ★ 2026-11-16：不再**静默对调**。参数写反是调用方的 bug，静默纠正会把
         //   "拿到一个 [3,10] 的数"变成看起来正常的随机值 ⇒ 排查时完全看不出问题
         //   （本仓口径：静默错值 > 编译期报错 > 性能，这种静默纠正必须消灭）。
-        native_throw_error("ints() 的 min 不能大于 max"
-                           "（想让两个值之间随机就按 [min, max] 顺序传）");
+        // ★ 2026-11-21：报错里带上**实际收到的值** —— 光说"min 不能大于 max"时，
+        //   调用点常常是 `floats(-6.0, -10.0)` 这种**负区间**写反，一眼看不出哪个是 min。
+        {   char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "ints() 的 min 不能大于 max（实际收到 min=%lld，max=%lld）—— "
+                     "参数顺序是 [min, max]，写反了**不会**自动对调（静默对调会把 bug 藏起来）",
+                     (long long)min_val, (long long)max_val);
+            native_throw_error(msg);
+        }
         return val_null();
     }
     
@@ -250,7 +258,16 @@ static Value rands_floats(int argc, Value* args) {
     if (min > max) {
         // 此前**不检查**：`floats(4.0, 2.0)` 会走 `min + r*(max-min)` ⇒ 结果落在
         // [2,4) 却**小于 min**，静默给出与参数名相反的值（2026-11-16 修）。
-        native_throw_error("floats() 的 min 不能大于 max");
+        // ★ 2026-11-21：带上实际值 —— 最常见的是**负区间写反**（`floats(-6.0, -10.0)`，
+        //   实测 fireworks.leno 就踩了这个），光看报错还得回头数哪个是负得更多的那个 ✗
+        {   char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "floats() 的 min 不能大于 max（实际收到 min=%g，max=%g）—— "
+                     "参数顺序是 [min, max]（要 -10~-6 就写 floats(-10.0, -6.0)），"
+                     "写反了**不会**自动对调",
+                     min, max);
+            native_throw_error(msg);
+        }
         return val_null();
     }
     
@@ -432,7 +449,12 @@ static Value rands_int_array(int argc, Value* args) {
     
     if (min > max) {
         // 同 ints()：不再静默对调（见 rands_ints 的说明）
-        native_throw_error("int_array() 的 min 不能大于 max");
+        {   char msg[192];
+            snprintf(msg, sizeof(msg),
+                     "int_array() 的 min 不能大于 max（实际收到 min=%d，max=%d）—— "
+                     "参数顺序是 [min, max]，写反了**不会**自动对调", min, max);
+            native_throw_error(msg);
+        }
         return val_null();
     }
     
@@ -501,7 +523,12 @@ static Value rands_array(int argc, Value* args) {
     
     if (min > max) {
         // 同 ints()：不再静默对调
-        native_throw_error("array() 的 min 不能大于 max");
+        {   char msg[192];
+            snprintf(msg, sizeof(msg),
+                     "array() 的 min 不能大于 max（实际收到 min=%d，max=%d）—— "
+                     "参数顺序是 [min, max]，写反了**不会**自动对调", min, max);
+            native_throw_error(msg);
+        }
         return val_null();
     }
     
