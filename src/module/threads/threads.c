@@ -151,7 +151,7 @@ static Value channel_method_send(int argc, Value* args) {
     //   **不能**再覆盖成"通道已关闭"（那会把真因彻底盖掉）
     if (result == -3) return val_null();
     if (result != 0) {
-        native_throw_error("Cannot send to closed channel");
+        native_throw_error("不能向**已关闭**的通道 send —— 接收方仍可取走缓冲区里剩下的数据，但新数据一律拒绝（这是有意的：close 之后再发就是逻辑错误）");
         return val_null();
     }
     return val_null();
@@ -298,7 +298,7 @@ static int threads_check_entry(ObjClosure* closure, int got_args, const char* wh
 
 static Value threads_start(int argc, Value* args) {
     if (argc < 1 || !val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_CLOSURE) {
-        native_throw_error("threads.start() requires a function argument");
+        native_throw_error("threads.start() 的第 1 个实参必须是函数（要传参数就写在后面：threads.start(worker, 1, 2)）");
         return val_null();
     }
 
@@ -329,7 +329,7 @@ static Value threads_start(int argc, Value* args) {
     ObjThread* thread = thread_new_with_args(closure, call_args, call_arg_count);
     if (call_args) free(call_args);
     if (!thread) {
-        native_throw_error("Failed to create thread");
+        native_throw_error("创建线程失败（系统资源或内存不足）");
         return val_null();
     }
 
@@ -346,7 +346,7 @@ static Value threads_channel(int argc, Value* args) {
 
     ObjChannel* channel = channel_new(capacity);
     if (!channel) {
-        native_throw_error("Failed to create channel");
+        native_throw_error("创建通道失败（容量非法，或内存不足）");
         return val_null();
     }
 
@@ -355,7 +355,7 @@ static Value threads_channel(int argc, Value* args) {
 
 static Value threads_sleep(int argc, Value* args) {
     if (argc < 1 || !val_is_int(args[0])) {
-        native_throw_error("threads.sleep() requires an integer milliseconds argument");
+        native_throw_error("threads.sleep() 需要一个整数毫秒参数");
         return val_null();
     }
     int ms = (int)val_as_num(args[0]);

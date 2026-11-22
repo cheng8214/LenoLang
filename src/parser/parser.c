@@ -1054,6 +1054,13 @@ static void prescan_struct_definitions(Parser* p) {
     // 保存当前 lexer 状态
     Lexer saved = p->lex;
 
+    // ★ 2026-11-22：预扫描只是**找 struct 名**，不该产出任何诊断 —— 此前它会把整份文件
+    //   再词法扫一遍（用同一个 lexer / 同一个 error 表）⇒ 每个**词法**错误都被记两遍，
+    //   报错里显示「(重复 2 次)」，读者会以为自己写了两处 ✗（实测 `1.0e400`、`1.`、
+    //   非法转义都是这样）。用既有的**静默段**盖住：begin/end 之间 add 的错误既不计数
+    //   也不入库，真正的诊断由下面那次正式解析给出（一次，位置也准）✓
+    error_silence_begin();
+
     // 扫描所有 token
     while (p->lex.current.type != TOK_EOF) {
         if (p->lex.current.type == TOK_STRUCT) {
@@ -1064,6 +1071,8 @@ static void prescan_struct_definitions(Parser* p) {
         }
         lexer_next(&p->lex);
     }
+
+    (void)error_silence_end();   // 预扫描吞掉的诊断按"已消费"记账，不留在队列里
 
     // 恢复 lexer 状态
     p->lex = saved;

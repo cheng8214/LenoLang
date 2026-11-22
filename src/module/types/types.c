@@ -621,7 +621,11 @@ static Value native_type(int argCount, Value* args) {
 //   只是把数值转换类的口径拉齐。
 //   ⚠ 截断到 48 字节并按 **UTF-8 字符边界**回退（别把中文切成半个）；
 //     控制字符换成空格，免得一条消息被撑成多行。
-static void num_convert_err(const char* what, ObjString* s) {
+//   `hint`（可 NULL）：给"为什么失败 / 怎么绕"的一句提示，拼在值后面。
+//     ★ 2026-11-22：`_int` / `_float` 的判据是**整串都必须是数字**（全有全无）——
+//       实测 `_int("12x")` 报错，但很多人会以为"取前面的 12"是它的默认行为，
+//       于是反复试。文案里把这条说清楚，并指出要前缀该走哪条路 ✓
+static void num_convert_err_hint(const char* what, ObjString* s, const char* hint) {
     char shown[80];
     int n = s->len > 48 ? 48 : s->len;
     if (n < s->len) {
@@ -635,8 +639,12 @@ static void num_convert_err(const char* what, ObjString* s) {
     }
     if (s->len > n) { shown[j++] = '.'; shown[j++] = '.'; shown[j++] = '.'; }
     shown[j] = '\0';
-    char msg[160];
-    snprintf(msg, sizeof(msg), "%s：\"%s\"", what, shown);
+    char msg[320];
+    if (hint && hint[0]) {
+        snprintf(msg, sizeof(msg), "%s：\"%s\"（%s）", what, shown, hint);
+    } else {
+        snprintf(msg, sizeof(msg), "%s：\"%s\"", what, shown);
+    }
     native_throw_error(msg);
 }
 
@@ -695,7 +703,9 @@ static Value native_to_int(int argCount, Value* args) {
                     }
                     return val_int_safe(num);
                 }
-                num_convert_err("无法将字符串转换为整数", str);
+                num_convert_err_hint("无法将字符串转换为整数", str,
+                    "要求整串都是数字，**不取前缀**；要取前面的数字请先用 "
+                    "regexs.extract(s, \"-?[0-9]+\")，或对可失败场景用 _int_or(s, 默认值)");
                 return val_int(0);
             } else if (val_as_obj(value)->type == OBJ_BIGINT) {
                 ObjBigInt* big = (ObjBigInt*)val_as_obj(value);
@@ -753,7 +763,9 @@ static Value native_to_float(int argCount, Value* args) {
                 if (end != str->chars && *end == '\0') {
                     return val_float(num);
                 }
-                num_convert_err("无法将字符串转换为浮点数", str);
+                num_convert_err_hint("无法将字符串转换为浮点数", str,
+                    "要求整串都是数字，**不取前缀**；要取前面的数字请先用 "
+                    "regexs.extract(s, \"-?[0-9.]+(e[-+]?[0-9]+)?\")，或对可失败场景用 _float_or(s, 默认值)");
                 return val_float(0.0);
             } else if (val_as_obj(value)->type == OBJ_BIGINT) {
                 ObjBigInt* bigint = (ObjBigInt*)val_as_obj(value);

@@ -73,9 +73,10 @@ static inline int call(ObjClosure* closure, int arg_count, int line) {
     if (unlikely(vm.frame_cnt >= vm.frame_capacity)) {
         // S1：硬上限——无限递归时逐倍扩容直到内存耗尽只会报"分配失败"，掩盖真实原因
         if (vm.frame_cnt >= VM_MAX_FRAMES) {
-            char depth_buf[96];
+            char depth_buf[192];   // 2026-11-22：文案加长后 96 不够（gcc -Wformat-truncation 报 161~164）
             snprintf(depth_buf, sizeof(depth_buf),
-                     "调用栈溢出：递归深度已达 %d（可能是无限递归）", vm.frame_cnt);
+                     "调用栈溢出：递归深度已达 %d（可能是无限递归）—— "
+                     "这是**致命错误**，不能被 try/catch 捕获（进程直接以 -1 退出）", vm.frame_cnt);
             runtime_error(depth_buf, line);
             return 0;
         }
@@ -181,9 +182,10 @@ static inline int call_no_type_check(ObjClosure* closure, int arg_count, int lin
     if (unlikely(vm.frame_cnt >= vm.frame_capacity)) {
         // S1：硬上限——无限递归时逐倍扩容直到内存耗尽只会报"分配失败"，掩盖真实原因
         if (vm.frame_cnt >= VM_MAX_FRAMES) {
-            char depth_buf[96];
+            char depth_buf[192];   // 2026-11-22：文案加长后 96 不够（gcc -Wformat-truncation 报 161~164）
             snprintf(depth_buf, sizeof(depth_buf),
-                     "调用栈溢出：递归深度已达 %d（可能是无限递归）", vm.frame_cnt);
+                     "调用栈溢出：递归深度已达 %d（可能是无限递归）—— "
+                     "这是**致命错误**，不能被 try/catch 捕获（进程直接以 -1 退出）", vm.frame_cnt);
             runtime_error(depth_buf, line);
             return 0;
         }
@@ -344,9 +346,10 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
     if (unlikely(vm.frame_cnt >= vm.frame_capacity)) {
         // S1：硬上限——无限递归时逐倍扩容直到内存耗尽只会报"分配失败"，掩盖真实原因
         if (vm.frame_cnt >= VM_MAX_FRAMES) {
-            char depth_buf[96];
+            char depth_buf[192];   // 2026-11-22：文案加长后 96 不够（gcc -Wformat-truncation 报 161~164）
             snprintf(depth_buf, sizeof(depth_buf),
-                     "调用栈溢出：递归深度已达 %d（可能是无限递归）", vm.frame_cnt);
+                     "调用栈溢出：递归深度已达 %d（可能是无限递归）—— "
+                     "这是**致命错误**，不能被 try/catch 捕获（进程直接以 -1 退出）", vm.frame_cnt);
             runtime_error(depth_buf, line);
             return 0;
         }

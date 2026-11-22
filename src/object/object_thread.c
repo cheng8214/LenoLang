@@ -1163,8 +1163,8 @@ static Value thread_reap(ObjThread* thread) {
 
     if (thread->state == THREAD_ERROR) {
         char msg[256];
-        snprintf(msg, sizeof(msg), "Thread error: %s",
-                 thread->error_msg ? thread->error_msg : "unknown");
+        snprintf(msg, sizeof(msg), "线程内抛出异常：%s",
+                 thread->error_msg ? thread->error_msg : "（未记录消息）");
         native_throw_error(msg);
         return val_null();
     }

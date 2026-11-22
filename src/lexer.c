@@ -5,6 +5,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <errno.h>      // 浮点字面量范围检查（strtod 的 ERANGE）
+#include <math.h>       // isinf / isnan
 
 // ============================================================================
 // Unicode 支持函数
@@ -658,7 +660,25 @@ static Token read_number(Lexer* lex) {
     }
 
     if (is_float) {
+        // ★ 2026-11-22：**浮点字面量超出 double 范围**（`1.0e400`）此前 strtod 静默给 inf，
+        //   而运行期 `1.0/0.0` 却报「除零错误」⇒ 同一个"非有限值"两套口径（一处静默一处报错 ✗）。
+        //   字面量是**写死的**：超范围几乎必然是笔误（多打一位 / 单位写错），编译期报错最省事；
+        //   运行期的算术溢出（`1e308 * 10`）仍走 IEEE —— 那是数据驱动，拦了会误伤 ✓
+        errno = 0;
         tok.num_val = strtod(numtext, NULL);
+        if (errno == ERANGE || isinf(tok.num_val) || isnan(tok.num_val)) {
+            // ⚠ 别用 `%.20s`：token 的 text 指向源码、**没有 NUL 结尾**（长度在 tok.len），
+            //   直接按字符串打会把后面的源码一起吞进来（实测打出 `1.0e400\n    print(_` ✗）
+            // ⚠ numtext 可能直接指向**源码**（没有 NUL 结尾，长度在 tok.len）⇒ 不能用 strlen
+            int show_len = (numtext == start) ? tok.len : nlen;
+            if (show_len > 24) show_len = 24;
+            if (show_len < 0) show_len = 0;
+            error_add_at_fmt(ERR_SYNTAX, lex->line, lex->pos - lex->line_start + 1,
+                             "浮点字面量超出范围：`%.*s` —— double 最大约 1.8e308；"
+                             "这个字面量要么多写了一位，要么应该拆成「数量 × 量级」两步算",
+                             show_len, numtext);
+            tok.num_val = 0;
+        }
         tok.is_bigint = 0;
         tok.bigint_str = NULL;
         tok.is_float = 1;
