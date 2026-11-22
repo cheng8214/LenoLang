@@ -572,6 +572,80 @@
             visit(s, ast->u.assign.value);
             s->expected_type = saved_expected;
 
+            // ★ 2026-11-22（压测发现）：**cstruct 窄整数字段写越界字面量 ⇒ 编译期报错**。
+            //   为什么放语义层：codegen 的字段指令路径（OP_SET_FIELD）对 cstruct 不生效
+            //   （`index_set_op_for()` 只认 TYPE_STRUCT，cstruct 走通用 OP_INDEX_SET）⇒ 那儿拿不到宽度；
+            //   而 `infer_field_type()` 的 cstruct 分支会把 `struct_field_types[i]->kind` 经
+            //   `c_layout_type_to_leno()` **映射成 Leno 的 int** ⇒ 宽度同样丢了。
+            //   唯一保留窄 kind（u8/i8/…）的就是这里直接读的**原始** `struct_field_types[i]` ✓
+            //   ⚠ 只查**字面量**（含 `-1` 这种 unary 形态）：变量/表达式的值运行期才知道，
+            //     硬查必然误报 ⇒ 宁漏勿误报（运行期已统一成补码截断，见 object_cstruct.c）✓
+            if (left_count == 1 && ast->u.assign.targets && ast->u.assign.targets[0]) {
+                Ast* tg = ast->u.assign.targets[0];
+                const char* recv_name = NULL;      // 接收者是**裸变量名**时用它查符号
+                const char* fname = NULL;
+                Ast* lit = ast->u.assign.value;
+                if (tg->kind == AST_MODULE_ACCESS) {
+                    // 实测：`t.a = 300` 的目标节点是 **AST_MODULE_ACCESS**（kind=32）——
+                    //   parser 把 `实例.字段` 也编成 MODULE_ACCESS（module_name=实例名、
+                    //   member_name=字段名），靠"是不是已导入模块"区分（见上面的 wr_mi 判断）
+                    //   ⇒ 这里只有**名字**没有 AST 结点，接收者类型得查符号 ✓
+                    recv_name = tg->u.module_access.module_name;
+                    fname = tg->u.module_access.member_name;
+                }
+                // ⚠ **只处理 AST_MODULE_ACCESS 这一种**（= 接收者是裸变量名）。
+                //   其它形态（`n4.children[0].id = 99` 这类接收者是表达式）**故意不查**：
+                //   在这里调 `infer_expr_type()` 会触发索引/字段推断的副作用（实测它给
+                //   `test_struct_edge` 刷出「不能在 any 类型上进行索引访问」的**误报**，
+                //   因为赋值目标的类型还没被正式访问出来）⇒ 宁漏勿误报 ✓
+                int neg = 0;
+                if (lit && lit->kind == AST_UNARY && lit->u.unary.op == TOK_MINUS &&
+                    lit->u.unary.operand && lit->u.unary.operand->kind == AST_NUM) {
+                    neg = 1;                            // `t.b = -1` ⇒ unary(-, num)
+                    lit = lit->u.unary.operand;
+                }
+                if (fname && lit && lit->kind == AST_NUM && recv_name) {
+                    // 接收者类型只查符号（不推断 AST —— 见上面的误报说明）
+                    TypeInfo* rt = NULL;
+                    {
+                        Symbol* rsym = scope_resolve(s->current, recv_name);
+                        if (rsym && rsym->type) rt = type_copy(rsym->type);
+                    }
+                    if (rt && rt->kind == TYPE_CSTRUCT && rt->struct_name) {
+                        Symbol* cdef = scope_resolve(s->current, rt->struct_name);
+                        if (cdef && cdef->struct_field_names && cdef->struct_field_types) {
+                            for (int fi = 0; fi < cdef->struct_field_count; fi++) {
+                                if (!cdef->struct_field_names[fi] ||
+                                    strcmp(cdef->struct_field_names[fi], fname) != 0) continue;
+                                TypeKind fk = cdef->struct_field_types[fi]->kind;
+                                double dv = lit->u.num.value;
+                                if (neg) dv = -dv;
+                                long long lo = 0, hi = 0;
+                                const char* tn = NULL;
+                                switch (fk) {
+                                    case TYPE_I8:  lo = -128;          hi = 127;           tn = "i8";  break;
+                                    case TYPE_U8:  lo = 0;             hi = 255;           tn = "u8";  break;
+                                    case TYPE_I16: lo = -32768;        hi = 32767;         tn = "i16"; break;
+                                    case TYPE_U16: lo = 0;             hi = 65535;         tn = "u16"; break;
+                                    case TYPE_I32: lo = -2147483648LL; hi = 2147483647LL;  tn = "i32"; break;
+                                    case TYPE_U32: lo = 0;             hi = 4294967295LL;  tn = "u32"; break;
+                                    default: break;
+                                }
+                                if (tn && (dv < (double)lo || dv > (double)hi)) {
+                                    error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                                        "cstruct 字段写越界：'%s' 是 %s，只能存 %lld ~ %lld，"
+                                        "这里写的是 %.17g —— 运行期会被**静默截断**成另一个值（不报错）；"
+                                        "请自己夹紧（min/max）或改用更宽的字段类型",
+                                        fname, tn, lo, hi, dv);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    if (rt) type_free(rt);
+                }
+            }
+
             // ★ 2026-11-18（F2·L1）：`x = null` 而 x 声明的类型非可空且非句柄 ⇒ 警告
             //   只判单一变量目标（`a, b = null, 1` / `arr[i] = null` / `obj.f = null` 先不判 ——
             //   宁漏勿误报；字段写入那一路等 L2 再统一做 ✓）

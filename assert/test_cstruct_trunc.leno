@@ -23,11 +23,19 @@ cstruct T {
 
 main() {
     var t = T.malloc()
-    t.a = 300
-    t.b = 200
-    t.c = 70000
-    t.d = 3000000000
-    t.e = 4294967296
+    // ⚠ 2026-11-22 起：**字面量**越界是**编译期错误**（`cstruct 字段写越界`）⇒ 这里必须经
+    //   变量把值带进来，才能测到"运行期怎么截断"。字面量那条见
+    //   `assert/error_cases/cstruct_field_overflow.leno`（诊断电池里登记）。
+    int v300 = 300
+    int v200 = 200
+    int v70000 = 70000
+    int v3e9 = 3000000000
+    int v2e32 = 4294967296
+    t.a = v300
+    t.b = v200
+    t.c = v70000
+    t.d = v3e9
+    t.e = v2e32
 
     assert_eq(_int(t.a), 44, "u8 ← 300 ⇒ 44（截断）")
     assert_eq(_int(t.b), -56, "i8 ← 200 ⇒ -56（截断）")
