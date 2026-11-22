@@ -1,0 +1,47 @@
+// test_format_trailing_pct.leno —— `format` 里**末尾裸 `%`** 要给提示（2026-11-23）
+//
+// 现场：`format("100%")` 运行期把 `%` 原样输出、编译期零提示；写的人多半想输出百分号，
+//   而正确写法是 `%%`。这是文档列的"四种格式串错误"之外唯一剩下的形态（其余四种已补齐）。
+//   ⚠ 只警告不拦：原样输出 `%` 本身不算错，可能有人就要这个字面量。
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_format_trailing_pct")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    // ① 裸调 format：末尾 `%`
+    var d1 = dirs.join(work, "bare.leno")
+    files.write(d1, @"main() {
+    print(format(""100%"") + ""\n"")
+}
+")
+    ce.expect_warning(d1, "① 裸调 format 末尾裸 % 要提示",
+        "格式串末尾的 `%` 后面没有转换符", 2)
+
+    // ② 模块调 strings.format：同一份实现，也必须提示
+    var d2 = dirs.join(work, "mod.leno")
+    files.write(d2, @"import strings
+
+main() {
+    print(strings.format(""50%"") + ""\n"")
+}
+")
+    ce.expect_warning(d2, "② strings.format 末尾裸 % 要提示",
+        "格式串末尾的 `%` 后面没有转换符", 4)
+
+    // ③ 对照：正确写法 `%%` **不该**报（误报红线）
+    var d3 = dirs.join(work, "escaped.leno")
+    files.write(d3, @"main() {
+    print(format(""100%%"") + ""\n"")
+    print(format(""%d%%"", 3) + ""\n"")
+}
+")
+    var o3 = ce.expect_ok(d3, "③ 用 %% 转义：应当无警告", "100%")
+    ce.expect_no_warning(o3, "③ `%%` 不该报末尾裸 %", "格式串末尾的")
+
+    dirs.delete(work)
+    print("test_format_trailing_pct passed")
+}

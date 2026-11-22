@@ -1159,7 +1159,19 @@ void semantic_check_format_literal(Semantic* s, AstList* args, int line, int col
             if (*r == '*') dyn_width = 1;
             r++;
         }
-        if (*r == 0 || *r == '%') continue;
+        // ★ 2026-11-23（压测）：**末尾裸 `%`**（`format("100%")` / `format("%5")`）——
+        //   运行期把 `%` 原样输出、不报错，而写的人多半是想输出百分号（该写 `%%`）。
+        //   这是文档里列的四种之外唯一剩下的形态（其余四种已在 2026-11-22 补齐）⇒ 补一条提示，
+        //   **只警告不拦**（原样输出不算错，可能有人就想要这个字面量）。
+        if (*r == 0) {
+            // ⚠ 消息里的 `%` 必须写成 `%%`：`warning_add_at_fmt` 自己走的是 printf 语义，
+            //   不转义时实参会被吞掉，输出成 "``"（实测第一版就是这样 ✗）
+            warning_add_at_fmt(WARN_FORMAT_SPEC, line, column,
+                "format：格式串末尾的 `%%` 后面没有转换符 —— 运行期会把 `%%` 原样输出；"
+                "要输出百分号请写 `%%%%`（写成 `%%%%` 才不会被当成转换符开头）");
+            break;
+        }
+        if (*r == '%') continue;
         if (conv_count < 16) convs[conv_count] = *r;
         conv_count++;
         q = r;
