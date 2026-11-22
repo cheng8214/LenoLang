@@ -2839,9 +2839,33 @@ Ast* parse_struct_stmt(Parser* p) {
         //   并直接给出正确写法；报完跳过本 struct 剩余内容，避免「期望 '}'」级联。
         do {
             if (p->lex.current.type != TOK_IDENT) {
-                error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
-                    "期望字段名 —— 一个类型声明多个字段时，逗号后**只写名字**（如 `int x, y`）；"
-                    "不同类型请另起一行（如 `int x` 换行 `int y`）");
+                // ★ 2026-11-22（压测）：字段名撞**类型名 / 关键字**（`f32` / `i32` / `u8` / `func` …）
+                //   时，原来报的是「逗号后只写名字」，完全指不到真因 ✗ —— 实测按 f0..f47 给
+                //   字段命名，第 33 个恰好叫 `f32`（合法类型名）⇒ 用户会误判成"字段数超过 32 就废了"
+                //   （现场就是这么被误导的）。这里先看"这个 token 看着像个名字却不是我 IDENT"
+                //   ⇒ 点名它不能当字段名 ✓
+                int looks_like_name = 0;
+                if (p->lex.current.text && p->lex.current.len > 0) {
+                    char c0 = p->lex.current.text[0];
+                    looks_like_name = ((c0 >= 'a' && c0 <= 'z') || (c0 >= 'A' && c0 <= 'Z') || c0 == '_');
+                }
+                if (looks_like_name) {
+                    // 两种成因合并成一条（都指得到真因）：
+                    //   ① 写了 `int x, int y`（逗号后又写类型）⇒ 该写 `int x, y`
+                    //   ② 字段名本身就是类型名/关键字（`f32` / `i32` / `u8`）⇒ 换个名字
+                    //   ⚠ 别拆成两条互斥文案：`int x, int y` 同时符合①②，只报②会把
+                    //     "逗号后只写名字"这条最常用的提示丢掉（既有用例正是钉它的 ✓）
+                    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        "期望字段名 —— 一个类型声明多个字段时，逗号后**只写名字**（如 `int x, y`），"
+                        "不同类型请另起一行；另外这里写的是 `%.*s`，它是**类型名 / 关键字**，"
+                        "本身不能当字段名用（若字段名恰好撞上类型名，如 `f32` / `i32` / `u8`，"
+                        "换个名字即可，如 `v32`）",
+                        p->lex.current.len, p->lex.current.text);
+                } else {
+                    error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                        "期望字段名 —— 一个类型声明多个字段时，逗号后**只写名字**（如 `int x, y`）；"
+                        "不同类型请另起一行（如 `int x` 换行 `int y`）");
+                }
                 // ⚠ 不在这里 type_free(field_type)：do-while 之后就统一释放一次 ✓
                 //   （在这里再释放会 double free ⇒ 实测编译期 SIGSEGV ✗）
                 while (p->lex.current.type != TOK_RBRACE && p->lex.current.type != TOK_EOF) {
