@@ -111,6 +111,9 @@ Value val_bigint_from_uint64(uint64_t value) {
     return val_obj((Object*)bigint);
 }
 
+// 十进制解析的**快速路径**（定义在文件后面的幂表处：要用 g_dec_pow / limbs_mul）
+static ObjBigInt* bigint_from_dec_fast(const char* digits, int len, int is_negative);
+
 ObjBigInt* bigint_from_string(const char* str) {
     int is_negative = 0;
     if (*str == '-') {
@@ -134,6 +137,13 @@ ObjBigInt* bigint_from_string(const char* str) {
 
     // 估算需要的 limb 数量
     int len = strlen(str);
+    // ★ 2026-11-22：十进制大数走**分治解析**（逐位 `x*10+d` 是平方级）——
+    //   阈值 400 位：小串切组 + 建幂表的固定开销比逐位还大，实测交叉点在这附近
+    if (!is_hex && len >= 400) {
+        ObjBigInt* fast = bigint_from_dec_fast(str, len, is_negative);
+        if (fast) return fast;
+        // 失败（OOM 等）⇒ 落到下面的逐位循环，行为不变
+    }
     int max_limbs;
     if (is_hex) {
         max_limbs = (len + 7) / 8 + 2;
@@ -445,6 +455,7 @@ Value bigint_or_i64(ObjBigInt* a, int64_t v) {
 //   其余（小数字 / 长短不一 / 奇数长度）一律走教科书式。
 //   理由：Karatsuba 的收益在大数，而它的边界（奇数拆分、进位、减法借位）最容易出静默错；
 //   把触发条件收窄 ⇒ 小数字零风险，大数字（真正的痛点）拿到收益。
+// 阈值 40 是实测最优：24 让 mul_1m 从 0.161→0.185s、64 让它 0.173s（都更差）
 #define KARATSUBA_THRESHOLD 40
 
 // 教科书式：out[0..na+nb) 必须已清零
@@ -544,6 +555,12 @@ static uint32_t* arena_take0(LimbArena* ar, size_t n) {   // 取一块并清零
 
 static void limbs_karatsuba(const uint32_t* a, const uint32_t* b, int n, uint32_t* out, LimbArena* ar);
 static void limbs_mul_rec(const uint32_t* a, int na, const uint32_t* b, int nb, uint32_t* out, LimbArena* ar);
+
+// ⚠ 2026-11-22：**试过"平方专用内核"（交叉项只算一半再乘 2），实测反而慢 5.8 倍**
+//   （100 万比特平方：0.944s vs 通用乘法 0.163s）—— 原因是我那版要靠"整体左移一位 +
+//   逐项补对角平方"三次额外遍历，且每行还要 `while (carry)` 推进，抵消了省下的一半乘法。
+//   结论：**平方仍走通用乘法**，不留这个内核（想再试的话，参考 CPython 的 k_sqr：
+//   交叉项用 64 位双重累加、只做一遍，不做整体移位）。
 
 // 统一入口：out[0..na+nb) 必须已清零
 static void limbs_mul(const uint32_t* a, int na, const uint32_t* b, int nb, uint32_t* out) {
@@ -1217,6 +1234,119 @@ static char* bigint_to_dec_dc(const uint32_t* limbs, int limb_count) {
     memcpy(out, buf + start, len);
     out[len] = '\0';
     free(buf);
+    return out;
+}
+
+// ============================================================================
+// 十进制文本 → bigint：**分治解析**（2026-11-22，与"打印"对称）
+// ----------------------------------------------------------------------------
+// 老实现逐位 `x = x*10 + d`，每个字符都要扫全部 limb ⇒ O(位数 × limb 数)。
+// 实测（30 万位）：打印 0.4s、**解析 3.2s**（Python 0.06s）⇒ 打印修快后它就是最大的悬崖
+// （读带大整数的 JSON、`_int` 解析长 ID 都会踩）。
+//
+// 分治：数字按 9 位切组（低位在前），高位补零到 2^k 组，
+// 树形合并 `x = 左 · 10^(9·2^j) + 右` —— 乘方正好是打印用的幂表 g_dec_pow[j] ✓
+// ============================================================================
+
+typedef struct { uint32_t* p; int n; } DecRawNum;
+
+// a + b（magnitude），返回新缓冲；调用方 free
+static uint32_t* dec_raw_add(const uint32_t* a, int na, const uint32_t* b, int nb, int* out_n) {
+    int maxn = na > nb ? na : nb;
+    uint32_t* r = (uint32_t*)calloc((size_t)maxn + 1, sizeof(uint32_t));
+    if (!r) { *out_n = 0; return NULL; }
+    uint64_t carry = 0;
+    for (int i = 0; i < maxn; i++) {
+        uint64_t s = carry + (i < na ? a[i] : 0u) + (i < nb ? b[i] : 0u);
+        r[i] = (uint32_t)s;
+        carry = s >> BASE_BITS;
+    }
+    int n = maxn;
+    if (carry) r[n++] = (uint32_t)carry;
+    while (n > 1 && r[n - 1] == 0) n--;
+    *out_n = n;
+    return r;
+}
+
+static uint32_t dec_parse_group(const char* s, int n) {   // n <= 9
+    uint32_t v = 0;
+    for (int i = 0; i < n; i++) v = v * 10u + (uint32_t)(s[i] - '0');
+    return v;
+}
+
+// groups 低位在前、长度是 2 的幂
+static DecRawNum dec_parse_rec(DecRawNum* groups, int len, int level) {
+    (void)len;                       // 长度由 level 决定（2^level 组），参数保留可读性
+    if (level == 0) return groups[0];
+    int half = 1 << (level - 1);
+    // ⚠ groups[0] 是**最低位**组 ⇒ 高半段在下标大的一侧：
+    //   `x = 高半段 · 10^(9·2^(level-1)) + 低半段`
+    //   （第一版把两侧写反，2^2048-1 的往返立刻挂了 —— 幸好有这条用例守着）
+    DecRawNum lo = dec_parse_rec(groups, half, level - 1);
+    DecRawNum hi = dec_parse_rec(groups + half, half, level - 1);
+    DecRawNum out = { NULL, 0 };
+    if (!lo.p || !hi.p) return out;
+    const uint32_t* P = g_dec_pow[level - 1];
+    int Pn = g_dec_pow_len[level - 1];
+    if (!P) return out;
+    int cap = hi.n + Pn + 1;
+    uint32_t* prod = (uint32_t*)calloc((size_t)cap, sizeof(uint32_t));
+    if (!prod) return out;
+    limbs_mul(hi.p, hi.n, P, Pn, prod);
+    int pn = hi.n + Pn;
+    while (pn > 1 && prod[pn - 1] == 0) pn--;
+    int sum_n = 0;
+    uint32_t* sum = dec_raw_add(prod, pn, lo.p, lo.n, &sum_n);
+    free(prod);
+    if (!sum) return out;
+    out.p = sum;
+    out.n = sum_n;
+    return out;
+}
+
+static ObjBigInt* bigint_from_dec_fast(const char* digits, int len, int is_negative) {
+    int ngroups = (len + 8) / 9;
+    int level = 0;
+    while ((1 << level) < ngroups) level++;
+    if (level >= DEC_LEVELS) return NULL;
+    dec_pow_init(level);
+    if (level > 0 && !g_dec_pow[level - 1]) return NULL;   // 幂表建不起来 ⇒ 交给老路径
+
+    int total = 1 << level;
+    DecRawNum* groups = (DecRawNum*)calloc((size_t)total, sizeof(DecRawNum));
+    if (!groups) return NULL;
+    int gi = 0;
+    for (int end = len; end > 0 && gi < ngroups; gi++) {
+        int start = end - 9;
+        if (start < 0) start = 0;
+        groups[gi].p = (uint32_t*)malloc(sizeof(uint32_t));
+        if (!groups[gi].p) {
+            for (int k = 0; k < gi; k++) free(groups[k].p);
+            free(groups);
+            return NULL;
+        }
+        groups[gi].p[0] = dec_parse_group(digits + start, end - start);
+        groups[gi].n = 1;
+        end = start;
+    }
+    for (int k = ngroups; k < total; k++) {      // 高位补零组
+        groups[k].p = (uint32_t*)calloc(1, sizeof(uint32_t));
+        if (!groups[k].p) {
+            for (int j = 0; j < k; j++) free(groups[j].p);
+            free(groups);
+            return NULL;
+        }
+        groups[k].n = 1;
+    }
+
+    DecRawNum r = dec_parse_rec(groups, total, level);
+    for (int k = 0; k < total; k++) {
+        if (groups[k].p) free(groups[k].p);
+    }
+    free(groups);
+    if (!r.p) return NULL;
+    ObjBigInt* out = bigint_new(r.p, r.n, is_negative);
+    free(r.p);
     return out;
 }
 

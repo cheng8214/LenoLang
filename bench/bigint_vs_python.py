@@ -54,6 +54,21 @@ for _ in range(4):
 print(c > 0)
 """),
 
+    ("sqr_1m", "100 万比特平方 ×4",
+     """    var a = (1 << 1000000) - 1
+    var c = 0
+    for 0 : 3 to i {
+        c = a * a
+    }
+    print(_str(c > 0))
+""",
+     """a = (1 << 1000000) - 1
+c = 0
+for _ in range(4):
+    c = a * a
+print(c > 0)
+"""),
+
     ("fact_20000", "阶乘 20000（2 万次小乘）",
      """    var f = 1
     for 1 : 20000 to i {
