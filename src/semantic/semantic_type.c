@@ -1136,6 +1136,86 @@ static int is_arith_or_bitop_for_null_check(LenoTokenType op) {
     }
 }
 
+// ★ 2026-11-22（压测）：`format` 的转换符对账 —— **裸调与模块调共用这一份**。
+//   此前只有裸调 `format(...)`（AST_CALL 的 callee 是 AST_VAR）挂了检查，
+//   而 `strings.format(...)`（AST_MODULE_CALL）**一条警告都没有** ⇒ 文档里写着
+//   "四种都会在编译期给警告"，实际模块式写法（LenoSDL3 里最常见的形态）全静默 ✗
+//   （实测 `strings.format("%d")` / `strings.format("%d","s")` 零警告）。
+//   `args->items[0]` 是格式串字面量、其余是实参；不是字面量就整条放弃（不猜）。
+void semantic_check_format_literal(Semantic* s, AstList* args, int line, int column) {
+    if (!args || args->count < 1 || !args->items[0] ||
+        args->items[0]->kind != AST_STRING) {
+        return;
+    }
+    const char* fmt = args->items[0]->u.string.value;
+    char convs[16];
+    int conv_count = 0;
+    int dyn_width = 0;      // `%*d` 会多吃一个实参 ⇒ 位置映射不可靠，放弃结构检查
+    for (const char* q = fmt; q && *q; q++) {
+        if (*q != '%') continue;
+        if (*(q + 1) == '%') { q++; continue; }     // %% 只是输出百分号 ✓
+        const char* r = q + 1;
+        while (*r && !((*r >= 'a' && *r <= 'z') || (*r >= 'A' && *r <= 'Z')) && *r != '%') {
+            if (*r == '*') dyn_width = 1;
+            r++;
+        }
+        if (*r == 0 || *r == '%') continue;
+        if (conv_count < 16) convs[conv_count] = *r;
+        conv_count++;
+        q = r;
+    }
+    int nargs = args->count - 1;
+    if (dyn_width) return;
+    if (conv_count > nargs) {
+        warning_add_at_fmt(WARN_FORMAT_SPEC, line, column,
+            "format：格式串里有 %d 个转换符，但只给了 %d 个实参 —— "
+            "缺的位置运行期会静默输出 `<missing>`；请补齐实参",
+            conv_count, nargs);
+    } else if (conv_count < nargs) {
+        warning_add_at_fmt(WARN_FORMAT_SPEC, line, column,
+            "format：格式串里只有 %d 个转换符，却给了 %d 个实参 —— "
+            "多出来的 %d 个运行期会被**静默忽略**；检查是否漏写了转换符",
+            conv_count, nargs, nargs - conv_count);
+    }
+    int check_n = conv_count < nargs ? conv_count : nargs;
+    for (int ci = 0; ci < check_n && ci < 16; ci++) {
+        char conv = convs[ci];
+        TypeInfo* at = infer_expr_type(s, args->items[ci + 1]);
+        if (!at) continue;
+        if (!strchr("sdiuoxXbfeEgGct", conv)) {
+            warning_add_at_fmt(WARN_FORMAT_SPEC, line, column,
+                "format：未知的格式转换符 `%%%c`（运行期会把 `%%%c` 原样输出）—— "
+                "常用：%%s 字符串 / %%d 整数 / %%f 浮点 / %%x 十六进制 / %%b 二进制 / "
+                "%%c 字符 / %%t 布尔；要输出百分号请写 %%%%",
+                conv, conv);
+        } else {
+            int is_num = (at->kind == TYPE_INT || at->kind == TYPE_FLOAT ||
+                          at->kind == TYPE_BIGINT || at->kind == TYPE_ENUM ||
+                          at->kind == TYPE_ANY);
+            int warns = 0;
+            if (strchr("diuoxXb", conv) || strchr("eEfgG", conv)) {
+                warns = !is_num;
+            } else if (conv == 'c') {
+                warns = !(at->kind == TYPE_INT || at->kind == TYPE_BIGINT ||
+                          at->kind == TYPE_ANY);
+            } else if (conv == 't') {
+                warns = !(at->kind == TYPE_BOOL || at->kind == TYPE_ANY);
+            }
+            if (warns) {
+                warning_add_at_fmt(WARN_FORMAT_TYPE, line, column,
+                    "格式说明符 `%%%c` 需要%s，但实参类型是 '%s' —— "
+                    "运行期会静默输出 `<type_error>` / 0.00（不报错）；"
+                    "请改用匹配的转换符，或先转成数字（_int / _str）",
+                    conv,
+                    (conv == 'c' ? "字符码（int）" :
+                     conv == 't' ? "bool" : "数字"),
+                    type_to_string(at));
+            }
+        }
+        type_free(at);
+    }
+}
+
 TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
     if (!ast) return type_new(TYPE_ANY);
     
@@ -2089,80 +2169,12 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             //   · 未知转换符（`format("%q",1)` 拼错）⇒ 运行期把 `%q` 原样输出
             //   现在：逐位对照**每个**转换符；结构不匹配与未知符走 WARN_FORMAT_SPEC，
             //   类型不匹配仍走 WARN_FORMAT_TYPE（两条互补）。
+            // ★ 2026-11-22（压测）：对账逻辑已抽成 `semantic_check_format_literal`，
+            //   裸调与模块调（`strings.format`）**共用同一份** —— 见下方函数定义
             if (ast->u.call.callee && ast->u.call.callee->kind == AST_VAR &&
                 ast->u.call.callee->u.var.name &&
-                strcmp(ast->u.call.callee->u.var.name, "format") == 0 &&
-                ast->u.call.args.count >= 1 &&
-                ast->u.call.args.items[0] &&
-                ast->u.call.args.items[0]->kind == AST_STRING) {
-                const char* fmt = ast->u.call.args.items[0]->u.string.value;
-                char convs[16];
-                int conv_count = 0;
-                int dyn_width = 0;      // `%*d` 会多吃一个实参 ⇒ 位置映射不可靠，放弃结构检查
-                for (const char* q = fmt; q && *q; q++) {
-                    if (*q != '%') continue;
-                    if (*(q + 1) == '%') { q++; continue; }     // %% 只是输出百分号 ✓
-                    const char* r = q + 1;
-                    while (*r && !((*r >= 'a' && *r <= 'z') || (*r >= 'A' && *r <= 'Z')) && *r != '%') {
-                        if (*r == '*') dyn_width = 1;
-                        r++;
-                    }
-                    if (*r == 0 || *r == '%') continue;
-                    if (conv_count < 16) convs[conv_count] = *r;
-                    conv_count++;
-                    q = r;
-                }
-                int nargs = ast->u.call.args.count - 1;
-                if (!dyn_width) {
-                    if (conv_count > nargs) {
-                        warning_add_at_fmt(WARN_FORMAT_SPEC, ast->line, ast->column,
-                            "format：格式串里有 %d 个转换符，但只给了 %d 个实参 —— "
-                            "缺的位置运行期会静默输出 `<missing>`；请补齐实参",
-                            conv_count, nargs);
-                    } else if (conv_count < nargs) {
-                        warning_add_at_fmt(WARN_FORMAT_SPEC, ast->line, ast->column,
-                            "format：格式串里只有 %d 个转换符，却给了 %d 个实参 —— "
-                            "多出来的 %d 个运行期会被**静默忽略**；检查是否漏写了转换符",
-                            conv_count, nargs, nargs - conv_count);
-                    }
-                    int check_n = conv_count < nargs ? conv_count : nargs;
-                    for (int ci = 0; ci < check_n && ci < 16; ci++) {
-                        char conv = convs[ci];
-                        TypeInfo* at = infer_expr_type(s, ast->u.call.args.items[ci + 1]);
-                        if (!at) continue;
-                        if (!strchr("sdiuoxXbfeEgGct", conv)) {
-                            warning_add_at_fmt(WARN_FORMAT_SPEC, ast->line, ast->column,
-                                "format：未知的格式转换符 `%%%c`（运行期会把 `%%%c` 原样输出）—— "
-                                "常用：%%s 字符串 / %%d 整数 / %%f 浮点 / %%x 十六进制 / %%b 二进制 / "
-                                "%%c 字符 / %%t 布尔；要输出百分号请写 %%%%",
-                                conv, conv);
-                        } else {
-                            int is_num = (at->kind == TYPE_INT || at->kind == TYPE_FLOAT ||
-                                          at->kind == TYPE_BIGINT || at->kind == TYPE_ENUM ||
-                                          at->kind == TYPE_ANY);
-                            int warns = 0;
-                            if (strchr("diuoxXb", conv) || strchr("eEfgG", conv)) {
-                                warns = !is_num;
-                            } else if (conv == 'c') {
-                                warns = !(at->kind == TYPE_INT || at->kind == TYPE_BIGINT ||
-                                          at->kind == TYPE_ANY);
-                            } else if (conv == 't') {
-                                warns = !(at->kind == TYPE_BOOL || at->kind == TYPE_ANY);
-                            }
-                            if (warns) {
-                                warning_add_at_fmt(WARN_FORMAT_TYPE, ast->line, ast->column,
-                                    "格式说明符 `%%%c` 需要%s，但实参类型是 '%s' —— "
-                                    "运行期会静默输出 `<type_error>` / 0.00（不报错）；"
-                                    "请改用匹配的转换符，或先转成数字（_int / _str）",
-                                    conv,
-                                    (conv == 'c' ? "字符码（int）" :
-                                     conv == 't' ? "bool" : "数字"),
-                                    type_to_string(at));
-                            }
-                        }
-                        type_free(at);
-                    }
-                }
+                strcmp(ast->u.call.callee->u.var.name, "format") == 0) {
+                semantic_check_format_literal(s, &ast->u.call.args, ast->line, ast->column);
             }
 
             // ★ 2026-11-03（fuzz 发现）：**立即调用的箭头函数** `((int n) => n * 3)(4)`。
@@ -2748,6 +2760,17 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             //   只查字面量 Dict、只警告不中断 ✓
             // 注解 @optkeys 的检查**不在这里** —— 实测控件的构造调用走的是
             //   `visit_expr.inc` 的参数个数检查处（那里 `func_def` 已解析到被调函数，跨模块也拿得到）
+            // ★ 2026-11-22（压测）：`strings.format(...)` 的转换符对账挂**这里**，不能挂 visit 侧 ——
+            //   与上面 @optkeys 那条注释同源：嵌套在别的表达式里的模块调用（如
+            //   `print("[" + strings.format("%d") + "]")`）**只走 infer、不走 visit** ✗
+            //   （实测：挂 visit 侧时赋值形态有警告、嵌套形态一条没有）。
+            if (ast->u.module_call.module_name &&
+                strcmp(ast->u.module_call.module_name, "strings") == 0 &&
+                ast->u.module_call.method_name &&
+                strcmp(ast->u.module_call.method_name, "format") == 0) {
+                semantic_check_format_literal(s, &ast->u.module_call.args,
+                                              ast->line, ast->column);
+            }
             const char* actual_module = native_resolve_module_alias(ast->u.module_call.module_name);
 
             // 检查是否是原生模块

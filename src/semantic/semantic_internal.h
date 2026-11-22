@@ -104,6 +104,11 @@ int semantic_check_method_args_from_placeholder(Semantic* s, const char* struct_
                                                 const char* method_name, AstList* args,
                                                 int line, int column);
 
+// `format` 字面量格式串的对账（**唯一实现**，2026-11-22 抽出）：裸调 `format(...)` 与
+// 模块调 `strings.format(...)` 共用 ⇒ 两种形态的 WARN_FORMAT_SPEC / WARN_FORMAT_TYPE 一致。
+// `args->items[0]` 必须是格式串**字面量**，其余是实参；不是字面量时整条放弃（不猜）。
+void semantic_check_format_literal(Semantic* s, AstList* args, int line, int column);
+
 // 「未定义的类型」提示（**唯一实现**，2026-10-10 加 / A 组第 4 条）：去**已导入模块**的
 //   符号表里按名字找（struct/face/enum/别名/clib ✓）⇒ 命中就写清「它其实是模块 'X' 导出的
 //   某类 ⇒ 请补 `use X.名字`」✓；找不到才退回泛泛提示 ✓。
