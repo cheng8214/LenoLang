@@ -2210,6 +2210,28 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                 // 同时检查是否是 async 函数（async 函数返回 Future）
                 Ast* func_def_for_async = func_table_find(&s->func_table, func_name);
                 Symbol* sym = scope_resolve(s->current, func_name);
+
+                // ★ 2026-11-22（压测）：`x(2)` 而 x 是**普通值**（int / string / struct …）⇒
+                //   编译期报错。此前只有运行期那句「只能调用函数（不是对象类型）」（可 catch，
+                //   但要跑到那行才知道，且 `try` 没包住就直接终止）。静态类型已经明确不是函数
+                //   ⇒ 零误报，提前拦 ✓
+                //   ⚠ 只拦"类型**确定**不是函数"的：any / 泛型参数 / 毒值 / null 全部放过
+                //     （any 里可能真装着函数值；null 有自己的"函数未定义"文案）
+                if (sym && sym->type) {
+                    TypeKind ck = sym->type->kind;
+                    //   ⚠ 没有 TYPE_VOID：源码里的 `void` 就是 TYPE_NULL（见 vm.c 的
+                    //     type_spec_render 注释），所以下面只排 TYPE_NULL 即可
+                    if (ck != TYPE_FUNCTION && ck != TYPE_ANY && ck != TYPE_INFER &&
+                        ck != TYPE_POISON && ck != TYPE_GENERIC_PARAM && ck != TYPE_NULL) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                            "不能调用 '%s' —— 它是 %s 类型的**值**，不是函数；"
+                            "调用函数要写成 `函数名(参数)`；若是「字段里存的函数值」，"
+                            "先确认该字段确实被赋成了函数（类型别写成了普通字段类型）",
+                            func_name, type_to_string(sym->type));
+                        semantic_poison_expr(ast);
+                        return type_new(TYPE_POISON);
+                    }
+                }
                 if (sym && sym->type && sym->type->kind == TYPE_FUNCTION && sym->type->return_type) {
                     TypeInfo* ret = type_copy(sym->type->return_type);
 
