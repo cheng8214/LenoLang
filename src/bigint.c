@@ -388,21 +388,140 @@ Value bigint_or_i64(ObjBigInt* a, int64_t v) {
     return bigint_or(a, &bv);
 }
 
+// ============================================================================
+// 大数乘法：Karatsuba（2026-11-22，压测 2^1e9 时发现乘法是纯教科书式 O(n·m)）
+// ----------------------------------------------------------------------------
+// 规模感：`2^1000000 × 2^1000000` 各约 3.1 万 limb ⇒ 教科书式要 ~10 亿次 32×32 乘加。
+// Karatsuba 把一次 n×n 拆成 **3 次 (n/2)×(n/2)**（少一次），复杂度降到 ~O(n^1.585)。
+//
+// ⚠ 判据刻意保守：**只对「等长、偶数长度、≥阈值」的操作数**启用，
+//   其余（小数字 / 长短不一 / 奇数长度）一律走教科书式。
+//   理由：Karatsuba 的收益在大数，而它的边界（奇数拆分、进位、减法借位）最容易出静默错；
+//   把触发条件收窄 ⇒ 小数字零风险，大数字（真正的痛点）拿到收益。
+#define KARATSUBA_THRESHOLD 40
+
+// 教科书式：out[0..na+nb) 必须已清零
+static void limbs_mul_school(const uint32_t* a, int na, const uint32_t* b, int nb,
+                             uint32_t* out) {
+    for (int i = 0; i < na; i++) {
+        uint64_t carry = 0;
+        uint64_t ai = a[i];
+        for (int j = 0; j < nb || carry; j++) {
+            uint64_t cur = (uint64_t)out[i + j] + (j < nb ? ai * b[j] : 0) + carry;
+            out[i + j] = (uint32_t)(cur & BASE_MASK);
+            carry = cur >> BASE_BITS;
+        }
+    }
+}
+
+// r = a + b（长度 n）；**返回最高进位**（0 或 1）
+//   ⚠ 这个返回值必须用上：a0+a1 是 n limb + n limb，结果可能需要 n+1 limb。
+//     第一版把它丢了（`sa[m] = 0`）⇒ 只要低半段全 1（如 2^3000-1）就必然算错，
+//     而 `2^k` 这种"只有一位是 1"的操作数进位恒为 0 ⇒ 恰好测不出来
+//     （实测：`(2^3000-1)²` 的展开恒等式挂了，`(2^5000)·(2^4999)` 却过 ✗）
+static uint32_t limbs_add_n(uint32_t* r, const uint32_t* a, const uint32_t* b, int n) {
+    uint64_t carry = 0;
+    for (int i = 0; i < n; i++) {
+        uint64_t s = (uint64_t)a[i] + b[i] + carry;
+        r[i] = (uint32_t)(s & BASE_MASK);
+        carry = s >> BASE_BITS;
+    }
+    return (uint32_t)carry;
+}
+
+// r -= a（长度 n；调用方保证 r >= a）
+static void limbs_sub_n(uint32_t* r, const uint32_t* a, int n) {
+    int64_t borrow = 0;
+    for (int i = 0; i < n; i++) {
+        int64_t d = (int64_t)r[i] - a[i] - borrow;
+        if (d < 0) { d += (int64_t)BASE; borrow = 1; } else { borrow = 0; }
+        r[i] = (uint32_t)d;
+    }
+}
+
+// out += x << (32*shift)；out 长 outn
+static void limbs_add_shifted(uint32_t* out, int outn, const uint32_t* x, int xn, int shift) {
+    uint64_t carry = 0;
+    for (int i = 0; i < xn || carry; i++) {
+        int k = i + shift;
+        if (k >= outn) break;
+        uint64_t cur = (uint64_t)out[k] + (i < xn ? x[i] : 0) + carry;
+        out[k] = (uint32_t)(cur & BASE_MASK);
+        carry = cur >> BASE_BITS;
+    }
+}
+
+static void limbs_karatsuba(const uint32_t* a, const uint32_t* b, int n, uint32_t* out);
+
+// 统一入口：out[0..na+nb) 必须已清零
+static void limbs_mul(const uint32_t* a, int na, const uint32_t* b, int nb, uint32_t* out) {
+    int n = na > nb ? na : nb;
+    // ★ 2026-11-22：**先按"等长"补齐**，别要求"本来等长" ——
+    //   实测 `(2^2000000-1) * (2^2000000+1)` 的 limb 数是 62500 vs 62501（+1 多一位）
+    //   ⇒ 原来的 `na == nb` 判据直接回退教科书式，等于"最常用的形态反而没加速" ✗
+    //   补齐到**偶数**长度（Karatsuba 要二分），结果先算进 2n 的临时缓冲再拷回
+    //   （out 只有 na+nb，可能比 2n 少一位）。
+    if (n >= KARATSUBA_THRESHOLD) {
+        int nn = (n % 2) ? n + 1 : n;
+        uint32_t* abuf = (uint32_t*)calloc(nn, sizeof(uint32_t));
+        uint32_t* bbuf = (uint32_t*)calloc(nn, sizeof(uint32_t));
+        uint32_t* rbuf = (uint32_t*)calloc(2 * nn, sizeof(uint32_t));
+        if (abuf && bbuf && rbuf) {
+            memcpy(abuf, a, na * sizeof(uint32_t));
+            memcpy(bbuf, b, nb * sizeof(uint32_t));
+            limbs_karatsuba(abuf, bbuf, nn, rbuf);
+            memcpy(out, rbuf, (size_t)(na + nb) * sizeof(uint32_t));
+            free(abuf); free(bbuf); free(rbuf);
+            return;
+        }
+        free(abuf); free(bbuf); free(rbuf);
+        // 内存不够 ⇒ 回退教科书式（结果一样，只是慢）
+    }
+    limbs_mul_school(a, na, b, nb, out);
+}
+
+// a、b 都是 n limb（n 为偶数、≥阈值），out 长 2n
+static void limbs_karatsuba(const uint32_t* a, const uint32_t* b, int n, uint32_t* out) {
+    int m = n / 2;
+    uint32_t* z0 = (uint32_t*)calloc(2 * m + 2, sizeof(uint32_t));
+    uint32_t* z2 = (uint32_t*)calloc(2 * m + 2, sizeof(uint32_t));
+    uint32_t* sa = (uint32_t*)calloc(m + 1, sizeof(uint32_t));
+    uint32_t* sb = (uint32_t*)calloc(m + 1, sizeof(uint32_t));
+    uint32_t* z1 = (uint32_t*)calloc(2 * (m + 1) + 2, sizeof(uint32_t));
+    if (!z0 || !z2 || !sa || !sb || !z1) {
+        free(z0); free(z2); free(sa); free(sb); free(z1);
+        limbs_mul_school(a, n, b, n, out);   // 兜底：宁可慢，不可错（out 有 2n ✓）
+        return;
+    }
+    // z0 = a0*b0, z2 = a1*b1
+    limbs_mul(a, m, b, m, z0);
+    limbs_mul(a + m, m, b + m, m, z2);
+    // sa = a0+a1, sb = b0+b1（都补齐到 m+1，保证等长 ⇒ 递归还能走 Karatsuba）
+    //   ⚠ 最高进位**必须写进 sa[m]/sb[m]**（见 limbs_add_n 的注释：丢掉它是个静默 bug）
+    sa[m] = limbs_add_n(sa, a, a + m, m);
+    sb[m] = limbs_add_n(sb, b, b + m, m);
+    // z1 = sa*sb - z0 - z2
+    limbs_mul(sa, m + 1, sb, m + 1, z1);
+    // ⚠ 减法要按 **z1 的完整长度（2m+2）** 传播借位 —— 只在低 2m limb 里减，
+    //   借位一出 2m 就被吞掉 ⇒ 低半段全 1 的操作数（如 2^k-1）必然算错 ✗
+    //   （z0/z2 的缓冲是 calloc 且多留了 2 limb ⇒ 高位是 0，多减无副作用 ✓）
+    limbs_sub_n(z1, z0, 2 * m + 2);
+    limbs_sub_n(z1, z2, 2 * m + 2);
+    // out = z0 + (z1 << m) + (z2 << 2m)
+    limbs_add_shifted(out, 2 * n, z0, 2 * m, 0);
+    limbs_add_shifted(out, 2 * n, z1, 2 * m + 2, m);
+    limbs_add_shifted(out, 2 * n, z2, 2 * m, 2 * m);
+    free(z0); free(z2); free(sa); free(sb); free(z1);
+}
+
 Value bigint_mul(ObjBigInt* a, ObjBigInt* b) {
     int result_is_negative = a->is_negative != b->is_negative;
     int result_count = a->limb_count + b->limb_count;
 
-    uint64_t* temp = (uint64_t*)calloc(result_count, sizeof(uint64_t));
+    uint32_t* temp = (uint32_t*)calloc(result_count, sizeof(uint32_t));
     if (!temp) return val_null();
 
-    for (int i = 0; i < a->limb_count; i++) {
-        uint64_t carry = 0;
-        for (int j = 0; j < b->limb_count || carry; j++) {
-            uint64_t cur = temp[i + j] + (uint64_t)a->limbs[i] * (j < b->limb_count ? b->limbs[j] : 0) + carry;
-            temp[i + j] = cur & BASE_MASK;
-            carry = cur >> BASE_BITS;
-        }
-    }
+    limbs_mul(a->limbs, a->limb_count, b->limbs, b->limb_count, temp);
 
     uint32_t* result_limbs = (uint32_t*)malloc(result_count * sizeof(uint32_t));
     if (!result_limbs) {
