@@ -455,6 +455,15 @@ static void limbs_karatsuba(const uint32_t* a, const uint32_t* b, int n, uint32_
 
 // 统一入口：out[0..na+nb) 必须已清零
 static void limbs_mul(const uint32_t* a, int na, const uint32_t* b, int nb, uint32_t* out) {
+    // ★★ 2026-11-22（与 Python 对比压测发现）：**小操作数必须先走教科书式**。
+    //   下面那段"补齐到等长"在 `nb == 1`（乘一个小整数）时会把 1 limb 补成 n limb，
+    //   然后拿 Karatsuba 去算一个**O(n) 就能完成**的乘法 ⇒ 阶乘这种"n 次乘小整数"的
+    //   负载直接慢 **609 倍**（实测 `fact_20000`：Leno 68.6s vs Python 0.11s，
+    //   同机同算式）。判据用 **min(na,nb)**：只有两边都够大，Karatsuba 才有意义 ✓
+    if ((na < nb ? na : nb) < KARATSUBA_THRESHOLD) {
+        limbs_mul_school(a, na, b, nb, out);
+        return;
+    }
     int n = na > nb ? na : nb;
     // ★ 2026-11-22：**先按"等长"补齐**，别要求"本来等长" ——
     //   实测 `(2^2000000-1) * (2^2000000+1)` 的 limb 数是 62500 vs 62501（+1 多一位）
