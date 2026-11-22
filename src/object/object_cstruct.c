@@ -530,30 +530,37 @@ void cstruct_set_field_value(ObjCStruct* obj, int field_index, Value value) {
         return;
     }
 
+    // ★ 2026-11-22（压测发现）：窄整数字段的写入**必须统一先落到 int64 再截断**。
+    //   此前每个分支直接 `(int8_t)val_as_num(value)` —— 那是 **double → 窄整数** 的转换，
+    //   超出目标范围时是 **C 的未定义行为**（实测 x86 上 `(int32_t)3000000000.0` 得
+    //   INT32_MIN = **饱和**，而 `(uint8_t)300.0` 得 44 = **截断**）⇒ 同一个 cstruct 里
+    //   `i32` 和 `u8` 的越界行为**不一致**，而且都没诊断（静默错值）。
+    //   现在统一 `(int64_t)` 中转：Leno 的 int 是 int48、必在 int64 内（溢出自提升 bigint）
+    //   ⇒ 中转无损，再窄化就是**确定的补码截断**（3000000000 → -1294967296，与 u8/u16 同口径）✓
     switch (field->type) {
         // 同 cstruct_get_field_value：packed 字段地址可能未对齐，统一走 memcpy
         case TYPE_I8: {
-            int8_t v = (int8_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
+            int8_t v = (int8_t)(int64_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
         }
         case TYPE_U8: {
-            uint8_t v = (uint8_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
+            uint8_t v = (uint8_t)(int64_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
         }
         case TYPE_I16: {
-            int16_t v = (int16_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
+            int16_t v = (int16_t)(int64_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
         }
         case TYPE_U16: {
-            uint16_t v = (uint16_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
+            uint16_t v = (uint16_t)(int64_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
         }
         case TYPE_I32: {
-            int32_t v = (int32_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
+            int32_t v = (int32_t)(int64_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
         }
         case TYPE_U32: {
-            uint32_t v = (uint32_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
+            uint32_t v = (uint32_t)(int64_t)val_as_num(value); memcpy(field_addr, &v, sizeof(v));
             break;
         }
         case TYPE_I64: {
