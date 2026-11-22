@@ -1312,11 +1312,18 @@
                                                     }
                                                     if (!is_generic && !type_is_compatible(check_type, arg_type)) {
                                                         char idx_str[16];
+                                                        // ★ 2026-11-23（压测）：**带上属主类型** `P.setV` ——
+                                                        //   原来只写方法名，同一个项目里"模块函数"那条是 `m.mk`、
+                                                        //   "struct 方法"这条却是裸 `setV` ⇒ 读者会当成自由函数 ✗
+                                                        char owner_buf[192];
                                                         snprintf(idx_str, sizeof(idx_str), "%d", i + 1);
+                                                        snprintf(owner_buf, sizeof(owner_buf), "%s.%s",
+                                                                 (obj_type && obj_type->struct_name) ? obj_type->struct_name : "?",
+                                                                 method_name);
                                                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "%s",
                                                             format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
                                                                 check_type, arg_type,
-                                                                method_name, idx_str, NULL));
+                                                                owner_buf, idx_str, NULL));
                                                     }
                                                 }
                                                 if (arg_type) type_free(arg_type);

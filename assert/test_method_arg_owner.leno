@@ -1,0 +1,44 @@
+// test_method_arg_owner.leno —— 方法调用的参数类型错，文案要带**属主类型**（2026-11-23）
+//
+// 现场：同一份代码里三种调用三种叫法 ——
+//   · 模块函数 `m.mk`  → `m.mk 第 1 个参数类型不匹配`  ✓
+//   · struct 方法       → 裸 `setV 第 1 个参数类型不匹配` ✗（读起来像自由函数）
+// 统一成 `P.setV`：读者一眼知道是哪个类型的方法。
+import "helpers/compiler.leno" as ce
+import dirs
+import files
+
+main() {
+    var work = dirs.join(_tmpdir(), "leno_method_arg_owner")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
+
+    var d1 = dirs.join(work, "m1.leno")
+    files.write(d1, @"struct P {
+    int x = 0
+    func setV(int v): void { self.x = v }
+}
+
+main() {
+    var p = new P()
+    p.setV(""1"")
+}
+")
+    ce.expect_error(d1, "① struct 方法参数类型错：属主类型要出现",
+        "P.setV 第 1 个参数类型不匹配", 8)
+
+    // ② 对照：自由函数仍是裸名字（不能凭空加前缀）
+    var d2 = dirs.join(work, "m2.leno")
+    files.write(d2, @"func takeInt(int v): void { print(_str(v)) }
+
+main() {
+    takeInt(""x"")
+}
+")
+    var o2 = ce.expect_error(d2, "② 自由函数参数类型错：仍是裸函数名",
+        "takeInt 第 1 个参数类型不匹配", 4)
+    ce.expect_no_warning(o2, "② 不该凭空加类型前缀", "unknown.takeInt")
+
+    dirs.delete(work)
+    print("test_method_arg_owner passed")
+}
