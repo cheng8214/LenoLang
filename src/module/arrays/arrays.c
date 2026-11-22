@@ -588,17 +588,31 @@ static Value arr_map(int argc, Value* args) {
     result->type_info = NULL;
     gc_track_memory((Object*)result, 0, result->capacity * sizeof(Value));
 
+    // ★ 2026-11-22（压测）：**回调里会触发 GC** —— `result` 只有 C 局部变量引用它，
+    //   GC 一跑就被当垃圾回收，之后 `result->elements[...] = …` 是 UAF。
+    //   实测：`a.map(func(int x, int _i) { a.add(99)  return x * 2 })` 直接 **0xC0000005**。
+    //   （`a.add` 会分配内存 ⇒ 触发 GC ⇒ 把还没交出去的 result 收掉）
+    //   ⇒ 循环前先登记成根，**所有出口都要 pop** ✓
+    Value result_val = val_obj((Object*)result);
+    gc_push_root(&result_val);
+
     for (int i = 0; i < arr->count; i++) {
         Value call_args[2];
         call_args[0] = arr->elements[i];
         call_args[1] = val_int(i);
         Value mapped = val_null();
         // 回调里抛异常 ⇒ 立刻 return（异常挂在 vm 上），别继续拿"半成品"结果
-        if (!call_closure(fn, 2, call_args, &mapped)) return val_null();
+        if (!call_closure(fn, 2, call_args, &mapped)) {
+            gc_pop_root();
+            return val_null();
+        }
         if (result->count >= result->capacity) {
             int new_cap = result->capacity * 2;
             Value* new_elems = (Value*)realloc(result->elements, new_cap * sizeof(Value));
-            if (!new_elems) return val_null();
+            if (!new_elems) {
+                gc_pop_root();
+                return val_null();
+            }
             gc_track_memory((Object*)result, result->capacity * sizeof(Value), new_cap * sizeof(Value));
             result->elements = new_elems;
             result->capacity = new_cap;
@@ -607,7 +621,8 @@ static Value arr_map(int argc, Value* args) {
         gc_write_barrier((Object*)result, mapped);
     }
 
-    return val_obj((Object*)result);
+    gc_pop_root();
+    return result_val;
 }
 
 static Value arr_filter(int argc, Value* args) {
@@ -624,17 +639,28 @@ static Value arr_filter(int argc, Value* args) {
     result->type_info = NULL;
     gc_track_memory((Object*)result, 0, result->capacity * sizeof(Value));
 
+    // ★ 2026-11-22（压测）：同 map —— 回调会分配/触发 GC，`result` 必须自保（实测 filter
+    //   回调里 `b.remove(0)` 也会 0xC0000005）。所有出口都要 gc_pop_root ✓
+    Value result_val = val_obj((Object*)result);
+    gc_push_root(&result_val);
+
     for (int i = 0; i < arr->count; i++) {
         Value call_args[2];
         call_args[0] = arr->elements[i];
         call_args[1] = val_int(i);
         Value pred = val_null();
-        if (!call_closure(fn, 2, call_args, &pred)) return val_null();   // 回调抛异常 ⇒ 上抛
+        if (!call_closure(fn, 2, call_args, &pred)) {   // 回调抛异常 ⇒ 上抛
+            gc_pop_root();
+            return val_null();
+        }
         if (val_is_bool(pred) && val_as_bool(pred)) {
             if (result->count >= result->capacity) {
                 int new_cap = result->capacity * 2;
                 Value* new_elems = (Value*)realloc(result->elements, new_cap * sizeof(Value));
-                if (!new_elems) return val_null();
+                if (!new_elems) {
+                    gc_pop_root();
+                    return val_null();
+                }
                 gc_track_memory((Object*)result, result->capacity * sizeof(Value), new_cap * sizeof(Value));
                 result->elements = new_elems;
                 result->capacity = new_cap;
@@ -644,7 +670,8 @@ static Value arr_filter(int argc, Value* args) {
         }
     }
 
-    return val_obj((Object*)result);
+    gc_pop_root();
+    return result_val;
 }
 
 static Value arr_reduce(int argc, Value* args) {
