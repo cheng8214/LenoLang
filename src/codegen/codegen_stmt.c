@@ -1906,7 +1906,7 @@ void gen_index_assign(CodeGen* gen, Ast* ast, int dst) {
     // ★ 2026-11-11（P0）：`a[i].x = v`（cstruct 数组 + 字面量字段名）融合成 **一条**指令。
     //   原先 = `a[i]`（OP_INDEX，每次 **gc_alloc 一个视图对象**）+ OP_INDEX_SET 的字符串
     //   下标分支（再做一次字段名比较）。实测 20 万顶点 × 4 字段 **52 ms** vs 手写
-    //   ffi.write_float 的 9 ms。根因与实测见 LenoDocsSrc/site/密集数据与FFI能力评估_2026-11-11.html。
+    //   ffi.write_float 的 9 ms。根因与实测见 LenoDocsSrc/site/archive/密集数据与FFI能力评估_2026-11-11.html。
     //   判据与读路径（codegen_expr.c 的 AST_INDEX 分支）**逐条同源**：
     //     接收者是 `a[非字符串下标]` + `a[i]` 与 `a` 的静态类型都是 cstruct + 字段索引解析得出。
     //   求值顺序：arr、下标先求值，右值最后（与下面通用路径一致）；右值可能改写这两个

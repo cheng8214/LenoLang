@@ -678,7 +678,7 @@
     // ★ 2026-11-11（P0）：cstruct **数组**的「索引 + 字段」融合读写。
     //   为什么：`a[i].x` 原先要「OP_INDEX 建视图（每次 gc_alloc）+ 字符串下标字段写」
     //   两步 ⇒ 20 万顶点 × 4 字段实测 **52 ms**，手写 ffi.write_float 只要 **9 ms**
-    //   （见 LenoDocsSrc/site/密集数据与FFI能力评估_2026-11-11.html）。
+    //   （见 LenoDocsSrc/site/archive/密集数据与FFI能力评估_2026-11-11.html）。
     //   做法：只承认 B 是 OBJ_CSTRUCT_ARRAY；其余类型（静态推断只知 TYPE_CSTRUCT，
     //   可能是单实例或 Ptr[T]）**逐条回退**，文案与 OP_INDEX / OP_INDEX_SET 保持一致，
     //   不比现状更差。

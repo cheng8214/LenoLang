@@ -261,7 +261,7 @@
                                         //   （cstruct 数组的「索引 + 字段」融合读写：
                                         //    `a[i].x` 原先每次 `a[i]` 都 gc_alloc 一个视图对象，
                                         //    20 万顶点 × 4 字段实测 52ms vs 手写 write_float 9ms；
-                                        //    见 LenoDocsSrc/site/密集数据与FFI能力评估_2026-11-11.html）。
+                                        //    见 LenoDocsSrc/site/archive/密集数据与FFI能力评估_2026-11-11.html）。
                                         //   编码 iABC + 紧随 EXTRAARG（24 位字段索引）。
                                         //   **opcode 集合变了**：追加在枚举末尾 ⇒ 既有编号不变，
                                         //   但新字节码含旧构建不认识的 opcode ⇒ 仍必须 bump ✓

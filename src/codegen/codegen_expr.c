@@ -693,7 +693,7 @@ void gen_expr_to(CodeGen* gen, Ast* ast, int dst) {
             //   原先 = `a[i]`（OP_INDEX，每次 **gc_alloc 一个视图对象**）+ 字符串下标取字段
             //   （OP_INDEX 的 cstruct 分支，再做一次字段名比较）。实测 20 万顶点 × 4 字段
             //   **52 ms**，而手写 ffi.write_float 只要 9 ms ⇒「用连续 cstruct 数组代替手工偏移」
-            //   反而慢 5.8 倍。根因与实测见 LenoDocsSrc/site/密集数据与FFI能力评估_2026-11-11.html。
+            //   反而慢 5.8 倍。根因与实测见 LenoDocsSrc/site/archive/密集数据与FFI能力评估_2026-11-11.html。
             //   ⚠ 必须放在**求值 obj_reg 之前**：obj_reg 一旦生成，视图分配就已经发生了。
             //   判据（任一不满足 ⇒ 走原路径，字节码与语义都不变）：
             //     ① 接收者是 AST_INDEX 且下标非字符串（`a[0]` / `a[i]`）
