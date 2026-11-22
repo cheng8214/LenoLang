@@ -639,10 +639,29 @@
                             sim_hint = get_similar_in_names(sim_names, sim_n,
                                                             ast->u.module_call.method_name);
                         }
-                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                 "模块 '%s' 中没有方法 '%s'%s",
-                                 ast->u.module_call.module_name, ast->u.module_call.method_name,
-                                 sim_hint);
+                        // ★ 2026-11-23（模块系统压测）：原文案「模块 'b' 中没有方法 'secret'」两处误导：
+                        //   ① `b.secret()` 调的是**函数**，不是方法；
+                        //   ② 真实原因常常是"模块里写了、但**没 export**"（Leno 模块默认文件私有）——
+                        //      照着"没有方法"去查拼写会白找。这里按"存在但未导出 / 根本不存在"分开说 ✓
+                        //   判据：`sym_table->funcs` 是 export ∪ 本地非导出函数（见 module_loader.c 的
+                        //   注释），能查到 ⇒ 名字对、只是没导出。
+                        int exists_internal = (module_info->sym_table &&
+                            module_symbol_table_find_func(module_info->sym_table,
+                                                          ast->u.module_call.method_name) != NULL);
+                        if (exists_internal) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                "模块 '%s' 里有函数 '%s'，但它**没有 export** —— Leno 模块默认文件私有，"
+                                "跨模块访问不到；请在模块里写成 `export func %s(...)`，"
+                                "或在模块内加一个导出的包装函数",
+                                ast->u.module_call.module_name,
+                                ast->u.module_call.method_name,
+                                ast->u.module_call.method_name);
+                        } else {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                "模块 '%s' 中没有**导出**的成员 '%s'（跨模块只能用 `export` 声明过的名字）%s",
+                                ast->u.module_call.module_name, ast->u.module_call.method_name,
+                                sim_hint);
+                        }
                         semantic_poison_expr(ast);   /* 根因已报 ⇒ 抑制下游级联 */
                     } else if (module_info->sym_table) {
                         // 从模块符号表推断返回类型
