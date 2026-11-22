@@ -29,7 +29,10 @@ export func mk(): Box {
 
     var entry = dirs.join(work, "main.leno")
     files.write(entry,
-        "import \"mod.leno\" as m\n\n"
+        // ★ 2026-11-22：同 test_error_cascade —— 不写 `use m.Box` 时类型解析不出来，
+        //   报的是「类型 'Box' 未解析」那条（正确但**不是**本用例要钉的"方法不存在"）
+        "import \"mod.leno\" as m\n"
+        + "use m.Box\n\n"
         + "func f(): int {\n"
         + "    var b = m.mk()\n"
         + "    var r = b.nope()\n"              // 第 5 行：唯一的根因
@@ -40,7 +43,7 @@ export func mk(): Box {
         + "    print(f())\n"
         + "}\n")
 
-    var out = ce.expect_error(entry, "缺失方法的链式调用只报一条根因", "没有方法 'nope'", 5)
+    var out = ce.expect_error(entry, "缺失方法的链式调用只报一条根因", "没有方法 'nope'", 6)
     assert_true(strings.has(out, "发现 1 个错误"),
                 "只该有 1 条根因错误（实际输出=" + out + "）")
     assert_true(not strings.has(out, "alsoNope"),

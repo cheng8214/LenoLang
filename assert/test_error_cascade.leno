@@ -30,7 +30,11 @@ export func mk(): Box {
     // 入口：调用不存在的方法，并把结果用于 int 声明 + return（两条经典级联点）
     var entry = dirs.join(work, "main.leno")
     files.write(entry,
-        "import \"mod.leno\" as m\n\n"
+        // ★ 2026-11-22：必须显式 `use m.Box` —— 否则类型根本没解析出来，报的是
+        //   「调用方法失败：类型 'Box' 未解析 ⇒ 请补 use m.Box」（那是另一条正确但不同的诊断）。
+        //   本用例要钉的是"**类型已解析**、方法确实不存在"这条根因，以及它的级联抑制 ✓
+        "import \"mod.leno\" as m\n"
+        + "use m.Box\n\n"
         + "func f(): int {\n"
         + "    var b = m.mk()\n"
         + "    int r = b.nope(1)\n"
@@ -40,8 +44,8 @@ export func mk(): Box {
         + "    print(f())\n"
         + "}\n")
 
-    // 第 5 行是 `int r = b.nope(1)`
-    var out = ce.expect_error(entry, "缺失方法应报错", "没有方法 'nope'", 5)
+    // 第 6 行是 `int r = b.nope(1)`（上面多了 `use m.Box` 一行）
+    var out = ce.expect_error(entry, "缺失方法应报错", "没有方法 'nope'", 6)
 
     assert_true(strings.has(out, "发现 1 个错误"),
                 "只该有 1 条根因错误（实际输出=" + out + "）")

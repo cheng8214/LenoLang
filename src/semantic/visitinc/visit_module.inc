@@ -720,11 +720,19 @@
                                         }
                                         if (!skip && !type_is_compatible(expected_type, arg_type)) {
                                             char idx_str[16];
+                                            char callee_buf[192];
                                             snprintf(idx_str, sizeof(idx_str), "%d", pi + 1);
+                                            // ★ 2026-11-22（压测）：**带上模块前缀** `m.mk` ——
+                                            //   同一份代码里"参数个数不足"那条写的是 `m.needs2`、
+                                            //   这条只写 `mk`，同一批跨模块调用两种叫法 ⇒ 读者会以为
+                                            //   是本地函数。统一成"模块名.函数名" ✓
+                                            snprintf(callee_buf, sizeof(callee_buf), "%s.%s",
+                                                     ast->u.module_call.module_name,
+                                                     ast->u.module_call.method_name);
                                             error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column, "%s",
                                                 format_type_error_text("%s3 第 %s4 个参数类型不匹配: 期望 %s1, 实际 %s2",
                                                     expected_type, arg_type,
-                                                    ast->u.module_call.method_name, idx_str, NULL));
+                                                    callee_buf, idx_str, NULL));
                                         }
                                     }
                                     if (arg_type) type_free(arg_type);
@@ -1736,9 +1744,16 @@
                                 //    这一处藏在"类型没有方法"里 ✓ 说明"照着报错文案 grep"才找得全 ✓）
                                 char hint[BUFFER_MEDIUM];
                                 semantic_undefined_type_hint(s, tn, hint, sizeof(hint));
+                                // ★ 2026-11-22（压测）：原来这条写成「类型 'struct Box' 没有方法 'setX'：
+                                //   类型 'Box' 未定义」—— **自相矛盾**（先断言没有方法，又说类型根本没解析出来）。
+                                //   压测现场：`var b = m.mk(1); b.setX(1)` 而文件没写 `use m.Box`
+                                //   ⇒ 真正的原因是"类型没解析"，此时**不可能**判有没有方法；
+                                //   按原文案会让人去翻 Box 的方法列表，方向全错 ✗
                                 error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                         "类型 '%s' 没有方法 '%s'：类型 '%s' 未定义%s",
-                                         type_to_string(obj_sym->type), method_name, tn, hint);
+                                         "调用方法 '%s' 失败：类型 '%s' 未解析%s —— "
+                                         "类型没解析出来时编译器**无法判断**这个方法存不存在，"
+                                         "所以这条**不一定是方法名拼错**",
+                                         method_name, tn, hint);
                                 semantic_poison_expr(ast);
                             } else {
                                 error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
