@@ -261,19 +261,69 @@ Value val_int_safe(int64_t value) {
 // BigInt 运算
 // ============================================================================
 
+// ★ 2026-11-22（与 Python 对比压测）：**接管**一块 malloc/calloc 出来的 limb 数组
+//   —— 不再像 `val_bigint_from_limbs` 那样整块 memcpy 一遍。
+//   为什么值得：100 万比特的加减/乘法结果是 125KB，每操作白拷一次；2 万次加法就是
+//   2.5GB 的无用拷贝（实测 `add_1m` 比 Python 慢 3.7 倍，大头在这里）。
+//   所有权约定：**成功与否都由本函数负责**这块缓冲（落回 int48 时 free 掉；
+//   装进对象时要么拷进内联缓冲再 free，要么直接给对象持有 —— 后者在 GC 里就是 `free`，
+//   见 gc.c 的 free_object_resources：`limbs != inline_limbs` 才 free ✓）
+Value val_bigint_from_owned_limbs(uint32_t* limbs, int limb_count, int is_negative) {
+    if (!limbs) return val_null();
+    if (limb_count <= 0) { free(limbs); return val_int(0); }
+    if (limb_count <= 2) {
+        uint64_t abs_val = limbs[0];
+        if (limb_count == 2) abs_val |= ((uint64_t)limbs[1] << 32);
+        if (!is_negative && abs_val <= (uint64_t)INT48_MAX) {
+            free(limbs);
+            return val_int((int64_t)abs_val);
+        }
+        if (is_negative && abs_val <= 0x800000000000ULL) {
+            free(limbs);
+            return val_int(-(int64_t)abs_val);
+        }
+    }
+    ObjBigInt* bigint = (ObjBigInt*)gc_alloc(sizeof(ObjBigInt), OBJ_BIGINT);
+    if (!bigint) { free(limbs); return val_null(); }
+    if (limb_count <= BIGINT_INLINE_LIMBS) {
+        bigint->limbs = bigint->inline_limbs;
+        memcpy(bigint->limbs, limbs, (size_t)limb_count * sizeof(uint32_t));
+        free(limbs);
+    } else {
+        bigint->limbs = limbs;          // 接管，省掉整块拷贝
+    }
+    bigint->limb_count = limb_count;
+    bigint->is_negative = is_negative;
+    strip_zeros(bigint);
+    return val_obj((Object*)bigint);
+}
+
 Value bigint_add(ObjBigInt* a, ObjBigInt* b) {
     if (a->is_negative == b->is_negative) {
         // 同号相加
         int max_limbs = a->limb_count > b->limb_count ? a->limb_count : b->limb_count;
-        uint32_t* result_limbs = (uint32_t*)calloc(max_limbs + 1, sizeof(uint32_t));
+        // 每个 limb 都会被写 ⇒ 用 malloc（省掉 calloc 的整块清零：125KB/次）
+        uint32_t* result_limbs = (uint32_t*)malloc((size_t)(max_limbs + 1) * sizeof(uint32_t));
         if (!result_limbs) return val_null();
 
+        // ★ 2026-11-22（与 Python 对比压测）：**热循环里不要有边界判断**。
+        //   原来是 `sum += (i < a->count) ? a->limbs[i] : 0` 之类的两连判，
+        //   每个 limb 多 2 次比较+选择（实测 100 万比特加 2 万次比 Python 慢 4.1 倍）。
+        //   拆成「两操作数都在的公共段（无分支）」+「只剩一方的高位尾巴」两段 ✓
+        int common = a->limb_count < b->limb_count ? a->limb_count : b->limb_count;
+        const uint32_t* tail = (a->limb_count > common) ? a->limbs : b->limbs;
+        // ⚠ 试过加 `restrict`/局部指针：实测**无收益**（1.009s → 1.030s，纯噪声），
+        //   因为进位是串行依赖、编译器本来也排不动 ⇒ 已回退，不留无用的修饰。
         uint64_t carry = 0;
-        for (int i = 0; i < max_limbs; i++) {
-            uint64_t sum = carry;
-            if (i < a->limb_count) sum += a->limbs[i];
-            if (i < b->limb_count) sum += b->limbs[i];
-            result_limbs[i] = (uint32_t)(sum & BASE_MASK);
+        int i = 0;
+        for (; i < common; i++) {
+            uint64_t sum = carry + a->limbs[i] + b->limbs[i];
+            result_limbs[i] = (uint32_t)sum;
+            carry = sum >> BASE_BITS;
+        }
+        for (; i < max_limbs; i++) {
+            uint64_t sum = carry + tail[i];
+            result_limbs[i] = (uint32_t)sum;
             carry = sum >> BASE_BITS;
         }
 
@@ -282,9 +332,7 @@ Value bigint_add(ObjBigInt* a, ObjBigInt* b) {
             result_limbs[result_count++] = (uint32_t)carry;
         }
 
-        Value result = bigint_compact_to_int(val_bigint_from_limbs(result_limbs, result_count, a->is_negative));
-        free(result_limbs);
-        return result;
+        return bigint_compact_to_int(val_bigint_from_owned_limbs(result_limbs, result_count, a->is_negative));
     } else {
         // 异号相加，转为减法
         int cmp = compare_abs(a, b);
@@ -296,26 +344,25 @@ Value bigint_add(ObjBigInt* a, ObjBigInt* b) {
         ObjBigInt* smaller = cmp > 0 ? b : a;
         int result_negative = larger->is_negative;
 
-        uint32_t* result_limbs = (uint32_t*)calloc(larger->limb_count, sizeof(uint32_t));
+        // 同号加法那套优化同样适用：malloc + 拆成「公共段 / 只剩被减数的高位段」
+        uint32_t* result_limbs = (uint32_t*)malloc((size_t)larger->limb_count * sizeof(uint32_t));
         if (!result_limbs) return val_null();
 
+        int common = smaller->limb_count;
         int64_t borrow = 0;
-        for (int i = 0; i < larger->limb_count; i++) {
+        int i = 0;
+        for (; i < common; i++) {
+            int64_t diff = (int64_t)larger->limbs[i] - smaller->limbs[i] - borrow;
+            if (diff < 0) { diff += (int64_t)BASE; borrow = 1; } else { borrow = 0; }
+            result_limbs[i] = (uint32_t)diff;
+        }
+        for (; i < larger->limb_count; i++) {
             int64_t diff = (int64_t)larger->limbs[i] - borrow;
-            if (i < smaller->limb_count) diff -= smaller->limbs[i];
-
-            if (diff < 0) {
-                diff += BASE;
-                borrow = 1;
-            } else {
-                borrow = 0;
-            }
+            if (diff < 0) { diff += (int64_t)BASE; borrow = 1; } else { borrow = 0; }
             result_limbs[i] = (uint32_t)diff;
         }
 
-        Value result = bigint_compact_to_int(val_bigint_from_limbs(result_limbs, larger->limb_count, result_negative));
-        free(result_limbs);
-        return result;
+        return bigint_compact_to_int(val_bigint_from_owned_limbs(result_limbs, larger->limb_count, result_negative));
     }
 }
 
@@ -403,11 +450,34 @@ Value bigint_or_i64(ObjBigInt* a, int64_t v) {
 // 教科书式：out[0..na+nb) 必须已清零
 static void limbs_mul_school(const uint32_t* a, int na, const uint32_t* b, int nb,
                              uint32_t* out) {
+    // ★ 2026-11-22（与 Python 对比压测）：**热循环里不要再判 `j < nb`**。
+    //   原来写成 `for (j = 0; j < nb || carry; j++)` 并在体内 `(j < nb ? ai*b[j] : 0)`，
+    //   每个 limb 都多一次分支+一次条件选择（实测 100 万比特乘法比 Python 慢 5 倍，
+    //   其中相当一部分是这个常数）。拆成「主体循环（无分支）+ 进位尾段」两段 ✓
     for (int i = 0; i < na; i++) {
         uint64_t carry = 0;
         uint64_t ai = a[i];
-        for (int j = 0; j < nb || carry; j++) {
-            uint64_t cur = (uint64_t)out[i + j] + (j < nb ? ai * b[j] : 0) + carry;
+        int j = 0;
+        // ★ 2026-11-22：**4 路展开**（CPython 的 longobject.c 同款思路）。
+        //   展开后循环控制与 `carry >> 32` 的依赖链被摊薄，实测是内层吞吐的主要来源。
+        for (; j + 4 <= nb; j += 4) {
+            uint64_t c0 = (uint64_t)out[i + j]     + ai * b[j]     + carry;
+            uint64_t c1 = (uint64_t)out[i + j + 1] + ai * b[j + 1] + (c0 >> BASE_BITS);
+            uint64_t c2 = (uint64_t)out[i + j + 2] + ai * b[j + 2] + (c1 >> BASE_BITS);
+            uint64_t c3 = (uint64_t)out[i + j + 3] + ai * b[j + 3] + (c2 >> BASE_BITS);
+            out[i + j]     = (uint32_t)(c0 & BASE_MASK);
+            out[i + j + 1] = (uint32_t)(c1 & BASE_MASK);
+            out[i + j + 2] = (uint32_t)(c2 & BASE_MASK);
+            out[i + j + 3] = (uint32_t)(c3 & BASE_MASK);
+            carry = c3 >> BASE_BITS;
+        }
+        for (; j < nb; j++) {
+            uint64_t cur = (uint64_t)out[i + j] + ai * b[j] + carry;
+            out[i + j] = (uint32_t)(cur & BASE_MASK);
+            carry = cur >> BASE_BITS;
+        }
+        for (; carry; j++) {                 // 进位最多再走 1~2 个 limb
+            uint64_t cur = (uint64_t)out[i + j] + carry;
             out[i + j] = (uint32_t)(cur & BASE_MASK);
             carry = cur >> BASE_BITS;
         }
@@ -451,7 +521,29 @@ static void limbs_add_shifted(uint32_t* out, int outn, const uint32_t* x, int xn
     }
 }
 
-static void limbs_karatsuba(const uint32_t* a, const uint32_t* b, int n, uint32_t* out);
+// ★ 2026-11-22（与 Python 对比压测）：**scratch arena** ——
+//   Karatsuba 的节点数是 3^depth（100 万比特 ≈ 6 万节点），每个节点都要 5 块临时缓冲
+//   ⇒ 一次乘法要 calloc/free 约 43MB 的碎片（实测这是与 CPython 差距的主要成分）。
+//   改成"整棵递归共用一个 arena、按栈序切片"：**一次 malloc、零次 free**，
+//   切片靠 `used` 指针回退（DFS 天然是栈序 ✓）。
+//   容量按 20n limb 估：每层占用约 6m 且 m 逐层减半 ⇒ 沿路径总和 ≈ 12n，留一倍余量；
+//   不够就退回教科书式（宁可慢，不可错）。
+typedef struct {
+    uint32_t* base;
+    size_t cap;
+    size_t used;
+} LimbArena;
+
+static uint32_t* arena_take0(LimbArena* ar, size_t n) {   // 取一块并清零
+    if (!ar || ar->used + n > ar->cap) return NULL;
+    uint32_t* p = ar->base + ar->used;
+    ar->used += n;
+    memset(p, 0, n * sizeof(uint32_t));
+    return p;
+}
+
+static void limbs_karatsuba(const uint32_t* a, const uint32_t* b, int n, uint32_t* out, LimbArena* ar);
+static void limbs_mul_rec(const uint32_t* a, int na, const uint32_t* b, int nb, uint32_t* out, LimbArena* ar);
 
 // 统一入口：out[0..na+nb) 必须已清零
 static void limbs_mul(const uint32_t* a, int na, const uint32_t* b, int nb, uint32_t* out) {
@@ -460,57 +552,82 @@ static void limbs_mul(const uint32_t* a, int na, const uint32_t* b, int nb, uint
     //   然后拿 Karatsuba 去算一个**O(n) 就能完成**的乘法 ⇒ 阶乘这种"n 次乘小整数"的
     //   负载直接慢 **609 倍**（实测 `fact_20000`：Leno 68.6s vs Python 0.11s，
     //   同机同算式）。判据用 **min(na,nb)**：只有两边都够大，Karatsuba 才有意义 ✓
-    if ((na < nb ? na : nb) < KARATSUBA_THRESHOLD) {
+    int mn = na < nb ? na : nb;
+    if (mn < KARATSUBA_THRESHOLD) {
         limbs_mul_school(a, na, b, nb, out);
         return;
     }
     int n = na > nb ? na : nb;
-    // ★ 2026-11-22：**先按"等长"补齐**，别要求"本来等长" ——
-    //   实测 `(2^2000000-1) * (2^2000000+1)` 的 limb 数是 62500 vs 62501（+1 多一位）
-    //   ⇒ 原来的 `na == nb` 判据直接回退教科书式，等于"最常用的形态反而没加速" ✗
-    //   补齐到**偶数**长度（Karatsuba 要二分），结果先算进 2n 的临时缓冲再拷回
-    //   （out 只有 na+nb，可能比 2n 少一位）。
-    if (n >= KARATSUBA_THRESHOLD) {
-        int nn = (n % 2) ? n + 1 : n;
-        uint32_t* abuf = (uint32_t*)calloc(nn, sizeof(uint32_t));
-        uint32_t* bbuf = (uint32_t*)calloc(nn, sizeof(uint32_t));
-        uint32_t* rbuf = (uint32_t*)calloc(2 * nn, sizeof(uint32_t));
-        if (abuf && bbuf && rbuf) {
-            memcpy(abuf, a, na * sizeof(uint32_t));
-            memcpy(bbuf, b, nb * sizeof(uint32_t));
-            limbs_karatsuba(abuf, bbuf, nn, rbuf);
-            memcpy(out, rbuf, (size_t)(na + nb) * sizeof(uint32_t));
-            free(abuf); free(bbuf); free(rbuf);
-            return;
-        }
-        free(abuf); free(bbuf); free(rbuf);
-        // 内存不够 ⇒ 回退教科书式（结果一样，只是慢）
+    LimbArena ar;
+    ar.cap = (size_t)n * 20 + 64;
+    ar.used = 0;
+    ar.base = (uint32_t*)malloc(ar.cap * sizeof(uint32_t));
+    if (!ar.base) {
+        limbs_mul_school(a, na, b, nb, out);
+        return;
     }
-    limbs_mul_school(a, na, b, nb, out);
+    limbs_mul_rec(a, na, b, nb, out, &ar);
+    free(ar.base);
+}
+
+// 递归实现：长度不等时**先从 arena 补齐到等长偶数**再二分
+//   （实测 `(2^2000000-1)*(2^2000000+1)` 的 limb 数是 62500 vs 62501（+1 多一位）
+//    ⇒ 若要求"本来等长"，最常用的形态反而拿不到加速 ✗）
+static void limbs_mul_rec(const uint32_t* a, int na, const uint32_t* b, int nb, uint32_t* out, LimbArena* ar) {
+    int mn = na < nb ? na : nb;
+    if (mn < KARATSUBA_THRESHOLD) {
+        limbs_mul_school(a, na, b, nb, out);
+        return;
+    }
+    int n = na > nb ? na : nb;
+    if (na == nb && (n % 2) == 0) {
+        // 本来就等长且偶数 ⇒ 直接算，省掉两次整块拷贝
+        limbs_karatsuba(a, b, n, out, ar);
+        return;
+    }
+    int nn = (n % 2) ? n + 1 : n;
+    size_t save = ar->used;
+    uint32_t* abuf = arena_take0(ar, (size_t)nn);
+    uint32_t* bbuf = arena_take0(ar, (size_t)nn);
+    uint32_t* rbuf = arena_take0(ar, (size_t)2 * nn);
+    if (abuf && bbuf && rbuf) {
+        memcpy(abuf, a, (size_t)na * sizeof(uint32_t));
+        memcpy(bbuf, b, (size_t)nb * sizeof(uint32_t));
+        limbs_karatsuba(abuf, bbuf, nn, rbuf, ar);
+        memcpy(out, rbuf, (size_t)(na + nb) * sizeof(uint32_t));
+        ar->used = save;
+        return;
+    }
+    ar->used = save;
+    limbs_mul_school(a, na, b, nb, out);   // arena 不够 ⇒ 兜底
 }
 
 // a、b 都是 n limb（n 为偶数、≥阈值），out 长 2n
-static void limbs_karatsuba(const uint32_t* a, const uint32_t* b, int n, uint32_t* out) {
+static void limbs_karatsuba(const uint32_t* a, const uint32_t* b, int n, uint32_t* out, LimbArena* ar) {
     int m = n / 2;
-    uint32_t* z0 = (uint32_t*)calloc(2 * m + 2, sizeof(uint32_t));
-    uint32_t* z2 = (uint32_t*)calloc(2 * m + 2, sizeof(uint32_t));
-    uint32_t* sa = (uint32_t*)calloc(m + 1, sizeof(uint32_t));
-    uint32_t* sb = (uint32_t*)calloc(m + 1, sizeof(uint32_t));
-    uint32_t* z1 = (uint32_t*)calloc(2 * (m + 1) + 2, sizeof(uint32_t));
+    size_t n_z0 = (size_t)(2 * m + 2);
+    size_t n_sa = (size_t)(m + 1);
+    size_t n_z1 = (size_t)(2 * (m + 1) + 2);
+    size_t save = ar->used;
+    uint32_t* z0 = arena_take0(ar, n_z0);
+    uint32_t* z2 = arena_take0(ar, n_z0);
+    uint32_t* sa = arena_take0(ar, n_sa);
+    uint32_t* sb = arena_take0(ar, n_sa);
+    uint32_t* z1 = arena_take0(ar, n_z1);
     if (!z0 || !z2 || !sa || !sb || !z1) {
-        free(z0); free(z2); free(sa); free(sb); free(z1);
+        ar->used = save;
         limbs_mul_school(a, n, b, n, out);   // 兜底：宁可慢，不可错（out 有 2n ✓）
         return;
     }
     // z0 = a0*b0, z2 = a1*b1
-    limbs_mul(a, m, b, m, z0);
-    limbs_mul(a + m, m, b + m, m, z2);
+    limbs_mul_rec(a, m, b, m, z0, ar);
+    limbs_mul_rec(a + m, m, b + m, m, z2, ar);
     // sa = a0+a1, sb = b0+b1（都补齐到 m+1，保证等长 ⇒ 递归还能走 Karatsuba）
     //   ⚠ 最高进位**必须写进 sa[m]/sb[m]**（见 limbs_add_n 的注释：丢掉它是个静默 bug）
     sa[m] = limbs_add_n(sa, a, a + m, m);
     sb[m] = limbs_add_n(sb, b, b + m, m);
     // z1 = sa*sb - z0 - z2
-    limbs_mul(sa, m + 1, sb, m + 1, z1);
+    limbs_mul_rec(sa, m + 1, sb, m + 1, z1, ar);
     // ⚠ 减法要按 **z1 的完整长度（2m+2）** 传播借位 —— 只在低 2m limb 里减，
     //   借位一出 2m 就被吞掉 ⇒ 低半段全 1 的操作数（如 2^k-1）必然算错 ✗
     //   （z0/z2 的缓冲是 calloc 且多留了 2 limb ⇒ 高位是 0，多减无副作用 ✓）
@@ -520,7 +637,7 @@ static void limbs_karatsuba(const uint32_t* a, const uint32_t* b, int n, uint32_
     limbs_add_shifted(out, 2 * n, z0, 2 * m, 0);
     limbs_add_shifted(out, 2 * n, z1, 2 * m + 2, m);
     limbs_add_shifted(out, 2 * n, z2, 2 * m, 2 * m);
-    free(z0); free(z2); free(sa); free(sb); free(z1);
+    ar->used = save;                       // 五块一并还回 arena（栈序回退）
 }
 
 Value bigint_mul(ObjBigInt* a, ObjBigInt* b) {
@@ -532,26 +649,16 @@ Value bigint_mul(ObjBigInt* a, ObjBigInt* b) {
 
     limbs_mul(a->limbs, a->limb_count, b->limbs, b->limb_count, temp);
 
-    uint32_t* result_limbs = (uint32_t*)malloc(result_count * sizeof(uint32_t));
-    if (!result_limbs) {
-        free(temp);
-        return val_null();
-    }
-
-    for (int i = 0; i < result_count; i++) {
-        result_limbs[i] = (uint32_t)temp[i];
-    }
-
-    free(temp);
-
     // 去除前导零
-    while (result_count > 1 && result_limbs[result_count - 1] == 0) {
+    while (result_count > 1 && temp[result_count - 1] == 0) {
         result_count--;
     }
 
-    Value result = bigint_compact_to_int(val_bigint_from_limbs(result_limbs, result_count, result_is_negative));
-    free(result_limbs);
-    return result;
+    // ★ 2026-11-22（与 Python 对比压测）：**去掉一次整块拷贝** ——
+    //   原来 `temp → result_limbs（malloc+memcpy）→ bigint_new（再 memcpy 进对象）`，
+    //   100 万比特的乘法白拷了 125KB。`bigint_new` 本来就会拷贝，直接把 temp 交给它 ✓
+    // temp 是 calloc 出来的完整结果 ⇒ 直接交给对象持有（GC 释放时走 free ✓），不再拷贝
+    return bigint_compact_to_int(val_bigint_from_owned_limbs(temp, result_count, result_is_negative));
 }
 
 Value bigint_neg(ObjBigInt* a) {
