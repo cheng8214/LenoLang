@@ -1,0 +1,56 @@
+// test_callback_gc.leno —— 「回调里分配内存 / 强制 GC」不得崩溃（2026-11-22 修）
+//
+// 现场：`[1,2,3].map(func(int x, int _i) { a.add(99)  return x * 2 })`
+//   修前 **0xC0000005**：map/filter 里新建的 result 数组只被 C 局部变量引用 ⇒
+//   回调里的分配触发 GC 就把它回收了 ⇒ 末尾 `result->elements[count++] = …` 是 UAF。
+//   修法：循环前 `gc_push_root(&result_val)`，所有出口 `gc_pop_root()`（见 5ccf03a8）。
+//
+// 本用例用 `_gc()` **在回调里强制回收**，比"靠分配压力碰运气触发"稳定得多；
+// 同时把 reduce / sort / Dict 遍历也一起钉住（它们本来就安全，防止以后改坏）。
+main() {
+    // ① map：回调里分配 + 强制 GC，结果必须完整
+    var m = [1, 2, 3].map(func(int x, int _i) {
+        var junk = [x, x, x]
+        _gc()
+        return junk.len() + x
+    })
+    assert_eq(m.len(), 3, "map 回调里 _gc() 后结果长度")
+    assert_eq(m[0], 4, "map[0] = 3(len) + 1")
+    assert_eq(m[2], 6, "map[2] = 3(len) + 3")
+
+    // ② filter：同上
+    var f = [1, 2, 3, 4].filter(func(int x, int _i) {
+        var _junk = [x]        // 只为制造一次分配（分配才会触发 GC）
+        _gc()
+        return x % 2 == 0
+    })
+    assert_eq(f.len(), 2, "filter 回调里 _gc() 后结果长度")
+
+    // ③ reduce：累加**字符串**（对象），回调里强制 GC
+    var s = ["a", "b", "c"].reduce(func(string acc, string x, int _i) {
+        _gc()
+        return acc + x
+    }, "")
+    assert_eq(s, "abc", "reduce 累加字符串 + 回调里 _gc()")
+
+    // ④ sort：比较器里强制 GC，排序结果仍正确
+    Array[int] a = [3, 1, 2]
+    var r = a.sort(func(int x, int y) {
+        _gc()
+        return x - y
+    })
+    assert_eq(r[0], 1, "sort 比较器里 _gc() 后 [0]")
+    assert_eq(r[2], 3, "sort 比较器里 _gc() 后 [2]")
+
+    // ⑤ Dict 遍历里强制 GC
+    Dict[string, int] d = {"a": 1, "b": 2, "c": 3}
+    var sum = 0
+    for d to k {
+        var junk = [k, k, k]
+        _gc()
+        sum = sum + d[k] + junk.len()
+    }
+    assert_eq(sum, 15, "Dict 遍历里 _gc()：6(值) + 9(各 3 个 junk)")
+
+    print("test_callback_gc passed")
+}
