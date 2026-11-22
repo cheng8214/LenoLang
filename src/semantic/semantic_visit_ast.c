@@ -1476,6 +1476,9 @@ int sem_cstruct_array_field(Semantic* s, Ast* expr, TypeKind* out_elem) {
 
 static void visit_node(Semantic* s, Ast* ast);
 
+// ★ 2026-11-22（压测）：实参位置的可空检查（定义见 warn_nullable_flow 之后）
+static void check_nullable_call_args(Semantic* s, Ast* call);
+
 void visit(Semantic* s, Ast* ast) {
     if (!ast) return;
     if (s->ast_depth >= SEM_MAX_AST_DEPTH) {
@@ -1490,6 +1493,11 @@ void visit(Semantic* s, Ast* ast) {
     s->ast_depth++;
     visit_node(s, ast);
     s->ast_depth--;
+    // ★ 2026-11-22（压测）：实参位置的可空检查 —— **必须后置**（先让它自己的实参被访问完）。
+    //   前置试过：`infer_expr_type` 在"实参还没 visit"时会把一堆 any 推断出来，
+    //   实测给 test_cross_module 等 11 个用例刷出「不能在 any 类型上进行索引访问」的误报 ✗
+    //   （与之前 cstruct 字面量检查踩的是同一个坑：推断有副作用，只能在节点就绪后用）。
+    if (ast->kind == AST_CALL) check_nullable_call_args(s, ast);
 }
 
 // ============================================================================
@@ -1760,6 +1768,73 @@ static void warn_nullable_flow(Semantic* s, Ast* value, TypeInfo* target,
         "        ② `… %s ?? 默认值`；③ 把这个位置也改成 `%s?`\n"
         "  提示: 句柄类（Ptr / cLib / Channel / File / Socket / func …）天然可空，不受此限",
         subj, tn, vn, vn, vn, tn);
+}
+
+// ★ 2026-11-22（压测）：**可空表达式流入非可空形参** ⇒ 警告。
+//   此前 `warn_nullable_flow()` 只挂了变量声明 / 赋值 / `return` 三处，**实参位置一处都没有**；
+//   而且它内部 `if (value->kind != AST_VAR) return;` 只认裸变量 ⇒ `need(p?.v)`（安全访问）
+//   连裸变量都不是。实测后果：`func need(int x)` 收到 null，函数声明 `: int` 成了假话，
+//   后续算术全按 null 走（又是静默错值）。
+//   判据用 **infer_expr_type(arg)->nullable**（不看 AST 形状）⇒ 一次覆盖 `p?.v` / `arr[i]` /
+//   返回可空的函数……；any / 泛型参数 / 毒值 / null 字面量 / 句柄类目标 / 目标本身可空
+//   全部放行（宁漏勿误报）。
+static void check_nullable_call_args(Semantic* s, Ast* call) {
+    if (!s || !call || call->kind != AST_CALL) return;
+    Ast* callee = call->u.call.callee;
+    if (!callee || callee->kind != AST_VAR || !callee->u.var.name) return;
+    if (call->u.call.args.count == 0) return;
+
+    TypeInfo** params = NULL;
+    int pcnt = 0;
+    Ast* fd = func_table_find(&s->func_table, callee->u.var.name);
+    if (fd && fd->kind == AST_FUNC_DEF && fd->u.func.param_types) {
+        params = fd->u.func.param_types;
+        pcnt = fd->u.func.pcnt;
+    } else {
+        Symbol* sym = s->current ? scope_resolve(s->current, callee->u.var.name) : NULL;
+        if (sym && sym->type && sym->type->kind == TYPE_FUNCTION &&
+            sym->type->param_types) {
+            params = sym->type->param_types;
+            pcnt = sym->type->param_count;
+        }
+    }
+    if (!params || pcnt <= 0) return;
+
+    for (int i = 0; i < call->u.call.args.count && i < pcnt; i++) {
+        Ast* a = call->u.call.args.items[i];
+        if (!a || a->kind == AST_ASSIGN) continue;      // 命名实参：位置对不上，放过
+        TypeInfo* want = params[i];
+        if (!want || want->kind == TYPE_ANY || want->kind == TYPE_INFER) continue;
+        if (want->nullable) continue;                    // 目标可空 ⇒ 本就该收
+        if (type_null_literal_ok(want)) continue;        // 句柄类（Ptr/Channel/File/func…）放行
+        // ⚠ "早退收窄"要认：`if p == null { return }` 之后 `p` 已经**确定非空**，
+        //   而 AST 上的 cached_type 仍是 `P?`（收窄记在作用域影子符号里，不改缓存）
+        //   ⇒ 裸变量先问一下 `sem_null_narrowed`，否则会误报（实测 test_nullable_flow ✗）
+        if (a->kind == AST_VAR && a->u.var.name && sem_null_narrowed(s, a->u.var.name)) continue;
+        // 优先用**已经算好**的缓存类型（本函数是后置调用）⇒ 不触发新的推断副作用
+        TypeInfo* got = a->cached_type ? type_copy(a->cached_type) : infer_expr_type(s, a);
+        if (!got) continue;
+        int bad = (got->kind != TYPE_ANY && got->kind != TYPE_INFER &&
+                   got->kind != TYPE_POISON && got->kind != TYPE_NULL && got->nullable);
+        if (bad) {
+            char wbuf[64], gbuf[64];
+            type_show_name(want, wbuf, sizeof(wbuf));
+            type_show_name(got, gbuf, sizeof(gbuf));
+            // ⚠ `type_show_name` **不打印可空标记** —— 不补这句时两侧都显示 `int`，
+            //   读起来像"int 传给 int 还报警"（实测第一版就是这样 ✗）⇒ 手动补一个 `?`
+            if (got->nullable) {
+                size_t gl = strlen(gbuf);
+                if (gl + 1 < sizeof(gbuf)) { gbuf[gl] = '?'; gbuf[gl + 1] = '\0'; }
+            }
+            warning_add_at_fmt(WARN_NULLABLE_FLOW, a->line, a->column,
+                "参数 %d 是 '%s'（非可空），这里传入的表达式是 '%s' —— 它**可能是 null**，"
+                "会静默流进去（函数里拿到的就是 null，声明里的非可空等于没说）\n"
+                "  提示: ① 调用前判空 `if x != null { … }`；② 传 `x ?? 默认值`；"
+                "③ 把这个形参的类型改成可空（`%s?`）并在函数里处理 null",
+                i + 1, wbuf, gbuf, wbuf);
+        }
+        type_free(got);
+    }
 }
 
 static void visit_node(Semantic* s, Ast* ast) {
