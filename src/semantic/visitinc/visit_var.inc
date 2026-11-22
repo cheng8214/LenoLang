@@ -371,6 +371,15 @@
                     }
                 }
 
+                // ★ 2026-11-23（压测）：`var m = Mode.on` —— 枚举成员在语义期被折成纯数字，
+                //   m 的类型是 int（这是既有口径「枚举 = int」，不改），但把**来源枚举**记到
+                //   符号上 ⇒ `switch m` 的穷尽性检查能拿它兜底（此前零警告 ✗）。
+                //   只用于诊断，不参与任何类型兼容判断 ✓
+                if (sym && ast->u.var_decl.init->kind == AST_NUM &&
+                    ast->u.var_decl.init->u.num.enum_owner && !sym->enum_origin) {
+                    sym->enum_origin = strdup(ast->u.var_decl.init->u.num.enum_owner);
+                }
+
                 if (ast->u.var_decl.init->kind == AST_DICT && sym) {
                     for (int i = 0; i < ast->u.var_decl.init->u.dict.count; i++) {
                         Ast* key_ast = ast->u.var_decl.init->u.dict.entries[i].key;

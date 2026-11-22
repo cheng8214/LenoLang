@@ -1139,10 +1139,29 @@
             //   ⚠ 枚举成员访问在语义阶段**已被改写成 AST_NUM**（见 visit_module.inc 的
             //     "enum 值解析成常量"那段），所以这里主要读 AST_NUM；同模块的
             //     `Color.red` 若还保持 AST_FIELD_ACCESS 也一并认。
-            if (sw_expr_type && sw_expr_type->kind == TYPE_ENUM && sw_expr_type->struct_name
-                && !ast->u.switch_.default_body) {
-                Symbol* esym = scope_resolve(s->current, sw_expr_type->struct_name);
-                if (esym && esym->enum_value_count > 0 && esym->enum_value_names && esym->enum_values) {
+            if (!ast->u.switch_.default_body) {
+                // ★ 2026-11-23（压测）：解析"主题来自哪个枚举"，**两条路**都要认：
+                //   ① 类型就是 enum（`Mode m = …` / 形参 `Mode m`）—— 原有路径 ✓
+                //   ② 类型是 int，但变量是**用枚举成员初始化**的（`var m = Mode.on`）——
+                //      成员在语义期被折成纯数字 ⇒ m 被推成 int，此时靠符号上的 enum_origin 兜底。
+                //      实测这条路此前**零警告**（`switch m` 少 case 也不提示），而它恰恰是最常见的写法 ✗
+                Symbol* esym = NULL;
+                if (sw_expr_type && sw_expr_type->kind == TYPE_ENUM && sw_expr_type->struct_name) {
+                    esym = scope_resolve(s->current, sw_expr_type->struct_name);
+                } else if (ast->u.switch_.expr && ast->u.switch_.expr->kind == AST_VAR &&
+                           ast->u.switch_.expr->u.var.name) {
+                    Symbol* vs = scope_resolve(s->current, ast->u.switch_.expr->u.var.name);
+                    if (vs && vs->enum_origin) {
+                        esym = scope_resolve(s->current, vs->enum_origin);
+                    }
+                }
+                // ⚠ 兜底路径（`var m = Mode.on`）下 `sw_expr_type->struct_name` 是 NULL，
+                //   下面两处要用枚举名（case 值比对 / 警告文案）⇒ 统一取一个非空的名字
+                const char* ename = (sw_expr_type && sw_expr_type->struct_name)
+                                        ? sw_expr_type->struct_name
+                                        : (esym ? esym->name : NULL);
+                if (esym && ename && esym->enum_value_count > 0 &&
+                    esym->enum_value_names && esym->enum_values) {
                     int* covered = (int*)calloc((size_t)esym->enum_value_count, sizeof(int));
                     int unknown = 0;
                     int any_case = 0;
@@ -1160,8 +1179,7 @@
                                        && v->u.field_access.obj->kind == AST_VAR
                                        && v->u.field_access.obj->u.var.name
                                        && v->u.field_access.field_name
-                                       && strcmp(v->u.field_access.obj->u.var.name,
-                                                 sw_expr_type->struct_name) == 0) {
+                                       && strcmp(v->u.field_access.obj->u.var.name, ename) == 0) {
                                 for (int mi = 0; mi < esym->enum_value_count; mi++) {
                                     if (strcmp(esym->enum_value_names[mi],
                                                v->u.field_access.field_name) == 0) {
@@ -1198,7 +1216,7 @@
                                 "switch 的主题是 enum '%s'，但少了 %d 个成员（%s%s）且没有 default："
                                 "这些值会直接穿过去、什么都不做；请补 case，或加 default"
                                 "（哪怕只写 throw / 赋一个兜底值）",
-                                sw_expr_type->struct_name, missing_n, missing,
+                                ename, missing_n, missing,
                                 missing_n > 6 ? " 等" : "");
                         }
                     }

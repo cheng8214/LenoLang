@@ -169,7 +169,13 @@ struct Ast {
     union {
         // is_color（2026-11-17，F3 阶段一）：这个数字字面量写的是 `#RRGGBBAA`。
         //   运行期表示与普通 int 完全相同，只是给编译期诊断留个身份（见 Token.is_color）
-        struct { double value; int is_bigint; char* bigint_str; int is_float; int is_color; } num;
+        // enum_owner（2026-11-23，压测）：这个数字是**从哪个枚举成员折过来的**
+        //   （`Mode.on` → AST_NUM(value=0, enum_owner="Mode")）。
+        //   为什么需要：成员在语义阶段就被折成纯数字 ⇒ `var m = Mode.on` 的 m 推成 int，
+        //   于是 `switch m` 的**穷尽性检查看不到 enum**（实测零警告，而 `Mode m = Mode.on` 有）。
+        //   记下来源后，变量声明可以把出处带到符号上，检查用它兜底 —— **不改类型语义**（零风险）。
+        struct { double value; int is_bigint; char* bigint_str; int is_float; int is_color;
+                 char* enum_owner; } num;
         struct { char* value; int len; } string;
         int boolean;
         AstList array;

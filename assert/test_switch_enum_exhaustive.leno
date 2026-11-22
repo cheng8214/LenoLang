@@ -1,75 +1,145 @@
-// test_switch_enum_exhaustive.leno —— switch 穷尽性检查**不许变成错误**（2026-11-10，P4）
+// test_switch_enum_exhaustive.leno —— 普通 enum 的 switch 穷尽性（2026-11-23 修）
 //
-// 背景：`switch` 的主题是 enum、case 没盖全、又没有 default 时，新增了一条
-//   `WARN_SWITCH_NOT_EXHAUSTIVE`（见 leno_types.h / visit_control.inc 的说明）。
-//   警告没法在脚本里断言（要捕获 stderr），所以这里钉住**另一半**：
-//   ① 盖全的 enum switch 照常编译、照常跑对；
-//   ② 有 default 的 switch 照常跑对（哪怕只写了一个 case）；
-//   ③ 非 enum 主题（int / string）完全不受影响；
-//   ④ `case is` 形式的 enum switch 不参与检查，也不影响语义。
-//   ①③④ 任何一条被"检查"改坏（比如误判成编译错误），这个用例会立刻红。
-import strings
+// 现场：`var m = Mode.on` 的 m 被推成 **int**（枚举成员在语义期已折成纯数字，
+//   这是既有口径「枚举 = int」，不改），于是 `switch m` 的穷尽性检查看不到 enum
+//   ⇒ **零警告**（少 case 也不提示）；而 `Mode m = Mode.on` / 形参 `Mode m` 都会警告。
+//   更糟的是 `var m = Mode.on` 恰恰是最常见的写法。
+//
+// 修法：折叠成员时在 AST_NUM 上记下来源枚举（enum_owner），变量声明把它转到 Symbol
+//   （enum_origin），穷尽性检查用它兜底 —— **完全不改类型语义**（m 仍是 int）。
+//
+// 本用例同时钉「不该报」的三条对照，防止以后改成"见 int 就猜 enum"的误报。
+import "helpers/compiler.leno" as ce
+import dirs
+import files
 
-enum Color { red; green; blue }
-enum Level { low = 1; mid = 2; high = 4 }
+main() {
+    var work = dirs.join(_tmpdir(), "leno_enum_exhaustive")
+    dirs.delete(work)
+    dirs.mkdir_p(work)
 
-// ① 盖全：应当是"零警告 + 结果正确"
-func nameOf(Color c): string {
-    switch c {
-        case Color.red { return "red" }
-        case Color.green { return "green" }
-        case Color.blue { return "blue" }
-    }
-    return "?"
-}
-
-// ② 有 default：只写一个 case 也合法
-func isRed(Color c): bool {
-    switch c {
-        case Color.red { return true }
-        default { return false }
-    }
-}
-
-// ③ 非 enum 主题：行为与之前逐位一致
-func sizeOf(int n): string {
-    switch n {
-        case 1 { return "one" }
-        case 2 { return "two" }
-    }
-    return "many"
-}
-
-// ③b 位标志 enum（成员值 1/2/4）：穷尽性按**值**比，不按名字
-func flags(Level l): int {
-    switch l {
-        case Level.low { return 1 }
-        case Level.mid { return 2 }
-        case Level.high { return 4 }
-    }
-    return 0
-}
-
-// ④ `case is` 形式：不参与穷尽性检查（但语义必须照旧）
-func kindName(any v): string {
-    switch v {
-        case is string { return "string" }
-        case is int { return "int" }
-    }
-    return "other"
+    // ① 最常见写法：var 初始化自枚举成员（类型是 int，靠 enum_origin 兜底）
+    var d1 = dirs.join(work, "var_init.leno")
+    files.write(d1, @"enum Mode {
+    on
+    off
 }
 
 main() {
-    assert_eq(nameOf(Color.red), "red", "① 盖全的 enum switch：red")
-    assert_eq(nameOf(Color.green), "green", "① green")
-    assert_eq(nameOf(Color.blue), "blue", "① blue")
-    assert_eq(isRed(Color.red), true, "② 有 default：命中 case")
-    assert_eq(isRed(Color.blue), false, "② 有 default：走 default")
-    assert_eq(sizeOf(1), "one", "③ int switch 不受影响")
-    assert_eq(sizeOf(9), "many", "③ int switch 落空照旧返回")
-    assert_eq(flags(Level.high), 4, "③b 位标志 enum 按值匹配")
-    assert_eq(kindName("x"), "string", "④ case is 分支照旧")
-    assert_eq(kindName(3), "int", "④ case is int")
+    var m = Mode.on
+    switch m {
+        case Mode.on { print(""a"") }
+    }
+}
+")
+    ce.expect_warning(d1, "① var 初始化自枚举成员：少 case 要警告",
+        "少了 1 个成员（off）", 8)
 
-    print("test_switch_enum_exhaustive passed（穷尽性检查不影响语义）")
+    // ② 显式 enum 类型（原有路径，不能因为本次改动退回去）
+    var d2 = dirs.join(work, "explicit_type.leno")
+    files.write(d2, @"enum Mode {
+    on
+    off
+}
+
+main() {
+    Mode m = Mode.off
+    switch m {
+        case Mode.off { print(""b"") }
+    }
+}
+")
+    ce.expect_warning(d2, "② 显式 enum 类型：少 case 要警告",
+        "少了 1 个成员（on）", 8)
+
+    // ③ 形参是 enum 类型
+    var d3 = dirs.join(work, "param.leno")
+    files.write(d3, @"enum Mode {
+    on
+    off
+}
+
+func dump(Mode m): void {
+    switch m {
+        case Mode.on { print(""c"") }
+    }
+}
+
+main() {
+    dump(Mode.on)
+}
+")
+    ce.expect_warning(d3, "③ enum 形参：少 case 要警告", "少了 1 个成员（off）", 7)
+
+    // ④ 跨模块 `use m.Mode` + var 初始化（走 use 路径的折叠）
+    var d4 = dirs.join(work, "cross_mod.leno")
+    var mdef = dirs.join(work, "m_mode.leno")
+    files.write(mdef, @"export enum Mode {
+    on
+    off
+}
+")
+    files.write(d4, @"import ""m_mode.leno"" as mm
+use mm.Mode
+
+main() {
+    var m = Mode.on
+    switch m {
+        case Mode.on { print(""d"") }
+    }
+}
+")
+    ce.expect_warning(d4, "④ 跨模块 enum + var 初始化：少 case 要警告",
+        "少了 1 个成员（off）", 6)
+
+    // ⑤ 对照：盖全了 ⇒ 不该报
+    var d5 = dirs.join(work, "exhaustive.leno")
+    files.write(d5, @"enum Mode {
+    on
+    off
+}
+
+main() {
+    var m = Mode.on
+    switch m {
+        case Mode.on { print(""a"") }
+        case Mode.off { print(""b"") }
+    }
+}
+")
+    var o5 = ce.expect_ok(d5, "⑤ 盖全了应当无警告", "")
+    ce.expect_no_warning(o5, "⑤ 盖全了不该报 switch未盖全", "switch未盖全")
+
+    // ⑥ 对照：有 default ⇒ 不该报
+    var d6 = dirs.join(work, "with_default.leno")
+    files.write(d6, @"enum Mode {
+    on
+    off
+}
+
+main() {
+    var m = Mode.on
+    switch m {
+        case Mode.on { print(""a"") }
+        default { print(""other"") }
+    }
+}
+")
+    var o6 = ce.expect_ok(d6, "⑥ 有 default 应当无警告", "")
+    ce.expect_no_warning(o6, "⑥ 有 default 不该报 switch未盖全", "switch未盖全")
+
+    // ⑦ 对照：普通 int 的 switch —— **绝不能**猜成 enum 去报（误报红线）
+    var d7 = dirs.join(work, "plain_int.leno")
+    files.write(d7, @"main() {
+    var n = 5
+    switch n {
+        case 1 { print(""one"") }
+    }
+}
+")
+    var o7 = ce.expect_ok(d7, "⑦ 普通 int 的 switch 不该被当成 enum", "")
+    ce.expect_no_warning(o7, "⑦ 普通 int 不该报 switch未盖全", "switch未盖全")
+
+    dirs.delete(work)
+    print("test_switch_enum_exhaustive passed")
 }

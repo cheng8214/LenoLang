@@ -2015,6 +2015,11 @@
                         // 超出 double 精确整数范围时改走 bigint 表示（与词法层同一判据）。
                         ast->u.num.is_float = 0;
                         ast->u.num.bigint_str = NULL;  // 必须清空：union 中 bigint_str 与 module_access.ref.kind/index 重叠
+                        // ★ 2026-11-23（压测）：**记下来源枚举**。成员折叠成纯数字后，
+                        //   `var m = Mode.on` 的 m 会被推成 int ⇒ `switch m` 的穷尽性检查
+                        //   看不到 enum（实测零警告，而 `Mode m = Mode.on` 有）✗
+                        //   记在 AST_NUM 上，由变量声明转到符号 ⇒ 检查用它兜底（**不改类型语义**）
+                        ast->u.num.enum_owner = var_sym->name ? strdup(var_sym->name) : NULL;
                         if (member_value > 9007199254740992LL || member_value < -9007199254740992LL) {
                             ast->u.num.value = 0;
                             ast->u.num.is_bigint = 1;

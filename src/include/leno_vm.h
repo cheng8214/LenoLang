@@ -1145,6 +1145,11 @@ struct Symbol {
     //   跨模块没有 AST ⇒ 这是唯一来源（见 visitinc/enum_payload.inc 的 SemPayloadEnum）。
     int* enum_payload_counts;
     int enum_payload_member_count;
+    // ★ 2026-11-23（压测）：变量是用**枚举成员**初始化时，记下来源枚举名（如 "Mode"）。
+    //   用途只有一个：`var m = Mode.on` 的 m 会被推成 int（成员已折成数字），
+    //   而 `switch m` 的穷尽性检查需要知道它来自哪个 enum ⇒ 用它兜底。
+    //   ⚠ 不参与类型兼容判断（m 仍是 int），所以对既有代码零影响。
+    char* enum_origin;
     // 函数别名信息（仅当 kind == SYM_FUNC_ALIAS 时使用）
     char* alias_module_name;        // 源模块名（如 "core"）
     char* alias_func_name;          // 源函数名（如 "loadTexture"）
