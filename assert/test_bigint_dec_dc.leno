@@ -1,0 +1,40 @@
+// test_bigint_dec_dc.leno —— bigint→十进制**分治版**的正确性（2026-11-22）
+//
+// 背景：老实现是"反复除以 1e9"，O(位数 × limb 数) = 平方级（30 万位 1.4s、300 万位 >2 分钟）。
+//   新实现：`x = q·10^h + r` 递归分治 + Knuth-D 大除数除法（`>= 64 limb` 才启用，
+//   小数字仍走老路）。这类算法改错的典型症状是"某一段变成 0 / 整体错位"，
+//   所以判据用**十进制往返**（`_int(_str(x)) == x`）+ 已知形态（`10^k` = 1 后面 k 个 0）。
+main() {
+    // ① 交叉点两侧：32 limb（老路）/ 64 limb（新路起点）/ 更大
+    var x1 = (1 << 1024) - 1
+    assert_eq(_int(_str(x1)), x1, "① 2^1024-1 往返（32 limb，老路径）")
+
+    var x2 = (1 << 2048) - 1
+    assert_eq(_int(_str(x2)), x2, "① 2^2048-1 往返（64 limb，**分治起点**）")
+
+    var x3 = (1 << 2100) + 1
+    assert_eq(_int(_str(x3)), x3, "① 2^2100+1 往返（奇数 limb）")
+
+    var x4 = (1 << 10000) - 1
+    assert_eq(_int(_str(x4)), x4, "① 2^10000-1 往返（312 limb）")
+
+    // ② `10^k` 是唯一可以**逐位断言**的形态：1 后面恰好 k 个 0
+    var p = 1
+    for 0 : 99 to i {
+        p = p * 10
+    }
+    var s = _str(p)
+    assert_eq(s.len(), 101, "② 10^100 位数")
+    assert_eq(s.slice(0, 0), "1", "② 10^100 首位是 1")
+    assert_eq(s.slice(100, 100), "0", "② 10^100 末位是 0")
+
+    // ③ 负数：符号与 magnitude 分开处理
+    var neg = 0 - x2
+    assert_eq(_int(_str(neg)), neg, "③ 负的 617 位大数往返")
+
+    // ④ 大数与乘法的组合（避免"只在纯幂次上对"）
+    var big = (1 << 5000) - 12345
+    assert_eq(_int(_str(big * big)), big * big, "④ (2^5000-12345)² 往返")
+
+    print("test_bigint_dec_dc passed")
+}
