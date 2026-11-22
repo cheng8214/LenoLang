@@ -219,7 +219,24 @@ static int ident_looks_like_keyword(Parser* p) {
     }
 }
 
+// ★ 2026-11-22（压测）：语句递归入口加**深度守卫** —— 1500 层嵌套 `if` 会打爆编译器栈；
+//   到上限改为报「语法嵌套过深」并返回占位节点（不崩）。
+static Ast* parse_statement_impl(Parser* p);
+
 Ast* parse_statement(Parser* p) {
+    if (!parse_nest_enter(p, "语句")) {
+        // ⚠ 必须**消费一个 token** 再返回占位节点：否则外层 `parse_block` 会拿着同一个
+        //    token 原地打转（实测 1500 层嵌套 `if` 变成 >60s 不结束 ✗）。
+        Ast* ph = ast_new(AST_NULL, p->lex.current.line);
+        if (p->lex.current.type != TOK_EOF) lexer_next(&p->lex);
+        return ph;
+    }
+    Ast* r = parse_statement_impl(p);
+    parse_nest_leave(p);
+    return r;
+}
+
+static Ast* parse_statement_impl(Parser* p) {
     Ast* stmt = NULL;
 
     // 注解（2026-10-31）：先把 `@xxx` 链收完，再递归解析真正的声明，最后挂上去。
@@ -931,6 +948,32 @@ void parser_init(Parser* p, const char* src) {
     //   pending_thread_local 若为脏值，普通 `var` 会被当成 thread_local var ✗
     p->arrow_hint = 0;
     p->pending_thread_local = 0;
+    // ★ 2026-11-22：同上，这两个也必须清零（否则第一次嵌套判断就用脏值）
+    p->nest_depth = 0;
+    p->nest_overflow = 0;
+}
+
+// ★ 2026-11-22（压测）：语法嵌套深度守卫（详见 leno_parser.h 的字段注释）
+//   上限 256：正常代码的嵌套远小于它（本仓最深的表达式 / 语句嵌套都在 30 层以内），
+//   而实测崩溃点在 1500 层左右 ⇒ 256 有足够余量，且不会误伤。
+#define PARSE_MAX_NEST 256
+
+int parse_nest_enter(Parser* p, const char* what) {
+    if (++p->nest_depth <= PARSE_MAX_NEST) return 1;
+    p->nest_depth--;
+    if (!p->nest_overflow) {
+        p->nest_overflow = 1;
+        error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+            "语法嵌套过深（超过 %d 层%s）—— 请把这段拆成多个变量 / 多个函数，"
+            "或把长表达式链改成循环累加；递归下降解析器在更深的输入上会**自身栈溢出**"
+            "（这是有意的硬上限，不是能力缺失）",
+            PARSE_MAX_NEST, what ? what : "");
+    }
+    return 0;
+}
+
+void parse_nest_leave(Parser* p) {
+    if (p->nest_depth > 0) p->nest_depth--;
 }
 
 // 释放 Parser 自己在解析过程中累积的辅助表（struct 名称 / 类型别名）。

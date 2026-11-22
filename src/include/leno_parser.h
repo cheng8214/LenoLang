@@ -35,7 +35,17 @@ typedef struct {
     //   为什么用"待定标记"而不是给 parse_var_decl_internal 加参数：它有三个调用点
     //   （var / const / 类型关键字），改签名要连带改 parser_module.c 的两处。
     int pending_thread_local;
+    // ★ 2026-11-22（压测）：**语法嵌套深度**守卫 —— 极端输入会把**编译器自己**的栈打爆：
+    //   实测 20000 项 `1+1+…`、1500 层嵌套 `if`、2000 层 `[[[…]]]` 三者都稳定触发
+    //   `0xC00000FD`（栈溢出，进程直接崩，用户只看到"编译器挂了"）。
+    //   现在到上限就报一条**语法错误**并返回占位节点 ⇒ 响亮地失败，而不是崩。
+    int nest_depth;        // 当前递归深度（表达式 / 语句共用）
+    int nest_overflow;     // 已报过"嵌套过深" ⇒ 后面只返回占位节点，不重复刷错
 } Parser;
+
+// 嵌套深度守卫（定义在 parser.c）：进入返回 1，超限返回 0（**已报错**）
+int  parse_nest_enter(Parser* p, const char* what);
+void parse_nest_leave(Parser* p);
 
 void parser_init(Parser* p, const char* src);
 void parser_free(Parser* p);

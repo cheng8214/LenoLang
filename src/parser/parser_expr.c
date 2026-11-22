@@ -134,8 +134,24 @@ Ast* parse_call_expression(Parser* p) {
     return parse_precedence(p, PREC_CALL);
 }
 
-// Pratt 表达式解析核心函数
+// ★ 2026-11-22（压测）：表达式递归入口加**深度守卫** —— 20000 项 `1+1+…` 这类长链
+//   会把编译器的栈打爆（0xC0000000FD 级崩溃）；到上限改为报「语法嵌套过深」并返回占位节点。
+static Ast* parse_precedence_impl(Parser* p, Precedence precedence);
+
 Ast* parse_precedence(Parser* p, Precedence precedence) {
+    if (!parse_nest_enter(p, "表达式")) {
+        // 同 parse_statement：超限时必须消耗一个 token，否则外层会原地重试同一个符号
+        Ast* ph = ast_new(AST_NULL, p->lex.current.line);
+        if (p->lex.current.type != TOK_EOF) lexer_next(&p->lex);
+        return ph;
+    }
+    Ast* r = parse_precedence_impl(p, precedence);
+    parse_nest_leave(p);
+    return r;
+}
+
+// Pratt 表达式解析核心函数
+static Ast* parse_precedence_impl(Parser* p, Precedence precedence) {
     LenoTokenType type = p->lex.current.type;
     ParseRule* rule = get_rule(type);
     
@@ -153,7 +169,18 @@ Ast* parse_precedence(Parser* p, Precedence precedence) {
     Ast* left = rule->prefix(p);
     
     // 处理中缀表达式（根据优先级）
+    //   ★ 2026-11-22（压测）：**长二元链上限** —— `1+1+…`（2 万项）解析本身是**循环**、
+    //   不会把解析器递归压深，但产出的 AST 是**左深 2 万层** ⇒ 随后的语义遍历 / 代码生成 /
+    //   `ast_free` 都会栈溢出（实测 `0xC00000FD`，编译进程直接崩，用户只看到"编译器挂了"）。
+    //   ⇒ 在这里就截断：超过上限报一条错并停止加长，后面的阶段就看不到超深 AST ✓
+    int chain = 0;
     while (precedence <= get_rule(p->lex.current.type)->precedence) {
+        if (++chain > 400) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "表达式过长（同一表达式的二元运算超过 400 项）—— 请拆成多个中间变量，"
+                "或用循环累加；再长的链会让编译器的递归栈吃不消（有意的硬上限）");
+            break;
+        }
         type = p->lex.current.type;
         rule = get_rule(type);
         // 如果没有中缀解析器，退出循环
