@@ -1,56 +1,60 @@
-// test_callback_gc.leno —— 「回调里分配内存 / 强制 GC」不得崩溃（2026-11-22 修）
+// test_callback_gc.leno —— 「回调里分配内存」不得崩溃（2026-11-22 修，5ccf03a8）
 //
 // 现场：`[1,2,3].map(func(int x, int _i) { a.add(99)  return x * 2 })`
 //   修前 **0xC0000005**：map/filter 里新建的 result 数组只被 C 局部变量引用 ⇒
 //   回调里的分配触发 GC 就把它回收了 ⇒ 末尾 `result->elements[count++] = …` 是 UAF。
-//   修法：循环前 `gc_push_root(&result_val)`，所有出口 `gc_pop_root()`（见 5ccf03a8）。
+//   修法：循环前 `gc_push_root(&result_val)`，所有出口 `gc_pop_root()`。
 //
-// 本用例用 `_gc()` **在回调里强制回收**，比"靠分配压力碰运气触发"稳定得多；
-// 同时把 reduce / sort / Dict 遍历也一起钉住（它们本来就安全，防止以后改坏）。
+// ⚠ 怎么"确定地"让 GC 在回调里发生：
+//   语言层的 `_gc(...)` **不是**"回收一次"，它是**开关**（`_gc()` 只查询，`_gc(false)` 关闭）。
+//   真正的测试钩子是环境变量（见 src/gc.c 的 gc_init）：
+//
+//       LENO_GC_FORCE_EVERY=1  leno.exe assert\test_callback_gc.leno
+//
+//   它让**每 1 次分配**都在下一个解释器安全点强制回收一次 ⇒ 本用例在该模式下跑通，
+//   就等于"回调里任何一次分配都可能紧跟一次回收，仍然不崩" ✓
+//   本用例自身也在回调里**刻意分配**（建小数组并读它的长度），保证钩子有东西可回收。
 main() {
-    // ① map：回调里分配 + 强制 GC，结果必须完整
+    // ① map：回调里分配，结果必须完整
     var m = [1, 2, 3].map(func(int x, int _i) {
         var junk = [x, x, x]
-        _gc()
         return junk.len() + x
     })
-    assert_eq(m.len(), 3, "map 回调里 _gc() 后结果长度")
+    assert_eq(m.len(), 3, "map 回调里分配后结果长度")
     assert_eq(m[0], 4, "map[0] = 3(len) + 1")
     assert_eq(m[2], 6, "map[2] = 3(len) + 3")
 
     // ② filter：同上
     var f = [1, 2, 3, 4].filter(func(int x, int _i) {
-        var _junk = [x]        // 只为制造一次分配（分配才会触发 GC）
-        _gc()
-        return x % 2 == 0
+        var junk = [x, x]
+        return junk.len() == 2 and x % 2 == 0
     })
-    assert_eq(f.len(), 2, "filter 回调里 _gc() 后结果长度")
+    assert_eq(f.len(), 2, "filter 回调里分配后结果长度")
 
-    // ③ reduce：累加**字符串**（对象），回调里强制 GC
+    // ③ reduce：累加**字符串**（对象，不是 int48），回调里分配
     var s = ["a", "b", "c"].reduce(func(string acc, string x, int _i) {
-        _gc()
-        return acc + x
+        var junk = [x, x]
+        return acc + x + _str(junk.len())
     }, "")
-    assert_eq(s, "abc", "reduce 累加字符串 + 回调里 _gc()")
+    assert_eq(s, "a2b2c2", "reduce 累加字符串 + 回调里分配")
 
-    // ④ sort：比较器里强制 GC，排序结果仍正确
+    // ④ sort：比较器里分配，排序结果仍正确
     Array[int] a = [3, 1, 2]
     var r = a.sort(func(int x, int y) {
-        _gc()
-        return x - y
+        var junk = [x, y]
+        return junk.len() * (x - y) / 2
     })
-    assert_eq(r[0], 1, "sort 比较器里 _gc() 后 [0]")
-    assert_eq(r[2], 3, "sort 比较器里 _gc() 后 [2]")
+    assert_eq(r[0], 1, "sort 比较器里分配后 [0]")
+    assert_eq(r[2], 3, "sort 比较器里分配后 [2]")
 
-    // ⑤ Dict 遍历里强制 GC
+    // ⑤ Dict 遍历里分配
     Dict[string, int] d = {"a": 1, "b": 2, "c": 3}
     var sum = 0
     for d to k {
         var junk = [k, k, k]
-        _gc()
         sum = sum + d[k] + junk.len()
     }
-    assert_eq(sum, 15, "Dict 遍历里 _gc()：6(值) + 9(各 3 个 junk)")
+    assert_eq(sum, 15, "Dict 遍历里分配：6(值) + 9(各 3 个 junk)")
 
     print("test_callback_gc passed")
 }
