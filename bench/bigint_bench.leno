@@ -1,0 +1,260 @@
+// bench/bigint_bench.leno —— bigint 速度：Leno 自身 vs Python `int`（Leno 版驱动）
+//
+// 为什么用 Leno 写（替代 bench/bigint_vs_python.py 里的驱动部分）：
+//   ① 这本身是压测：`_exec` + `times` + 文件读写全用上；
+//   ② 同一份负载两边都跑、由**同一个进程**量，避免"驱动本身"引入偏差；
+//   ③ 表格式输出与 py 版一致，可以直接对照。
+//
+// 计时口径：
+//   · Leno 侧：本进程内 `times.ms()` 前后差；
+//   · Python 侧：**Python 自己**用 `time.perf_counter()` 量（只把结果打印出来），
+//     再由本脚本解析 ⇒ 不含解释器启动时间，两边可比。
+//
+// 用法：build\leno.exe bench\bigint_bench.leno [--timeout 600000] [--only mul_1m]
+
+import dirs
+import files
+import strings
+import times
+
+var g_timeout_ms = 600000
+var g_only = ""
+
+// ---------------------------------------------------------------- 被测负载（Leno 侧）
+
+func w_mul_100k() {
+    var a = (1 << 100000) - 1
+    var b = (1 << 100000) + 1
+    var c = 0
+    for 0:19 to i { c = a * b }
+    if c <= 0 { print("bad\n") }
+}
+
+func w_mul_1m() {
+    var a = (1 << 1000000) - 1
+    var b = (1 << 1000000) + 1
+    var c = 0
+    for 0:3 to i { c = a * b }
+    if c <= 0 { print("bad\n") }
+}
+
+func w_sqr_1m() {
+    var a = (1 << 1000000) - 1
+    var c = 0
+    for 0:3 to i { c = a * a }
+    if c <= 0 { print("bad\n") }
+}
+
+func w_fact_20000() {
+    var f = 1
+    for 1:20000 to i { f = f * i }
+    if f <= 0 { print("bad\n") }
+}
+
+func w_add_1m() {
+    var a = 1 << 1000000
+    var s = a
+    for 0:19999 to i { s = s + a }
+    if s <= 0 { print("bad\n") }
+}
+
+func w_shift_billion() {
+    var p = 1 << 1000000000
+    if p <= 0 { print("bad\n") }
+}
+
+func w_dec_300k() {
+    var x = 1 << 1000000
+    var s = _str(x)
+    if s.len() != 301030 { print("bad len\n") }
+}
+
+// ---------------------------------------------------------------- 被测负载（Python 侧）
+//   每个片段都以 `print("%.3f" % elapsed)` 结尾 ⇒ 本脚本解析最后一行
+
+const PY_HEAD = "import time\nt0 = time.perf_counter()\n"
+const PY_TAIL = "print('%.3f' % ((time.perf_counter() - t0) * 1000))\n"
+
+func py_mul_100k():string {
+    return PY_HEAD + "a = (1 << 100000) - 1\nb = (1 << 100000) + 1\nc = 0\nfor _ in range(20):\n    c = a * b\n" + PY_TAIL
+}
+
+func py_mul_1m():string {
+    return PY_HEAD + "a = (1 << 1000000) - 1\nb = (1 << 1000000) + 1\nc = 0\nfor _ in range(4):\n    c = a * b\n" + PY_TAIL
+}
+
+func py_sqr_1m():string {
+    return PY_HEAD + "a = (1 << 1000000) - 1\nc = 0\nfor _ in range(4):\n    c = a * a\n" + PY_TAIL
+}
+
+func py_fact_20000():string {
+    return PY_HEAD + "f = 1\nfor i in range(1, 20001):\n    f = f * i\n" + PY_TAIL
+}
+
+func py_add_1m():string {
+    return PY_HEAD + "a = 1 << 1000000\ns = a\nfor _ in range(20000):\n    s = s + a\n" + PY_TAIL
+}
+
+func py_shift_billion():string {
+    return PY_HEAD + "p = 1 << 1000000000\n" + PY_TAIL
+}
+
+func py_dec_300k():string {
+    // ⚠ Python 3.11+ 默认限制 int→str 到 4300 位（DoS 防护）⇒ 30 万位会 ValueError；
+    //   校验大数必须显式放开（Leno 侧没有这个限制）
+    return "import sys\nsys.set_int_max_str_digits(0)\n" + PY_HEAD
+           + "x = 1 << 1000000\ns = str(x)\nassert len(s) == 301030, len(s)\n" + PY_TAIL
+}
+
+// ---------------------------------------------------------------- 跑 Python 侧
+
+func parse_last_float(string out):float {
+    var lines = strings.split(out, "\n")
+    var i = lines.len() - 1
+    while i >= 0 {
+        var ln = strings.trim(lines[i])
+        if ln != "" {
+            if _is_num_str(ln) { return _float(ln) }
+        }
+        i = i - 1
+    }
+    return -1.0
+}
+
+func _is_num_str(string s):bool {
+    if s == "" { return false }
+    var i = 0
+    var n = s.len()
+    while i < n {
+        var c = s.slice(i, i)
+        if not ((c >= "0" and c <= "9") or c == ".") { return false }
+        i = i + 1
+    }
+    return true
+}
+
+func run_py(string workdir, string name, string code):float {
+    var f = dirs.join(workdir, name + ".py")
+    files.write(f, code)
+    var r = _exec("python \"" + f + "\"", g_timeout_ms)
+    if r == null { return -1.0 }
+    var out = _str(r.output)
+    if r.code != 0 {
+        print("      (python 侧失败 exit=" + _str(r.code) + ")\n")
+        return -1.0
+    }
+    return parse_last_float(out)
+}
+
+// ---------------------------------------------------------------- 计时
+
+func time_leno(int which):float {
+    var t0 = times.ms()
+    if which == 0 { w_mul_100k() }
+    else if which == 1 { w_mul_1m() }
+    else if which == 2 { w_sqr_1m() }
+    else if which == 3 { w_fact_20000() }
+    else if which == 4 { w_add_1m() }
+    else if which == 5 { w_shift_billion() }
+    else { w_dec_300k() }
+    return times.ms() - t0
+}
+
+func pad(string s, int w):string {
+    var out = s
+    while out.len() < w { out = out + " " }
+    return out
+}
+
+func tag_of(int which):string {
+    if which == 0 { return "mul_100k" }
+    if which == 1 { return "mul_1m" }
+    if which == 2 { return "sqr_1m" }
+    if which == 3 { return "fact_20000" }
+    if which == 4 { return "add_1m" }
+    if which == 5 { return "shift_pow2" }
+    return "dec_300k"
+}
+
+func desc_of(int which):string {
+    if which == 0 { return "10 万比特乘法 ×20" }
+    if which == 1 { return "100 万比特乘法 ×4" }
+    if which == 2 { return "100 万比特平方 ×4" }
+    if which == 3 { return "阶乘 20000" }
+    if which == 4 { return "100 万比特加法 ×20000" }
+    if which == 5 { return "2^1e9 移位（十亿比特）" }
+    return "2^1e6 转十进制（30 万位）"
+}
+
+func py_code_of(int which):string {
+    if which == 0 { return py_mul_100k() }
+    if which == 1 { return py_mul_1m() }
+    if which == 2 { return py_sqr_1m() }
+    if which == 3 { return py_fact_20000() }
+    if which == 4 { return py_add_1m() }
+    if which == 5 { return py_shift_billion() }
+    return py_dec_300k()
+}
+
+main() {
+    var args = _args()
+    var i = 0
+    var n = args.len()
+    while i < n {
+        if args[i] == "--timeout" and i + 1 < n { i = i + 1; g_timeout_ms = _int(args[i]) }
+        else if args[i] == "--only" and i + 1 < n { i = i + 1; g_only = args[i] }
+        i = i + 1
+    }
+
+    var work = dirs.join(_tmpdir(), "leno_bigbench_" + _str(_int(times.ms())))
+    dirs.mkdir_p(work)
+
+    print(pad("用例", 16) + pad("说明", 30) + pad("Leno(s)", 10) + pad("Python(s)", 11) + "倍数（越大越慢）\n")
+    print(strings.rep("-", 88) + "\n")
+
+    var which = 0
+    while which < 7 {
+        var tag = tag_of(which)
+        if g_only == "" or g_only == tag {
+            var leno_ms = time_leno(which)
+            var py_ms = run_py(work, tag, py_code_of(which))
+
+            var lsec = leno_ms / 1000.0
+            var psec = py_ms / 1000.0
+            var ratio = "-"
+            if psec > 0.0 { ratio = fmt2(lsec / psec) + "x" }
+            var pstr = "-"
+            if psec > 0.0 { pstr = fmt3(psec) }
+            var lstr = fmt3(lsec)
+            // 工作量为 0 时（如 2^1e9 只是分配）也照实给 0.000，不显示负数
+            if lsec <= 0.0 { lstr = "0.000" }
+            print(pad(tag, 16) + pad(desc_of(which), 30)
+                  + pad(lstr, 10) + pad(pstr, 11) + ratio + "\n")
+        }
+        which = which + 1
+    }
+
+    dirs.delete(work)
+    print(strings.rep("-", 88) + "\n")
+    print("（倍数 = Leno 用时 / Python 用时；>1 表示 Leno 更慢）\n")
+}
+
+// 两位小数（整数运算拼串：不引 strings.format，避免"被测对象"影响基准脚本本身）
+func fmt2(float v):string {
+    var c = _int(v * 100.0)
+    var whole = c / 100
+    var frac = c - whole * 100
+    var f = _str(frac)
+    if f.len() < 2 { f = "0" + f }
+    return _str(whole) + "." + f
+}
+
+// 秒数保留 3 位（不引 format：避免 strings.format 的转换符差异影响基准脚本本身）
+func fmt3(float v):string {
+    var ms = _int(v * 1000.0)
+    var whole = ms / 1000
+    var frac = ms - whole * 1000
+    var f = _str(frac)
+    while f.len() < 3 { f = "0" + f }
+    return _str(whole) + "." + f
+}

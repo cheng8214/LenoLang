@@ -1,0 +1,307 @@
+// bench/verify_doc_code.leno —— 把文档里每个 ```leno 代码块**真跑一遍**（Leno 版）
+//
+// 为什么用 Leno 写（而不是 bench/verify_doc_code.py）：
+//   ① 这本身是一次压测：files / dirs / strings / _exec 全用上；
+//   ② 少一层依赖（不用保证机器上有 python）；
+//   ③ 与 assert/ 那套「_exec + 判据」同一机制，行为可以和 py 版对照。
+//
+// 分类口径（与 py 版一致，便于互相验证）：
+//   STALE     报语法/语义错 ⇒ **文档过期**，要改文档
+//   FRAGMENT  只报「未定义函数 / 未定义变量」⇒ 依赖上文，单独跑不了（不算文档错）
+//   CRASH     非 0 退出且没有任何 error 行
+//   TIMEOUT   exit == 124（_exec 的超时码）
+//
+// ⚠ 两个语言缺口（写这个脚本时撞上的，报错本身已给出做法）：
+//   1. 正则引擎**不支持非贪婪量词**（`*?` / `+?`）——报错明确提示「先用 find 定位、再用 slice 截取」；
+//      所以这里不用 regexs，改成 find + slice 手扫。
+//   2. 字符串字面量里 `\s` / `\S` 是**无效转义**（编译期警告并原样保留）⇒ 正则里也没法写 `[\s\S]`。
+//
+// 用法：
+//   build\leno.exe bench\verify_doc_code.leno
+//   build\leno.exe bench\verify_doc_code.leno --glob module_dicts.md
+//   build\leno.exe bench\verify_doc_code.leno --glob *.md --timeout 30000 --only stale
+
+import dirs
+import files
+import strings
+import times
+
+const FENCE = "```leno"
+const FENCE_LEN = 7
+
+var g_docs = ""
+var g_glob = "module_*.md"
+var g_timeout_ms = 20000
+var g_only = ""
+var g_verbose = 0
+
+var g_ok = 0
+var g_stale = 0
+var g_fragment = 0
+var g_crash = 0
+var g_timeout = 0
+var g_skip = 0
+
+// ---------------------------------------------------------------- 字符串工具
+
+func hline():string {
+    return strings.rep("-", 74)      // strings.repeat 不存在，叫 rep
+}
+
+// kind 转大写（strings.upper 不存在；种类只有 5 个 ⇒ 查表即可，别为此加库函数）
+func upper_kind(string k):string {
+    if k == "ok" { return "OK" }
+    if k == "stale" { return "STALE" }
+    if k == "fragment" { return "FRAGMENT" }
+    if k == "crash" { return "CRASH" }
+    if k == "timeout" { return "TIMEOUT" }
+    return k
+}
+
+// 从 from 开始找 needle（strings.find 没有起始偏移参数 ⇒ 先 slice 再找，O(n²) 但文档都很小）
+func find_from(string s, string needle, int from):int {
+    var slen = strings.len(s)
+    if from < 0 { from = 0 }
+    if from >= slen { return -1 }
+    var rest = s.slice(from, slen - 1)
+    var idx = strings.find(rest, needle)
+    if idx < 0 { return -1 }
+    return from + idx
+}
+
+// 去掉首尾的换行/回车
+func trim_newlines(string s):string {
+    var a = s
+    var l = strings.len(a)
+    while l > 0 {
+        var c0 = a.slice(0, 0)
+        if c0 == "\n" or c0 == "\r" {
+            if l >= 2 { a = a.slice(1, l - 1) } else { a = "" }
+            l = l - 1
+        } else {
+            break
+        }
+    }
+    l = strings.len(a)
+    while l > 0 {
+        var cl = a.slice(l - 1, l - 1)
+        if cl == "\n" or cl == "\r" {
+            if l >= 2 { a = a.slice(0, l - 2) } else { a = "" }
+            l = l - 1
+        } else {
+            break
+        }
+    }
+    return a
+}
+
+// 抽出所有 ```leno ... ``` 的**内容**（不含围栏）
+//   ⚠ 不能用正则的 `[\s\S]*?`（见文件头：不支持非贪婪 + 不支持 \s）⇒ 手扫
+func extract_blocks(string text):Array[string] {
+    Array[string] blocks = []
+    var pos = 0
+    var tl = strings.len(text)
+    while pos < tl {
+        var o = find_from(text, FENCE, pos)
+        if o < 0 { break }
+        var start = o + FENCE_LEN
+        var c = find_from(text, "```", start)
+        if c < 0 { break }
+        if c > start {
+            blocks.add(trim_newlines(text.slice(start, c - 1)))
+        }
+        pos = c + 3
+    }
+    return blocks
+}
+
+// 简单的 glob：只支持单个 `*`（`module_*.md` / `*.md` / 精确名）
+func glob_match(string name, string pat):bool {
+    var star = strings.find(pat, "*")
+    if star < 0 { return name == pat }
+    var plen = strings.len(pat)
+    var pre = ""
+    if star > 0 { pre = pat.slice(0, star - 1) }
+    var suf = ""
+    if star + 1 < plen { suf = pat.slice(star + 1, plen - 1) }
+    if not strings.starts_with(name, pre) { return false }
+    if not strings.ends_with(name, suf) { return false }
+    return strings.len(name) >= strings.len(pre) + strings.len(suf)
+}
+
+// ---------------------------------------------------------------- 判定
+
+func has_main(string code):bool {
+    return strings.find(code, "main(") >= 0
+}
+
+// 依赖同目录 .leno 的块（多文件示例）单独跑不了 ⇒ 跳过
+func has_local_import(string code):bool {
+    if strings.find(code, "import \"") < 0 { return false }
+    return strings.find(code, ".leno\"") >= 0
+}
+
+// 抽出 `error: [标签]` 里的标签（按行找，避免正则转义问题）
+func error_tags(string out):Array[string] {
+    Array[string] tags = []
+    var lines = strings.split(out, "\n")
+    for lines to ln {
+        var p = strings.find(ln, "error: [")
+        if p < 0 { continue }
+        var llen = strings.len(ln)
+        if p + 7 >= llen { continue }
+        var rest = ln.slice(p + 7, llen - 1)      // 从 '[' 开始
+        if not strings.starts_with(rest, "[") { continue }
+        var rb = strings.find(rest, "]")
+        if rb <= 1 { continue }
+        tags.add(rest.slice(1, rb - 1))
+    }
+    return tags
+}
+
+// ok / timeout / crash / fragment / stale
+func classify(string out, int code):string {
+    if code == 0 { return "ok" }
+    if code == 124 { return "timeout" }
+    var tags = error_tags(out)
+    if tags.len() == 0 { return "crash" }
+    var all_undef = true
+    for tags to t {
+        if not (t == "未定义函数" or t == "未定义变量") { all_undef = false }
+    }
+    if all_undef { return "fragment" }
+    return "stale"
+}
+
+// 取出第一行 error/warning 作详情
+func first_error_line(string out):string {
+    var lines = strings.split(out, "\n")
+    for lines to ln {
+        if strings.find(ln, "error:") >= 0 { return strings.trim(ln) }
+    }
+    for lines to ln2 {
+        if strings.find(ln2, "[错误]") >= 0 { return strings.trim(ln2) }
+    }
+    return ""
+}
+
+// ---------------------------------------------------------------- 主流程
+
+func docs_root():string {
+    // script_dir = <repo>\bench ⇒ 上两级是 <父目录>，同级有 LenoDocsSrc
+    var sd = dirs.script_dir()
+    var up1 = dirs.abspath(dirs.join(sd, ".."))
+    var up2 = dirs.abspath(dirs.join(up1, ".."))
+    return dirs.join(up2, "LenoDocsSrc")
+}
+
+main() {
+    g_docs = docs_root()
+
+    var args = _args()
+    var nargs = args.len()
+    var i = 0
+    while i < nargs {
+        var a = args[i]
+        if a == "--glob" and i + 1 < nargs { i = i + 1; g_glob = args[i] }
+        else if a == "--timeout" and i + 1 < nargs { i = i + 1; g_timeout_ms = _int(args[i]) }
+        else if a == "--only" and i + 1 < nargs { i = i + 1; g_only = args[i] }
+        else if a == "--docs" and i + 1 < nargs { i = i + 1; g_docs = args[i] }
+        else if a == "-v" { g_verbose = 1 }
+        i = i + 1
+    }
+
+    if not dirs.is_dir(g_docs) {
+        print("找不到文档目录：" + g_docs + "\n")
+        print("用 --docs <路径> 指定（默认是兄弟目录 LenoDocsSrc）\n")
+        _exit(2)
+    }
+
+    var names = dirs.listdir(g_docs)
+    var work = dirs.join(_tmpdir(), "leno_doccode_" + _str(times.ms()))
+    dirs.mkdir_p(work)
+
+    print("文档目录: " + g_docs + "\n")
+    print("匹配: " + g_glob + "，超时 " + _str(g_timeout_ms) + "ms\n")
+    print(hline() + "\n")
+
+    var files_with_fail = 0
+    var md_count = 0
+    for names to nm {
+        if not strings.ends_with(nm, ".md") { continue }
+        if not glob_match(nm, g_glob) { continue }
+        md_count = md_count + 1
+
+        var path = dirs.join(g_docs, nm)
+        var text = files.read(path)
+        if text == null { continue }
+
+        var blocks = extract_blocks(_str(text))
+        var ran = 0
+        var fail = 0
+        var skip = 0
+        var bi = 0
+        for blocks to code {
+            bi = bi + 1
+            if not has_main(code) or has_local_import(code) {
+                skip = skip + 1
+                g_skip = g_skip + 1
+                continue
+            }
+            var f = dirs.join(work, "blk" + _str(bi) + ".leno")
+            files.write(f, code)
+            var cmd = _executable() + " \"" + f + "\""
+            var r = _exec(cmd, g_timeout_ms)
+            var out = ""
+            var c = -1
+            if r != null { out = _str(r.output); c = r.code }
+            var kind = classify(out, c)
+            ran = ran + 1
+            if kind == "ok" {
+                g_ok = g_ok + 1
+            } else if kind == "fragment" {
+                g_fragment = g_fragment + 1
+                fail = fail + 1
+            } else if kind == "stale" {
+                g_stale = g_stale + 1
+                fail = fail + 1
+            } else if kind == "timeout" {
+                g_timeout = g_timeout + 1
+                fail = fail + 1
+            } else {
+                g_crash = g_crash + 1
+                fail = fail + 1
+            }
+
+            if kind != "ok" and (g_only == "" or g_only == kind) {
+                print("  #" + _str(bi) + "  " + upper_kind(kind) + "  " + first_line(code) + "\n")
+                var detail = first_error_line(out)
+                if detail != "" { print("        " + detail + "\n") }
+            }
+        }
+
+        var mark = "OK  "
+        if fail > 0 { mark = "FAIL" }
+        if g_only == "" or fail > 0 {
+            print(mark + " " + nm + "  ran=" + _str(ran) + " fail=" + _str(fail) + " skip=" + _str(skip) + "\n")
+        }
+        if fail > 0 { files_with_fail = files_with_fail + 1 }
+    }
+
+    dirs.delete(work)
+
+    print(hline() + "\n")
+    print("文件 " + _str(md_count) + " 个；ok=" + _str(g_ok) + " stale=" + _str(g_stale)
+          + " fragment=" + _str(g_fragment) + " crash=" + _str(g_crash)
+          + " timeout=" + _str(g_timeout) + " skip=" + _str(g_skip) + "\n")
+    print("有失败的文件：" + _str(files_with_fail) + " 个\n")
+
+    if g_stale > 0 or g_crash > 0 { _exit(1) }
+}
+
+// 取代码块的第一行（报告里好认）
+func first_line(string code):string {
+    var lines = strings.split(code, "\n")
+    if lines.len() == 0 { return "" }
+    return strings.trim(lines[0])
+}
