@@ -1,0 +1,48 @@
+// reflect × 跨模块 struct：字段类型精度回归（2026-11-24）
+//
+// 背景（压测 reflect 时抓到的**既存 bug**）：
+//   `new m.Outer(inner = new m.Inner(...))` 曾报
+//     「字段 'inner' 类型不匹配: 期望 'struct'，实际 'struct Inner'」
+//   根因在 visit_struct_init.inc 的模块限定分支：它只搬 `fields[fi].type`（一个
+//   TypeKind），struct 名 / nullable / 完整 type_info 全丢 ⇒ 期望侧是无名裸 struct。
+//   同模块同一句是好的（走 visit_type_def，类型完整）—— 只有跨模块退化成粗类型。
+//   顺带丢的还有 `Array[Array[int]]` 的内层与泛型字段的 K/V。
+//
+// 本用例同时钉两件事：
+//   ① 跨模块构造的类型检查用**完整**类型（不会再误报）；
+//   ② reflect 读同一份元数据时给得出完整声明类型（两侧同源 ⇒ 一起回归）。
+import reflect
+import "reflect_xmod_types.leno" as m
+
+main() {
+    // ---- ① 跨模块可空 struct 字段：命名参数构造 ----
+    var o = new m.Outer(inner = new m.Inner(a = 7, name = "x"))
+    assert_eq(o.inner.a, 7, "① new m.Outer(inner = new m.Inner(...))")
+    assert_eq(o.inner.name, "x")
+
+    // ---- ② 嵌套容器 / 可空：字段类型不再变粗 ----
+    assert_eq(reflect.field_type(o, "inner"), "struct Inner?")
+    assert_eq(reflect.field_type(o, "grid"), "Array[Array[int]]")
+    assert_eq(reflect.field_type(o, "groups"), "Dict[string, Array[string]]")
+
+    // ---- ③ 跨模块泛型 struct：单参数代入实参 ----
+    var b = new m.Box[int](value = 5)
+    assert_eq(b.value, 5)
+    assert_eq(reflect.type_name(b), "Box")
+    assert_eq(reflect.field_type(b, "value"), "int")
+    assert_eq(reflect.field_type(b, "items"), "Array[int]")
+
+    // ---- ④ 取出来的嵌套 struct 仍可反射（同一份定义） ----
+    var v = reflect.get(o, "inner")
+    assert_eq(reflect.type_name(v), "Inner")
+    assert_eq(reflect.kind(v), "struct")
+    assert_eq(reflect.fields(v).len(), 2)
+
+    // ---- ⑤ 容器值本身穿越模块后类型正确 ----
+    o.grid.add([1, 2])
+    assert_eq(o.grid[0][1], 2)
+    o.groups["k"] = ["a", "b"]
+    assert_eq(o.groups["k"][1], "b")
+
+    print("test_reflect_xmod passed")
+}

@@ -219,6 +219,9 @@ static const char* decl_kind_desc(TypeKind k) {
     case TYPE_STR16: return "str16";
     case TYPE_CFUNC: return "cfunc";
     case TYPE_CLIB: return "clib";
+    // 泛型参数（字段类型写成 `T` / `K`）。见 generic_field_desc 的说明：
+    //   单参数时能代入实参，多参数时**不猜**，统一给 "generic"（而不是 "unknown"）。
+    case TYPE_GENERIC_PARAM: return "generic";
     default: return "unknown";
     }
 }
@@ -240,25 +243,47 @@ static void tb_put(TypeBuf* b, const char* s) {
     b->buf[b->pos] = '\0';
 }
 
+// 泛型参数字段的类型串。
+// ----------------------------------------------------------------------------
+// 运行期**没有**"这个字段对应哪个类型参数"的元数据：字节码的字段表只记
+// `type == TYPE_GENERIC_PARAM`，参数名（K / V）没有编进去（写出侧只对
+// TYPE_STRUCT 写 struct_type_name）。而实例上有**实参列表**（generic_type_args）。
+//   · 单参数 struct（`Box[T]`）只有一个实参 ⇒ 必然对得上 ⇒ 直接给实参类型（"int"）；
+//   · 多参数（`Pair[K, V]`）无法判断该字段是 K 还是 V ⇒ 给 "generic"。
+//     **不猜**：猜错就是静默错类型，比"不知道"更糟（本项目反复踩过的同一类坑）。
+// 要把 Pair 也做对，需要在字节码字段表里补参数名 —— 布局改动，暂不做（见模块文档）。
+static void generic_field_desc(ObjStructDef* def, ObjStruct* s, TypeBuf* b) {
+    if (def && s && s->generic_type_args && s->generic_type_arg_count == 1 &&
+        def->type_param_count == 1 && s->generic_type_args[0]) {
+        tb_put(b, s->generic_type_args[0]);
+    } else {
+        tb_put(b, "generic");
+    }
+}
+
 // 容器声明类型树（2026-11-15 起字段带完整树）：逐层展开。
-static void tb_container(TypeBuf* b, const ContainerTypeMeta* m) {
+static void tb_container(TypeBuf* b, const ContainerTypeMeta* m,
+                         ObjStructDef* def, ObjStruct* s) {
     if (!m) { tb_put(b, "unknown"); return; }
     switch (m->type) {
     case TYPE_ARRAY:
         tb_put(b, "Array[");
-        tb_container(b, m->element);
+        tb_container(b, m->element, def, s);
         tb_put(b, "]");
         break;
     case TYPE_DICT:
         tb_put(b, "Dict[");
-        tb_container(b, m->key);
+        tb_container(b, m->key, def, s);
         tb_put(b, ", ");
-        tb_container(b, m->value);
+        tb_container(b, m->value, def, s);
         tb_put(b, "]");
         break;
     case TYPE_STRUCT:
         tb_put(b, "struct ");
         tb_put(b, m->struct_name ? m->struct_name : "?");
+        break;
+    case TYPE_GENERIC_PARAM:
+        generic_field_desc(def, s, b);
         break;
     default:
         tb_put(b, decl_kind_desc(m->type));
@@ -267,10 +292,12 @@ static void tb_container(TypeBuf* b, const ContainerTypeMeta* m) {
 }
 
 // GC struct 单个字段的声明类型串。
-static void field_type_desc(const StructFieldInfo* f, TypeBuf* b) {
+static void field_type_desc(const StructFieldInfo* f, ObjStructDef* def, ObjStruct* s, TypeBuf* b) {
     if (!f) return;
     if (f->container) {
-        tb_container(b, f->container);
+        tb_container(b, f->container, def, s);
+    } else if (f->type == TYPE_GENERIC_PARAM) {
+        generic_field_desc(def, s, b);
     } else if (f->type == TYPE_ARRAY) {
         // 元素类型未指定（老字节码 / 裸 Array）⇒ 只写 `Array`，不编一个假的元素类型
         if (f->element_type == TYPE_UNKNOWN && !f->element_struct_name) {
@@ -492,7 +519,7 @@ static Value reflect_field_type_func(int argc, Value* args) {
     if (t.is_cstruct) {
         cstruct_field_type_desc(&t.cdef->fields[idx], &tb);
     } else {
-        field_type_desc(&t.sdef->fields[idx], &tb);
+        field_type_desc(&t.sdef->fields[idx], t.sdef, t.s, &tb);
     }
     return val_obj((Object*)str_new(buf, (int)tb.pos));
 }

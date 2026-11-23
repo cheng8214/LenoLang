@@ -40,35 +40,19 @@
                             sym = (Symbol*)calloc(1, sizeof(Symbol));
                             sym_is_virtual = 1;   // 见上面的说明：本分支结束时整份释放
                             sym->name = strdup(struct_name_part);
-                            sym->type = type_new(TYPE_STRUCT);
-                            sym->type->struct_name = strdup(struct_name_part);
-                            sym->struct_field_count = mod_struct->field_count;
-                            sym->struct_type_param_count = mod_struct->type_param_count;
-                            if (mod_struct->type_param_count > 0 && mod_struct->type_param_names) {
-                                sym->struct_type_params = (char**)malloc(sizeof(char*) * mod_struct->type_param_count);
-                                for (int ti = 0; ti < mod_struct->type_param_count; ti++) {
-                                    sym->struct_type_params[ti] = strdup(mod_struct->type_param_names[ti]);
-                                }
-                                // ★ 2026-11-07：跨模块泛型约束名一并带上（new 时校验用）
-                                if (mod_struct->type_param_constraints) {
-                                    sym->struct_type_param_constraints =
-                                        (char**)calloc((size_t)mod_struct->type_param_count, sizeof(char*));
-                                    for (int ti = 0; ti < mod_struct->type_param_count; ti++) {
-                                        if (mod_struct->type_param_constraints[ti]) {
-                                            sym->struct_type_param_constraints[ti] =
-                                                strdup(mod_struct->type_param_constraints[ti]);
-                                        }
-                                    }
-                                }
-                            }
-                            if (mod_struct->field_count > 0) {
-                                sym->struct_field_names = (char**)malloc(sizeof(char*) * mod_struct->field_count);
-                                sym->struct_field_types = (TypeInfo**)malloc(sizeof(TypeInfo*) * mod_struct->field_count);
-                                for (int fi = 0; fi < mod_struct->field_count; fi++) {
-                                    sym->struct_field_names[fi] = strdup(mod_struct->fields[fi].name);
-                                    sym->struct_field_types[fi] = type_new(mod_struct->fields[fi].type);
-                                }
-                            }
+                            // ★ 2026-11-24（压测 reflect 时抓到的**既存 bug**）：
+                            //   这里原先只搬 `fields[fi].type`（一个 TypeKind），
+                            //   **struct 名 / nullable / 完整 type_info 全丢** ⇒
+                            //     struct Outer { Inner? inner = null }
+                            //     new m.Outer(inner = new m.Inner(...))
+                            //   报「字段 'inner' 类型不匹配: 期望 'struct'，实际 'struct Inner'」
+                            //   （期望侧是无名裸 struct，自然套不上）。同模块同一句是好的 ——
+                            //   走的 visit_type_def，字段类型完整 ⇒ 只有跨模块退化成粗类型。
+                            //   顺带丢的还有 `Array[Array[int]]` 的内层、泛型字段的 K/V 名。
+                            //   修法：直接复用 `semantic_attach_struct_fields` —— 那本来就是
+                            //   "把模块 struct 按完整精度搬进当前作用域"的**唯一实现**，
+                            //   这里再手写一份正是它注释里说的"同一件事两处写 ⇒ 精度漂移"。
+                            semantic_attach_struct_fields(sym, mod_struct);
                         }
                     }
                     free(module_name);

@@ -1,0 +1,18 @@
+// reflect 压测配套模块（2026-11-24）
+//   钉的是"跨模块 struct 的字段类型精度" —— 这组类型在 2026-11-24 之前
+//   经 `new m.X(...)` 进来时会退化成裸 kind（struct 名 / nullable / 嵌套泛型全丢）。
+export struct Inner {
+    int a = 0
+    string name = ""
+}
+
+export struct Outer {
+    Inner? inner = null
+    Array[Array[int]] grid = []
+    Dict[string, Array[string]] groups = {}
+}
+
+export struct Box[T] {
+    T value
+    Array[T] items = []
+}
