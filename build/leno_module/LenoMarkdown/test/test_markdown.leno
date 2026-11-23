@@ -80,6 +80,32 @@ main() {
     eq(md.to_html("<div class=\"x\">\nhi\n</div>"),
        "<div class=\"x\">\nhi\n</div>\n", "⑫ HTML 块透传")
 
+    // ⑬ 行内 HTML 透传（`<br>` / `<kbd>`），但 `a < b` 仍要转义
+    eq(md.to_html("换行<br>继续"), "<p>换行<br>继续</p>\n", "⑬ 行内 <br> 透传")
+    eq(md.to_html("按 <kbd>Ctrl</kbd> 保存"),
+       "<p>按 <kbd>Ctrl</kbd> 保存</p>\n", "⑬ 行内 <kbd> 透传")
+    eq(md.to_html("a < b"), "<p>a &lt; b</p>\n", "⑬ `<` 后不是字母仍转义")
+
+    // ⑭ 缩进代码块（4 空格）
+    eq(md.to_html("    let x = 1"), "<pre><code>let x = 1\n</code></pre>\n", "⑭ 缩进代码块")
+    eq(md.to_html("正文\n\n    let y = 2"), "<p>正文</p>\n<pre><code>let y = 2\n</code></pre>\n",
+       "⑭ 空行后的缩进代码块")
+
+    // ⑮ 表格单元格里的 `\|` 是字面竖线，不拆格
+    eq(md.to_html("| a \\| b | c |\n|---|---|\n| 1 | 2 |"),
+       "<table>\n<thead>\n<tr>\n<th>a | b</th>\n<th>c</th>\n</tr>\n</thead>\n<tbody>\n"
+       + "<tr>\n<td>1</td>\n<td>2</td>\n</tr>\n</tbody>\n</table>\n", "⑮ 表格单元格转义")
+
+    // ⑯ 删除线（GFM，python-markdown 核心不支持）
+    eq(md.to_html("已废弃 ~~旧接口~~ 请用新的"),
+       "<p>已废弃 <del>旧接口</del> 请用新的</p>\n", "⑯ 删除线")
+
+    // ⑰ 未支持语法扫描：该报的两类都报，正常文档一条都不报
+    check("⑰ ~ 围栏被扫出", md.scan_unsupported("~~~\nx\n~~~\n").len() == 1)
+    check("⑰ 引用式链接定义被扫出", md.scan_unsupported("[a]: http://x\n").len() == 1)
+    check("⑰ 正常文档零告警",
+          md.scan_unsupported("# 标题\n\n正文 **粗** 和 `code` 与 ~~删~~\n\n- 列表\n").len() == 0)
+
     if fails > 0 {
         print("test_markdown: " + _str(fails) + " 项失败\n")
         _exit(1)
