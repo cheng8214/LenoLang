@@ -314,13 +314,36 @@ func can_open_em(string s, int i):bool {
     return false
 }
 
-// 找**合法的闭标记**：marker 前面的字符不能是空格/换行（CommonMark 的强调收尾规则）
+// 找**合法的闭标记**：
+//   ① marker 前面的字符不能是空格/换行（CommonMark 的强调收尾规则）；
+//   ② **必须跳过行内代码**——`` （C 的 `char**`）现状 `` 里的 `**` 是代码内容，
+//      当闭标记的话会把前半句圈成 `<strong>`、后半句全乱（实测 archive/密集数据… 就是这样 ✗）
 func find_em_close(string s, string marker, int from):int {
-    var k = find_from(s, marker, from)
-    while k > 0 {
-        var prev = s.slice(k - 1, k - 1)
-        if prev != " " and prev != "\n" { return k }
-        k = find_from(s, marker, k + marker.len())
+    var n = s.len()
+    var k = from
+    while k < n {
+        var c = s.slice(k, k)
+        if c == "`" {
+            // 按 **run 长度**配对：`` `x` `` 与 `````` ```leno ``` ``` 都算代码；
+            //   只按单个反引号切换状态的话，```` ``` ```` 会切 3 次 ⇒ 状态错位，闭标记找错位置
+            var ticks = 1
+            while k + ticks < n and s.slice(k + ticks, k + ticks) == "`" { ticks += 1 }
+            var run = ""
+            var t = 0
+            while t < ticks {
+                run = run + "`"
+                t += 1
+            }
+            var close_code = find_from(s, run, k + ticks)
+            if close_code < 0 { return -1 }          // 反引号没配对：后面都当代码，不找闭标记
+            k = close_code + ticks
+            continue
+        }
+        if strings.starts_with(s.slice(k, n - 1), marker) {
+            var prev = s.slice(k - 1, k - 1)
+            if prev != " " and prev != "\n" { return k }
+        }
+        k += 1
     }
     return -1
 }

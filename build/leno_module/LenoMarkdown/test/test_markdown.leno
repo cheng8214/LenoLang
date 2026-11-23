@@ -127,6 +127,16 @@ main() {
        "<table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n</thead>\n<tbody>\n"
        + "<tr>\n<td><code>x|y</code></td>\n<td>2</td>\n</tr>\n</tbody>\n</table>\n", "⑯d 表格内代码含竖线")
 
+    // ⑯b 加粗的闭标记查找必须**跳过行内代码**：
+    //     `char**` 里的 `**` 是代码内容，当成闭标记会把前半句圈成 `<strong>`、后半句全乱
+    eq(md.to_html("**粗体里有 `a**b` 继续**"),
+       "<p><strong>粗体里有 <code>a**b</code> 继续</strong></p>\n", "⑯b 代码里的 `**` 不当闭合")
+
+    // ⑯c 反引号要按 **run 长度**配对（`` `x` `` / ```` ```leno ```` 都算代码）
+    //     ⚠ 想显示 3 个反引号，得用 4 个包裹（Markdown 的通用写法）
+    eq(md.to_html("**只认裸 ```` ``` ```` 闭合**"),
+       "<p><strong>只认裸 <code>```</code> 闭合</strong></p>\n", "⑯c 三反引号 run 配对")
+
     // ⑰ 未支持语法扫描：该报的两类都报，正常文档一条都不报
     check("⑰ ~ 围栏被扫出", md.scan_unsupported("~~~\nx\n~~~\n").len() == 1)
     check("⑰ 引用式链接定义被扫出", md.scan_unsupported("[a]: http://x\n").len() == 1)
