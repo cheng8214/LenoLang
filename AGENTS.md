@@ -551,4 +551,24 @@ http.mount(app, [ new Route(method="GET", path="/api/search", auth=true, handler
 
 **enum 的 `switch` 要写全，或者写 `default`**：主题是 enum 且漏 case、又没有 `default` 时，
 编译器给 `WARN_SWITCH_NOT_EXHAUSTIVE` 并列出缺的成员（漏掉的值会**穿过去什么都不做**）。
-只是警告，不打断编译。
+只是警告，不打断编译。⚠ `var m = Mode.on` 这种**变量**写法也覆盖了（2026-11-23 修）：
+成员在语义期被折成纯数字，靠 `Symbol.enum_origin` 找回来源枚举 —— 类型仍是 `int`。
+
+## 12. 工作区卫生：`build/_*` 用完就删（2026-11-23 的教训）
+
+`build/` 是**允许入库**的目录（`leno_module/` 在里面），所以 `.gitignore` 只忽略
+`build/_*` —— 临时探针/命令输出按约定都以 `_` 开头放在 `build/` 下，
+**正因如此它们不会提醒你"该删了"**（git 永远看不到）。实测一次压测攒下 20+ 个
+`_*.txt` 与 3 个目录（`_stress` / `_bigbench` / `_doctest`，合计约 9.6MB），最后由用户来问。
+
+**约定**：
+
+1. 临时文件一律用 `build/_` 前缀（`_probe_x.leno`、`_out.txt`、`_run.ps1`…）；
+2. **每轮结束前**执行一次收尾（在 `build/` 下）：
+   ```
+   del /q _*.txt _*.py _*.ps1 _*.leno
+   rmdir /s /q _stress _bigbench _doctest
+   ```
+3. **保留**：`leno.exe` / `leno_vm.exe` / `leno_vm_gui.exe` / `leno_icon.*` /
+   `leno_module/` / `.lenocache`（缓存，删了只是下次编译慢一点）；
+4. 需要长期保留的脚本放 `bench/`（入库），不要留在 `build/_`。
