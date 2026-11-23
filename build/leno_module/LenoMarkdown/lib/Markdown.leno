@@ -150,19 +150,24 @@ func inline(string s):string {
             continue
         }
 
-        // 行内代码 `x`（内容原样转义，不再解析里面的标记）
+        // 行内代码 `x` / ``x`` / ```x```（**开闭必须等长**，否则 ```lang 这种会被切错）
         if c == "`" {
-            var close = find_from(s, "`", i + 1)
-            if close > i + 1 {
-                var code = s.slice(i + 1, close - 1)
+            var ticks = 1
+            while i + ticks < n and s.slice(i + ticks, i + ticks) == "`" { ticks += 1 }
+            var fence_run = ""
+            var t = 0
+            while t < ticks { fence_run = fence_run + "`"; t += 1 }
+            var close = find_from(s, fence_run, i + ticks)
+            if close > i + ticks {
+                var code = s.slice(i + ticks, close - 1)
                 // ⚠ 行内代码**不转义引号**（python-markdown 只在代码块里把 `"` 变成 `&quot;`，
                 //   行内 `<code>` 里保持原样 ⇒ 两边不一致会让每个带引号的例子都"看起来不同"）
                 out.add("<code>" + esc_text(trim_one_space(code)) + "</code>")
-                i = close + 1
+                i = close + ticks
                 continue
             }
-            out.add("`")
-            i += 1
+            out.add(fence_run)
+            i += ticks
             continue
         }
 
@@ -211,6 +216,14 @@ func inline(string s):string {
         i += 1
     }
     return strings.join(out, "")
+}
+
+// 去掉行首 0~3 个空格（4 个空格是缩进代码块的标记，不在这里处理）
+func strip_upto3(string s):string {
+    var i = 0
+    while i < 3 and i < s.len() and s.slice(i, i) == " " { i += 1 }
+    if i == 0 { return s }
+    return s.slice(i, s.len() - 1)
 }
 
 func trim_one_space(string s):string {
@@ -440,7 +453,9 @@ func render_list(Array[string] lines, int start, int base_indent, bool ordered):
             var ind2 = indent_of(lines[i])
             if ind2 <= base_indent { break }
             if list_marker_len(lines[i]) > 0 { break }         // 嵌套列表交给下面单独处理
-            text = text + " " + strings.trim(lines[i])
+            // 续行：用**换行**连接，且**保留原缩进**（python-markdown 就是这样：
+            //   列表项里的续行缩进会原样进 HTML，见对拍里 `   ```leno` 那一行）
+            text = text + "\n" + lines[i]
             i += 1
         }
 
@@ -479,7 +494,14 @@ func render(Array[string] lines, int from, int end_idx):string {
             Array[string] code = []
             i += 1
             while i < end_idx and not is_fence(lines[i]) {
-                code.add(lines[i])
+                // ⚠ python-markdown 会把代码块里的**纯空白行规范化成空行**，
+                //   但非空行的行尾空格**保留**（实测 `a   ` 保留、`   ` 变空）——
+                //   不照做的话每段示例里的空行都会多出缩进，和站点对不上。
+                if strings.trim(lines[i]) == "" {
+                    code.add("")
+                } else {
+                    code.add(lines[i])
+                }
                 i += 1
             }
             if i < end_idx { i += 1 }
@@ -562,16 +584,19 @@ func render(Array[string] lines, int from, int end_idx):string {
             para.add(lines[i])
             i += 1
         }
-        // 行尾两个空格 = **硬换行**（python-markdown 输出 `<br>`，换行仍保留）
-        Array[string] html_lines = []
+        // 段落必须**整段 inline**：`**粗体**` / `` `code` `` 可能跨行，
+        //   逐行 inline 会把跨行的标记当成普通字符（实测 `**在寄存器式改造中…` 原样漏出来 ✗）
+        //   · 行首 0~3 空格先剥掉（4 个才是缩进代码块）
+        //   · 行尾两个空格 = 硬换行：先换成哨兵，inline 之后再变 `<br>`（否则会被转义掉）
+        Array[string] clean = []
         for para to pl {
-            if strings.ends_with(pl, "  ") {
-                html_lines.add(inline(strings.trim_end(pl)) + "<br>")
-            } else {
-                html_lines.add(inline(pl))
-            }
+            var tline = strip_upto3(pl)
+            if strings.ends_with(pl, "  ") { tline = strings.trim_end(tline) + "\u0002" }
+            clean.add(tline)
         }
-        out.add("<p>" + strings.join(html_lines, "\n") + "</p>\n")
+        var phtml = inline(strings.join(clean, "\n"))
+        phtml = strings.replace(phtml, "\u0002", "<br>")
+        out.add("<p>" + phtml + "</p>\n")
     }
     return strings.join(out, "")
 }
