@@ -71,3 +71,4 @@ android/app/jniLibs/*/*.so
 #   详见 build/leno_module/README.md 的「原生源码已迁出」一节；确需重新纳入用 `git add -f`
 build/leno_module/*/src/
 # （上面这条覆盖了原来的 build/leno_module/*/src/build/ —— CMake 构建树同样不入库）
+app.config 
