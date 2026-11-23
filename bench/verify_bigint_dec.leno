@@ -1,12 +1,9 @@
-// bench/verify_bigint_dec.leno —— bigint → 十进制：与 Python 真值**逐字节**比对（Leno 驱动）
+// bench/verify_bigint_dec.leno —— bigint↔十进制**双向**校验（Leno 驱动）
 //
-// 分工：
-//   · Leno：造值、算 `_str(...)`、逐行比对、报结论；
-//   · Python：只当"真值预言机"（把同一批表达式的十进制结果打出来）。
-//   这样驱动/判据都在 Leno 里（少一层依赖、也是压测），预言机保留是因为**独立实现**才有意义
-//   （用 Leno 自己验 Leno 只能抓"两次调用不一致"，抓不到系统性算错）。
+//   打印方向（12 例）：Leno 算值 + `_str`，与 Python 真值逐字节比对；
+//                      Python 只当"真值预言机"（独立实现才有意义：自己验自己抓不到系统性算错）。
+//   解析方向（9 例）：`_int(文本)` 再 `_str` 回来 —— 输入/期望都是本文件里的字面量，纯 Leno 即可。
 //
-// 覆盖：2^n±1（1000/2048/4096/10000）、10^100、10^1000、3^5000、负数。
 // 用法：build\leno.exe bench\verify_bigint_dec.leno
 
 import dirs
@@ -14,40 +11,14 @@ import files
 import strings
 import times
 
-const N = 12
+var TAGS = ["2^1000-1", "2^1000+1", "2^2048-1", "2^2048+1", "2^4096-1", "2^4096+1",
+            "10^100", "10^1000", "3^5000", "2^10000-1", "-(2^2048-1)", "-(2^10000+1)"]
+// 与 TAGS 一一对应的 Python 表达式
+var PY = ["(1 << 1000) - 1", "(1 << 1000) + 1", "(1 << 2048) - 1", "(1 << 2048) + 1",
+          "(1 << 4096) - 1", "(1 << 4096) + 1", "10 ** 100", "10 ** 1000", "3 ** 5000",
+          "(1 << 10000) - 1", "-((1 << 2048) - 1)", "-((1 << 10000) + 1)"]
 
-func tag_of(int i):string {
-    if i == 0 { return "2^1000-1" }
-    if i == 1 { return "2^1000+1" }
-    if i == 2 { return "2^2048-1" }
-    if i == 3 { return "2^2048+1" }
-    if i == 4 { return "2^4096-1" }
-    if i == 5 { return "2^4096+1" }
-    if i == 6 { return "10^100" }
-    if i == 7 { return "10^1000" }
-    if i == 8 { return "3^5000" }
-    if i == 9 { return "2^10000-1" }
-    if i == 10 { return "-(2^2048-1)" }
-    return "-(2^10000+1)"
-}
-
-// 预言机侧：同一批表达式的 Python 文本
-func py_expr(int i):string {
-    if i == 0 { return "(1 << 1000) - 1" }
-    if i == 1 { return "(1 << 1000) + 1" }
-    if i == 2 { return "(1 << 2048) - 1" }
-    if i == 3 { return "(1 << 2048) + 1" }
-    if i == 4 { return "(1 << 4096) - 1" }
-    if i == 5 { return "(1 << 4096) + 1" }
-    if i == 6 { return "10 ** 100" }
-    if i == 7 { return "10 ** 1000" }
-    if i == 8 { return "3 ** 5000" }
-    if i == 9 { return "(1 << 10000) - 1" }
-    if i == 10 { return "-((1 << 2048) - 1)" }
-    return "-((1 << 10000) + 1)"
-}
-
-// Leno 侧：真算一遍（不是查表）
+// Leno 侧**真算**（不是查表）
 func leno_val(int i):int {
     if i == 0 { return (1 << 1000) - 1 }
     if i == 1 { return (1 << 1000) + 1 }
@@ -58,106 +29,87 @@ func leno_val(int i):int {
     if i == 9 { return (1 << 10000) - 1 }
     if i == 10 { return 0 - ((1 << 2048) - 1) }
     if i == 11 { return 0 - ((1 << 10000) + 1) }
-    if i == 6 {
-        var p6 = 1
-        for 0:99 to k { p6 = p6 * 10 }
-        return p6
-    }
-    if i == 7 {
-        var p7 = 1
-        for 0:999 to k { p7 = p7 * 10 }
-        return p7
-    }
-    var p3 = 1
-    for 0:4999 to k { p3 = p3 * 3 }
-    return p3
+    var p = 1
+    if i == 6 { for 0:99 to k { p = p * 10 } }
+    else if i == 7 { for 0:999 to k { p = p * 10 } }
+    else { for 0:4999 to k { p = p * 3 } }
+    return p
 }
 
 func py_script():string {
-    // ⚠ Python 3.11+ 默认限制 int→str 到 4300 位（DoS 防护）⇒ 大数必须显式放开
+    // Python 3.11+ 默认限制 int→str 到 4300 位（DoS 防护）⇒ 大数必须显式放开
     var s = "import sys\nsys.set_int_max_str_digits(0)\n"
-    var i = 0
-    while i < N {
-        s = s + "print(" + py_expr(i) + ")\n"
-        i = i + 1
-    }
+    for PY to e { s += $"print({e})\n" }
     return s
-}
-
-main() {
-    var work = dirs.join(_tmpdir(), "leno_decverify_" + _str(_int(times.ms())))
-    dirs.mkdir_p(work)
-    var pyf = dirs.join(work, "truth.py")
-    files.write(pyf, py_script())
-
-    var r = _exec("python \"" + pyf + "\"", 600000)
-    if r == null or r.code != 0 {
-        print("真值预言机跑失败（exit=" + _str(r.code) + "）\n")
-        dirs.delete(work)
-        _exit(2)
-    }
-    var expect = strings.split(_str(r.output), "\n")
-
-    var bad = 0
-    var i = 0
-    while i < N {
-        var got = _str(leno_val(i))
-        var want = ""
-        if i < expect.len() { want = strings.trim(expect[i]) }
-        if got == want {
-            print("OK   " + pad(tag_of(i), 14) + _str(got.len()) + " 位\n")
-        } else {
-            bad = bad + 1
-            print("FAIL " + pad(tag_of(i), 14) + "leno=" + _str(got.len())
-                  + " 位 / 真值=" + _str(want.len()) + " 位\n")
-            print("     leno: " + head(got) + "\n")
-            print("     真值: " + head(want) + "\n")
-        }
-        i = i + 1
-    }
-
-    // ── 反向：十进制文本 → bigint（`_int`），覆盖 400 位阈值两侧与边界形态 ──
-    //   为什么不需要预言机：输入与期望都是**我们自己写的字面量**（前导零这些形态
-    //   Python 也只会给出同一个规范串），所以纯 Leno 就能判 ✓
-    print(strings.rep("-", 60) + "\n")
-    var pbad = 0
-    pbad = pbad + check_parse("9 位", "999999999", "999999999")
-    pbad = pbad + check_parse("10 位", "1234567890", "1234567890")
-    pbad = pbad + check_parse("18 位", "123456789012345678", "123456789012345678")
-    pbad = pbad + check_parse("399 位", strings.rep("9", 399), strings.rep("9", 399))
-    pbad = pbad + check_parse("400 位(阈值)", strings.rep("9", 400), strings.rep("9", 400))
-    pbad = pbad + check_parse("401 位", strings.rep("9", 401), strings.rep("9", 401))
-    pbad = pbad + check_parse("1 后跟 500 零", "1" + strings.rep("0", 500), "1" + strings.rep("0", 500))
-    pbad = pbad + check_parse("前导零", strings.rep("0", 50) + "123456789", "123456789")
-    pbad = pbad + check_parse("负数 1000 位", "-" + strings.rep("7", 1000), "-" + strings.rep("7", 1000))
-
-    dirs.delete(work)
-    print(strings.rep("-", 60) + "\n")
-    // ⚠ 拆成两行打印：合成一整串时**汇总行会丢**（实测，原因待查 ——
-    //   可能与中文分号 `；` 或过长的拼接有关）；分开写就正常，先绕开
-    print("打印方向 " + _str(N) + " 例，失败 " + _str(bad) + "\n")
-    print("解析方向 9 例，失败 " + _str(pbad) + "\n")
-    if bad > 0 or pbad > 0 { _exit(1) }
-}
-
-// 解析一对：`_int(text)` 再 `_str` 回来，应与 expect 一致
-func check_parse(string tag, string text, string expect):int {
-    var got = _str(_int(text))
-    if got == expect {
-        print("OK   " + pad(tag, 14) + _str(got.len()) + " 位\n")
-        return 0
-    }
-    print("FAIL " + pad(tag, 14) + "leno=" + head(got) + " / 期望=" + head(expect) + "\n")
-    return 1
-}
-
-func pad(string s, int w):string {
-    var out = s
-    while out.len() < w { out = out + " " }
-    return out
 }
 
 func head(string s):string {
     if s.len() <= 40 { return s }
     return s.slice(0, 39) + "..."
+}
+
+func check_parse(string tag, string text, string expect):int {
+    var got = _str(_int(text))
+    if got == expect {
+        print($"OK   {strings.pad_end(tag, 14)}{got.len()} 位\n")
+        return 0
+    }
+    print($"FAIL {strings.pad_end(tag, 14)}leno={head(got)} / 期望={head(expect)}\n")
+    return 1
+}
+
+main() {
+    var work = dirs.join(_tmpdir(), $"leno_decverify_{_int(times.ms())}")
+    dirs.mkdir_p(work)
+    var pyf = dirs.join(work, "truth.py")
+    files.write(pyf, py_script())
+
+    var r = _exec($"python \"{pyf}\"", 600000)
+    if r == null or r.code != 0 {
+        print($"真值预言机跑失败（exit={r.code}）\n")
+        dirs.delete(work)
+        _exit(2)
+    }
+    var expect = strings.split(_str(r.output), "\n")
+
+    // ── 打印方向 ──
+    var bad = 0
+    var i = 0
+    while i < TAGS.len() {
+        var got = _str(leno_val(i))
+        var want = ""
+        if i < expect.len() { want = strings.trim(expect[i]) }
+        if got == want {
+            print($"OK   {strings.pad_end(TAGS[i], 14)}{got.len()} 位\n")
+        } else {
+            bad += 1
+            print($"FAIL {strings.pad_end(TAGS[i], 14)}leno={got.len()} 位 / 真值={want.len()} 位\n")
+            print($"     leno: {head(got)}\n     真值: {head(want)}\n")
+        }
+        i += 1
+    }
+
+    // ── 解析方向（400 位阈值两侧 + 前导零 + 负数）──
+    var p_tags = ["9 位", "10 位", "18 位", "399 位", "400 位(阈值)", "401 位",
+                  "1 后跟 500 零", "前导零", "负数 1000 位"]
+    var texts = ["999999999", "1234567890", "123456789012345678",
+                 strings.rep("9", 399), strings.rep("9", 400), strings.rep("9", 401),
+                 "1" + strings.rep("0", 500), strings.rep("0", 50) + "123456789",
+                 "-" + strings.rep("7", 1000)]
+    var expects = ["999999999", "1234567890", "123456789012345678",
+                   strings.rep("9", 399), strings.rep("9", 400), strings.rep("9", 401),
+                   "1" + strings.rep("0", 500), "123456789", "-" + strings.rep("7", 1000)]
+    print(strings.rep("-", 60) + "\n")
+    var pbad = 0
+    var k = 0
+    while k < p_tags.len() {
+        pbad += check_parse(p_tags[k], texts[k], expects[k])
+        k += 1
+    }
+
+    dirs.delete(work)
+    print(strings.rep("-", 60) + "\n")
+    print($"打印方向 {TAGS.len()} 例，失败 {bad}\n")
+    print($"解析方向 {p_tags.len()} 例，失败 {pbad}\n")
+    if bad > 0 or pbad > 0 { _exit(1) }
 }

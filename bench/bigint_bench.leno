@@ -1,14 +1,11 @@
-// bench/bigint_bench.leno —— bigint 速度：Leno 自身 vs Python `int`（Leno 版驱动）
+// bench/bigint_bench.leno —— bigint 速度：Leno 自身 vs Python `int`
 //
-// 为什么用 Leno 写（替代 bench/bigint_vs_python.py 里的驱动部分）：
-//   ① 这本身是压测：`_exec` + `times` + 文件读写全用上；
-//   ② 同一份负载两边都跑、由**同一个进程**量，避免"驱动本身"引入偏差；
-//   ③ 表格式输出与 py 版一致，可以直接对照。
+// 计时口径：Leno 侧用 `times.ms()` 前后差；Python 侧**自己**用 `perf_counter()` 只量负载
+//   （不含解释器启动 —— 老 py 驱动把启动 45ms 算进去过，据此得出过"反超"的假结论 ✗）。
 //
-// 计时口径：
-//   · Leno 侧：本进程内 `times.ms()` 前后差；
-//   · Python 侧：**Python 自己**用 `time.perf_counter()` 量（只把结果打印出来），
-//     再由本脚本解析 ⇒ 不含解释器启动时间，两边可比。
+// 乘法用**稠密**操作数（`(2^n-1)/3` 与 `/5`）：`(2^n-1)×(2^n+1)` 的第二个操作数只有 2 个
+//   非零位，CPython 在稀疏输入上快 20 多倍（1M 比特 3ms vs 随机 67ms）⇒ 曾把"我们慢 12.8x"
+//   测出来过，那是**基准的锅**。稀疏形态单列 `mul_sparse_1m` 继续可见。
 //
 // 用法：build\leno.exe bench\bigint_bench.leno [--timeout 600000] [--only mul_1m]
 
@@ -17,15 +14,16 @@ import files
 import strings
 import times
 
+var TAGS = ["mul_100k", "mul_1m", "sqr_1m", "fact_20000", "add_1m", "shift_pow2", "dec_300k", "mul_sparse_1m"]
+var DESCS = ["10 万比特乘法 ×20（稠密）", "100 万比特乘法 ×4（稠密）", "100 万比特平方 ×4",
+             "阶乘 20000", "100 万比特加法 ×20000", "2^1e9 移位（十亿比特）",
+             "2^1e6 转十进制（30 万位）", "100 万比特乘法（稀疏）×4"]
+
 var g_timeout_ms = 600000
 var g_only = ""
 
-// ---------------------------------------------------------------- 被测负载（Leno 侧）
+// ---------------------------------------------------------------- Leno 侧负载
 
-// ⚠ 乘法用**稠密非退化**操作数（`(2^n-1)/3` 与 `/5`，即 0x555… 与 0x333…）。
-//   曾经用 `(2^n-1) × (2^n+1)`，第二个操作数只有 **2 个非零位** ⇒ CPython 在这种稀疏输入上
-//   快 20 多倍（1M 比特 3ms vs 随机值 67ms），把"我们慢 12.8 倍"测出来过 —— 那是**基准的锅** ✗
-//   稀疏形态单列一个用例（mul_sparse_1m）单独观察。
 func w_mul_100k() {
     var v = (1 << 100000) - 1
     var a = v / 3
@@ -39,15 +37,6 @@ func w_mul_1m() {
     var v = (1 << 1000000) - 1
     var a = v / 3
     var b = v / 5
-    var c = 0
-    for 0:3 to i { c = a * b }
-    if c <= 0 { print("bad\n") }
-}
-
-// 稀疏操作数（历史上被误用的那种形态）：只看差距，不作为主判据
-func w_mul_sparse_1m() {
-    var a = (1 << 1000000) - 1
-    var b = (1 << 1000000) + 1
     var c = 0
     for 0:3 to i { c = a * b }
     if c <= 0 { print("bad\n") }
@@ -79,205 +68,107 @@ func w_shift_billion() {
 }
 
 func w_dec_300k() {
-    var x = 1 << 1000000
-    var s = _str(x)
+    var s = _str(1 << 1000000)
     if s.len() != 301030 { print("bad len\n") }
 }
 
-// ---------------------------------------------------------------- 被测负载（Python 侧）
-//   每个片段都以 `print("%.3f" % elapsed)` 结尾 ⇒ 本脚本解析最后一行
-
-const PY_HEAD = "import time\nt0 = time.perf_counter()\n"
-const PY_TAIL = "print('%.3f' % ((time.perf_counter() - t0) * 1000))\n"
-
-func py_mul_100k():string {
-    return PY_HEAD + "v = (1 << 100000) - 1\na = v // 3\nb = v // 5\nc = 0\nfor _ in range(20):\n    c = a * b\n" + PY_TAIL
+func w_mul_sparse_1m() {
+    var a = (1 << 1000000) - 1
+    var b = (1 << 1000000) + 1
+    var c = 0
+    for 0:3 to i { c = a * b }
+    if c <= 0 { print("bad\n") }
 }
 
-func py_mul_1m():string {
-    return PY_HEAD + "v = (1 << 1000000) - 1\na = v // 3\nb = v // 5\nc = 0\nfor _ in range(4):\n    c = a * b\n" + PY_TAIL
-}
-
-func py_mul_sparse_1m():string {
-    return PY_HEAD + "a = (1 << 1000000) - 1\nb = (1 << 1000000) + 1\nc = 0\nfor _ in range(4):\n    c = a * b\n" + PY_TAIL
-}
-
-func py_sqr_1m():string {
-    return PY_HEAD + "a = (1 << 1000000) - 1\nc = 0\nfor _ in range(4):\n    c = a * a\n" + PY_TAIL
-}
-
-func py_fact_20000():string {
-    return PY_HEAD + "f = 1\nfor i in range(1, 20001):\n    f = f * i\n" + PY_TAIL
-}
-
-func py_add_1m():string {
-    return PY_HEAD + "a = 1 << 1000000\ns = a\nfor _ in range(20000):\n    s = s + a\n" + PY_TAIL
-}
-
-func py_shift_billion():string {
-    return PY_HEAD + "p = 1 << 1000000000\n" + PY_TAIL
-}
-
-func py_dec_300k():string {
-    // ⚠ Python 3.11+ 默认限制 int→str 到 4300 位（DoS 防护）⇒ 30 万位会 ValueError；
-    //   校验大数必须显式放开（Leno 侧没有这个限制）
-    return "import sys\nsys.set_int_max_str_digits(0)\n" + PY_HEAD
-           + "x = 1 << 1000000\ns = str(x)\nassert len(s) == 301030, len(s)\n" + PY_TAIL
-}
-
-// ---------------------------------------------------------------- 跑 Python 侧
-
-func parse_last_float(string out):float {
-    var lines = strings.split(out, "\n")
-    var i = lines.len() - 1
-    while i >= 0 {
-        var ln = strings.trim(lines[i])
-        if ln != "" {
-            if _is_num_str(ln) { return _float(ln) }
-        }
-        i = i - 1
-    }
-    return -1.0
-}
-
-func _is_num_str(string s):bool {
-    if s == "" { return false }
-    var i = 0
-    var n = s.len()
-    while i < n {
-        var c = s.slice(i, i)
-        if not ((c >= "0" and c <= "9") or c == ".") { return false }
-        i = i + 1
-    }
-    return true
-}
-
-func run_py(string workdir, string name, string code):float {
-    var f = dirs.join(workdir, name + ".py")
-    files.write(f, code)
-    var r = _exec("python \"" + f + "\"", g_timeout_ms)
-    if r == null { return -1.0 }
-    var out = _str(r.output)
-    if r.code != 0 {
-        print("      (python 侧失败 exit=" + _str(r.code) + ")\n")
-        return -1.0
-    }
-    return parse_last_float(out)
-}
-
-// ---------------------------------------------------------------- 计时
-
-func time_leno(int which):float {
+func time_leno(int i):float {
     var t0 = times.ms()
-    if which == 0 { w_mul_100k() }
-    else if which == 1 { w_mul_1m() }
-    else if which == 2 { w_sqr_1m() }
-    else if which == 3 { w_fact_20000() }
-    else if which == 4 { w_add_1m() }
-    else if which == 5 { w_shift_billion() }
-    else if which == 6 { w_dec_300k() }
+    if i == 0 { w_mul_100k() }
+    else if i == 1 { w_mul_1m() }
+    else if i == 2 { w_sqr_1m() }
+    else if i == 3 { w_fact_20000() }
+    else if i == 4 { w_add_1m() }
+    else if i == 5 { w_shift_billion() }
+    else if i == 6 { w_dec_300k() }
     else { w_mul_sparse_1m() }
     return times.ms() - t0
 }
 
-func pad(string s, int w):string {
-    var out = s
-    while out.len() < w { out = out + " " }
-    return out
+// ---------------------------------------------------------------- Python 侧负载
+//   只给"负载本体"；头尾（计时 + 打印毫秒）由 py_script 拼 ⇒ 8 段共用一份口径
+
+func py_body(int i):string {
+    if i == 0 { return "v = (1 << 100000) - 1\na = v // 3\nb = v // 5\nc = 0\nfor _ in range(20):\n    c = a * b\n" }
+    if i == 1 { return "v = (1 << 1000000) - 1\na = v // 3\nb = v // 5\nc = 0\nfor _ in range(4):\n    c = a * b\n" }
+    if i == 2 { return "a = (1 << 1000000) - 1\nc = 0\nfor _ in range(4):\n    c = a * a\n" }
+    if i == 3 { return "f = 1\nfor k in range(1, 20001):\n    f = f * k\n" }
+    if i == 4 { return "a = 1 << 1000000\ns = a\nfor _ in range(20000):\n    s = s + a\n" }
+    if i == 5 { return "p = 1 << 1000000000\n" }
+    if i == 6 { return "x = 1 << 1000000\ns = str(x)\nassert len(s) == 301030, len(s)\n" }
+    return "a = (1 << 1000000) - 1\nb = (1 << 1000000) + 1\nc = 0\nfor _ in range(4):\n    c = a * b\n"
 }
 
-func tag_of(int which):string {
-    if which == 0 { return "mul_100k" }
-    if which == 1 { return "mul_1m" }
-    if which == 2 { return "sqr_1m" }
-    if which == 3 { return "fact_20000" }
-    if which == 4 { return "add_1m" }
-    if which == 5 { return "shift_pow2" }
-    if which == 6 { return "dec_300k" }
-    return "mul_sparse_1m"
+func py_script(int i):string {
+    // set_int_max_str_digits：Python 3.11+ 默认限制 int→str 到 4300 位（只有 dec 用例需要，放着无害）
+    return "import sys, time\nsys.set_int_max_str_digits(0)\nt0 = time.perf_counter()\n"
+           + py_body(i)
+           + "print('%.3f' % ((time.perf_counter() - t0) * 1000))\n"
 }
 
-func desc_of(int which):string {
-    if which == 0 { return "10 万比特乘法 ×20" }
-    if which == 1 { return "100 万比特乘法 ×4" }
-    if which == 2 { return "100 万比特平方 ×4" }
-    if which == 3 { return "阶乘 20000" }
-    if which == 4 { return "100 万比特加法 ×20000" }
-    if which == 5 { return "2^1e9 移位（十亿比特）" }
-    if which == 6 { return "2^1e6 转十进制（30 万位）" }
-    return "100 万比特乘法（稀疏）×4"
+// 取输出里最后一个"看起来是数字"的行（毫秒）
+func last_ms(string out):float {
+    var lines = strings.split(out, "\n")
+    var k = lines.len() - 1
+    while k >= 0 {
+        var ln = strings.trim(lines[k])
+        if ln != "" and strings.find(ln, ".") >= 0 { return _float(ln) }
+        k -= 1
+    }
+    return -1.0
 }
 
-func py_code_of(int which):string {
-    if which == 0 { return py_mul_100k() }
-    if which == 1 { return py_mul_1m() }
-    if which == 2 { return py_sqr_1m() }
-    if which == 3 { return py_fact_20000() }
-    if which == 4 { return py_add_1m() }
-    if which == 5 { return py_shift_billion() }
-    if which == 6 { return py_dec_300k() }
-    return py_mul_sparse_1m()
+func run_py(string workdir, int i, string tag):float {
+    var f = dirs.join(workdir, $"{tag}.py")
+    files.write(f, py_script(i))
+    var r = _exec($"python \"{f}\"", g_timeout_ms)
+    if r == null or r.code != 0 { return -1.0 }
+    return last_ms(_str(r.output))
 }
 
 main() {
     var args = _args()
     var i = 0
-    var n = args.len()
-    while i < n {
-        if args[i] == "--timeout" and i + 1 < n { i = i + 1; g_timeout_ms = _int(args[i]) }
-        else if args[i] == "--only" and i + 1 < n { i = i + 1; g_only = args[i] }
-        i = i + 1
+    while i < args.len() {
+        if args[i] == "--timeout" and i + 1 < args.len() { i += 1; g_timeout_ms = _int(args[i]) }
+        else if args[i] == "--only" and i + 1 < args.len() { i += 1; g_only = args[i] }
+        i += 1
     }
 
-    var work = dirs.join(_tmpdir(), "leno_bigbench_" + _str(_int(times.ms())))
+    var work = dirs.join(_tmpdir(), $"leno_bigbench_{_int(times.ms())}")
     dirs.mkdir_p(work)
-
-    print(pad("用例", 16) + pad("说明", 30) + pad("Leno(s)", 10) + pad("Python(s)", 11) + "倍数（越大越慢）\n")
+    // ⚠ 中文列不能用 `%-16s`：printf 的宽度按**字节**算，一个汉字 3 字节 ⇒ 列贴在一起 ✗
+    //   `strings.pad_end` 按**字符**计宽 ⇒ 中文/英文混排才对得齐（2026-11-23 实测）
+    print(strings.pad_end("用例", 16) + strings.pad_end("说明", 34)
+          + strings.pad_end("Leno(s)", 10) + strings.pad_end("Python(s)", 11) + "倍数\n")
     print(strings.rep("-", 88) + "\n")
 
-    var which = 0
-    while which < 8 {
-        var tag = tag_of(which)
-        if g_only == "" or g_only == tag {
-            var leno_ms = time_leno(which)
-            var py_ms = run_py(work, tag, py_code_of(which))
-
-            var lsec = leno_ms / 1000.0
-            var psec = py_ms / 1000.0
-            var ratio = "-"
-            if psec > 0.0 { ratio = fmt2(lsec / psec) + "x" }
+    var k = 0
+    while k < TAGS.len() {
+        if g_only == "" or g_only == TAGS[k] {
+            var lsec = time_leno(k) / 1000.0
+            var psec = run_py(work, k, TAGS[k]) / 1000.0
             var pstr = "-"
-            if psec > 0.0 { pstr = fmt3(psec) }
-            var lstr = fmt3(lsec)
-            // 工作量为 0 时（如 2^1e9 只是分配）也照实给 0.000，不显示负数
-            if lsec <= 0.0 { lstr = "0.000" }
-            print(pad(tag, 16) + pad(desc_of(which), 30)
-                  + pad(lstr, 10) + pad(pstr, 11) + ratio + "\n")
+            var ratio = "-"
+            if psec > 0.0 {
+                pstr = strings.format("%.3f", psec)
+                ratio = strings.format("%.2f", lsec / psec) + "x"
+            }
+            print(strings.pad_end(TAGS[k], 16) + strings.pad_end(DESCS[k], 34)
+                  + strings.pad_end(strings.format("%.3f", lsec), 10)
+                  + strings.pad_end(pstr, 11) + ratio + "\n")
         }
-        which = which + 1
+        k += 1
     }
 
     dirs.delete(work)
-    print(strings.rep("-", 88) + "\n")
-    print("（倍数 = Leno 用时 / Python 用时；>1 表示 Leno 更慢）\n")
-}
-
-// 两位小数（整数运算拼串：不引 strings.format，避免"被测对象"影响基准脚本本身）
-func fmt2(float v):string {
-    var c = _int(v * 100.0)
-    var whole = c / 100
-    var frac = c - whole * 100
-    var f = _str(frac)
-    if f.len() < 2 { f = "0" + f }
-    return _str(whole) + "." + f
-}
-
-// 秒数保留 3 位（不引 format：避免 strings.format 的转换符差异影响基准脚本本身）
-func fmt3(float v):string {
-    var ms = _int(v * 1000.0)
-    var whole = ms / 1000
-    var frac = ms - whole * 1000
-    var f = _str(frac)
-    while f.len() < 3 { f = "0" + f }
-    return _str(whole) + "." + f
+    print(strings.rep("-", 88) + "\n倍数 = Leno / Python（>1 表示 Leno 更慢）\n")
 }

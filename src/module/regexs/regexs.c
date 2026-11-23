@@ -1221,6 +1221,40 @@ static Value regex_extract_all(int argc, Value* args) {
     return val_obj((Object*)result);
 }
 
+// 5b. 取所有 `open … close` 之间的内容（**不含**两端标记）
+//   ★ 2026-11-23：为什么需要它 —— 本引擎的**量词一律贪婪**、不支持 `*?`，
+//     于是"截取一对标记之间的全部内容"（Markdown 代码块、HTML 标签、模板占位符…）
+//     这个最常见的需求**用正则写不出来**；报错虽然提示"先用 find 定位再 slice"，
+//     但那要手写十来回合并处理越界 ⇒ 每个调用点都得抄一遍。
+//   语义刻意单一：
+//     · 按出现顺序、**不重叠**（配对后从 close 之后继续找）；
+//     · 有 open 但找不到 close ⇒ **停在那里**（不返回半截，也不抛错）；
+//     · open / close 为空串 ⇒ 返回空数组（避免原地死循环）。
+//   与 `extract_all` 的区别：那个返回"整个匹配"，这个返回"标记之间的内容"。
+static Value regex_find_between(int argc, Value* args) {
+    (void)argc;
+    ObjString* str = (ObjString*)val_as_obj(args[0]);
+    ObjString* open = (ObjString*)val_as_obj(args[1]);
+    ObjString* close = (ObjString*)val_as_obj(args[2]);
+    ObjArray* result = arr_new(4);
+    if (!result) return val_null();
+    if (!str || !open || !close || open->len == 0 || close->len == 0) {
+        return val_obj((Object*)result);
+    }
+    const char* p = str->chars;
+    const char* end_all = str->chars + str->len;
+    while (p < end_all) {
+        const char* o = strstr(p, open->chars);
+        if (!o) break;
+        const char* body = o + open->len;
+        const char* c = strstr(body, close->chars);
+        if (!c) break;                      // 缺配对 ⇒ 停（不返回半截）
+        arr_push_custom(result, val_obj((Object*)str_copy(body, (int)(c - body))));
+        p = c + close->len;
+    }
+    return val_obj((Object*)result);
+}
+
 // 6. 替换第一个匹配
 static Value regex_replace(int argc, Value* args) {
     (void)argc;
@@ -1564,6 +1598,12 @@ void regexs_init_module(void) {
     native_register_struct_spec(&REGEXMATCH_STRUCT_SPEC);
     native_register_module_method("regexs", "find_all", regex_find_all, &S_REGEXMATCH_ARR_SPEC, NATIVE_FIXED(str_params));
     native_register_module_method("regexs", "extract_all", regex_extract_all, &NATIVE_T_ARR_STRING, NATIVE_FIXED(str_params));
+    // ★ 2026-11-23：截「一对标记之间的内容」（懒量词的典型用途，见 regex_find_between 的说明）
+    {
+        TypeKind fb_params[] = {TYPE_STRING, TYPE_STRING, TYPE_STRING};
+        native_register_module_method("regexs", "find_between", regex_find_between,
+                                      &NATIVE_T_ARR_STRING, NATIVE_FIXED(fb_params));
+    }
     native_register_module_method("regexs", "replace_all", regex_replace_all, &NATIVE_T_STRING, NATIVE_FIXED(str3_params));
 
     // 单参数方法

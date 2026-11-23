@@ -1,0 +1,42 @@
+// test_regex_find_between.leno —— `regexs.find_between(s, open, close)`（2026-11-23 新增）
+//
+// 为什么加它：本引擎**量词一律贪婪**、不支持 `*?`，于是"截一对标记之间的内容"
+//   （Markdown 代码块、HTML 标签、模板占位符）**用正则写不出来**；报错虽然提示
+//   "先用 find 定位再 slice"，但那要手写十几行并处理越界 ⇒ 每个调用点都抄一遍。
+// 语义（刻意单一）：按出现顺序、不重叠；缺配对 ⇒ 停在开标记处（不返回半截）；
+//   open/close 为空 ⇒ 空数组（不死循环）。
+import regexs
+import strings
+
+main() {
+    // ① 基本：两块内容，均不含标记
+    var doc = "x\n```leno\nmain() {}\n```\ny\n```leno\nmain() { print(2) }\n```\n"
+    var blocks = regexs.find_between(doc, "```leno", "```")
+    assert_eq(blocks.len(), 2, "① 应截到 2 块")
+    assert_eq(strings.trim(blocks[0]), "main() {}", "① 第一块内容")
+    assert_eq(strings.trim(blocks[1]), "main() { print(2) }", "① 第二块内容")
+    assert_true(not strings.has(blocks[0], "```leno"), "① 内容不该含开标记")
+
+    // ② 缺配对：停在开标记处，不返回半截
+    var half = regexs.find_between("a<<bb", "<<", ">>")
+    assert_eq(half.len(), 0, "② 缺 close ⇒ 0 个")
+
+    // ③ 空标记：不能死循环、不能返回怪东西
+    assert_eq(regexs.find_between("abc", "", "b").len(), 0, "③ 空 open ⇒ 0 个")
+    assert_eq(regexs.find_between("abc", "b", "").len(), 0, "③ 空 close ⇒ 0 个")
+
+    // ④ 不重叠：配对后从 close 之后继续找
+    var ov = regexs.find_between("aaXaaXaa", "aa", "X")
+    assert_eq(ov.len(), 2, "④ 不重叠 ⇒ 2 个")
+
+    // ⑤ 对照：`extract_all` 返回的是**整个匹配**（含标记），两者职责不同
+    //   ⚠ 这里用 `<>` 而不是 `[]`：本语言的字符串字面量不认 `\[` / `\]`（会警告并按原样保留）
+    var whole = regexs.extract_all("a<1>b<2>c", "<[0-9]>")
+    assert_eq(whole.len(), 2, "⑤ extract_all 仍是整个匹配")
+    assert_eq(whole[0], "<1>", "⑤ 含标记")
+    var inner = regexs.find_between("a<1>b<2>c", "<", ">")
+    assert_eq(inner.len(), 2, "⑤ find_between 个数一致")
+    assert_eq(inner[0], "1", "⑤ 不含标记")
+
+    print("test_regex_find_between passed")
+}
