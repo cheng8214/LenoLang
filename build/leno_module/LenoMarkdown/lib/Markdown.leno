@@ -316,6 +316,17 @@ func is_fence(string l):bool {
     return strings.starts_with(strings.trim_start(l), "```")
 }
 
+// **闭合**围栏 = 只有反引号（允许缩进/行尾空格），**不能带语言**
+//   ⚠ 这是 CommonMark 的规则，也是 python-markdown 的行为。按"任何 ``` 都算切换"会出事：
+//   文档里漏写一个闭合围栏时，下一段的 ```` ```leno ```` 会被当成闭合 ⇒ 从此**奇偶颠倒**，
+//   后面整篇都被吞进代码块（实测 module_cstructs.md 就是这样毁掉的）。
+func is_fence_close(string l):bool {
+    var t = strings.trim(l)
+    if not strings.starts_with(t, "```") { return false }
+    if t == "```" { return true }
+    return strings.trim(t.slice(3, t.len() - 1)) == ""
+}
+
 // 表格分隔行：只含 `| - : 空格`，且至少一个 `-`
 func is_table_sep(string l):bool {
     var t = strings.trim(l)
@@ -450,6 +461,10 @@ func render_list(Array[string] lines, int start, int base_indent, bool ordered):
 
         // 续行：缩进更深的普通行（列表项里的第二段）
         while i < n and not is_blank(lines[i]) {
+            // ⚠ 围栏代码**不能让列表吞掉**：一旦这里把开围栏收进 `<li>`、而关闭围栏留给外层，
+            //   外层的围栏配对就错位 ⇒ 后面整段文档被当成代码块**原样输出**
+            //   （实测 module_cstructs 的 `### 线程安全说明` 与整张表格就是这样漏出来的 ✗）
+            if is_fence(lines[i]) { break }
             var ind2 = indent_of(lines[i])
             if ind2 <= base_indent { break }
             if list_marker_len(lines[i]) > 0 { break }         // 嵌套列表交给下面单独处理
@@ -461,8 +476,8 @@ func render_list(Array[string] lines, int start, int base_indent, bool ordered):
 
         // 嵌套列表（缩进更深、且是列表项）
         var nested = ""
-        while i < n and not is_blank(lines[i]) and indent_of(lines[i]) > base_indent
-              and list_marker_len(lines[i]) > 0 {
+        while i < n and not is_blank(lines[i]) and not is_fence(lines[i])
+              and indent_of(lines[i]) > base_indent and list_marker_len(lines[i]) > 0 {
             var sub = render_list(lines, i, indent_of(lines[i]), is_ordered(lines[i]))
             nested = nested + sub.html
             i = sub.next
@@ -493,7 +508,7 @@ func render(Array[string] lines, int from, int end_idx):string {
             var lang = strings.trim(tl.slice(3, tl.len() - 1))
             Array[string] code = []
             i += 1
-            while i < end_idx and not is_fence(lines[i]) {
+            while i < end_idx and not is_fence_close(lines[i]) {
                 // ⚠ python-markdown 会把代码块里的**纯空白行规范化成空行**，
                 //   但非空行的行尾空格**保留**（实测 `a   ` 保留、`   ` 变空）——
                 //   不照做的话每段示例里的空行都会多出缩进，和站点对不上。
