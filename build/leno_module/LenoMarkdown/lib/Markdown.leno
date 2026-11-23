@@ -214,23 +214,36 @@ func inline(string s):string {
         }
 
         // 粗体 **x**
+        //   ⚠ CommonMark 的边界规则：**开标记后面不能是空格**、**闭标记前面不能是空格**。
+        //   不遵守时，正文里像 `** 重点` 这种（`**` 后带空格）会被当成开头，一路错配到
+        //   很远处的 `**`，输出里就会冒出孤立的 `</strong>` 和残留 `**`（实测多篇踩到 ✗）
         if c == "*" and i + 1 < n and s.slice(i + 1, i + 1) == "*" {
-            var close2 = find_from(s, "**", i + 2)
-            if close2 > i + 2 {
-                out.add("<strong>" + inline(s.slice(i + 2, close2 - 1)) + "</strong>")
-                i = close2 + 2
-                continue
+            var after_ok = (i + 2 < n) and s.slice(i + 2, i + 2) != " " and s.slice(i + 2, i + 2) != "\n"
+            if after_ok {
+                var close2 = find_em_close(s, "**", i + 2)
+                if close2 > i + 2 {
+                    out.add("<strong>" + inline(s.slice(i + 2, close2 - 1)) + "</strong>")
+                    i = close2 + 2
+                    continue
+                }
             }
         }
 
-        // 斜体 *x*（两侧都不能是 `*`，否则会和粗体打架）
+        // 斜体 *x*
+        //   左边界（CommonMark 的 left-flanking）：**前面必须是开头/空白/标点**。
+        //   否则 `string→char*、cstruct` 里的 `char*` 会被当成斜体开头，一路错配到很远的
+        //   `*`，把后面的正文整段吞进 `<em>`（实测 archive/FFI优化方案 就是这样 ✗）
         if c == "*" {
             var prev_ok = (i == 0) or (s.slice(i - 1, i - 1) != "*")
-            var close3 = find_from(s, "*", i + 1)
-            if prev_ok and close3 > i + 1 {
-                out.add("<em>" + inline(s.slice(i + 1, close3 - 1)) + "</em>")
-                i = close3 + 1
-                continue
+            if prev_ok and i > 0 and not can_open_em(s, i) { prev_ok = false }
+            var after_ok2 = (i + 1 < n) and s.slice(i + 1, i + 1) != " " and s.slice(i + 1, i + 1) != "\n"
+            if prev_ok and after_ok2 {
+                var close3 = find_em_close(s, "*", i + 1)
+                if close3 > i + 1 {
+                    out.add("<em>" + inline(s.slice(i + 1, close3 - 1)) + "</em>")
+                    i = close3 + 1
+                    continue
+                }
             }
         }
 
@@ -281,6 +294,29 @@ func strip_upto3(string s):string {
     return s.slice(i, s.len() - 1)
 }
 
+// `*` 能否开启强调：前一个字符必须是 空白/换行 或常见左括类标点
+//   （`char*` 这种"紧贴单词"的星号是**右**边界，不能当开头）
+func can_open_em(string s, int i):bool {
+    var prev = s.slice(i - 1, i - 1)
+    if prev == " " or prev == "\n" or prev == "\t" { return true }
+    Array[string] opens = ["(", "（", "[", "【", "「", "“", "\"", "'", "、", "，", "。", "：", "；", "！", "？", "/", "→", "-", "+", "="]
+    for opens to o {
+        if prev == o { return true }
+    }
+    return false
+}
+
+// 找**合法的闭标记**：marker 前面的字符不能是空格/换行（CommonMark 的强调收尾规则）
+func find_em_close(string s, string marker, int from):int {
+    var k = find_from(s, marker, from)
+    while k > 0 {
+        var prev = s.slice(k - 1, k - 1)
+        if prev != " " and prev != "\n" { return k }
+        k = find_from(s, marker, k + marker.len())
+    }
+    return -1
+}
+
 func trim_one_space(string s):string {
     if strings.starts_with(s, " ") and strings.ends_with(s, " ") and s.len() >= 2 {
         return s.slice(1, s.len() - 2)
@@ -303,7 +339,24 @@ func parse_link(string s, int open):LinkParts {
     r.url = ""
     r.next = open
     var n = s.len()
-    var rb = find_from(s, "]", open + 1)
+    // ⚠ 标签里可以**嵌套 `[`**（`[Ptr[T] 的区别](#…)'` 这种），必须按深度找**真正配对**的 `]`；
+    //   直接找第一个 `]` 会让这类链接整条漏成纯文本（实测 FFI使用指南/入门教程 的目录全没转换 ✗）
+    var depth = 0
+    var k = open + 1
+    var rb = -1
+    while k < n {
+        var ch = s.slice(k, k)
+        if ch == "[" {
+            depth += 1
+        } else if ch == "]" {
+            if depth == 0 {
+                rb = k
+                break
+            }
+            depth -= 1
+        }
+        k += 1
+    }
     if rb < 0 or rb + 1 >= n or s.slice(rb + 1, rb + 1) != "(" { return r }
     var rp = find_from(s, ")", rb + 2)
     if rp < 0 { return r }

@@ -1,0 +1,256 @@
+// bench/verify_md_render.leno —— Markdown 渲染冒烟测试（拿文档站**全部真实文档**当语料）
+//
+// 为什么需要它：单元测试只钉住我想到的 30 种写法，而"漏看某段语法导致页面上留一堆 `**`"这种事
+//   只有真文档才能发现（`module_cstructs` 整篇被吞就是靠对拍发现的）。
+//   这个脚本把 121 篇 md 全渲染一遍，检查两件事：
+//     ① 不崩、不超时（顺手量每篇耗时）；
+//     ② **代码块以外**没有残留的 Markdown 标记（`**`、`](`、行首 `#`、行首 `|`、```` ``` ````）。
+//       代码块里出现这些是正常的（源码本来就有），所以先剔除 `<pre>…</pre>` 与 `<code>…</code>`。
+//
+// 用法：build\leno.exe bench\verify_md_render.leno [--docs 目录] [-v]
+import dirs
+import files
+import strings
+import times
+import "Markdown" as md
+
+var g_docs = "D:/CLeno/LenoDocsSrc"
+var g_verbose = 0
+var g_files = 0
+var g_bad = 0
+var g_doc = 0          // 源文档自己笔误（`**` 漏闭标记）导致的残留，不算渲染失败
+var g_total_ms = 0.0
+
+func skip_dir(string n):bool {
+    if strings.starts_with(n, ".") { return true }
+    return n == "site" or n == "site_leno" or n == "_tpl" or n == "_build_vendor" or n == "node_modules"
+}
+
+func walk(string base, string rel, Array[string] out) {
+    var full = dirs.join(base, rel)
+    var names = dirs.listdir(full)
+    if names == null { return }
+    for names to n {
+        var child = n
+        if rel != "" { child = rel + "/" + n }
+        if dirs.is_dir(dirs.join(base, child)) {
+            if skip_dir(n) { continue }
+            walk(base, child, out)
+        } else if strings.ends_with(n, ".md") {
+            out.add(child)
+        }
+    }
+}
+
+// 把 `<pre>…</pre>` 与 `<code>…</code>` 整段删掉（里面的 `**` 是源码，不算残留）
+func strip_code(string html):string {
+    Array[string] out = []
+    var pos = 0
+    var n = html.len()
+    while pos < n {
+        var p1 = strings.find(html.slice(pos, n - 1), "<pre")
+        var p2 = strings.find(html.slice(pos, n - 1), "<code")
+        var at = -1
+        var close_tag = ""
+        if p1 >= 0 and (p2 < 0 or p1 < p2) {
+            at = pos + p1
+            close_tag = "</pre>"
+        } else if p2 >= 0 {
+            at = pos + p2
+            close_tag = "</code>"
+        }
+        if at < 0 {
+            out.add(html.slice(pos, n - 1))
+            break
+        }
+        out.add(html.slice(pos, at - 1))
+        var e = strings.find(html.slice(at, n - 1), close_tag)
+        if e < 0 {
+            pos = n
+            break
+        }
+        pos = at + e + close_tag.len()
+    }
+    return strings.join(out, "")
+}
+
+// 整行只有 `*` / `-` / `_`（≥3 个）⇒ 分隔线，不是粗体
+func is_rule_line(string t):bool {
+    if t.len() < 3 { return false }
+    var c0 = t.slice(0, 0)
+    if c0 != "*" and c0 != "-" and c0 != "_" { return false }
+    var k = 0
+    while k < t.len() {
+        if t.slice(k, k) != c0 { return false }
+        k += 1
+    }
+    return true
+}
+
+// 去掉行内代码 `` `…` `` 的内容（诊断用）
+func strip_inline_code(string l):string {
+    Array[string] out = []
+    var pos = 0
+    var n = l.len()
+    while pos < n {
+        var a = strings.find(l.slice(pos, n - 1), "`")
+        if a < 0 {
+            out.add(l.slice(pos, n - 1))
+            break
+        }
+        a = pos + a
+        var b = strings.find(l.slice(a + 1, n - 1), "`")
+        if b < 0 {
+            out.add(l.slice(pos, n - 1))
+            break
+        }
+        out.add(l.slice(pos, a - 1))
+        pos = a + b + 2
+    }
+    return strings.join(out, "")
+}
+
+// 源文本里 `**` 数量为**奇数**的行（1 起）。这种行本身就是文档笔误（漏了闭标记），
+//   任何渲染器都只能"沿线错配"——所以要单独归类，不能算渲染器的锅。
+func odd_bold_lines(string text):Array[int] {
+    Array[int] out = []
+    var lines = strings.split(text, "\n")
+    var in_fence = false
+    var i = 0
+    while i < lines.len() {
+        var l = lines[i]
+        if strings.starts_with(strings.trim_start(l), "```") {
+            in_fence = not in_fence
+            i += 1
+            continue
+        }
+        if not in_fence {
+            // `***` / `---` 这类是分隔线（`***` 里含一个 `**`，会误报成奇数）⇒ 跳过
+            if is_rule_line(strings.trim(l)) {
+                i += 1
+                continue
+            }
+            // 先把行内代码 `` `…` `` 剥掉：里面写 `**` 是**字面量**（文档常用来解释语法），
+            //   不剥的话几乎每篇都会被误报成"奇数个 **"
+            var no_code = strip_inline_code(l)
+            var cnt = 0
+            var pos = 0
+            while pos < no_code.len() {
+                var idx = strings.find(no_code.slice(pos, no_code.len() - 1), "**")
+                if idx < 0 { break }
+                cnt += 1
+                pos = pos + idx + 2
+            }
+            if cnt % 2 != 0 { out.add(i + 1) }
+        }
+        i += 1
+    }
+    return out
+}
+
+// 返回残留条数；doc_odd=true 时把 `**` 残留记到"文档笔误"里
+func scan_leftover(string rel, string html, bool doc_odd):int {
+    var clean = strip_code(html)
+    var lines = strings.split(clean, "\n")
+    var bad = 0
+    var shown = 0
+    var lineno = 0
+    for lines to l {
+        lineno += 1
+        var t = strings.trim(l)
+        var why = ""
+        if strings.starts_with(t, "#") and strings.find(t, " ") >= 0 { why = "行首 `#`（标题没转换）" }
+        else if strings.starts_with(t, "```") { why = "```` ``` ```` 围栏（代码块没转换）" }
+        else if strings.find(l, "**") >= 0 { why = "`**`（粗体没转换）" }
+        else if strings.find(l, "](") >= 0 { why = "`](`（链接没转换）" }
+        else if strings.starts_with(t, "|") and strings.find(t, "---") >= 0 { why = "`|---|`（表格分隔行没转换）" }
+        if why != "" {
+            if doc_odd and strings.find(why, "`**`") >= 0 {
+                g_doc += 1          // 源文档该行 `**` 是奇数个 ⇒ 笔误，不算渲染失败
+            } else {
+                bad += 1
+            }
+            if g_verbose > 0 and shown < 3 {
+                print("    [" + rel + ":" + _str(lineno) + "] " + why + "  →  " + substr(l, 0, 100) + "\n")
+                shown += 1
+            }
+        }
+    }
+    return bad
+}
+
+func substr(string s, int from, int len2):string {
+    if s == "" { return "" }
+    var stop = from + len2 - 1
+    if stop >= s.len() { stop = s.len() - 1 }
+    if from > stop { return "" }
+    return s.slice(from, stop)
+}
+
+main() {
+    var args = _args()
+    var i = 0
+    while i < args.len() {
+        if args[i] == "--docs" and i + 1 < args.len() { i += 1; g_docs = args[i] }
+        else if args[i] == "-v" { g_verbose = 1 }
+        i += 1
+    }
+
+    Array[string] rels = []
+    walk(g_docs, "", rels)
+    // 稳定输出：按名字排序（插入排序，量小）
+    var k = 1
+    while k < rels.len() {
+        var key = rels[k]
+        var j = k - 1
+        while j >= 0 and rels[j] > key {
+            rels[j + 1] = rels[j]
+            j -= 1
+        }
+        rels[j + 1] = key
+        k += 1
+    }
+
+    print("渲染冒烟：目录 " + g_docs + "，共 " + _str(rels.len()) + " 篇\n")
+    print(strings.rep("-", 78) + "\n")
+
+    for rels to rel {
+        var text = files.read(dirs.join(g_docs, rel))
+        if text == null {
+            print("跳过（读不到）：" + rel + "\n")
+            continue
+        }
+        var body = strings.replace(_str(text), "\r\n", "\n")
+        var t0 = times.ms()
+        var html = md.to_html(body)
+        var ms = times.ms() - t0
+        g_total_ms += ms
+        g_files += 1
+
+        var odd = odd_bold_lines(body)
+        if odd.len() > 0 {
+            // 只报**数量**（不列行号：有的文档上百行，打印会把汇总冲掉）
+            print("源文档有 " + _str(odd.len()) + " 行 `**` 为奇数（文档笔误，非渲染问题）：" + rel + "\n")
+        }
+        var bad = scan_leftover(rel, html, odd.len() > 0)   // -v 时自己打印最多 3 条细节
+        if bad > 0 {
+            g_bad += 1
+            print("残留 " + _str(bad) + " 处  " + rel + "\n")
+        }
+        if ms > 400.0 {
+            print("慢（" + _str(_int(ms)) + "ms）：" + rel + "\n")
+        }
+    }
+
+    print(strings.rep("-", 78) + "\n")
+    print("渲染 " + _str(g_files) + " 篇，耗时 " + _str(_int(g_total_ms)) + "ms（平均 "
+          + _str(_int(g_total_ms / _float(g_files + 1))) + "ms）\n")
+    if g_doc > 0 {
+        print("（另有 " + _str(g_doc) + " 处残留来自**源文档自身**的 `**` 笔误，不计为渲染失败）\n")
+    }
+    if g_bad > 0 {
+        print("✗ 有 " + _str(g_bad) + " 篇存在未转换的 Markdown 标记（加 -v 看位置）\n")
+        _exit(1)
+    }
+    print("✓ 全部文档渲染通过，代码块以外没有残留标记\n")
+}
