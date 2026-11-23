@@ -539,12 +539,27 @@ func indent_of(string l):int {
 
 // 从 start 开始解析一个列表（同一缩进、同一种 marker），返回 html 与下一行下标
 func render_list(Array[string] lines, int start, int base_indent, bool ordered):ListResult {
-    Array[string] items = []
+    // 项内容先收起来：松散与否（项之间有没有空行）要到**扫完**才知道
+    Array[string] item_text = []
+    Array[string] item_nested = []
+    var loose = false
     var i = start
     var n = lines.len()
     while i < n {
         var line = lines[i]
-        if is_blank(line) { break }
+        if is_blank(line) {
+            // 空行后面还是**同类列表项** ⇒ 这是**松散列表**（CommonMark：项要包 `<p>`），
+            //   跳过空行继续扫；否则列表到此结束。
+            var j = i
+            while j < n and is_blank(lines[j]) { j += 1 }
+            if j < n and indent_of(lines[j]) == base_indent and list_marker_len(lines[j]) > 0
+               and is_ordered(lines[j]) == ordered {
+                loose = true
+                i = j
+                continue
+            }
+            break
+        }
         var ind = indent_of(line)
         if ind != base_indent or list_marker_len(line) == 0 { break }
         if is_ordered(line) != ordered { break }
@@ -576,8 +591,22 @@ func render_list(Array[string] lines, int start, int base_indent, bool ordered):
             nested = nested + sub.html
             i = sub.next
         }
-        items.add("<li>" + inline(text) + nested + "</li>\n")
+        item_text.add(text)
+        item_nested.add(nested)
     }
+
+    Array[string] items = []
+    var k = 0
+    while k < item_text.len() {
+        if loose {
+            // 松散列表：python-markdown 的形状是 `<li>\n<p>…</p>\n</li>`
+            items.add("<li>\n<p>" + inline(item_text[k]) + "</p>\n" + item_nested[k] + "</li>\n")
+        } else {
+            items.add("<li>" + inline(item_text[k]) + item_nested[k] + "</li>\n")
+        }
+        k += 1
+    }
+
     var tag = "ul"
     if ordered { tag = "ol" }
     ListResult r = new ListResult()
@@ -685,6 +714,17 @@ func render(Array[string] lines, int from, int end_idx):string {
                 var body2 = t.slice(1, t.len() - 1)
                 if strings.starts_with(body2, " ") { body2 = body2.slice(1, body2.len() - 1) }
                 inner.add(body2)
+                i += 1
+            }
+            // 懒续行（CommonMark / python-markdown 一致）：紧跟的正文行即使**没写 `>`**，
+            //   也属于引用内的最后一段。只吃"纯文本行"—— 标题/围栏/列表/分隔线/表格/新引用
+            //   都不算，否则会把后面的块结构吸进引用里。
+            while i < end_idx and not is_blank(lines[i])
+                  and heading_level(lines[i]) == 0 and not is_fence(lines[i])
+                  and not is_hr(lines[i]) and not is_quote(lines[i])
+                  and list_marker_len(lines[i]) == 0
+                  and not strings.starts_with(strings.trim(lines[i]), "|") {
+                inner.add(lines[i])
                 i += 1
             }
             out.add("<blockquote>\n" + render(inner, 0, inner.len()) + "</blockquote>\n")

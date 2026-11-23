@@ -51,6 +51,19 @@ main() {
     // ⑥ 引用（内部按段落渲染）
     eq(md.to_html("> 注意 **这点**"), "<blockquote>\n<p>注意 <strong>这点</strong></p>\n</blockquote>\n", "⑥ 引用")
 
+    // ⑥b 松散列表：项之间有空行 ⇒ 每项包 `<p>`（python-markdown 的形状）
+    eq(md.to_html("- 甲\n\n- 乙"),
+       "<ul>\n<li>\n<p>甲</p>\n</li>\n<li>\n<p>乙</p>\n</li>\n</ul>\n", "⑥b 松散列表")
+    eq(md.to_html("1. 甲\n\n2. 乙"),
+       "<ol>\n<li>\n<p>甲</p>\n</li>\n<li>\n<p>乙</p>\n</li>\n</ol>\n", "⑥b 松散有序列表")
+
+    // ⑥c 引用懒续行：第二行没写 `>` 也属于引用
+    eq(md.to_html("> 第一行\n第二行"),
+       "<blockquote>\n<p>第一行\n第二行</p>\n</blockquote>\n", "⑥c 引用懒续行")
+    // 对照：标题/列表不该被吸进引用
+    eq(md.to_html("> 引用\n## 标题"),
+       "<blockquote>\n<p>引用</p>\n</blockquote>\n<h2 id=\"标题\">标题</h2>\n", "⑥c 引用不吞标题")
+
     // ⑦ 分隔线
     eq(md.to_html("---"), "<hr>\n", "⑦ 分隔线")
 
