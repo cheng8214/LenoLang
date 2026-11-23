@@ -588,22 +588,13 @@ static void* thread_entry_point(void* arg) {
     uint64_t dt1a = dbg ? thr_dbg_now_us() : 0;   // native globals 注册结束
 
     // 初始化所有模块方法（与主 VM 一致）
-    extern int native_init_module(const char* module_name);
-    native_init_module("io");
-    native_init_module("times");
-    native_init_module("arrays");
-    native_init_module("strings");
-    native_init_module("maths");
-    native_init_module("rands");
-    native_init_module("files");
-    native_init_module("asyncs");
-    native_init_module("dirs");
-    native_init_module("jsons");
-    native_init_module("sockets");
-    native_init_module("ffi");
-    native_init_module("threads");
-    native_init_module("regexs");
-    uint64_t dt1b = dbg ? thr_dbg_now_us() : 0;   // 13 个模块方法注册结束
+    //   ★ 2026-11-24：这里原先**手抄了 13 个模块名**，新增 reflect 时漏掉 ⇒
+    //     子线程里 `reflect.kind(x)` 找不到模块对象、静默抛异常退出，而主线程卡在
+    //     `ch.receive()` 上永久等待 —— 表现为"整个程序卡死"，且日志里什么都看不到。
+    //     清单与 module_init_table 是同一份事实 ⇒ 改成遍历表，以后加模块不会再漏。
+    extern void native_init_all_modules(void);
+    native_init_all_modules();
+    uint64_t dt1b = dbg ? thr_dbg_now_us() : 0;   // 所有模块方法注册结束
     // 初始化所有实例方法（与主 VM 一致）
     extern void arrays_init_instance_methods(void);
     arrays_init_instance_methods();

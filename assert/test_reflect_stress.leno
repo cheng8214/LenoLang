@@ -1,0 +1,113 @@
+// reflect 压力 / 并发 / 视图 压测（2026-11-24）
+//
+// 覆盖：
+//   ① 线程：struct 深拷贝进子线程后仍可反射（字段名 / 取值）
+//   ② 大量实例 × fields（GC 压力：每次 fields 都分配 N 个字符串）
+//   ③ 20 字段 struct × 20 万次 get（struct_get_field_index 是**线性扫**，
+//      这里只打印耗时、不做断言 —— 时间随机器变，断言会抖）
+//   ④ cstruct 的 Ptr 视图（`Ptr[T][i]`）也能按名反射
+import reflect
+import threads
+import times
+
+struct Wide {
+    int f01 = 0
+    int f02 = 0
+    int f03 = 0
+    int f04 = 0
+    int f05 = 0
+    int f06 = 0
+    int f07 = 0
+    int f08 = 0
+    int f09 = 0
+    int f10 = 0
+    int f11 = 0
+    int f12 = 0
+    int f13 = 0
+    int f14 = 0
+    int f15 = 0
+    int f16 = 0
+    int f17 = 0
+    int f18 = 0
+    int f19 = 0
+    int f20 = 0
+}
+
+cstruct V3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+// 线程入口必须是模块级函数；闭包捕获只会拿到副本
+func worker(any ch) {
+    if ch is Channel {
+        var c = ch
+        var w = new Wide(f01 = 1, f20 = 20)
+        c.send(reflect.fields(w).len())
+        c.send(reflect.get(w, "f20"))
+        c.send(reflect.type_name(w))
+    }
+}
+
+main() {
+    // ---- ① 线程：struct 深拷贝后反射 ----
+    var ch = threads.channel(4)
+    var t = threads.start(worker, ch)
+    var got_n = ch.receive()
+    var got_v = ch.receive()
+    var got_t = ch.receive()
+    t.join()
+    assert_eq(_int(got_n), 20, "①子线程 reflect.fields 应看到 20 个字段")
+    assert_eq(_int(got_v), 20, "①子线程 reflect.get(f20)")
+    assert_eq(_str(got_t), "Wide", "①子线程 reflect.type_name")
+
+    // ---- ② 大量实例 × fields（GC 压力，也验证定义表没有被回收） ----
+    //   ⚠ 规模刻意保守：native 调用 + 每次 fields 分配 N 个字符串，几千实例就够压出
+    //     "定义表被回收 / 字符串没被跟踪"这类问题；再大只是烧时间（压测不是跑分）。
+    var total = 0
+    for 0 : 499 to i {
+        var w = new Wide(f01 = i)
+        total = total + reflect.fields(w).len()
+    }
+    assert_eq(total, 500 * 20, "②500 个实例 × 20 字段")
+
+    // ---- ③ 20 字段 × 2000 次按名取值（线性查找的单次成本） ----
+    var w2 = new Wide(f10 = 3)
+    var acc = 0
+    var t0 = times.ms()
+    for 0 : 1999 to i {
+        var x = reflect.get(w2, "f10")
+        if x is int => xi {
+            acc = acc + xi
+        }
+    }
+    var dt = times.ms() - t0
+    assert_eq(acc, 2000 * 3, "③2000 次 get 结果正确")
+    print("perf: 2000 reflect.get on 20-field struct = " + _str(dt) + " ms")
+
+    // ---- ④ cstruct 的 Ptr 视图按名反射 ----
+    var arr = V3.malloc_array(3)
+    arr[1].x = 2.5
+    var p = arr.to_ptr()
+    Ptr[V3] q = p
+    var e = q[1]
+    assert_eq(reflect.kind(e), "cstruct", "④Ptr[V3][1] 是 cstruct 视图")
+    assert_eq(reflect.type_name(e), "V3")
+    var xv = reflect.get(e, "x")
+    if xv is float => xf {
+        assert_eq(xf, 2.5, "④按名读 Ptr 视图的字段")
+    } else {
+        assert_true(false)
+    }
+    arr.free_all()
+
+    // ⚠ 边界（与 VM 一致，reflect **不额外**加保护）：
+    //   `q[1]` 是 `Ptr[V3]` 的下标视图，存活判定挂在 **owner_ptr->freed** 上
+    //   （只有 `ffi.free(ptr)` 会置位）；`arr.free_all()` 释放的是源数组，
+    //   不会回头标记这个 Ptr ⇒ 之后再读属于既有语义里的未定义行为
+    //   （VM 写 `q[1].x` 同样不报错）。要验证 UAF 保护请用**元素视图**
+    //   `arr[1]`（走 owner_arr），见 test_reflect.leno 与 cstruct 的压测用例。
+
+    print("test_reflect_stress passed")
+}

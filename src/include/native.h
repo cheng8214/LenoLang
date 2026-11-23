@@ -330,6 +330,12 @@ void native_reset_module_aliases(void);
 // 调用其方法时才暴露，且报错位置与真实原因不符。
 int native_init_module(const char* module_name);
 
+// 初始化**所有**已注册模块（遍历 module_init_table）。
+//   ⚠ 子线程建 VM 必须走这个，**不要再手抄模块名清单** ——
+//     2026-11-24 实测：手抄的清单漏了新增模块时，子线程调用它的方法会静默抛异常，
+//     主线程卡在 `ch.receive()` 上永久等待（表现为整个程序卡死）。
+void native_init_all_modules(void);
+
 // 该模块名是否是已注册的原生模块（编译期校验用；权威清单 = native.c 的 module_init_table）
 int native_module_is_registered(const char* module_name);
 

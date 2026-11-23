@@ -1605,6 +1605,20 @@ const char* native_module_names_csv(void) {
     return buf;
 }
 
+// 初始化**所有**已注册模块（子线程建 VM 时用）。
+// ----------------------------------------------------------------------------
+// 为什么要有这个入口（2026-11-24，压测 reflect 抓到的坑）：
+//   object_thread.c 建子线程 VM 时**手抄了一份 13 个模块名的清单**（"与主 VM 一致"），
+//   新增的 reflect 没列进去 ⇒ 子线程里 `reflect.kind(x)` 找不到模块对象 ⇒
+//   子线程抛异常退出，而主线程卡在 `ch.receive()` 上**永久等待** ——
+//   现象是"程序整个卡死"，从报错/日志完全看不出与模块列表有关。
+//   清单与 module_init_table 本来就是同一份事实 ⇒ 只留一处（遍历表）。
+void native_init_all_modules(void) {
+    for (int i = 0; module_init_table[i].name != NULL; i++) {
+        module_init_table[i].init_func();
+    }
+}
+
 // 根据模块名初始化对应的模块
 // 返回 0 = 成功（含「合法但无需初始化」的模块），-1 = 未知模块名
 int native_init_module(const char* module_name) {
