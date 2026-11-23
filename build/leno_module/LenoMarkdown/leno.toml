@@ -1,0 +1,11 @@
+[package]
+name = "LenoMarkdown"
+version = "0.1.0"
+description = "Leno Markdown module: Markdown -> HTML + heading anchors (pure Leno)"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库

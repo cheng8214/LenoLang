@@ -1,0 +1,634 @@
+// Markdown.leno -- Markdown → HTML（纯 Leno，无原生依赖）
+//
+// 为什么需要：Leno 没有 markdown 库 ⇒ 文档站（LenoDocsSrc）只能让 Python 的 markdown 包生成 HTML，
+//   于是"改个模板 / 加个页面"都要先装 Python 依赖。这个模块把那一步收回 Leno。
+//
+// 覆盖范围 = **文档站实际用到的语法**（不是 Complete Markdown）：
+//   块级：ATX 标题(#..######，带锚点) / 段落 / 围栏代码(```lang) / 表格(GFM) /
+//         无序与有序列表(含嵌套) / 引用(含嵌套) / 分隔线 / 原始 HTML 块
+//   行内：`code` / **粗** / *斜* / [链接](url) / ![图](src) / \转义
+//
+// API：
+//   md.to_html(text)      → HTML 片段
+//   md.headings(text)     → Array[Heading]（level/text/id，给目录用）
+//   md.slug(text)         → 锚点名（保留中文，与文档里手写的 `#基础语法` 一致）
+//   md.escape(text)       → HTML 转义
+//
+// 刻意**不支持**（写了会原样输出，不会报错）：
+//   · 下划线斜体 `_x_`：Leno 代码里 `snake_case` 满地都是，误判代价 >> 收益；
+//   · 引用式链接 `[a][ref]` / 脚注 / 定义列表 / 任务列表；
+//   · 行内原始 HTML（块级会把整段原样透传，这是文档站需要的能力）。
+//
+// 与 python-markdown 的一致性：输出形状（换行位置、`<th>` 一行一个、`<hr>` 不闭合…）
+//   是照文档站现有 HTML 抄的，可以用 `bench/` 里的对拍脚本逐字节比。
+import strings
+
+// 字段必须写初值：Leno 的 struct 标量字段默认是 **null**（不是 0），不写会在参与运算时报错
+export struct Heading {
+    int level = 0
+    string text = ""
+    string id = ""
+}
+
+// ---------------------------------------------------------------- 转义
+
+func esc_text(string s):string {
+    if strings.find(s, "&") < 0 and strings.find(s, "<") < 0 and strings.find(s, ">") < 0 {
+        return s
+    }
+    return strings.replace(strings.replace(strings.replace(s, "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
+}
+
+// 代码块里连引号一起转（与 python-markdown 一致：`"` → `&quot;`）
+func esc_code(string s):string {
+    var t = esc_text(s)
+    return strings.replace(t, "\"", "&quot;")
+}
+
+export func escape(string s):string {
+    return esc_code(s)
+}
+
+// ---------------------------------------------------------------- 锚点
+
+// 与 docs/build_html.py 的 _slug 同口径：小写；字母/数字/汉字/`_`/`-` 保留；
+//   其余（空格、括号、斜杠、标点）压成 `-`；连续 `-` 合并；首尾 `-` 去掉；空则 `_`。
+export func slug(string text):string {
+    var lower = strings.to_lower(strings.trim(text))
+    Array[string] chars = []
+    var i = 0
+    var n = lower.len()
+    while i < n {
+        var c = lower.slice(i, i)
+        if is_word_char(c) or c == "_" or c == "-" {
+            chars.add(c)
+        } else {
+            chars.add("-")
+        }
+        i += 1
+    }
+    var s = strings.join(chars, "")
+    while strings.find(s, "--") >= 0 {
+        s = strings.replace(s, "--", "-")
+    }
+    // 去首尾 `-`（stdlib 没有 trim_chars，手写；slug 串很短）
+    while s.len() > 0 and s.slice(0, 0) == "-" {
+        s = s.slice(1, s.len() - 1)
+    }
+    while s.len() > 0 and s.slice(s.len() - 1, s.len() - 1) == "-" {
+        s = s.slice(0, s.len() - 2)
+    }
+    if s == "" { return "_" }
+    return s
+}
+
+// 字母 / 数字 / 汉字
+//   ⚠ 不能"多字节就算词字符"：中文**全角标点**（（）、，。！？：；《》…）也是多字节，
+//     那样 `返回类型（跟接收者一致）` 的括号会留在锚点里，而 python 的 `isalnum()` 判 False
+//     ⇒ 必须按**码点范围**分：ASCII 字母数字 / CJK 统一表意区 / 假名 / 全角字母数字
+func is_word_char(string c):bool {
+    var cp = codepoint_of(c)
+    if cp >= 48 and cp <= 57 { return true }              // 0-9
+    if cp >= 65 and cp <= 90 { return true }              // A-Z
+    if cp >= 97 and cp <= 122 { return true }             // a-z
+    if cp >= 0x4E00 and cp <= 0x9FFF { return true }      // CJK 统一表意
+    if cp >= 0x3400 and cp <= 0x4DBF { return true }      // CJK 扩展 A
+    if cp >= 0x3040 and cp <= 0x30FF { return true }      // 平假名 / 片假名
+    if cp >= 0x3005 and cp <= 0x3007 { return true }      // 々〆〇
+    if cp >= 0xFF10 and cp <= 0xFF19 { return true }      // 全角数字
+    if cp >= 0xFF21 and cp <= 0xFF3A { return true }      // 全角大写
+    if cp >= 0xFF41 and cp <= 0xFF5A { return true }      // 全角小写
+    return false
+}
+
+// 取一个**字符**的 Unicode 码点（UTF-8 解码；非法序列返回 0xFFFD）
+func codepoint_of(string c):int {
+    var b = c.to_bytes()
+    if b.len() == 0 { return 0xFFFD }
+    var v = b[0]
+    if b.len() == 1 { return v }
+    if b.len() == 2 { return ((v & 0x1F) << 6) | (b[1] & 0x3F) }
+    if b.len() == 3 { return ((v & 0x0F) << 12) | ((b[1] & 0x3F) << 6) | (b[2] & 0x3F) }
+    if b.len() == 4 {
+        return ((v & 0x07) << 18) | ((b[1] & 0x3F) << 12) | ((b[2] & 0x3F) << 6) | (b[3] & 0x3F)
+    }
+    return 0xFFFD
+}
+
+// 把行内标记剥掉，只留纯文本（给 slug 用）
+func strip_inline(string s):string {
+    var t = strings.replace(s, "`", "")
+    t = strings.replace(t, "**", "")
+    t = strings.replace(t, "*", "")
+    t = strings.replace(t, "![", "")
+    t = strings.replace(t, "]", "")
+    return t
+}
+
+// ---------------------------------------------------------------- 行内
+
+func find_from(string s, string needle, int from):int {
+    var n = s.len()
+    if from < 0 { from = 0 }
+    if from >= n { return -1 }
+    var idx = strings.find(s.slice(from, n - 1), needle)
+    if idx < 0 { return -1 }
+    return from + idx
+}
+
+func inline(string s):string {
+    Array[string] out = []
+    var i = 0
+    var n = s.len()
+    while i < n {
+        var c = s.slice(i, i)
+
+        // 反斜杠转义：`\*` 输出字面 `*`
+        if c == "\\" and i + 1 < n {
+            out.add(esc_text(s.slice(i + 1, i + 1)))
+            i += 2
+            continue
+        }
+
+        // 行内代码 `x`（内容原样转义，不再解析里面的标记）
+        if c == "`" {
+            var close = find_from(s, "`", i + 1)
+            if close > i + 1 {
+                var code = s.slice(i + 1, close - 1)
+                // ⚠ 行内代码**不转义引号**（python-markdown 只在代码块里把 `"` 变成 `&quot;`，
+                //   行内 `<code>` 里保持原样 ⇒ 两边不一致会让每个带引号的例子都"看起来不同"）
+                out.add("<code>" + esc_text(trim_one_space(code)) + "</code>")
+                i = close + 1
+                continue
+            }
+            out.add("`")
+            i += 1
+            continue
+        }
+
+        // 图片 ![alt](src)
+        if c == "!" and i + 1 < n and s.slice(i + 1, i + 1) == "[" {
+            var img = parse_link(s, i + 1)
+            if img.ok {
+                out.add("<img alt=\"" + esc_code(img.text) + "\" src=\"" + esc_code(img.url) + "\" />")
+                i = img.next
+                continue
+            }
+        }
+
+        // 链接 [text](url)
+        if c == "[" {
+            var lk = parse_link(s, i)
+            if lk.ok {
+                out.add("<a href=\"" + esc_code(lk.url) + "\">" + inline(lk.text) + "</a>")
+                i = lk.next
+                continue
+            }
+        }
+
+        // 粗体 **x**
+        if c == "*" and i + 1 < n and s.slice(i + 1, i + 1) == "*" {
+            var close2 = find_from(s, "**", i + 2)
+            if close2 > i + 2 {
+                out.add("<strong>" + inline(s.slice(i + 2, close2 - 1)) + "</strong>")
+                i = close2 + 2
+                continue
+            }
+        }
+
+        // 斜体 *x*（两侧都不能是 `*`，否则会和粗体打架）
+        if c == "*" {
+            var prev_ok = (i == 0) or (s.slice(i - 1, i - 1) != "*")
+            var close3 = find_from(s, "*", i + 1)
+            if prev_ok and close3 > i + 1 {
+                out.add("<em>" + inline(s.slice(i + 1, close3 - 1)) + "</em>")
+                i = close3 + 1
+                continue
+            }
+        }
+
+        out.add(esc_text(c))
+        i += 1
+    }
+    return strings.join(out, "")
+}
+
+func trim_one_space(string s):string {
+    if strings.starts_with(s, " ") and strings.ends_with(s, " ") and s.len() >= 2 {
+        return s.slice(1, s.len() - 2)
+    }
+    return s
+}
+
+struct LinkParts {
+    bool ok = false
+    string text = ""
+    string url = ""
+    int next = 0
+}
+
+// 从 `[` 开始解析 `[text](url)`；失败返回 ok=false
+func parse_link(string s, int open):LinkParts {
+    LinkParts r = new LinkParts()
+    r.ok = false
+    r.text = ""
+    r.url = ""
+    r.next = open
+    var n = s.len()
+    var rb = find_from(s, "]", open + 1)
+    if rb < 0 or rb + 1 >= n or s.slice(rb + 1, rb + 1) != "(" { return r }
+    var rp = find_from(s, ")", rb + 2)
+    if rp < 0 { return r }
+    r.ok = true
+    r.text = s.slice(open + 1, rb - 1)
+    r.url = s.slice(rb + 2, rp - 1)
+    r.next = rp + 1
+    return r
+}
+
+// ---------------------------------------------------------------- 块级判据
+
+func is_blank(string l):bool {
+    return strings.trim(l) == ""
+}
+
+// `#`..`######` + 空格；返回级别，非标题返回 0
+func heading_level(string l):int {
+    var n = 0
+    while n < l.len() and n < 6 and l.slice(n, n) == "#" { n += 1 }
+    if n == 0 { return 0 }
+    if n >= l.len() { return n }                       // 全是 `#`：也当标题
+    if l.slice(n, n) == " " { return n }
+    return 0
+}
+
+func is_hr(string l):bool {
+    var t = strings.trim(l)
+    if t.len() < 3 { return false }
+    var c = t.slice(0, 0)
+    if c != "-" and c != "*" and c != "_" { return false }
+    var i = 0
+    while i < t.len() {
+        if t.slice(i, i) != c { return false }
+        i += 1
+    }
+    return true
+}
+
+// 列表项：`- ` / `* ` / `+ ` / `1. `；返回 marker 长度，非列表返回 0
+func list_marker_len(string l):int {
+    var t = strings.trim_start(l)
+    if t.len() >= 2 {
+        var c = t.slice(0, 0)
+        if (c == "-" or c == "*" or c == "+") and t.slice(1, 1) == " " { return 2 }
+    }
+    var d = 0
+    while d < t.len() and d < 9 and t.slice(d, d) >= "0" and t.slice(d, d) <= "9" { d += 1 }
+    if d > 0 and d + 1 < t.len() and t.slice(d, d) == "." and t.slice(d + 1, d + 1) == " " {
+        return d + 2
+    }
+    return 0
+}
+
+func is_ordered(string l):bool {
+    var t = strings.trim_start(l)
+    return t.slice(0, 0) >= "0" and t.slice(0, 0) <= "9"
+}
+
+func is_quote(string l):bool {
+    return strings.starts_with(strings.trim_start(l), ">")
+}
+
+func is_fence(string l):bool {
+    return strings.starts_with(strings.trim_start(l), "```")
+}
+
+// 表格分隔行：只含 `| - : 空格`，且至少一个 `-`
+func is_table_sep(string l):bool {
+    var t = strings.trim(l)
+    if strings.find(t, "-") < 0 { return false }
+    var i = 0
+    while i < t.len() {
+        var c = t.slice(i, i)
+        if c != "|" and c != "-" and c != ":" and c != " " { return false }
+        i += 1
+    }
+    return true
+}
+
+func is_table_row(string l):bool {
+    return strings.find(l, "|") >= 0
+}
+
+func starts_block(Array[string] lines, int i):bool {
+    var l = lines[i]
+    if is_blank(l) { return true }
+    if heading_level(l) > 0 { return true }
+    if is_fence(l) { return true }
+    if is_quote(l) { return true }
+    if is_hr(l) { return true }
+    if list_marker_len(l) > 0 {
+        // ⚠ sane_lists：列表**前面必须有空行**才算新块。否则
+        //   ```
+        //   **参数**:
+        //   - key (string): ...
+        //   ```
+        //   在 python-markdown 里是**同一个段落**（`- key` 只是段内文字），
+        //   我们若把它当列表就会多出 <ul>/<li> ⇒ 整段结构都不一样。
+        if i == 0 { return true }
+        return is_blank(lines[i - 1])
+    }
+    if strings.starts_with(strings.trim(l), "<") and strings.ends_with(strings.trim(l), ">") { return true }
+    if strings.starts_with(strings.trim(l), "|") and i + 1 < lines.len() and is_table_sep(lines[i + 1]) { return true }
+    return false
+}
+
+// ---------------------------------------------------------------- 表格
+
+func split_row(string l):Array[string] {
+    var t = strings.trim(l)
+    if strings.starts_with(t, "|") { t = t.slice(1, t.len() - 1) }
+    if strings.ends_with(t, "|") and t.len() >= 1 { t = t.slice(0, t.len() - 2) }
+    Array[string] cells = []
+    for strings.split(t, "|") to cell {
+        cells.add(strings.trim(cell))
+    }
+    return cells
+}
+
+func align_of(string sep_cell):string {
+    var t = strings.trim(sep_cell)
+    var left = strings.starts_with(t, ":")
+    var right = strings.ends_with(t, ":")
+    if left and right { return " style=\"text-align: center;\"" }
+    if right { return " style=\"text-align: right;\"" }
+    if left { return " style=\"text-align: left;\"" }
+    return ""
+}
+
+// 从第 i 行（表头）开始渲染表格，返回 HTML（调用方负责推进下标）
+func render_table(Array[string] lines, int start, int end):string {
+    var head = split_row(lines[start])
+    var seps = split_row(lines[start + 1])
+    Array[string] tv = []
+    var k = 0
+    while k < head.len() {
+        var al = ""
+        if k < seps.len() { al = align_of(seps[k]) }
+        tv.add("<th" + al + ">" + inline(head[k]) + "</th>\n")
+        k += 1
+    }
+    Array[string] out = ["<table>\n<thead>\n<tr>\n"]
+    out.add(strings.join(tv, ""))
+    out.add("</tr>\n</thead>\n<tbody>\n")
+    var r = start + 2
+    while r < end and not is_blank(lines[r]) and is_table_row(lines[r]) {
+        var cells = split_row(lines[r])
+        Array[string] tr = []
+        var c = 0
+        while c < head.len() {
+            var al2 = ""
+            if c < seps.len() { al2 = align_of(seps[c]) }
+            var val = ""
+            if c < cells.len() { val = cells[c] }
+            tr.add("<td" + al2 + ">" + inline(val) + "</td>\n")
+            c += 1
+        }
+        out.add("<tr>\n" + strings.join(tr, "") + "</tr>\n")
+        r += 1
+    }
+    out.add("</tbody>\n</table>\n")
+    return strings.join(out, "")
+}
+
+// ---------------------------------------------------------------- 列表
+
+struct ListResult {
+    string html = ""
+    int next = 0
+}
+
+func indent_of(string l):int {
+    var i = 0
+    while i < l.len() {
+        var c = l.slice(i, i)
+        if c == " " { i += 1 }
+        else if c == "\t" { i += 4 }
+        else { break }
+    }
+    return i
+}
+
+// 从 start 开始解析一个列表（同一缩进、同一种 marker），返回 html 与下一行下标
+func render_list(Array[string] lines, int start, int base_indent, bool ordered):ListResult {
+    Array[string] items = []
+    var i = start
+    var n = lines.len()
+    while i < n {
+        var line = lines[i]
+        if is_blank(line) { break }
+        var ind = indent_of(line)
+        if ind != base_indent or list_marker_len(line) == 0 { break }
+        if is_ordered(line) != ordered { break }
+
+        var ml = list_marker_len(line)
+        var text = strings.trim_start(line).slice(ml, strings.trim_start(line).len() - 1)
+        i += 1
+
+        // 续行：缩进更深的普通行（列表项里的第二段）
+        while i < n and not is_blank(lines[i]) {
+            var ind2 = indent_of(lines[i])
+            if ind2 <= base_indent { break }
+            if list_marker_len(lines[i]) > 0 { break }         // 嵌套列表交给下面单独处理
+            text = text + " " + strings.trim(lines[i])
+            i += 1
+        }
+
+        // 嵌套列表（缩进更深、且是列表项）
+        var nested = ""
+        while i < n and not is_blank(lines[i]) and indent_of(lines[i]) > base_indent
+              and list_marker_len(lines[i]) > 0 {
+            var sub = render_list(lines, i, indent_of(lines[i]), is_ordered(lines[i]))
+            nested = nested + sub.html
+            i = sub.next
+        }
+        items.add("<li>" + inline(text) + nested + "</li>\n")
+    }
+    var tag = "ul"
+    if ordered { tag = "ol" }
+    ListResult r = new ListResult()
+    r.html = "<" + tag + ">\n" + strings.join(items, "") + "</" + tag + ">\n"
+    r.next = i
+    return r
+}
+
+// ---------------------------------------------------------------- 块级主循环
+
+// ⚠ 参数名不能叫 `to`（保留字，语法错误）；用 end_idx
+func render(Array[string] lines, int from, int end_idx):string {
+    Array[string] out = []
+    var i = from
+    while i < end_idx {
+        var line = lines[i]
+        if is_blank(line) { i += 1; continue }
+
+        // 围栏代码
+        if is_fence(line) {
+            var tl = strings.trim_start(line)
+            var lang = strings.trim(tl.slice(3, tl.len() - 1))
+            Array[string] code = []
+            i += 1
+            while i < end_idx and not is_fence(lines[i]) {
+                code.add(lines[i])
+                i += 1
+            }
+            if i < end_idx { i += 1 }
+            var cls = ""
+            if lang != "" { cls = " class=\"language-" + lang + "\"" }
+            var body = strings.join(code, "\n")
+            if body == "" {
+                out.add("<pre><code" + cls + "></code></pre>\n")
+            } else {
+                out.add("<pre><code" + cls + ">" + esc_code(body) + "\n</code></pre>\n")
+            }
+            continue
+        }
+
+        // 标题
+        var lvl = heading_level(line)
+        if lvl > 0 {
+            var raw = ""
+            if lvl < line.len() { raw = strings.trim(line.slice(lvl, line.len() - 1)) }
+            var id = slug(strip_inline(raw))
+            var tagl = _str(lvl)
+            out.add("<h" + tagl + " id=\"" + id + "\">" + inline(raw) + "</h" + tagl + ">\n")
+            i += 1
+            continue
+        }
+
+        // 分隔线
+        if is_hr(line) {
+            out.add("<hr>\n")
+            i += 1
+            continue
+        }
+
+        // 表格
+        if strings.starts_with(strings.trim(line), "|") and i + 1 < end_idx and is_table_sep(lines[i + 1]) {
+            var stop = i + 2
+            while stop < end_idx and not is_blank(lines[stop]) and is_table_row(lines[stop]) { stop += 1 }
+            out.add(render_table(lines, i, stop))
+            i = stop
+            continue
+        }
+
+        // 引用
+        if is_quote(line) {
+            Array[string] inner = []
+            while i < end_idx and is_quote(lines[i]) {
+                var t = strings.trim_start(lines[i])
+                var body2 = t.slice(1, t.len() - 1)
+                if strings.starts_with(body2, " ") { body2 = body2.slice(1, body2.len() - 1) }
+                inner.add(body2)
+                i += 1
+            }
+            out.add("<blockquote>\n" + render(inner, 0, inner.len()) + "</blockquote>\n")
+            continue
+        }
+
+        // 列表
+        if list_marker_len(line) > 0 {
+            var res = render_list(lines, i, indent_of(line), is_ordered(line))
+            out.add(res.html)
+            i = res.next
+            continue
+        }
+
+        // 原始 HTML 块（`<div ...>` 这类，整段原样透传）
+        if strings.starts_with(strings.trim(line), "<") {
+            Array[string] raw_html = []
+            while i < end_idx and not is_blank(lines[i]) {
+                raw_html.add(lines[i])
+                i += 1
+            }
+            out.add(strings.join(raw_html, "\n") + "\n")
+            continue
+        }
+
+        // 段落：吃掉连续的非块起始行
+        Array[string] para = [line]
+        i += 1
+        while i < end_idx and not starts_block(lines, i) {
+            para.add(lines[i])
+            i += 1
+        }
+        // 行尾两个空格 = **硬换行**（python-markdown 输出 `<br>`，换行仍保留）
+        Array[string] html_lines = []
+        for para to pl {
+            if strings.ends_with(pl, "  ") {
+                html_lines.add(inline(strings.trim_end(pl)) + "<br>")
+            } else {
+                html_lines.add(inline(pl))
+            }
+        }
+        out.add("<p>" + strings.join(html_lines, "\n") + "</p>\n")
+    }
+    return strings.join(out, "")
+}
+
+export func to_html(string text):string {
+    var lines = strings.split(normalize(text), "\n")
+    return render(lines, 0, lines.len())
+}
+
+func normalize(string text):string {
+    var t = text
+    if strings.find(t, "\r\n") >= 0 { t = strings.replace(t, "\r\n", "\n") }
+    return t
+}
+
+// ---------------------------------------------------------------- 标题列表（目录用）
+
+export func headings(string text):Array[Heading] {
+    Array[Heading] result = []
+    Array[string] seen = []
+    var lines = strings.split(normalize(text), "\n")
+    var in_fence = false
+    var i = 0
+    while i < lines.len() {
+        var line = lines[i]
+        i += 1
+        if is_fence(line) {
+            in_fence = not in_fence
+            continue
+        }
+        if in_fence { continue }
+        var lvl = heading_level(line)
+        if lvl == 0 { continue }
+        var raw = ""
+        if lvl < line.len() { raw = strings.trim(line.slice(lvl, line.len() - 1)) }
+        var id = unique_id(seen, slug(strip_inline(raw)))
+        seen.add(id)
+        Heading h = new Heading()
+        h.level = lvl
+        h.text = strip_inline(raw)
+        h.id = id
+        result.add(h)
+    }
+    return result
+}
+
+// 重名锚点：python-markdown 的 toc 用 `_1` / `_2` 后缀
+func unique_id(Array[string] seen, string base):string {
+    if not contains_str(seen, base) { return base }
+    var k = 1
+    while contains_str(seen, base + "_" + _str(k)) { k += 1 }
+    return base + "_" + _str(k)
+}
+
+func contains_str(Array[string] arr, string want):bool {
+    for arr to s {
+        if s == want { return true }
+    }
+    return false
+}

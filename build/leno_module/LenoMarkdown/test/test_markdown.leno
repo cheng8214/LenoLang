@@ -1,0 +1,88 @@
+// LenoMarkdown 0.1.0 自测：标题/段落/行内/代码块/表格/列表/引用/分隔线/锚点
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoMarkdown\test\test_markdown.leno
+//
+// 期望值不是"我觉得应该这样"，而是**照文档站现有 HTML 抄的**（python-markdown 的实际输出形状）：
+//   <th> 一行一个、<hr> 不闭合、代码块结尾带 \n、引用内是 <p>…</p>。
+import "Markdown" as md
+
+var fails = 0
+
+func eq(string got, string want, string tag) {
+    if got != want {
+        print("[FAIL] " + tag + "\n  得到: [" + got + "]\n  期望: [" + want + "]\n")
+        fails += 1
+    }
+}
+
+func check(string tag, bool ok) {
+    if not ok {
+        print("[FAIL] " + tag + "\n")
+        fails += 1
+    }
+}
+
+main() {
+    // ① 标题 + 锚点（中文保留，与文档里手写的 #基础语法 一致）
+    eq(md.to_html("## 实例方法 vs 模块方法"),
+       "<h2 id=\"实例方法-vs-模块方法\">实例方法 vs 模块方法</h2>\n", "① 标题中文锚点")
+
+    // ② 行内：粗体 / 代码 / 链接 / 图片
+    eq(md.to_html("这是 **粗体** 和 `code`。"),
+       "<p>这是 <strong>粗体</strong> 和 <code>code</code>。</p>\n", "② 行内粗体与代码")
+    eq(md.to_html("[文档](a.html) 与 ![图](i.png)"),
+       "<p><a href=\"a.html\">文档</a> 与 <img alt=\"图\" src=\"i.png\" /></p>\n", "② 链接与图片")
+
+    // ③ 围栏代码：语言类 + 转义（含引号）+ 结尾换行
+    eq(md.to_html("```leno\nprint(\"hi\")\n```"),
+       "<pre><code class=\"language-leno\">print(&quot;hi&quot;)\n</code></pre>\n", "③ 代码块")
+
+    // ④ 表格（<th>/<td> 各占一行）
+    eq(md.to_html("| a | b |\n|---|---|\n| 1 | 2 |"),
+       "<table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n</thead>\n<tbody>\n"
+       + "<tr>\n<td>1</td>\n<td>2</td>\n</tr>\n</tbody>\n</table>\n", "④ 表格")
+
+    // ⑤ 列表（紧凑：<li> 里不放 <p>）
+    eq(md.to_html("- 甲\n- 乙"), "<ul>\n<li>甲</li>\n<li>乙</li>\n</ul>\n", "⑤ 无序列表")
+    eq(md.to_html("1. 甲\n2. 乙"), "<ol>\n<li>甲</li>\n<li>乙</li>\n</ol>\n", "⑤ 有序列表")
+    eq(md.to_html("- 甲\n  - 子"), "<ul>\n<li>甲<ul>\n<li>子</li>\n</ul>\n</li>\n</ul>\n", "⑤ 嵌套列表")
+
+    // ⑥ 引用（内部按段落渲染）
+    eq(md.to_html("> 注意 **这点**"), "<blockquote>\n<p>注意 <strong>这点</strong></p>\n</blockquote>\n", "⑥ 引用")
+
+    // ⑦ 分隔线
+    eq(md.to_html("---"), "<hr>\n", "⑦ 分隔线")
+
+    // ⑧ 段落：软换行原样保留（不变成 <br>）
+    eq(md.to_html("第一行\n第二行"), "<p>第一行\n第二行</p>\n", "⑧ 软换行")
+
+    // ⑨ 转义：文本里的 < > & 都要逃
+    eq(md.to_html("a < b & c > d"), "<p>a &lt; b &amp; c &gt; d</p>\n", "⑨ 文本转义")
+
+    // ⑩ slug：文档里的真实锚点（照站点 HTML 校对）
+    eq(md.slug("len()"), "len", "⑩ slug len()")
+    eq(md.slug("has(key)"), "has-key", "⑩ slug has(key)")
+    eq(md.slug("get(key) / get(key, default)"), "get-key-get-key-default", "⑩ slug get(...)")
+    eq(md.slug("  "), "_", "⑩ slug 空串")
+    eq(md.slug("C++ 与 C#"), "c-与-c", "⑩ slug 符号压缩")
+
+    // ⑪ headings()：级别/文本/去重后缀
+    var hs = md.headings("# 一\n\n## 二\n\n## 二\n\n```\n# 代码里的不算\n```\n")
+    check("⑪ 标题数量（代码块内不算）", hs.len() == 3)
+    if hs.len() == 3 {
+        check("⑪ 级别", hs[0].level == 1 and hs[1].level == 2)
+        check("⑪ 文本", hs[1].text == "二")
+        check("⑪ 重名后缀", hs[2].id == "二_1")
+    }
+
+    // ⑫ 原始 HTML 块透传（文档站用它嵌 <div class="banner">）
+    eq(md.to_html("<div class=\"x\">\nhi\n</div>"),
+       "<div class=\"x\">\nhi\n</div>\n", "⑫ HTML 块透传")
+
+    if fails > 0 {
+        print("test_markdown: " + _str(fails) + " 项失败\n")
+        _exit(1)
+    }
+    print("test_markdown passed")
+}
