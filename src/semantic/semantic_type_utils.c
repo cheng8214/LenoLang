@@ -1434,6 +1434,20 @@ const char* get_similar_name_hint(Scope* scope, const char* name) {
     return hint;
 }
 
+// s 是否以 suffix 结尾
+static int str_ends_with_n(const char* s, const char* suffix) {
+    size_t ls = strlen(s), lf = strlen(suffix);
+    if (lf == 0 || lf >= ls) return 0;
+    return strcmp(s + (ls - lf), suffix) == 0;
+}
+
+// s 是否以 prefix 开头
+static int str_starts_with_n(const char* s, const char* prefix) {
+    size_t lf = strlen(prefix);
+    if (lf == 0) return 0;
+    return strncmp(s, prefix, lf) == 0;
+}
+
 // 在给定名字集合中找最相似的（C1 struct 方法提示用），返回提示串（静态缓冲区）
 const char* get_similar_in_names(const char** names, int count, const char* name) {
     static char hint[160];
@@ -1448,6 +1462,29 @@ const char* get_similar_in_names(const char** names, int count, const char* name
             best_dist = dist;
             best = names[i];
             if (dist == 0) break;
+        }
+    }
+    // ★ 2026-11-23（写 bench 脚本时撞到）：**词缀规则**。
+    //   `strings.upper` 明明有 `to_upper`（标准库的前缀约定），但编辑距离是 3 > 阈值 2
+    //   ⇒ 一条提示都不给，用户只能把 43 个方法名逐个看 ✗（实测）。
+    //   同理 `strings.repeat` ↔ `strings.rep`（只差后缀）。
+    //   规则刻意窄：**同一词根、只差 `to_`/`_all` 这类前缀或 ≤3 字符的后缀**才提示，
+    //   避免把 `len` 提示成 `byte_len` 之外的一堆无关名字。
+    if (!best) {
+        for (int i = 0; i < count; i++) {
+            if (!names[i]) continue;
+            const char* cand = names[i];
+            size_t lc = strlen(cand), ln = strlen(name);
+            int diff = (int)lc - (int)ln;
+            if (diff < 0) diff = -diff;
+            if (diff > 3) continue;
+            // **两个方向都查**：`upper`→`to_upper`（候选比输入长），`repeat`→`rep`（候选更短）。
+            // 候选短于 3 字符时不提示（`rep` 是 3、`len` 也是 3，都保留 ⇒ 阈值取 3 不再收紧）
+            if (str_ends_with_n(cand, name) || str_starts_with_n(cand, name) ||
+                (strlen(cand) >= 3 && (str_starts_with_n(name, cand) || str_ends_with_n(name, cand)))) {
+                best = cand;
+                break;
+            }
         }
     }
     if (best && strcmp(best, name) != 0) {
