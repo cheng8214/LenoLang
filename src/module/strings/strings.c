@@ -2334,14 +2334,14 @@ void strings_init_module(void) {
     TypeKind rep_params[] = {TYPE_STRING, TYPE_INT};
     native_register_module_method("strings", "rep", str_rep, &NATIVE_T_STRING, NATIVE_FIXED(rep_params));
 
-    // ★ 2026-11-23（用户拍板）：补 `repeat` / `upper` / `lower` 三个**别名**。
-    //   下面的 pad_left 注释反对"一功能两名"，这里是有理由的例外：
-    //   实测三天里 `rep` / `to_upper` 是**最常写错的两个**（"词缀提示"只能事后纠错），
-    //   而这三个名字在各家 stdlib 里几乎就是唯一写法 ⇒ 写成 `strings.repeat(...)` 却报错，
-    //   会让人以为语言不支持。别名只在这三个上开，不再扩大（其余保持单一实现）。
-    native_register_module_method("strings", "repeat", str_rep, &NATIVE_T_STRING, NATIVE_FIXED(rep_params));
-    native_register_module_method("strings", "upper", str_to_upper, &NATIVE_T_STRING, NATIVE_FIXED(upper_params));
-    native_register_module_method("strings", "lower", str_to_lower, &NATIVE_T_STRING, NATIVE_FIXED(lower_params));
+    // ⚠ 2026-11-23：**曾短暂加过 `repeat` / `upper` / `lower` 三个别名，已删除**。
+    //   删除理由（与下面 pad_left 那段同一条原则）：同一功能两个名字，用户看到两个都
+    //   能跑，就永远不知道该用哪个；文档/示例/别人代码里会长期两种写法混用。
+    //   名字直觉的问题改用**词缀提示**解决（semantic_type_utils.c 的 get_similar_in_names
+    //   已支持"同词根、前后缀差 ≤3 字符"）：
+    //     `strings.upper`  → 提示「是否想用 'to_upper'？」
+    //     `strings.repeat` → 提示「是否想用 'rep'？」
+    //   ⇒ 纠错而不是留两条路 ✓
 
     // 8. 新增：获取字符的ASCII码值（支持1-2个可变参数）
     TypeKind byte_params[] = {TYPE_STRING, TYPE_INT};
