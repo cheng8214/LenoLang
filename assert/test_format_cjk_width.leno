@@ -1,0 +1,28 @@
+// test_format_cjk_width.leno —— `strings.format` 的 `%s` 宽度/精度按**字符**计（2026-11-23）
+//
+// 现场：`slen = s->len` 是**字节数** ⇒ 一个汉字 3 字节，`%-10s` 对中文只补 1~2 个空格，
+//   表格列必然错位；而 `strings.len` / `pad_end` 都按字符 ⇒ 同一个库里两种口径。
+// 修法：宽度与精度都按 `utf8_char_len` 计（精度按字符截断后再换算回字节边界）。
+import strings
+
+main() {
+    // ① 左对齐：宽度按字符
+    assert_eq(strings.format("%-10s|", "中文"), "中文        |", "① 中文 %-10s 补 8 空格")
+    // ② 右对齐
+    assert_eq(strings.format("%10s|", "中文"), "        中文|", "② 中文 %10s 补 8 空格")
+    // ③ 中文满宽不多补
+    assert_eq(strings.format("%-6s|", "汉字三个"), "汉字三个  |", "③ 4 个汉字 %-6s 补 2 空格")
+    // ④ ASCII 行为不变（回归护栏）
+    assert_eq(strings.format("%-4s|", "ab"), "ab  |", "④ ASCII 左对齐不变")
+    assert_eq(strings.format("%4s|", "ab"), "  ab|", "④ ASCII 右对齐不变")
+    // ⑤ 精度按字符截断（不是按字节）
+    assert_eq(strings.format("%.2s", "中文字符"), "中文", "⑤ %.2s 截 2 个汉字")
+    assert_eq(strings.format("%.3s", "abcdef"), "abc", "⑤ %.3s 截 3 个 ASCII")
+
+    // ⑥ 与 strings.len 口径一致（同一条串，len 与 %s 宽度基数是同一个数）
+    var s = "中文abc"
+    assert_eq(strings.len(s), 5, "⑥ len 按字符")
+    assert_eq(strings.len(strings.format("%-5s", s)), 5, "⑥ %-5s 后正好 5 个字符")
+
+    print("test_format_cjk_width passed")
+}

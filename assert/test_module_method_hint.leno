@@ -1,10 +1,12 @@
-// test_module_method_hint.leno —— 「模块方法名写错」要给出**可猜的**建议（2026-11-23）
+// test_module_method_hint.leno —— 模块方法名写错要给建议；`repeat`/`upper`/`lower` 现已成别名
 //
-// 由来：写 bench 脚本时把 `strings.to_upper` 写成 `strings.upper`、`strings.rep` 写成
-//   `strings.repeat` —— 报错只列了 43 个方法名（还被截断），一条建议都没有。
-//   根因不是"没做相似名提示"，而是提示用的是 **编辑距离 ≤2**：
-//     `upper` → `to_upper` 距离 3、`repeat` → `rep` 距离 3 ⇒ 恰好都被挡掉 ✗
-//   修法：在编辑距离之外补一条**词缀规则**（同一词根、只差 ≤3 字符的前缀/后缀，双向查）。
+// 历史（保留说明，免得下次困惑）：
+//   2026-11-23 上午：`strings.upper` / `strings.repeat` 报错且**一条建议都没有** ——
+//     相似名提示用的是编辑距离 ≤2，而 `upper`→`to_upper`、`repeat`→`rep` 都是 3 ⇒ 被挡掉。
+//     当时补了「词缀规则」（同词根、前后缀差 ≤3 字符、双向查）。
+//   2026-11-23 晚上：用户拍板直接加 `repeat`/`upper`/`lower` **别名** ⇒ 那两个名字不再报错，
+//     词缀规则的主要用例消失（保留作为其他模块的兜底）。
+//   ⇒ 本用例改成两件事：① 别名真的可用；② 拼错仍给建议、真没有相近项时不瞎猜。
 import "helpers/compiler.leno" as ce
 import dirs
 import files
@@ -14,38 +16,37 @@ main() {
     dirs.delete(work)
     dirs.mkdir_p(work)
 
-    // ① 少写了 `to_` 前缀
+    // ① 别名可用（不再是错误）——`strings.upper` 曾经是"最容易写错的那个"
+    var d0 = dirs.join(work, "m0.leno")
+    files.write(d0, @"import strings
+
+main() {
+    print(strings.upper(""abc"") + strings.repeat(""-"", 3) + strings.lower(""AB""))
+}
+")
+    var o0 = ce.expect_ok(d0, "① 别名 upper/repeat/lower 可用", "ABC---ab")
+    ce.expect_no_warning(o0, "① 别名不该报'未找到模块方法'", "未找到模块方法")
+
+    // ② 拼错仍给建议（编辑距离 ≥1 的名字，走到相似名提示）
     var d1 = dirs.join(work, "m1.leno")
     files.write(d1, @"import strings
 
 main() {
-    print(strings.upper(""abc""))
+    print(strings.uppper(""abc""))
 }
 ")
-    ce.expect_error(d1, "① strings.upper 应提示 to_upper",
-        "是否想用 'to_upper'", 4)
+    ce.expect_error(d1, "② 拼错 uppper 应提示 upper", "是否想用 'upper'", 4)
 
-    // ② 多写了后缀（候选比输入短的方向）
+    // ③ 对照：真的没有相近名字时**不要瞎猜**（误报红线）
     var d2 = dirs.join(work, "m2.leno")
     files.write(d2, @"import strings
-
-main() {
-    print(strings.repeat(""-"", 3))
-}
-")
-    ce.expect_error(d2, "② strings.repeat 应提示 rep",
-        "是否想用 'rep'", 4)
-
-    // ③ 对照：真的没有相近的名字时**不要瞎猜**（误报红线）
-    var d3 = dirs.join(work, "m3.leno")
-    files.write(d3, @"import strings
 
 main() {
     print(strings.contians(""abc"", ""b""))
 }
 ")
-    var o3 = ce.expect_error(d3, "③ 毫无相近项时不提示", "未找到模块方法", 4)
-    ce.expect_no_warning(o3, "③ 不该硬凑一个建议", "是否想用")
+    var o2 = ce.expect_error(d2, "③ 毫无相近项时不提示", "未找到模块方法", 4)
+    ce.expect_no_warning(o2, "③ 不该硬凑一个建议", "是否想用")
 
     dirs.delete(work)
     print("test_module_method_hint passed")

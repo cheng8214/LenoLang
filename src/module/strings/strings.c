@@ -970,17 +970,23 @@ static Value str_format(int argc, Value* args) {
                 if (arg_idx < argc && val_is_obj(args[arg_idx]) &&
                     val_as_obj(args[arg_idx])->type == OBJ_STRING) {
                     ObjString* s = (ObjString*)val_as_obj(args[arg_idx]);
-                    int slen = s->len;
+                    int slen = s->len;                 // **字节数**（写缓冲用）
                     const char* schars = s->chars;
-                    
-                    // 精度限制字符串长度
-                    if (precision >= 0 && slen > precision) {
-                        slen = precision;
+                    // ★ 2026-11-23（真缺陷）：宽度/精度一律按**字符**算。
+                    //   此前 `slen = s->len` 是**字节数** ⇒ 一个汉字 3 字节，`%-10s` 对中文
+                    //   只补 1~2 个空格，表格列必然错位（实测 `"中文"` 在 `%-10s` 下宽 10 字节
+                    //   而不是 10 列）。这与 `strings.len` / `pad_end`（都按字符）也不一致。
+                    int schar = utf8_char_len(s->chars, s->len);
+
+                    // 精度限制：按**字符**截断，并换算回字节边界
+                    if (precision >= 0 && schar > precision) {
+                        schar = precision;
+                        slen = utf8_char_offset(s->chars, s->len, precision);
                     }
-                    
-                    // 宽度填充
-                    if (has_width && slen < width) {
-                        int pad = width - slen;
+
+                    // 宽度填充：按字符数比较/计算补几个空格
+                    if (has_width && schar < width) {
+                        int pad = width - schar;
                         if (flag_minus) {
                             // 左对齐：先字符串后空格
                             APPEND_STR(schars, slen);
@@ -2327,6 +2333,15 @@ void strings_init_module(void) {
     // 7. 新增：重复字符串
     TypeKind rep_params[] = {TYPE_STRING, TYPE_INT};
     native_register_module_method("strings", "rep", str_rep, &NATIVE_T_STRING, NATIVE_FIXED(rep_params));
+
+    // ★ 2026-11-23（用户拍板）：补 `repeat` / `upper` / `lower` 三个**别名**。
+    //   下面的 pad_left 注释反对"一功能两名"，这里是有理由的例外：
+    //   实测三天里 `rep` / `to_upper` 是**最常写错的两个**（"词缀提示"只能事后纠错），
+    //   而这三个名字在各家 stdlib 里几乎就是唯一写法 ⇒ 写成 `strings.repeat(...)` 却报错，
+    //   会让人以为语言不支持。别名只在这三个上开，不再扩大（其余保持单一实现）。
+    native_register_module_method("strings", "repeat", str_rep, &NATIVE_T_STRING, NATIVE_FIXED(rep_params));
+    native_register_module_method("strings", "upper", str_to_upper, &NATIVE_T_STRING, NATIVE_FIXED(upper_params));
+    native_register_module_method("strings", "lower", str_to_lower, &NATIVE_T_STRING, NATIVE_FIXED(lower_params));
 
     // 8. 新增：获取字符的ASCII码值（支持1-2个可变参数）
     TypeKind byte_params[] = {TYPE_STRING, TYPE_INT};

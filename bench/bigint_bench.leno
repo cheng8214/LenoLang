@@ -145,10 +145,8 @@ main() {
 
     var work = dirs.join(_tmpdir(), $"leno_bigbench_{_int(times.ms())}")
     dirs.mkdir_p(work)
-    // ⚠ 中文列不能用 `%-16s`：printf 的宽度按**字节**算，一个汉字 3 字节 ⇒ 列贴在一起 ✗
-    //   `strings.pad_end` 按**字符**计宽 ⇒ 中文/英文混排才对得齐（2026-11-23 实测）
-    print(strings.pad_end("用例", 16) + strings.pad_end("说明", 34)
-          + strings.pad_end("Leno(s)", 10) + strings.pad_end("Python(s)", 11) + "倍数\n")
+    // `%s` 的宽度已改成**按字符**计（2026-11-23 修）⇒ 中文列不再需要手工 pad_end ✓
+    print(strings.format("%-16s%-34s%-10s%-11s%s\n", "用例", "说明", "Leno(s)", "Python(s)", "倍数"))
     print(strings.rep("-", 88) + "\n")
 
     var k = 0
@@ -162,9 +160,8 @@ main() {
                 pstr = strings.format("%.3f", psec)
                 ratio = strings.format("%.2f", lsec / psec) + "x"
             }
-            print(strings.pad_end(TAGS[k], 16) + strings.pad_end(DESCS[k], 34)
-                  + strings.pad_end(strings.format("%.3f", lsec), 10)
-                  + strings.pad_end(pstr, 11) + ratio + "\n")
+            print(strings.format("%-16s%-34s%-10s%-11s%s\n", TAGS[k], DESCS[k],
+                                 strings.format("%.3f", lsec), pstr, ratio))
         }
         k += 1
     }

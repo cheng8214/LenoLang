@@ -51,10 +51,10 @@ func head(string s):string {
 func check_parse(string tag, string text, string expect):int {
     var got = _str(_int(text))
     if got == expect {
-        print($"OK   {strings.pad_end(tag, 14)}{got.len()} 位\n")
+        print(strings.format("OK   %-14s%d 位\n", tag, got.len()))
         return 0
     }
-    print($"FAIL {strings.pad_end(tag, 14)}leno={head(got)} / 期望={head(expect)}\n")
+    print(strings.format("FAIL %-14sleno=%s / 期望=%s\n", tag, head(got), head(expect)))
     return 1
 }
 
@@ -80,7 +80,7 @@ main() {
         var want = ""
         if i < expect.len() { want = strings.trim(expect[i]) }
         if got == want {
-            print($"OK   {strings.pad_end(TAGS[i], 14)}{got.len()} 位\n")
+            print(strings.format("OK   %-14s%d 位\n", TAGS[i], got.len()))
         } else {
             bad += 1
             print($"FAIL {strings.pad_end(TAGS[i], 14)}leno={got.len()} 位 / 真值={want.len()} 位\n")

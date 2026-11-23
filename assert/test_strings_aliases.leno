@@ -1,0 +1,24 @@
+// test_strings_aliases.leno —— `strings.repeat` / `upper` / `lower` 别名（2026-11-23 新增）
+//
+// 背景：仓库里反对"一功能两名"（`pad_left` 那段注释）。这三个是**有理由的例外**：
+//   实测三天里 `rep` / `to_upper` 是最常写错的两个，而 `repeat` / `upper` / `lower`
+//   在各家 stdlib 里几乎是唯一写法 —— 写了就报错会让人以为语言不支持。
+// 判据：别名与原名**结果必须完全一致**，且原名不能被替换掉。
+import strings
+
+main() {
+    // ① 结果一致（别名 == 原名）
+    assert_eq(strings.repeat("-", 5), strings.rep("-", 5), "① repeat == rep")
+    assert_eq(strings.upper("abc"), strings.to_upper("abc"), "② upper == to_upper")
+    assert_eq(strings.lower("ABC"), strings.to_lower("ABC"), "③ lower == to_lower")
+
+    // ② 语义本身（不只看"两边一样"，否则两个都错也能过）
+    assert_eq(strings.repeat("ab", 3), "ababab", "② repeat 语义")
+    assert_eq(strings.upper("abc中文"), "ABC中文", "② upper 语义（非 ASCII 不动）")
+    assert_eq(strings.lower("ABC中文"), "abc中文", "③ lower 语义")
+
+    // ③ 边界：重复 0 次得空串（不能崩、不能返 null）
+    assert_eq(strings.repeat("x", 0), "", "③ repeat 0 次")
+
+    print("test_strings_aliases passed")
+}
