@@ -17,6 +17,9 @@ extern VM vm;
 static const char* builtin_module_names[] = {
     "io", "times", "arrays", "strings", "maths", "rands",
     "files", "asyncs", "dirs", "jsons", "sockets", "ffi", "threads", "regexs",
+    // 2026-11-23：reflect —— 运行期只读反射（struct 字段名/声明类型/方法表）。
+    //   必须登记在这里，否则 parser 不认 `import reflect`。
+    "reflect",
     NULL
 };
 
@@ -45,6 +48,7 @@ extern void sockets_init_module(void);
 extern void ffi_init_module(void);
 extern void threads_init_module(void);
 extern void regexs_init_module(void);
+extern void reflect_init_module(void);
 
 // 模块初始化函数映射表
 typedef void (*ModuleInitFunc)(void);
@@ -69,6 +73,7 @@ static ModuleInitEntry module_init_table[] = {
     {"ffi", ffi_init_module},
     {"threads", threads_init_module},
     {"regexs", regexs_init_module},
+    {"reflect", reflect_init_module},
     {NULL, NULL}
 };
 
@@ -671,6 +676,10 @@ void native_register_all_module_metas(void) {
     threads_init_module();
     extern void regexs_init_module(void);
     regexs_init_module();
+    // reflect：编译期也要注册一遍 —— 语义层靠这张表给 `reflect.fields(s)` 定
+    //   `Array[string]` 返回类型（缺了这行，编译期只能拿到 any，调用点全部要手写收窄）。
+    extern void reflect_init_module(void);
+    reflect_init_module();
 }
 
 // ============================================================================

@@ -1,0 +1,208 @@
+// reflect 模块测试（2026-11-23）
+//   覆盖：kind / type_name / fields / field_count / has_field / get /
+//         field_type（含容器、嵌套 struct、可空）/ methods / 带载荷 enum。
+//   这些都是**强类型断言**：返回类型规格一漂（例如 fields 退回 Array[any]），
+//   下面的赋值/比较会直接编译失败，而不是靠运行期才发现。
+
+import reflect
+
+struct Item {
+    int id = 0
+    string name = ""
+    bool ok = true
+
+    func label():string {
+        return "item"
+    }
+}
+
+struct Bag {
+    int count = 0
+    string? note = null
+    Array[int] nums = []
+    Array[Item] items = []
+    Dict[string, int] score = {}
+    Item? one = null
+}
+
+enum Msg {
+    progress(int done, int total)
+    finished()
+}
+
+cstruct V3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+cstruct Rec {
+    i32 id
+    u8 flag
+    u32 bits : 3
+    f32 ratio
+    u8 data[4]
+}
+
+// 反射的**真实用途**示范：通用 struct → Dict，不需要每个类型手抄一份。
+func dump(any obj):Dict[string, any] {
+    Dict[string, any] out = {}
+    var fs = reflect.fields(obj)
+    for fs to f {
+        out[f] = reflect.get(obj, f)
+    }
+    return out
+}
+
+main() {
+    // ---- kind：对任意值都有定义 ----
+    assert_eq(reflect.kind(1), "int")
+    assert_eq(reflect.kind(2.5), "float")
+    assert_eq(reflect.kind("x"), "string")
+    assert_eq(reflect.kind(true), "bool")
+    assert_eq(reflect.kind(null), "null")
+    assert_eq(reflect.kind([1, 2]), "array")
+    assert_eq(reflect.kind({"a": 1}), "dict")
+
+    // ---- type_name：有声明名给声明名，否则与 kind 同名 ----
+    var item = new Item(id = 7, name = "apple")
+    assert_eq(reflect.type_name(item), "Item")
+    assert_eq(reflect.type_name(1), "int")
+    assert_eq(reflect.kind(item), "struct")
+
+    // ---- fields / field_count：顺序 = 声明顺序 ----
+    var bag = new Bag(count = 3)
+    bag.nums.add(1)
+    bag.nums.add(2)
+    bag.items.add(new Item(id = 9, name = "nested"))
+
+    var fs = reflect.fields(bag)
+    assert_eq(fs.len(), 6)
+    assert_eq(fs[0], "count")
+    assert_eq(fs[1], "note")
+    assert_eq(fs[2], "nums")
+    assert_eq(fs[3], "items")
+    assert_eq(fs[4], "score")
+    assert_eq(fs[5], "one")
+    assert_eq(reflect.field_count(bag), 6)
+
+    // ---- has_field：探测用，不存在返回 false、不抛 ----
+    assert_eq(reflect.has_field(bag, "count"), true)
+    assert_eq(reflect.has_field(bag, "nope"), false)
+
+    // ---- get：取出原值（引用类型是同一个对象） ----
+    var c = reflect.get(bag, "count")
+    if c is int => ci {
+        assert_eq(ci, 3)
+    } else {
+        assert_true(false)
+    }
+
+    var nested = reflect.get(bag, "items")
+    if nested is Array[Item] => ns {
+        assert_eq(ns.len(), 1)
+        assert_eq(ns[0].name, "nested")
+        // 同一引用：改它等于改 bag 里那份
+        ns[0].id = 42
+        assert_eq(bag.items[0].id, 42)
+    } else {
+        assert_true(false)
+    }
+
+    // ---- field_type：声明类型的 Leno 写法 ----
+    assert_eq(reflect.field_type(bag, "count"), "int")
+    assert_eq(reflect.field_type(bag, "note"), "string?")
+    assert_eq(reflect.field_type(bag, "nums"), "Array[int]")
+    assert_eq(reflect.field_type(bag, "items"), "Array[struct Item]")
+    assert_eq(reflect.field_type(bag, "score"), "Dict[string, int]")
+    assert_eq(reflect.field_type(bag, "one"), "struct Item?")
+
+    // ---- methods ----
+    var ms = reflect.methods(item)
+    assert_eq(ms.len(), 1)
+    assert_eq(ms[0], "label")
+
+    // ---- 通用 struct → Dict（反射的核心收益） ----
+    var d = dump(item)
+    assert_eq(d.len(), 3)
+    assert_eq(_str(d["id"]), "7")
+    assert_eq(_str(d["name"]), "apple")
+    assert_eq(_str(d["ok"]), "true")
+
+    // ---- 带载荷 enum：kind 说 enum、fields 为空（内部 tag/p0 不应泄露） ----
+    var m = Msg.progress(3, 10)
+    assert_eq(reflect.kind(m), "enum")
+    assert_eq(reflect.fields(m).len(), 0)
+    assert_eq(reflect.field_count(m), 0)
+
+    // ---- 非 struct 传进 fields 必须**报错**（不是静默空数组） ----
+    var threw = false
+    try {
+        reflect.fields(123)
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true)
+
+    // ---- 拼错字段名同样要报错，而不是给 null ----
+    threw = false
+    try {
+        reflect.get(item, "nmae")
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true)
+
+    // ---- cstruct（数据导向那一半）：同一套 API 覆盖连续内存布局 ----
+    var v = V3.malloc()
+    v.x = 1.5
+    v.y = 2.5
+    v.z = 3.5
+    assert_eq(reflect.kind(v), "cstruct")
+    assert_eq(reflect.type_name(v), "V3")
+    assert_eq(reflect.field_count(v), 3)
+    var vfs = reflect.fields(v)
+    assert_eq(vfs.len(), 3)
+    assert_eq(vfs[0], "x")
+    assert_eq(vfs[2], "z")
+    assert_eq(reflect.has_field(v, "z"), true)
+    assert_eq(reflect.has_field(v, "w"), false)
+    assert_eq(reflect.field_type(v, "x"), "f32")
+
+    var xv = reflect.get(v, "x")
+    if xv is float => xf {
+        assert_eq(xf, 1.5)
+    } else {
+        assert_true(false)
+    }
+    // cstruct 没有用户方法
+    assert_eq(reflect.methods(v).len(), 0)
+
+    // C 布局的宽度/数组/位域在 field_type 里要如实给出（数据导向下 i32 ≠ int）
+    var r = Rec.malloc()
+    assert_eq(reflect.field_type(r, "id"), "i32")
+    assert_eq(reflect.field_type(r, "flag"), "u8")
+    assert_eq(reflect.field_type(r, "bits"), "u32 : 3")
+    assert_eq(reflect.field_type(r, "ratio"), "f32")
+    assert_eq(reflect.field_type(r, "data"), "u8[4]")
+    r.id = 123
+    var idv = reflect.get(r, "id")
+    if idv is int => idi {
+        assert_eq(idi, 123)
+    } else {
+        assert_true(false)
+    }
+    r.free()
+
+    // ---- 释放后读必须报错（reflect 是新入口，不能绕过 UAF 守卫） ----
+    v.free()
+    threw = false
+    try {
+        reflect.get(v, "x")
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true)
+
+    print("reflect ok")
+}

@@ -329,6 +329,24 @@ maths.roundi(-2.5)              // -3   ← 远离零，不是银行家舍入
 > **已知缺口**（不用找了，标准库确实没有）：`gcd` / `lcm` / `is_prime` /
 > `factorial` / `cbrt` / `comb`。四个项目里使用量为 **0**，需要时自己写。
 
+## 6.2 字段名 / 字段类型：用 `reflect`，别手抄
+
+```leno
+import reflect
+
+reflect.fields(s)             // Array[string]，声明顺序
+reflect.field_type(s, "id")   // "int" / "Array[struct Item]" / "i64"
+reflect.get(s, "id")          // any，字段值原样
+reflect.has_field(s, "x")     // bool，探测用，**不抛**
+```
+
+**不要**为每个 struct 手抄一份字段名列表 / 手写 `to_dict`：抄漏一个不会报错，
+只是少一行（`Table` 的列、表单标签、文档表格同理，都该从 `fields` 生成）。
+
+`reflect` 是**只读**的 —— 写一律走 `jsons.fill`（按声明类型转换）。它**不做**
+enum 值反查（enum 成员运行期就是 `int`，无从知道属于哪个 enum）。`cstruct` 也能用，
+`field_type` 给的是 C 宽度：`i32` / `f32` / `u8[4]` / `u32 : 3`。
+
 ---
 
 ## 7. 可空：`T?` + `is` 收窄，不要 `any` + 双检
