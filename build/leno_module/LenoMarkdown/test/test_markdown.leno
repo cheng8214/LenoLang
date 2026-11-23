@@ -113,6 +113,20 @@ main() {
     eq(md.to_html("已废弃 ~~旧接口~~ 请用新的"),
        "<p>已废弃 <del>旧接口</del> 请用新的</p>\n", "⑯ 删除线")
 
+    // ⑯b 任务列表 `- [ ]` / `- [x]`
+    eq(md.to_html("- [ ] 待办\n- [x] 已办"),
+       "<ul>\n<li><input type=\"checkbox\" disabled> 待办</li>\n"
+       + "<li><input type=\"checkbox\" disabled checked> 已办</li>\n</ul>\n", "⑯b 任务列表")
+
+    // ⑯c 图片 title
+    eq(md.to_html("![图](i.png \"说明\")"),
+       "<p><img alt=\"图\" src=\"i.png\" title=\"说明\" /></p>\n", "⑯c 图片 title")
+
+    // ⑯d 表格里行内代码中的 `|` 不拆格
+    eq(md.to_html("| a | b |\n|---|---|\n| `x|y` | 2 |"),
+       "<table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n</thead>\n<tbody>\n"
+       + "<tr>\n<td><code>x|y</code></td>\n<td>2</td>\n</tr>\n</tbody>\n</table>\n", "⑯d 表格内代码含竖线")
+
     // ⑰ 未支持语法扫描：该报的两类都报，正常文档一条都不报
     check("⑰ ~ 围栏被扫出", md.scan_unsupported("~~~\nx\n~~~\n").len() == 1)
     check("⑰ 引用式链接定义被扫出", md.scan_unsupported("[a]: http://x\n").len() == 1)

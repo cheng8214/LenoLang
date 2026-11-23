@@ -110,40 +110,54 @@ func strip_inline_code(string l):string {
     return strings.join(out, "")
 }
 
-// 源文本里 `**` 数量为**奇数**的行（1 起）。这种行本身就是文档笔误（漏了闭标记），
-//   任何渲染器都只能"沿线错配"——所以要单独归类，不能算渲染器的锅。
-func odd_bold_lines(string text):Array[int] {
+// 数一段文本里 `**` 的个数（先剥行内代码：里面写 `**` 是字面量）
+func count_bold(string s):int {
+    // 含连续三个反引号（```` ``` ```` / ```` ```lang ````）时**不统计**：那多半是围栏/示例文本，
+    //   `strip_inline_code` 按单反引号配对会错配，进而把含 `**` 的正文吞掉或重复计 —— 误报源头
+    if strings.find(s, "```") >= 0 { return 0 }
+    var no_code = strip_inline_code(s)
+    var cnt = 0
+    var pos = 0
+    while pos < no_code.len() {
+        var idx = strings.find(no_code.slice(pos, no_code.len() - 1), "**")
+        if idx < 0 { break }
+        cnt += 1
+        pos = pos + idx + 2
+    }
+    return cnt
+}
+
+// `**` 数量为奇数的**段落**（返回段落起始行号，1 起）。
+//   ⚠ 必须按**段落**而不是按行统计：跨行加粗
+//     `**开头…\n…结尾**` 会让两行各算 1 个（都是奇数），但整段是配平的 —— 按行统计会把
+//     34 篇文档全部误报（实测：JIT 那篇 300+ 条几乎都是这种成对行）。
+func odd_bold_blocks(string text):Array[int] {
     Array[int] out = []
     var lines = strings.split(text, "\n")
     var in_fence = false
+    Array[string] acc = []
+    var acc_start = 0
     var i = 0
     while i < lines.len() {
-        var l = lines[i]
-        if strings.starts_with(strings.trim_start(l), "```") {
-            in_fence = not in_fence
+        var raw = lines[i]
+        var t = strings.trim(raw)
+        var boundary = strings.trim(raw) == "" or strings.starts_with(strings.trim_start(raw), "```")
+        if boundary or in_fence or is_rule_line(t) {
+            // 先把累积的段落结算掉
+            if acc.len() > 0 {
+                if count_bold(strings.join(acc, "\n")) % 2 != 0 { out.add(acc_start + 1) }
+                acc = []
+            }
+            if strings.starts_with(strings.trim_start(raw), "```") { in_fence = not in_fence }
             i += 1
             continue
         }
-        if not in_fence {
-            // `***` / `---` 这类是分隔线（`***` 里含一个 `**`，会误报成奇数）⇒ 跳过
-            if is_rule_line(strings.trim(l)) {
-                i += 1
-                continue
-            }
-            // 先把行内代码 `` `…` `` 剥掉：里面写 `**` 是**字面量**（文档常用来解释语法），
-            //   不剥的话几乎每篇都会被误报成"奇数个 **"
-            var no_code = strip_inline_code(l)
-            var cnt = 0
-            var pos = 0
-            while pos < no_code.len() {
-                var idx = strings.find(no_code.slice(pos, no_code.len() - 1), "**")
-                if idx < 0 { break }
-                cnt += 1
-                pos = pos + idx + 2
-            }
-            if cnt % 2 != 0 { out.add(i + 1) }
-        }
+        if acc.len() == 0 { acc_start = i }
+        acc.add(raw)
         i += 1
+    }
+    if acc.len() > 0 {
+        if count_bold(strings.join(acc, "\n")) % 2 != 0 { out.add(acc_start + 1) }
     }
     return out
 }
@@ -165,8 +179,11 @@ func scan_leftover(string rel, string html, bool doc_odd):int {
         else if strings.find(l, "](") >= 0 { why = "`](`（链接没转换）" }
         else if strings.starts_with(t, "|") and strings.find(t, "---") >= 0 { why = "`|---|`（表格分隔行没转换）" }
         if why != "" {
-            if doc_odd and strings.find(why, "`**`") >= 0 {
-                g_doc += 1          // 源文档该行 `**` 是奇数个 ⇒ 笔误，不算渲染失败
+            // ⚠ `**` 单独归类：正文里**本来就可能**有字面 `**`（紧跟空格时 CommonMark 也不认作强调），
+            //   光看输出无法和"没转换"区分 ⇒ 只当警告。其余四类（`](` / 行首 `#` / 围栏 / 表格分隔行）
+            //   一定是没转换，才算失败。
+            if strings.find(why, "`**`") >= 0 {
+                g_doc += 1
             } else {
                 bad += 1
             }
@@ -227,10 +244,14 @@ main() {
         g_total_ms += ms
         g_files += 1
 
-        var odd = odd_bold_lines(body)
+        var odd = odd_bold_blocks(body)
         if odd.len() > 0 {
-            // 只报**数量**（不列行号：有的文档上百行，打印会把汇总冲掉）
-            print("源文档有 " + _str(odd.len()) + " 行 `**` 为奇数（文档笔误，非渲染问题）：" + rel + "\n")
+            // 默认只报**数量**（有的文档上百行，列出来会把汇总冲掉）；-v 时才给行号
+            if g_verbose > 0 {
+                print("源文档 `**` 奇数行：" + rel + " " + _str(odd) + "\n")
+            } else {
+                print("源文档有 " + _str(odd.len()) + " 行 `**` 为奇数（文档笔误，加 -v 看行号）：" + rel + "\n")
+            }
         }
         var bad = scan_leftover(rel, html, odd.len() > 0)   // -v 时自己打印最多 3 条细节
         if bad > 0 {
@@ -246,7 +267,8 @@ main() {
     print("渲染 " + _str(g_files) + " 篇，耗时 " + _str(_int(g_total_ms)) + "ms（平均 "
           + _str(_int(g_total_ms / _float(g_files + 1))) + "ms）\n")
     if g_doc > 0 {
-        print("（另有 " + _str(g_doc) + " 处残留来自**源文档自身**的 `**` 笔误，不计为渲染失败）\n")
+        print("（另有 " + _str(g_doc) + " 处 `**` 未成对：可能是文档笔误，也可能是正文里的字面星号 ——"
+              + " 不计为渲染失败，加 -v 看具体位置）\n")
     }
     if g_bad > 0 {
         print("✗ 有 " + _str(g_bad) + " 篇存在未转换的 Markdown 标记（加 -v 看位置）\n")

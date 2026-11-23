@@ -182,11 +182,19 @@ func inline(string s):string {
             }
         }
 
-        // 图片 ![alt](src)
+        // 图片 ![alt](src) / ![alt](src "标题")
         if c == "!" and i + 1 < n and s.slice(i + 1, i + 1) == "[" {
             var img = parse_link(s, i + 1)
             if img.ok {
-                out.add("<img alt=\"" + esc_code(img.text) + "\" src=\"" + esc_code(img.url) + "\" />")
+                // `src "title"`：地址后面跟一个**引号串**是 title（CommonMark）
+                var src_url = img.url
+                var title = ""
+                var q = strings.find(src_url, " \"")
+                if q > 0 and strings.ends_with(src_url, "\"") {
+                    title = " title=\"" + esc_code(src_url.slice(q + 2, src_url.len() - 2)) + "\""
+                    src_url = src_url.slice(0, q - 1)
+                }
+                out.add("<img alt=\"" + esc_code(img.text) + "\" src=\"" + esc_code(src_url) + "\"" + title + " />")
                 i = img.next
                 continue
             }
@@ -486,15 +494,23 @@ func split_row(string l):Array[string] {
     }
     Array[string] cells = []
     Array[string] cur = []
+    var in_code = false
     var i = 0
     while i < t.len() {
         var c = t.slice(i, i)
+        // 行内代码里的 `|` 是**字面量**（`a|b` 这种），不能拆格
+        if c == "`" {
+            in_code = not in_code
+            cur.add(c)
+            i += 1
+            continue
+        }
         if c == "\\" and i + 1 < t.len() and t.slice(i + 1, i + 1) == "|" {
             cur.add("|")
             i += 2
             continue
         }
-        if c == "|" {
+        if c == "|" and not in_code {
             cells.add(strings.trim(strings.join(cur, "")))
             cur.clear()
             i += 1
@@ -595,6 +611,7 @@ func render_list(Array[string] lines, int start, int base_indent, bool ordered):
     // 项内容先收起来：松散与否（项之间有没有空行）要到**扫完**才知道
     Array[string] item_text = []
     Array[string] item_nested = []
+    Array[string] item_prefix = []       // 任务列表的勾选框（普通项是空串）
     var loose = false
     var i = start
     var n = lines.len()
@@ -621,6 +638,16 @@ func render_list(Array[string] lines, int start, int base_indent, bool ordered):
         var text = strings.trim_start(line).slice(ml, strings.trim_start(line).len() - 1)
         i += 1
 
+        // 任务列表 `- [ ] 待办` / `- [x] 已办`（GFM 写法）
+        var prefix = ""
+        if strings.starts_with(text, "[ ] ") {
+            prefix = "<input type=\"checkbox\" disabled> "
+            text = text.slice(4, text.len() - 1)
+        } else if strings.starts_with(text, "[x] ") or strings.starts_with(text, "[X] ") {
+            prefix = "<input type=\"checkbox\" disabled checked> "
+            text = text.slice(4, text.len() - 1)
+        }
+
         // 续行：缩进更深的普通行（列表项里的第二段）
         while i < n and not is_blank(lines[i]) {
             // ⚠ 围栏代码**不能让列表吞掉**：一旦这里把开围栏收进 `<li>`、而关闭围栏留给外层，
@@ -646,6 +673,7 @@ func render_list(Array[string] lines, int start, int base_indent, bool ordered):
         }
         item_text.add(text)
         item_nested.add(nested)
+        item_prefix.add(prefix)
     }
 
     Array[string] items = []
@@ -653,9 +681,9 @@ func render_list(Array[string] lines, int start, int base_indent, bool ordered):
     while k < item_text.len() {
         if loose {
             // 松散列表：python-markdown 的形状是 `<li>\n<p>…</p>\n</li>`
-            items.add("<li>\n<p>" + inline(item_text[k]) + "</p>\n" + item_nested[k] + "</li>\n")
+            items.add("<li>\n<p>" + item_prefix[k] + inline(item_text[k]) + "</p>\n" + item_nested[k] + "</li>\n")
         } else {
-            items.add("<li>" + inline(item_text[k]) + item_nested[k] + "</li>\n")
+            items.add("<li>" + item_prefix[k] + inline(item_text[k]) + item_nested[k] + "</li>\n")
         }
         k += 1
     }
