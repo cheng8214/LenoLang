@@ -63,36 +63,35 @@ export func hide_cursor(): string { return ESC + "[?25l" }
 export func show_cursor(): string { return ESC + "[?25h" }
 
 // ---- 显示宽度 ----
-// 为什么不是 len()：终端里中文占 **2 列**，用码点数会让表格右半边歪掉。
+// 为什么不是 len()：终端里中文占 **2 列**，按码点数会让表格右半边歪掉。
 //
-// 判定用 **UTF-8 首字节**（没有码点 API，也不需要）：
-//   · < 0x80        ASCII / 控制符 ⇒ 1 列
-//   · 0xE4 ~ 0xE9   CJK 统一汉字 / 全角标点（U+4E00 ~ U+9FFF）⇒ 2 列
-//   · 其它 0xE0+    制表符（─│┌，U+2500 首字节 E2）、其他符号 ⇒ 1 列
-//   · 0xF0+         4 字节字符（emoji 等）⇒ 2 列
-//   · 0xC0 ~ 0xDF   2 字节（拉丁扩展）⇒ 1 列
-// ⚠ 这是**启发式**，不是完整的 East Asian Width 表：生僻字（扩展 B 区，4 字节）会算成 2 列，
-//   而它们实际也是 2 列 ✓；真正会偏的是"窄的 CJK 兼容字符"，少见。
-//   对表格对齐来说，**同一张表内判定一致**比"绝对精确"重要。
+// 走**真实码点**（`strings.to_codepoints` 一趟 O(n)），再按 Unicode East Asian Width
+// 的常用区段判定宽窄 —— 不是拿字节数猜：
+//   `─`(U+2500) 3 字节但**窄**（1 列），中文 3 字节但**宽**（2 列），只有码点能区分。
+//
+// 区段取的是"绝大多数终端都会按 2 列渲染"的那些（CJK 汉字/假名/韩文/全角/emoji），
+// 不含少数"窄的 CJK 兼容字符"——那类连许多终端自己都处理不一致。
+func _is_wide(int cp): bool {
+    if cp >= 0x1100 and cp <= 0x115F { return true }   // 韩文字母
+    if cp >= 0x2E80 and cp <= 0x303E { return true }   // CJK 部首 / 标点
+    if cp >= 0x3041 and cp <= 0x33FF { return true }   // 假名 / CJK 兼容
+    if cp >= 0x3400 and cp <= 0x4DBF { return true }   // CJK 扩展 A
+    if cp >= 0x4E00 and cp <= 0x9FFF { return true }   // CJK 统一汉字
+    if cp >= 0xA000 and cp <= 0xA4CF { return true }   // 彝文
+    if cp >= 0xAC00 and cp <= 0xD7A3 { return true }   // 韩文音节
+    if cp >= 0xF900 and cp <= 0xFAFF { return true }   // CJK 兼容汉字
+    if cp >= 0xFE30 and cp <= 0xFE4F { return true }   // 竖排标点
+    if cp >= 0xFF00 and cp <= 0xFF60 { return true }   // 全角 ASCII / 片假名
+    if cp >= 0xFFE0 and cp <= 0xFFE6 { return true }   // 全角符号
+    if cp >= 0x1F300 and cp <= 0x1F9FF { return true } // emoji / 图形符号
+    return false
+}
+
 export func width(string s): int {
-    int n = strings.byte_len(s)
     int w = 0
-    int i = 0
-    while i < n {
-        int b = strings.byte(s, i)
-        if b < 0x80 {
-            w = w + 1
-            i = i + 1
-        } else if b >= 0xF0 {
-            w = w + 2
-            i = i + 4
-        } else if b >= 0xE0 {
-            if b >= 0xE4 and b <= 0xE9 { w = w + 2 } else { w = w + 1 }
-            i = i + 3
-        } else {
-            w = w + 1
-            i = i + 2
-        }
+    var cps = strings.to_codepoints(s)
+    for cps to cp {
+        if _is_wide(cp) { w = w + 2 } else { w = w + 1 }
     }
     return w
 }

@@ -21,6 +21,11 @@ main() {
     eqI(tui.width("中文"), 4, "① 中文按 2 列算")
     eqI(tui.width("a中b"), 4, "① 混排")
     eqI(tui.width(""), 0, "① 空串")
+    // 关键区分：同样是 3 字节，制表符是**窄**的、汉字是宽的 —— 只有码点能分辨
+    eqI(tui.width("─"), 1, "① 制表符 1 列（3 字节但不是宽字符）")
+    eqI(tui.width("█"), 1, "① 进度条方块 1 列")
+    eqI(tui.width("한"), 2, "① 韩文 2 列")
+    eqI(tui.width("😀"), 2, "① emoji 2 列")
 
     // ---------- ② 进度条 ----------
     string p0 = tui.progress(0.0, 100.0, 10)

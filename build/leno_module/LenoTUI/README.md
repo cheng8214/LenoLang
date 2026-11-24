@@ -50,10 +50,11 @@ print(tui.table(headers, rows))
 
 ## 两条需要知道的口径
 
-1. **`width()` 是启发式判定**，用 UTF-8 首字节区分：CJK 汉字（U+4E00~U+9FFF）算 2 列，
-   制表符（`─│┌`）和普通符号算 1 列，emoji 算 2 列。它不读完整的 East Asian Width 表
-   （Leno 没有码点 API），生僻的"窄 CJK 兼容字符"会偏 —— 但**同一张表内判定一致**，
-   对齐不会忽宽忽窄。
+1. **`width()` 按真实码点判定**（`strings.to_codepoints` 一趟 O(n) + Unicode East Asian
+   Width 的常用区段）。这一点很关键：`─`（U+2500）和 `中`（U+4E2D）**都是 3 字节**，
+   但前者 1 列、后者 2 列 —— 靠字节数猜一定会把表格边框算歪。
+   覆盖区段：CJK 汉字/扩展 A/兼容、假名、韩文、彝文、全角 ASCII、竖排标点、emoji。
+   少数"窄的 CJK 兼容字符"按 1 列算（许多终端自己也处理不一致）。
 2. **颜色默认开**。Windows Terminal / VS Code / 各 Linux 终端都认 ANSI；
    老 conhost 窗口会把 `\x1b[...` 原样打出来 —— 用 `set_color(false)` 或设 `NO_COLOR`。
 
