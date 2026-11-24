@@ -26,7 +26,7 @@ main() {
         + "\"debug\":true,\"ratio\":1.5,\"name\":\"demo\"}"
     var r = config.loadJson(text)
     if r.isErr() { fail("① 解析失败：" + r.msg) }
-    Config c = r.get()
+    var c = r.get()
 
     eqI(c.getInt("server.port", 0), 8080, "① 嵌套 int")
     eqS(c.getStr("server.host", ""), "127.0.0.1", "① 嵌套 string")
@@ -54,7 +54,7 @@ main() {
     _env("LENOCFG_A_PORT", "9090")
     _env("LENOCFG_A_DEBUG", "no")
     var r2 = config.loadJson("{\"port\":8080,\"debug\":true}", "LENOCFG_A")
-    Config c2 = r2.get()
+    var c2 = r2.get()
     eqI(c2.getInt("port", 0), 9090, "④ ENV 覆盖 int")
     if c2.getBool("debug", true) { fail("④ ENV 覆盖 bool") }
     eqS(c2.source("port"), "env", "④ source=env")
@@ -64,7 +64,7 @@ main() {
     // ENV 值不是整数 ⇒ 报错（不静默给 0）
     _env("LENOCFG_B_N", "abc")
     var r3 = config.loadJson("{\"n\":1}", "LENOCFG_B")
-    Config c3 = r3.get()
+    var c3 = r3.get()
     var threwEnv = false
     try {
         c3.getInt("n", 0)
@@ -77,7 +77,7 @@ main() {
     // ---------- ⑤ 文件不存在 ⇒ ok（空配置） ----------
     var r5 = config.load("__no_such_config__.json", "")
     if r5.isErr() { fail("⑤ 文件不存在不该算错误") }
-    Config c5 = r5.get()
+    var c5 = r5.get()
     eqI(c5.getInt("x", 7), 7, "⑤ 空配置用默认值")
 
     // ---------- ⑥ 类型不符 ⇒ 报错（不猜） ----------
@@ -108,7 +108,7 @@ main() {
 
     // ---------- ⑧ 显式 null 算"没给值" ----------
     var r8 = config.loadJson("{\"k\":null}")
-    Config c8 = r8.get()
+    var c8 = r8.get()
     var threw8 = false
     try {
         c8.requireStr("k")

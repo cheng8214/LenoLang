@@ -357,7 +357,7 @@ use config.Config
 
 var r = config.load("app.json", "APP")     // 第二个参数 = ENV 前缀
 if r.isErr() { … }
-Config c = r.get()                          // ⚠ 必须显式标注类型（见最后一条）
+var c = r.get()
 var port = c.getInt("server.port", 8080)
 ```
 
@@ -366,8 +366,8 @@ var port = c.getInt("server.port", 8080)
 - 类型**不猜**：JSON 里把 `"8080"` 当 int 读会报错；ENV 走严格解析（`res.parseInt`）
 - `requireStr/requireInt` 缺（含显式 `null`）⇒ 抛错；`getX(key, default)` 缺 ⇒ 默认值
 - 只做 JSON。**别**为配置引入 TOML/YAML 的"够用版"解析器 —— 长尾写不全就是新的静默错源
-- ⚠ `Result[T].get()` 跨模块不会自动代入成具体类型 ⇒ 必须写 `Config c = r.get()`，
-  写 `var c = r.get()` 会得到未约束的 `T`（报「类型 'T' 没有方法 getInt」）
+- ⚠ `Result[X]` 里的 `X` 要在当前文件 `use` 导入；少了它，`r.get()` 会退化成未约束的 `T`
+  （报「类型 'T' 没有方法 …」）—— 这是"类型名要导入"的通用规则，不是 `Result` 特有
 
 ## 6.4 时间：只有「本地 / UTC」两种口径
 

@@ -13,7 +13,7 @@ if r.isErr() {
     print("配置有问题：" + r.msg)
     _exit(1)
 }
-Config c = r.get()                          // ⚠ 显式标注类型（见下面的"已知语言限制"）
+var c = r.get()
 
 var port  = c.getInt("server.port", 8080)   // 缺 ⇒ 8080
 var host  = c.getStr("server.host", "0.0.0.0")
@@ -73,16 +73,19 @@ TOML/YAML 的规范长尾（多行串、数组表、锚点、缩进敏感）写�
 
 真需要 TOML：用 `leno.toml` 那套工具链先转成 JSON，再交给本模块。
 
-## 已知语言限制（写调用代码时会遇到）
+## 一个容易踩的点
 
-`Result[T].get()` 的返回值在**跨模块**处不会自动代入成具体类型（返回声明里是 `T`），所以：
+`Result[X]` 里的 `X` **必须在当前文件 `use` 导入**：
 
 ```leno
-Config c = r.get()      // ✓ 显式标注
-var c = r.get()         // ✗ 会被当成未约束的 T ⇒ 「类型 'T' 没有方法 getInt」
+import "Config" as config
+use config.Config          // ← 少了这行，`Result[Config]` 的实参就解析不出来
+import "Result" as res
+use res.Result
 ```
 
-这是编译器侧的问题（已记录），不是本模块的设计选择。
+少了它，`r.get()` 会退化成未约束的 `T`，后续 `c.getInt(...)` 报「类型 'T' 没有方法 getInt」。
+这是"类型名要导入"的通用规则（编译器会在报错里提示补哪一句 `use`），不是本模块特有的限制。
 
 ## 跑测试
 
