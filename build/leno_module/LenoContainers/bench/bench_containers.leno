@@ -1,0 +1,176 @@
+// bench_containers.leno —— LenoContainers 速度基准（常驻，随时复测）
+//
+// 用法（任意目录，脚本自己靠 leno.toml 找模块根）：
+//   build\leno.exe build\leno_module\LenoContainers\bench\bench_containers.leno
+// 或在模块目录里：
+//   ..\..\..\build\leno.exe bench\bench_containers.leno
+//
+// 读数的正确姿势：同机同时段比趋势，不要抠单次小数（机器/后台负载 ±10%）。
+// 2026-11-24 基线（N=2,000,000，本机单进程）：
+//   裸 Array.add 8 ns/op（对照）
+//   Stack.push 35、pop 68；Queue.push 32、pop 90（含 sink 17ns，缓存 len 后再省 ~6ns）
+//   LRU cap=1024：put 2.8us、get 2.2us、peek 0.36us、未命中 0.8us
+//   ClockLRU cap=1024：put 1.2us、get 0.40us、peek 0.38us（get 不随 cap 涨：16/128/1024/4096
+//   ⇒ 320/357/361/369 ns，而 LRU 是 379/624/2178/7659 ns）
+import "Containers" as ct
+import times
+import strings
+
+float gT0 = 0.0
+int gSink = 0
+
+func tick() { gT0 = times.us() }
+
+func lap(string name, int nops) {
+    int us = _int(times.us() - gT0)
+    int ns = 0
+    if nops > 0 { ns = _int(us * 1000 / nops) }
+    print("  " + strings.pad_end(name, 44) + strings.pad_start(_str(us), 9) + " us"
+          + strings.pad_start(_str(ns), 8) + " ns/op\n")
+}
+
+func sink(int v) { gSink = gSink + v }
+
+main() {
+    int N = 2000000
+    int G = 1000000
+    print("=== LenoContainers 基准（N = " + _str(N) + "，G = " + _str(G) + "）===\n")
+    print("注：pop 类读数含 sink() 调用（自由函数约 17 ns）；LRU/ClockLRU 读数含 key 拼串\n")
+
+    // ---------------- 基线 ----------------
+    print("[基线] 裸 Array\n")
+    tick()
+    var a = []
+    for 0 : N - 1 to i { a.add(i) }
+    lap("Array.add ×N", N)
+
+    tick()
+    for 0 : N - 1 to i { sink(_int(a.pop())) }
+    lap("Array.pop ×N（含 sink）", N)
+
+    // ---------------- Stack ----------------
+    print("\n[Stack]\n")
+    var st = new ct.Stack[int]()
+    tick()
+    for 0 : N - 1 to i { st.push(i) }
+    lap("push ×N", N)
+
+    tick()
+    for 0 : N - 1 to i { sink(st.pop()) }
+    lap("pop ×N（含 sink）", N)
+    if st.len() != 0 { print("  !! Stack 未清空\n") }
+
+    // ---------------- Queue ----------------
+    print("\n[Queue]（head 指针 + 惰性压缩）\n")
+    var q = new ct.Queue[int]()
+    tick()
+    for 0 : N - 1 to i { q.push(i) }
+    lap("push ×N", N)
+
+    tick()
+    for 0 : N - 1 to i { sink(q.pop()) }
+    lap("pop ×N（FIFO，含一次性压缩 + sink）", N)
+    if not q.is_empty() { print("  !! Queue 未清空\n") }
+
+    tick()
+    for 0 : N - 1 to i {
+        q.push(i)
+        sink(q.pop())
+    }
+    lap("push+pop 交替 ×N", N * 2)
+
+    tick()
+    var bad = []
+    int M = 20000
+    for 0 : M - 1 to i { bad.add(i) }
+    for 0 : M - 1 to i { sink(_int(bad.remove(0))) }
+    lap("对照：Array.remove(0) 出队 ×" + _str(M), M)
+
+    // ---------------- LRU ----------------
+    print("\n[LRU]（严格按最近访问淘汰，O(n)）\n")
+    var lru = new ct.LRU[int]()
+    lru.set_capacity(1024)
+    int K = 200000
+    tick()
+    for 0 : K - 1 to i { lru.put("k" + _str(i), i) }
+    lap("put 新 key ×" + _str(K) + "（cap=1024，含淘汰）", K)
+    if lru.len() != 1024 { print("  !! LRU 长度应恒为 1024，实际 " + _str(lru.len()) + "\n") }
+
+    tick()
+    for 0 : G - 1 to i { sink(lru.get("k" + _str(K - 1 - (i % 1024)), 0)) }
+    lap("get 命中 ×" + _str(G) + "（含提升）", G)
+
+    tick()
+    for 0 : G - 1 to i { sink(lru.peek("k" + _str(K - 1 - (i % 1024)), 0)) }
+    lap("peek 命中 ×" + _str(G) + "（不提升）", G)
+
+    tick()
+    for 0 : G - 1 to i { sink(lru.get("miss" + _str(i), -1)) }
+    lap("get 未命中 ×" + _str(G), G)
+
+    tick()
+    for 0 : G - 1 to i { lru.put("k" + _str(K - 1 - (i % 1024)), i) }
+    lap("put 覆盖已有 key ×" + _str(G), G)
+
+    // 缩容：批量裁掉前缀（原来的 while + remove(0) 是 O(over×n)）
+    var lru3 = new ct.LRU[int]()
+    lru3.set_capacity(4096)
+    for 0 : 4095 to i { lru3.put("k" + _str(i), i) }
+    tick()
+    lru3.set_capacity(128)
+    lap("set_capacity 4096 → 128（一次裁 3968 个）", 3968)
+    if lru3.len() != 128 { print("  !! 缩容后长度应为 128，实际 " + _str(lru3.len()) + "\n") }
+
+    // ---------------- ClockLRU ----------------
+    print("\n[ClockLRU]（CLOCK 二次机会，O(1) 近似 LRU）\n")
+    var cl = new ct.ClockLRU[int](cap = 1024)
+    tick()
+    for 0 : K - 1 to i { cl.put("k" + _str(i), i) }
+    lap("put 新 key ×" + _str(K) + "（cap=1024，含淘汰）", K)
+    if cl.len() != 1024 { print("  !! ClockLRU 长度应恒为 1024，实际 " + _str(cl.len()) + "\n") }
+
+    tick()
+    for 0 : G - 1 to i { sink(cl.get("k" + _str(K - 1 - (i % 1024)), 0)) }
+    lap("get 命中 ×" + _str(G) + "（打 ref 位）", G)
+
+    tick()
+    for 0 : G - 1 to i { sink(cl.peek("k" + _str(K - 1 - (i % 1024)), 0)) }
+    lap("peek 命中 ×" + _str(G), G)
+
+    tick()
+    for 0 : G - 1 to i { sink(cl.get("miss" + _str(i), -1)) }
+    lap("get 未命中 ×" + _str(G), G)
+
+    tick()
+    for 0 : G - 1 to i { cl.put("k" + _str(K - 1 - (i % 1024)), i) }
+    lap("put 覆盖已有 key ×" + _str(G), G)
+
+    // cap 扫描：O(1) 的关键证据 —— 曲线必须**平**，不能随 cap 涨
+    print("\n[cap 扫描] get 命中 ×200000（key 循环在 cap 个里）\n")
+    for [16, 128, 1024, 4096] to capv {
+        var l1 = new ct.LRU[int]()
+        l1.set_capacity(capv)
+        var l2 = new ct.ClockLRU[int](cap = capv)
+        for 0 : capv - 1 to j {
+            l1.put("k" + _str(j), j)
+            l2.put("k" + _str(j), j)
+        }
+        tick()
+        for 0 : 200000 - 1 to j { sink(l1.get("k" + _str(j % capv), 0)) }
+        lap("LRU cap=" + _str(capv), 200000)
+
+        tick()
+        for 0 : 200000 - 1 to j { sink(l2.get("k" + _str(j % capv), 0)) }
+        lap("ClockLRU cap=" + _str(capv), 200000)
+    }
+
+    // 对照：裸 Dict
+    print("\n[对照] 裸 Dict\n")
+    var d = {}
+    for 0 : 1023 to i { d["k" + _str(i)] = i }
+    tick()
+    for 0 : G - 1 to i { sink(_int(d.get("k" + _str(i % 1024), 0))) }
+    lap("Dict.get 命中 ×" + _str(G), G)
+
+    print("\nsink = " + _str(gSink) + "（仅防优化）\n")
+}

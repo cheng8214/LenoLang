@@ -120,5 +120,72 @@ main() {
     l.clear()
     eqI(l.len(), 0, "③ clear")
 
+    // peek 只读、不提升 ⇒ 不能改变淘汰顺序
+    var lp = new ct.LRU[int](cap = 2)
+    lp.put("a", 1)
+    lp.put("b", 2)
+    eqI(lp.peek("a", -1), 1, "③ peek 命中")
+    eqI(lp.peek("zz", -9), -9, "③ peek 缺失返回默认值")
+    lp.put("c", 3)              // a 只 peek 过（没提升）⇒ 淘汰的仍是 a
+    if lp.has("a") { fail("③ peek 不该提升访问序（a 应被淘汰）") }
+    if not lp.has("b") { fail("③ peek 后 b 必须保留") }
+
+    // ==================== ClockLRU（O(1) 近似 LRU）====================
+    var c = new ct.ClockLRU[int](cap = 4)
+    eqI(c.capacity(), 4, "④ 容量")
+    eqI(c.len(), 0, "④ 新容器为空")
+    for 0 : 3 to i { c.put("k" + _str(i), i) }
+    eqI(c.len(), 4, "④ 装满 4")
+    eqI(c.get("k1", -1), 1, "④ 命中")
+    eqI(c.peek("k2", -1), 2, "④ peek 命中")
+    eqI(c.get("nope", -1), -1, "④ 缺失返回默认值")
+    eqI(c.peek("nope", -7), -7, "④ peek 缺失返回默认值")
+
+    c.put("k4", 4)              // 满 ⇒ 淘汰一格，长度必须恒定
+    eqI(c.len(), 4, "④ 淘汰后长度恒定")
+    if not c.has("k4") { fail("④ 新写的 key 必须在") }
+    if not c.has("k1") { fail("④ k1 刚被 get 提升过，必须留下") }
+
+    // 覆盖写：不新增长度、值要换掉
+    c.put("k1", 111)
+    eqI(c.get("k1", -1), 111, "④ 覆盖写")
+    eqI(c.len(), 4, "④ 覆盖写不增长度")
+
+    // remove 留死槽，后续 put 要复用 ⇒ 长度不虚增
+    c.remove("k1")
+    eqI(c.len(), 3, "④ remove 后长度")
+    if c.has("k1") { fail("④ remove 后查不到") }
+    c.put("k9", 9)
+    eqI(c.len(), 4, "④ 死槽被复用，长度不虚增")
+
+    // 容量只能调大
+    c.set_capacity(8)
+    eqI(c.capacity(), 8, "④ 调大容量")
+    c.put("k10", 10)
+    eqI(c.len(), 5, "④ 调大后能装更多")
+
+    var threw4 = false
+    try {
+        c.set_capacity(2)
+    } catch e {
+        threw4 = true
+    }
+    if not threw4 { fail("④ ClockLRU 缩容必须报错（定长环只支持调大）") }
+    eqI(c.capacity(), 8, "④ 缩容失败后容量不变")
+
+    var threw5 = false
+    try {
+        c.set_capacity(0)
+    } catch e {
+        threw5 = true
+    }
+    if not threw5 { fail("④ 容量 0 必须报错") }
+
+    // clear 后能重新用
+    c.clear()
+    eqI(c.len(), 0, "④ clear")
+    c.put("x", 1)
+    eqI(c.get("x", -1), 1, "④ clear 后重新写入")
+
     print("test_containers passed")
 }
