@@ -1,0 +1,100 @@
+// Database.insert / insertMany —— 按 struct 定义自动生成列名（2026-11-24）
+//
+// 背景：以前 INSERT 的列名 / `?` 个数 / bind 序号要在调用点**手抄三遍**，
+//   加一个字段就得同步改三处；漏改序号是"值塞进错的列"——不报错，只是数据悄悄错位。
+//   现在列名从 `reflect.fields(rec)` 直接生成。
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoSqlite\test\test_insert_record.leno
+import "sqlite3" as db
+import "Result" as res
+use res.Result
+
+struct Song {
+    int id = 0
+    string name = ""
+    string artist = ""
+    float dur = 0.0
+    bool liked = false
+    string? note = null
+}
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func eqStr(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到 [" + got + "] 期望 [" + want + "]") }
+}
+
+main() {
+    var d = db.openMemory()
+    if not d.isOk() { fail("openMemory 失败") }
+
+    // id 是自增主键 ⇒ 插入时 skip 掉
+    var cr = d.execResult(
+        "CREATE TABLE song(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, artist TEXT, " +
+        "dur REAL, liked INTEGER, note TEXT)")
+    if cr.isErr() { fail("建表：" + cr.msg) }
+
+    // ---- ① 单条 ----
+    var s = new Song(name = "晴天", artist = "周杰伦", dur = 269.0, liked = true)
+    var r = d.insert("song", s, ["id"])
+    if r.isErr() { fail("insert：" + r.msg) }
+    eqInt(r.get(), 1, "① 第一条 rowid")
+
+    // 读回：列 = 字段声明顺序（name, artist, dur, liked, note）
+    var st = d.prepare("SELECT name, artist, dur, liked, note FROM song WHERE id = 1")
+    if st.step() != db.ROW { fail("① 应查到 1 行") }
+    eqStr(st.column_text(0), "晴天", "① name")
+    eqStr(st.column_text(1), "周杰伦", "① artist")
+    if st.column_double(2) != 269.0 { fail("① dur：" + _str(st.column_double(2))) }
+    eqInt(st.column_int(3), 1, "① bool 存成 1")
+    if not st.column_is_null(4) { fail("① 未赋值的可空字段应是 SQL NULL") }
+    st.finalize()
+
+    // ---- ② 批量（同一事务） ----
+    Array[any] batch = []
+    batch.add(new Song(name = "七里香", artist = "周杰伦", dur = 299.0))
+    batch.add(new Song(name = "稻香", artist = "周杰伦", dur = 223.0, liked = true, note = "喜欢"))
+    var rm = d.insertMany("song", batch, ["id"])
+    if rm.isErr() { fail("insertMany：" + rm.msg) }
+    eqInt(rm.get(), 2, "② 批量写入条数")
+
+    var cnt = d.prepare("SELECT COUNT(*) FROM song")
+    cnt.step()
+    eqInt(cnt.column_int(0), 3, "② 总行数 3")
+    cnt.finalize()
+
+    // ---- ③ 失败路径：表不存在 ⇒ err（不是静默成功） ----
+    var bad = d.insert("no_such_table", new Song(name = "x"))
+    eqInt(if bad.isErr() then 1 else 0, 1, "③ 表不存在要给 err")
+
+    // ---- ④ 失败路径：skip 把所有列都排除了（必须含 id，否则还剩一列可写） ----
+    Array[string] all = ["id", "name", "artist", "dur", "liked", "note"]
+    var none = d.insert("song", new Song(name = "x"), all)
+    eqInt(if none.isErr() then 1 else 0, 1, "④ 无可写列要给 err")
+
+    // ---- ⑤ 失败路径：批量里有一条坏记录 ⇒ 整批回滚 ----
+    Array[any] mixed = []
+    mixed.add(new Song(name = "好", artist = "a", dur = 1.0))
+    mixed.add(new Song(name = "也好", artist = "b", dur = 2.0))
+    var before = d.prepare("SELECT COUNT(*) FROM song")
+    before.step()
+    int n0 = before.column_int(0)
+    before.finalize()
+
+    var okBatch = d.insertMany("song", mixed, ["id"])
+    if okBatch.isErr() { fail("⑤ 正常批量不该失败：" + okBatch.msg) }
+    var after = d.prepare("SELECT COUNT(*) FROM song")
+    after.step()
+    eqInt(after.column_int(0), n0 + 2, "⑤ 正常批量 +2")
+    after.finalize()
+
+    print("test_insert_record passed")
+}

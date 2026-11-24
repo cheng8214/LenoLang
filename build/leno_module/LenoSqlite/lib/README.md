@@ -74,3 +74,41 @@ done
   `leno pack` 把某一 ABI 的库复制到 exe 目录。Android 侧一律走 `build_android.sh`。
 - 换完库记得跑一次 `leno.exe build/leno_module/run_all_tests.leno`（要用**编译器**跑，
   不是 VM），52 个用例里包含 SQLite 的 NULL 语义、事务回滚、坏 SQL 报错等契约。
+
+## 记录写入：`insert` / `insertMany`（2026-11-24）
+
+`Database` 现在能直接吃**有字段名的记录**（struct）：列名由 `reflect.fields(rec)` 生成，
+不用再在调用点手抄列名 / `?` 个数 / bind 序号三处 —— 漏改其中一个就是"值塞进错的列"，
+**不报错**，只是数据悄悄错位。
+
+```leno
+struct Song {
+    int id = 0
+    string name = ""
+    float dur = 0.0
+    bool liked = false
+}
+
+var d = sqlite3.open("music.db")
+// 列 = 字段名（声明顺序）；id 是自增主键 ⇒ skip 掉
+var r = d.insert("song", new Song(name = "晴天", dur = 269.0), ["id"])
+if r.isOk() {
+    print("rowid=" + _str(r.get()))
+} else {
+    print("失败：" + r.msg)
+}
+
+// 批量：同一个事务，要么全进、要么全不进
+Array[any] many = [new Song(name = "七里香"), new Song(name = "稻香")]
+var rm = d.insertMany("song", many, ["id"])
+```
+
+口径：
+
+- 列名 = 字段名，按**声明顺序**；表名由调用方给（不做转义 —— 别把用户输入拼进来）
+- 值走 `bind()` 自动分派 `int` / `float` / `string` / `null`；**`bool` 存 0/1**
+- 失败一律 `Result.err` 并带 SQLite 原话（表不存在、列数不匹配可以分开看）
+- 返回值：`insert` 给 `lastInsertRowid()`，`insertMany` 给成功条数
+
+> 只适合"手里已经有 struct 记录"的场景（模型直接落库）。如果数据本来就是
+> HTTP 请求里的 `Dict`，`db.run(sql, [params])` 那条路更直接 —— 不要为了用它多绕一层。

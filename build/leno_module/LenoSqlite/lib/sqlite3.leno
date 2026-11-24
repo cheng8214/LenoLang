@@ -4,6 +4,9 @@
 import ffi
 import dirs
 import files
+import strings
+// 2026-11-24：记录写入按 struct 定义自动生成列名（见下面 Database.insert 的说明）
+import reflect
 import "sqlite3_core.leno" as core
 // 统一错误契约（P2）：`execResult` / `prepareResult` 用 Result 取代 Dict{rc,err} / 裸 rc
 import "Result" as res
@@ -539,6 +542,99 @@ export struct Database {
 
     // 是否连接成功
     func isOk(): bool { return ok }
+
+    // ==================== 记录写入（struct → INSERT，2026-11-24）====================
+    // 为什么加：INSERT 的**列名 / `?` 个数 / bind 序号**原先要在调用点手抄三遍 ——
+    //   加一个字段就得同步改三处；漏改序号是"值塞进错的列"，**不报错**，只是数据悄悄错位。
+    //   列名现在直接从 struct 定义取（`reflect.fields`），写一次对所有记录类型通用。
+    //
+    // 口径：
+    //   · 列 = 字段名，按**声明顺序**；表名由调用方给（不做转义 —— 别把用户输入拼进来）；
+    //   · 值走 `bind()` 自动分派 int / float / string / null；**bool 先转 0/1**
+    //     （`bind` 的 switch 没有 bool 分支，不转会得到 MISMATCH）；
+    //   · `skip` 给自增主键 / 创建时间这类不该由调用方写的列；
+    //   · 失败一律 `Result.err` 并带 SQLite 原话（与 `execResult` 同口径）。
+    func insert(string table, any rec, Array[string]? skip = null): Result[int] {
+        if not ok { return res.err[int](res.ErrCode.IO, "数据库连接未打开") }
+
+        // 默认值不支持数组字面量 ⇒ 参数用可空，这里收窄成一份非空副本
+        Array[string] sk = []
+        if skip is Array[string] => arr { sk = arr }
+
+        Array[string] cols = []
+        Array[any] vals = []
+        var fs = reflect.fields(rec)
+        for fs to f {
+            if sk.has(f) { continue }
+            cols.add(f)
+            vals.add(reflect.get(rec, f))
+        }
+        if cols.len() == 0 {
+            return res.err[int](res.ErrCode.DB, "insert：没有可写入的字段（skip 把列都排除了？）")
+        }
+
+        string ph = ""
+        for 0 : cols.len() - 1 to i {
+            if i > 0 { ph = ph + ", " }
+            ph = ph + "?"
+        }
+        string sql = "INSERT INTO " + table + "(" + strings.join(cols, ", ") + ") VALUES(" + ph + ")"
+
+        var pr = prepareResult(sql)
+        if pr.isErr() { return res.err[int](pr.code, pr.msg) }
+        Statement stmt = pr.get()
+
+        for 0 : vals.len() - 1 to i {
+            var v = vals[i]
+            int rc = 0
+            if v is bool => b {
+                rc = stmt.bind(i + 1, if b then 1 else 0)
+            } else {
+                rc = stmt.bind(i + 1, v)
+            }
+            if rc != ResultCode.OK {
+                stmt.finalize()
+                return res.err[int](res.ErrCode.DB,
+                    "insert：第 " + _str(i + 1) + " 个参数（" + cols[i] + "）绑定失败（rc=" + _str(rc) + "）")
+            }
+        }
+
+        int rc2 = stmt.step()
+        stmt.finalize()
+        if rc2 != ResultCode.DONE {
+            return res.err[int](res.ErrCode.DB, "insert 失败：" + errmsg() + "｜SQL: " + sql)
+        }
+        return res.ok(lastInsertRowid())
+    }
+
+    // 批量写入：**同一个事务**（要么全进，要么全不进）。
+    //   为什么必须包事务：逐条 autocommit 在机械盘上慢一个数量级，且中途失败会留半份数据。
+    //   列名取**第一条**记录：同一类型的记录字段完全一致；混入别的类型会被 SQL 拒绝
+    //   （不会静默错列 —— 列数/类型对不上时 SQLite 自己报错）。
+    func insertMany(string table, Array[any] recs, Array[string]? skip = null): Result[int] {
+        if not ok { return res.err[int](res.ErrCode.IO, "数据库连接未打开") }
+        if recs.len() == 0 { return res.ok(0) }
+
+        var br = execResult("BEGIN")
+        if br.isErr() { return res.err[int](br.code, br.msg) }
+
+        int n = 0
+        for recs to rec {
+            var r = insert(table, rec, skip)
+            if r.isErr() {
+                exec("ROLLBACK")
+                return res.err[int](r.code, "第 " + _str(n + 1) + " 条插入失败：" + r.msg)
+            }
+            n = n + 1
+        }
+
+        var cr = execResult("COMMIT")
+        if cr.isErr() {
+            exec("ROLLBACK")
+            return res.err[int](cr.code, cr.msg)
+        }
+        return res.ok(n)
+    }
 }
 
 // ==================== 工厂函数 ====================
