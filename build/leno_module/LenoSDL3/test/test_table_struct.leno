@@ -57,5 +57,12 @@ main() {
     tb.add_struct(c)
     assert_eq(tb.get_row(2).join("|"), "song-c||7", "④ 拼错的字段 ⇒ 空单元格");
 
-    print("test_table_struct passed（逐行 / 默认值 / 批量 / 拼错留空 四组）")
+    // ⑤ 不调 set_struct_keys ⇒ 按 struct 的**声明顺序**自动取全部字段（2026-11-24）
+    //    显式 keys 仍优先（上面 ①②④ 都还是显式映射）
+    Table tb2 = SDL3.createTable({x: 0, y: 0, w: 600.0, h: 300.0,
+                                  headers: ["title", "artist", "secs", "liked"]});
+    tb2.add_struct(a)
+    assert_eq(tb2.get_row(0).join("|"), "song-a|singer-a|269|true", "⑤ 未设 keys 时按字段声明顺序")
+
+    print("test_table_struct passed（逐行 / 默认值 / 批量 / 拼错留空 / 自动字段 五组）")
 }

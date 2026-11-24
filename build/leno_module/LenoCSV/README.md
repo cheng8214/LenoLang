@@ -13,6 +13,12 @@ var text = csv.encode(rows)                  // "a,b\r\n1,2"（默认 CRLF，Exc
 CsvTable t = csv.parseTable("name,age\nAlice,30\n")
 var recs = csv.toDicts(t.header, t.rows)     // [{name:"Alice", age:"30"}]
 
+// ②b 记录 → CSV（表头取字段名，列顺序 = 声明顺序）
+struct Song { string name = ""; int dur = 0 }
+Array[any] songs = [new Song(name = "晴天", dur = 269)]
+var text2 = csv.encodeRecords(csv.headersOf(songs), csv.rowsOf(songs))
+// "name,dur\r\n晴天,269"
+
 // ③ 文件（会失败的两个返回 Result）
 Result[CsvTable] d = csv.load("data.csv", ",", true)
 if d.isErr() { print(d.errText()) }
@@ -31,6 +37,8 @@ Result[int] w = csv.save("out.csv", d.val.rows, ",", true)    // 写出的字节
 | `encodeRecords(header, rows, ...)` | 表头 + 记录 → 文本 |
 | `parseTable(text, delim=",", hasHeader=true)` | → `CsvTable{header, rows}` |
 | `toDicts(header, rows)` | → `Array[Dict]`（缺列补 `""`，多列忽略） |
+| `headersOf(recs, keys=null)` | 记录 → 表头（字段名，**声明顺序**）；给 `keys` 则按它（裁剪/换序） |
+| `rowsOf(recs, keys=null)` | 记录 → 行（不含表头）；单元格一律 `_str()`；**字段名写错会抛错** |
 | `load(path, delim=",", hasHeader=true)` | → `Result[CsvTable]`；文件不存在 ⇒ `NOT_FOUND` |
 | `save(path, rows, delim=",", crlf=true)` | → `Result[int]`（写出的**字节数**） |
 | `widths(rows)` | 每行列数（排查"第 3 行少一列"） |

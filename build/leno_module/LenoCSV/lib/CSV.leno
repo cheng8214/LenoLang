@@ -53,6 +53,20 @@ export func toDicts(Array[string] header, Array[Array[string]] rows): Array[Dict
     return cio.to_dicts(header, rows)
 }
 
+// ==================== 记录（struct）→ 表头 / 行（2026-11-24）====================
+// 表头取字段名（声明顺序），行取字段值（一律字符串）。
+// `keys` 非空则按它（只导出部分列 / 指定顺序）；空列表可用第二个参数显式给 keys。
+//
+//   Array[any] recs = [new Song(name = "晴天", dur = 269), ...]
+//   var text = csv.encodeRecords(csv.headersOf(recs), csv.rowsOf(recs))
+export func headersOf(Array[any] recs, Array[string]? keys = null): Array[string] {
+    return cio.headers_of(recs, keys)
+}
+
+export func rowsOf(Array[any] recs, Array[string]? keys = null): Array[Array[string]] {
+    return cio.rows_of(recs, keys)
+}
+
 // ==================== 文件 ====================
 export func load(string path, string delim = ",", bool hasHeader = true): Result[CsvTable] {
     return cio.load(path, delim, hasHeader)

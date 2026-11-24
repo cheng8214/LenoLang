@@ -9,6 +9,8 @@
 //   这样既统一了契约，也没有"凭空造一个永远 ok 的 Result"（那种 Result 反而让人以为要判错）。
 import files
 import strings
+// 2026-11-24：记录（struct）→ 表头/行 按字段定义生成（见文件末尾的 headers_of / rows_of）
+import reflect
 import "Result" as res
 use res.Result
 import "csv_parse.leno" as p
@@ -73,4 +75,35 @@ export func to_dicts(Array[string] header, Array[Array[string]] rows): Array[Dic
         recs.add(d)
     }
     return recs
+}
+
+// ==================== 记录（struct）→ 表头 / 行（2026-11-24）====================
+// 背景：to_dicts 是 CSV → Dict 这一侧；反方向（手里已经是 struct）原先只能写
+//   `rows.add([s.name, s.dur, ...])` —— **列顺序即契约**，插一列要改所有构造点，
+//   漏一处就是串列（不报错，看着像数据错）。
+//
+// 口径：
+//   · 表头 = 字段名，按**声明顺序**；`keys` 非空则按它（裁剪列 / 指定顺序）；
+//   · 单元格一律 `_str()`（CSV 只有字符串一种类型，数字/布尔怎么格式化由调用方决定）；
+//   · 字段名写错 ⇒ `reflect.get` 抛错并列出可用字段。**不静默给空串** ——
+//     那会变成"这一列全是空"，比直接报错难查得多。
+export func headers_of(Array[any] recs, Array[string]? keys = null): Array[string] {
+    if keys is Array[string] => ks { return ks }
+    if recs.len() == 0 { return [] }
+    return reflect.fields(recs[0])
+}
+
+export func rows_of(Array[any] recs, Array[string]? keys = null): Array[Array[string]] {
+    Array[string] ks = headers_of(recs, keys)
+    Array[Array[string]] out = []
+    if ks.len() == 0 { return out }
+    for recs to rec {
+        Array[string] row = []
+        for ks to k {
+            var v = reflect.get(rec, k)
+            row.add(if v == null then "" else _str(v))
+        }
+        out.add(row)
+    }
+    return out
 }

@@ -13,6 +13,8 @@
 //     —— 真控件那种"格内小按钮/可拖进度"要处理可见行实例化与生命周期，本轮不做 ✓
 import maths
 import strings
+// 2026-11-24：未 set_struct_keys 时按 struct 定义自动取字段（见 struct_row）
+import reflect
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
@@ -738,9 +740,14 @@ export struct Table impl Widget, Themeable {
     }
 
     // 把一条记录按 keys 摊成一行（不追加，供需要自己攒批量的调用方用）
+    //   ★ 2026-11-24：**没调 set_struct_keys 时**按 struct 的**声明顺序**取全部字段
+    //     （reflect.fields）—— 显式 keys 仍优先，用于"表头中文 + 只导出部分列"那类场景。
+    //     这样 `add_struct(rec)` 可以直接用，不必先手抄一份字段名清单。
     func struct_row(any rec): Array[string] {
+        Array[string] ks = structKeys
+        if ks.len() == 0 { ks = reflect.fields(rec) }
         Array[string] cells = []
-        for structKeys to k {
+        for ks to k {
             var v = _field(rec, k)
             cells.add(if v == null then "" else _str(v))
         }

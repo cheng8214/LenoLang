@@ -1,0 +1,61 @@
+// LenoCSV：记录（struct）→ 表头 / 行（2026-11-24）
+//
+// 反方向（CSV → Dict）是 toDicts；这一侧让"手里已经是 struct"的场景不用再写
+// `rows.add([s.a, s.b, ...])`（列顺序即契约，插一列要改所有构造点）。
+import "CSV" as csv
+
+struct Song {
+    string name = ""
+    int dur = 0
+    bool liked = false
+}
+
+main() {
+    Array[any] recs = []
+    recs.add(new Song(name = "晴天", dur = 269, liked = true))
+    recs.add(new Song(name = "稻香", dur = 223))
+
+    // ---- ① 表头 = 字段名，按声明顺序 ----
+    var h = csv.headersOf(recs)
+    assert_eq(h.len(), 3, "① 3 列")
+    assert_eq(h[0], "name", "① 第 0 列")
+    assert_eq(h[1], "dur", "① 第 1 列")
+    assert_eq(h[2], "liked", "① 第 2 列")
+
+    // ---- ② 行 = 字段值（一律字符串） ----
+    var rows = csv.rowsOf(recs)
+    assert_eq(rows.len(), 2, "② 2 行")
+    assert_eq(rows[0][0], "晴天", "② name")
+    assert_eq(rows[0][1], "269", "② int → \"269\"")
+    assert_eq(rows[0][2], "true", "② bool → \"true\"")
+    assert_eq(rows[1][2], "false", "② 默认 false")
+
+    // ---- ③ keys 可裁剪 / 换序 ----
+    var h2 = csv.headersOf(recs, ["dur", "name"])
+    assert_eq(h2[0], "dur", "③ 换序后第 0 列")
+    var r2 = csv.rowsOf(recs, ["dur", "name"])
+    assert_eq(r2[0][0], "269", "③ 换序后的值")
+
+    // ---- ④ 空列表：没有记录可推断 ⇒ 空表头（显式给 keys 才有） ----
+    Array[any] empty = []
+    assert_eq(csv.headersOf(empty).len(), 0, "④ 空列表无表头")
+    assert_eq(csv.headersOf(empty, ["x"]).len(), 1, "④ 显式 keys 生效")
+
+    // ---- ⑤ 端到端：记录 → CSV 文本 → 解析回来 ----
+    var text = csv.encodeRecords(h, rows)
+    var t = csv.parseTable(text)
+    assert_eq(t.header[0], "name", "⑤ 解析后的表头")
+    assert_eq(t.rows.len(), 2, "⑤ 解析后的行数")
+    assert_eq(t.rows[0][0], "晴天", "⑤ 解析后的值")
+
+    // ---- ⑥ 字段名拼错必须报错（不是静默给空列） ----
+    var threw = false
+    try {
+        csv.rowsOf(recs, ["nmae"])
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true, "⑥ 拼错字段名要抛错")
+
+    print("test_csv_struct passed")
+}
