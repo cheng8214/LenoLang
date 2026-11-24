@@ -1,0 +1,173 @@
+// TUI.leno — 终端输出增强（2026-11-24）
+// 纯 Leno，无原生依赖。
+//
+// 范围说明：**只做"输出好看"这一半** —— 颜色、清行、进度条、表格。
+// 不做全屏 TUI / 键盘事件 / 鼠标（那要各平台的 termios / Win32 控制台 API，
+// 是另一个量级的东西，且与"脚本在哪都能跑"的定位冲突）。
+//
+// 颜色默认开：现代终端（Windows Terminal / VS Code / 各 Linux 终端）都认 ANSI。
+// 老 conhost 窗口可能把 `\x1b[...` 原样打出来 —— 用 set_color(false) 关掉，
+// 或设置 NO_COLOR 环境变量（init() 会自动识别，见 https://no-color.org）。
+
+import strings
+
+const ESC = "\x1b"
+
+export var color_enabled = true
+
+// 读 NO_COLOR 环境变量（存在即关色）；调用一次即可，不调用则默认开
+export func init() {
+    color_enabled = _env("NO_COLOR") == null
+}
+
+export func set_color(bool on) { color_enabled = on }
+
+func _wrap(string s, string code): string {
+    if not color_enabled { return s }
+    return ESC + "[" + code + "m" + s + ESC + "[0m"
+}
+
+export func bold(string s): string { return _wrap(s, "1") }
+export func dim(string s): string { return _wrap(s, "2") }
+export func underline(string s): string { return _wrap(s, "4") }
+
+// 前景色；不认识的名字原样返回（不报错 —— 颜色是装饰，不该让程序挂掉）
+export func fg(string s, string name): string {
+    var code = ""
+    switch name {
+        case "black" { code = "30" }
+        case "red" { code = "31" }
+        case "green" { code = "32" }
+        case "yellow" { code = "33" }
+        case "blue" { code = "34" }
+        case "magenta" { code = "35" }
+        case "cyan" { code = "36" }
+        case "white" { code = "37" }
+        case "gray" { code = "90" }
+        default { return s }
+    }
+    return _wrap(s, code)
+}
+
+// ---- 光标 / 行控制 ----
+
+// 清掉当前行并把光标回到行首（进度条重绘用：print(tui.clear_line() + ...)）
+export func clear_line(): string { return ESC + "[2K\r" }
+
+export func move_up(int n): string {
+    if n <= 0 { return "" }
+    return ESC + "[" + _str(n) + "A"
+}
+
+export func hide_cursor(): string { return ESC + "[?25l" }
+export func show_cursor(): string { return ESC + "[?25h" }
+
+// ---- 显示宽度 ----
+// 为什么不是 len()：终端里中文占 **2 列**，用码点数会让表格右半边歪掉。
+//
+// 判定用 **UTF-8 首字节**（没有码点 API，也不需要）：
+//   · < 0x80        ASCII / 控制符 ⇒ 1 列
+//   · 0xE4 ~ 0xE9   CJK 统一汉字 / 全角标点（U+4E00 ~ U+9FFF）⇒ 2 列
+//   · 其它 0xE0+    制表符（─│┌，U+2500 首字节 E2）、其他符号 ⇒ 1 列
+//   · 0xF0+         4 字节字符（emoji 等）⇒ 2 列
+//   · 0xC0 ~ 0xDF   2 字节（拉丁扩展）⇒ 1 列
+// ⚠ 这是**启发式**，不是完整的 East Asian Width 表：生僻字（扩展 B 区，4 字节）会算成 2 列，
+//   而它们实际也是 2 列 ✓；真正会偏的是"窄的 CJK 兼容字符"，少见。
+//   对表格对齐来说，**同一张表内判定一致**比"绝对精确"重要。
+export func width(string s): int {
+    int n = strings.byte_len(s)
+    int w = 0
+    int i = 0
+    while i < n {
+        int b = strings.byte(s, i)
+        if b < 0x80 {
+            w = w + 1
+            i = i + 1
+        } else if b >= 0xF0 {
+            w = w + 2
+            i = i + 4
+        } else if b >= 0xE0 {
+            if b >= 0xE4 and b <= 0xE9 { w = w + 2 } else { w = w + 1 }
+            i = i + 3
+        } else {
+            w = w + 1
+            i = i + 2
+        }
+    }
+    return w
+}
+
+func _rep(string s, int n): string {
+    var out = ""
+    for 0 : n - 1 to i { out = out + s }
+    return out
+}
+
+func _pad(string s, int target): string {
+    int w = width(s)
+    if w >= target { return s }
+    return s + _rep(" ", target - w)
+}
+
+// ---- 进度条 ----
+// 返回**一行字符串**（不自己打印）：调用方决定是 `print(bar)` 还是一次性拼进日志。
+// 重绘写法：`print(tui.clear_line() + tui.progress(done, total, 30, "下载"))`
+export func progress(float done, float total, int bar_width = 30, string label = ""): string {
+    float ratio = 0.0
+    if total > 0.0 { ratio = done / total }
+    if ratio < 0.0 { ratio = 0.0 }
+    if ratio > 1.0 { ratio = 1.0 }
+    int filled = _int(ratio * _float(bar_width))
+    string bar = ""
+    for 0 : bar_width - 1 to i {
+        if i < filled { bar = bar + "█" } else { bar = bar + "░" }
+    }
+    string pct = _str(_int(ratio * 100.0)) + "%"
+    if label == "" { return "[" + bar + "] " + pct }
+    return "[" + bar + "] " + label + " " + pct
+}
+
+// ---- 表格 ----
+func _hline(Array[int] ws, string l, string m, string r): string {
+    var out = l
+    for 0 : ws.len() - 1 to i {
+        out = out + _rep("─", ws[i] + 2)
+        if i < ws.len() - 1 { out = out + m }
+    }
+    return out + r + "\n"
+}
+
+func _row(Array[string] cells, Array[int] ws, bool border): string {
+    var out = ""
+    if border { out = "│" }
+    for 0 : ws.len() - 1 to i {
+        var c = if i < cells.len() then cells[i] else ""
+        if border {
+            out = out + " " + _pad(c, ws[i]) + " │"
+        } else {
+            out = out + _pad(c, ws[i]) + "  "
+        }
+    }
+    return out + "\n"
+}
+
+// 列宽取**表头与所有单元格的最大显示宽度**；行的列数不足补空、超出截掉。
+// 单元格一律按字符串处理（数字自己 `_str()` —— 要不要加千分位是调用方的事）。
+export func table(Array[string] headers, Array[Array[string]] rows, bool border = true): string {
+    Array[int] ws = []
+    for headers to h { ws.add(width(h)) }
+    for rows to r {
+        for 0 : ws.len() - 1 to c {
+            var cell = if c < r.len() then r[c] else ""
+            int w = width(cell)
+            if w > ws[c] { ws[c] = w }
+        }
+    }
+    var out = ""
+    if border { out = out + _hline(ws, "┌", "┬", "┐") }
+    out = out + _row(headers, ws, border)
+    if border { out = out + _hline(ws, "├", "┼", "┤") }
+    for rows to r { out = out + _row(r, ws, border) }
+    if border { out = out + _hline(ws, "└", "┴", "┘") }
+    return out
+}

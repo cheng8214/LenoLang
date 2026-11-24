@@ -1,0 +1,117 @@
+// LenoTUI 自测：宽度估算 / 进度条 / 表格 / 颜色开关（2026-11-24）
+import strings
+import "TUI" as tui
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqI(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func eqS(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到「" + got + "」期望「" + want + "」") }
+}
+
+main() {
+    // ---------- ① 显示宽度：中文 2 列、ASCII 1 列 ----------
+    eqI(tui.width("abc"), 3, "① ASCII 宽度")
+    eqI(tui.width("中文"), 4, "① 中文按 2 列算")
+    eqI(tui.width("a中b"), 4, "① 混排")
+    eqI(tui.width(""), 0, "① 空串")
+
+    // ---------- ② 进度条 ----------
+    string p0 = tui.progress(0.0, 100.0, 10)
+    string p5 = tui.progress(50.0, 100.0, 10)
+    string p10 = tui.progress(100.0, 100.0, 10)
+    eqI(tui.width(p0), tui.width("[░░░░░░░░░░] 0%"), "② 0% 形状")
+    eqI(tui.width(p5), tui.width("[█████░░░░░] 50%"), "② 50% 形状")
+    eqI(tui.width(p10), tui.width("[██████████] 100%"), "② 100% 形状")
+    if not strings_has(p5, "50%") { fail("② 50% 应带百分比") }
+    // 越界要夹取，不能出现负格数或超出
+    eqI(tui.width(tui.progress(-5.0, 100.0, 10)), tui.width(p0), "② 负进度夹到 0")
+    eqI(tui.width(tui.progress(200.0, 100.0, 10)), tui.width(p10), "② 超额夹到 100")
+    // total = 0 不除零
+    eqI(tui.width(tui.progress(5.0, 0.0, 10)), tui.width(p0), "② total=0 视为 0%")
+    // 带标签
+    if not strings_has(tui.progress(50.0, 100.0, 10, "下载"), "下载") { fail("② 标签") }
+
+    // ---------- ③ 表格 ----------
+    Array[string] headers = ["名称", "大小"]
+    Array[Array[string]] rows = []
+    rows.add(["a.txt", "12"])
+    rows.add(["很长很长的文件名.txt", "3456"])
+    string tb = tui.table(headers, rows, true)
+    // 边框 3 + 表头 1 + 数据 2 = 6 行
+    eqI(_lines(tb), 6, "③ 表格行数（上边框+表头+分隔+2 行+下边框）")
+    if not strings_has(tb, "┌") { fail("③ 应有上边框") }
+    if not strings_has(tb, "很长很长的文件名.txt") { fail("③ 内容应完整") }
+
+    // 每行**显示宽度**必须一致（这是对齐的核心判据）
+    Array[string] ls = _split_lines(tb)
+    int w0 = tui.width(ls[0])
+    for ls to ln {
+        eqI(tui.width(ln), w0, "③ 每行宽度一致（含中文列）")
+    }
+
+    // 无边框：3 行，且不带 │
+    string tn = tui.table(headers, rows, false)
+    eqI(_lines(tn), 3, "③ 无边框行数")
+    if strings_has(tn, "│") { fail("③ 无边框不应带竖线") }
+
+    // 行的列数不足 ⇒ 补空，不崩
+    Array[Array[string]] short_rows = []
+    short_rows.add(["只有一列"])
+    string ts = tui.table(headers, short_rows, true)
+    if not strings_has(ts, "只有一列") { fail("③ 缺列应补空") }
+
+    // ---------- ④ 颜色开关 ----------
+    tui.set_color(true)
+    string red = tui.fg("x", "red")
+    if not strings_has(red, "\x1b[31m") { fail("④ 开色时应带 ANSI") }
+    tui.set_color(false)
+    eqS(tui.fg("x", "red"), "x", "④ 关色后原样返回")
+    eqS(tui.bold("x"), "x", "④ 关色后 bold 原样")
+    tui.set_color(true)
+
+    // 不认识的色名原样返回（装饰不该让程序挂）
+    eqS(tui.fg("x", "no-such-color"), "x", "④ 未知色名原样返回")
+
+    // ---------- ⑤ 光标控制 ----------
+    if not strings_has(tui.clear_line(), "\x1b[2K") { fail("⑤ clear_line") }
+    if not strings_has(tui.hide_cursor(), "\x1b[?25l") { fail("⑤ hide_cursor") }
+    eqS(tui.move_up(0), "", "⑤ move_up(0) 不产生控制码")
+    if not strings_has(tui.move_up(3), "\x1b[3A") { fail("⑤ move_up(3)") }
+
+    print("test_tui passed")
+}
+
+func strings_has(string s, string sub): bool {
+    return strings.find(s, sub) >= 0
+}
+
+func _lines(string s): int {
+    var n = 0
+    for 0 : s.len() - 1 to i {
+        if s[i] == "\n" { n = n + 1 }
+    }
+    return n
+}
+
+func _split_lines(string s): Array[string] {
+    Array[string] out = []
+    var cur = ""
+    for 0 : s.len() - 1 to i {
+        string ch = s[i]
+        if ch == "\n" {
+            out.add(cur)
+            cur = ""
+        } else {
+            cur = cur + ch
+        }
+    }
+    if cur != "" { out.add(cur) }
+    return out
+}

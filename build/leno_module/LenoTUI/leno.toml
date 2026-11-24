@@ -1,0 +1,11 @@
+[package]
+name = "LenoTUI"
+version = "0.1.0"
+description = "Leno terminal output helpers: ANSI color, progress bar, aligned table (pure Leno)"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库。
