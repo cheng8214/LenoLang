@@ -1077,6 +1077,15 @@ struct Symbol {
     //   visit_var 据此给定向报错，而不是让用户拿到 null 还以为是值。
     int is_enum_member;
 
+    // ★ 2026-11-25：这条符号是**类型别名**（`alias Stack[T] = ct.Stack[T]`；本文件或 `use m.X`
+    //   导入的都算）。`type` 里是别名体，形参名单独存 —— 体里只有 `T` 的引用，名字丢了就没法
+    //   用实参代入（这正是"跨模块 `use m.Stack` 后 `new Stack[int]()` 报不是泛型"的根因）。
+    //   用处：① visit_struct_init 把 `new Stack[int]()` 展开成真实的 `new ct.Stack[int]()`；
+    //         ② resolve_alias_in_type 展开时按实参替换形参（此前直接把 body 抄走，`T` 留着）。
+    int is_type_alias;
+    char** alias_type_params;
+    int alias_type_param_count;
+
     // ★ 编译期专用：「该变量的**字典值类型**是在哪一行被锁定的」（2026-10-14 加）
     //   背景（写 LenoWordBuddy 时的实录）：`d` 若是**裸 `Dict`**（键值类型未指定），
     //   第一次 `d.set(k, v)` / `d[k] = v` 会把 `value_type` **静默定死**，此后第二处

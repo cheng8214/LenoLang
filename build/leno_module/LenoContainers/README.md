@@ -252,13 +252,14 @@ LRU/ClockLRU 读数含 key 拼串。只比同机同时段的趋势，别抠小�
 > "装得下整屏文字就不淘汰"的刻意选择）、`sdl_texcache.leno`（带 refcount 与按渲染器失效，
 > 容器没有引用计数语义）、`sdl_renderer.leno` 的裁剪栈/图集（按下标池化、不是 KV）。
 
-> ⚠ **LenoWeb 的 `web_generic.Stack` 已删除（2026-11-24，破坏性）**：它和 `Containers.Stack`
-> **同名**，而编译器的四张类型表全局按名字索引 —— 用户同时 `import "Web"` 与
-> `import "Containers"` 会直接报
+> ⚠ **LenoWeb 的 `web_generic.Stack` 现在是本模块 `Stack` 的别名**（2026-11-24 先删掉、
+> 2026-11-26 用别名补回）：手写那份与本模块**同名**，而编译器类型表全局按名字索引 ——
+> 同时 `import "Web"` 与 `import "Containers"` 会直接报
 > 「跨模块同名struct 'Stack' … 运行期只能保留一份 … 请给其中一个改名」。
-> 现在只有一份实现（本模块的），`use web.Stack` / 字段 `size` / `init()` 不再存在，
-> 迁移写法：`import "Containers" as ct; new ct.Stack[T]()`，长度用 `len()`、判空用 `is_empty()`。
-> 与 2026-11-09 `web_generic.Result` 的处理方式一致。
+> 现在 `export alias Stack[T] = ct.Stack[T]`：`use web.Stack` 照旧可用、与 `ct.Stack` 是同一个类型，
+> 但实现只有一份 ⇒ 不再撞名字。
+> ⚠ 语义随本模块：长度是 `len()`（没有字段 `size`）、判空 `is_empty()`、空取**抛错**、没有 `init()`。
+> （这条别名之所以写得出来，是同日补齐了"跨模块泛型别名"能力，见 LenoDocsSrc M6。）
 
 ## 跑测试
 

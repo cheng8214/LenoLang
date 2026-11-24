@@ -816,6 +816,18 @@ int semantic_import_use_symbol(Semantic* s, const char* module_name, const char*
                 Symbol* sym = scope_define(s->current, symbol_name, SYM_TYPE);
                 if (sym && alias_sym->type_info) {
                     sym->type = type_copy(alias_sym->type_info);
+                    // ★ 2026-11-25：别名标记 + 形参名一起搬（否则 `new Stack[int]()` 会被当成
+                    //   "非泛型 struct" 报错 —— 形参名此前压根没导出）
+                    sym->is_type_alias = 1;
+                    if (alias_sym->type_params && alias_sym->type_param_count > 0) {
+                        sym->alias_type_param_count = alias_sym->type_param_count;
+                        sym->alias_type_params = (char**)calloc(
+                            (size_t)alias_sym->type_param_count, sizeof(char*));
+                        for (int tpi = 0; tpi < alias_sym->type_param_count; tpi++) {
+                            sym->alias_type_params[tpi] = alias_sym->type_params[tpi]
+                                ? strdup(alias_sym->type_params[tpi]) : NULL;
+                        }
+                    }
                     // 递归导入 alias 底层类型依赖（如 EventHandler = func(Event):bool 中的 Event）
                     import_type_deps(s, module_info, alias_sym->type_info);
                 }

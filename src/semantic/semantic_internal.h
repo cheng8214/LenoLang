@@ -220,6 +220,14 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
 // ============================================================================
 int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line);
 
+// 把 `new <类型别名>[实参…](…)` 就地改写成真实 struct 的构造（2026-11-25，见实现处注释）。
+// 返回 1 = 改写过（调用方须重新解析 struct 名）；0 = 不是可展开的别名。
+int semantic_expand_alias_struct_init(Semantic* s, Ast* ast, Symbol* alias_sym);
+
+// 同上的"裸类型信息"版：给**模块符号表**里的别名用（`new gen.Stack[int]()` 走这条，
+// 那里没有 Symbol，只有 ModuleAliasSymbol 的 body + 形参名）。
+int semantic_expand_alias_struct_init_ti(Ast* ast, TypeInfo* body, char** params, int param_count);
+
 // ★ US1（2026-10-12，见 LenoDocsSrc/site/类型可见性与use逃生阀修复追踪.html）：
 //   `use m.Sym` 的**唯一实现**（原来整段分派体长在 visitinc/visit_module.inc 的 case AST_USE 里）。
 //   抽出来的目的：**类型位置写限定名**（`m.Pt`）走的是**同一条路径** ⇒ 报错文案、可用性判据、

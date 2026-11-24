@@ -883,7 +883,12 @@ Ast* parse_alias_stmt(Parser* p) {
 
     // 检查是否是值别名模式：alias X = EnumName.member
     // 模式：IDENT DOT IDENT — 即 . 紧跟在第一个标识符之后
-    if (p->lex.current.type == TOK_IDENT) {
+    // ★ 2026-11-25：加了**两条排除条件**。此前这两种写法都会被误判成"值别名"，
+    //   于是右值那截 `[T]` 被当成**下标表达式** ⇒ 报「未定义的变量: T」（指错靶子，
+    //   完全看不出是别名解析走了岔路；实测 `export alias Stack[T] = ct.Stack[T]` 必崩）：
+    //     ① `alias Box[T] = m.Box[T]` —— 值别名**没有类型参数**，带参数的一律是类型别名；
+    //     ② `alias S = m.Stack[int]`  —— 成员名后面跟 `[` 说明是泛型类型引用。
+    if (p->lex.current.type == TOK_IDENT && type_param_count == 0) {
         // 保存当前词法位置以便回退
         int saved_pos = p->lex.pos;
         int saved_line = p->lex.line;
@@ -896,7 +901,7 @@ Ast* parse_alias_stmt(Parser* p) {
         lexer_next(&p->lex);
 
         if (p->lex.current.type == TOK_DOT) {
-            // 这是值别名模式：alias X = EnumName.member
+            // 可能是值别名：alias X = EnumName.member（也可能是泛型类型，见下面的 `[` 判断）
             lexer_next(&p->lex); // 消费 '.'
             if (p->lex.current.type != TOK_IDENT) {
                 error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column, "期望枚举成员名");
@@ -910,22 +915,27 @@ Ast* parse_alias_stmt(Parser* p) {
             char* member_name = copy_string(p->lex.current.text, p->lex.current.len);
             lexer_next(&p->lex); // 消费成员名
 
-            // 构建 AST_MODULE_ACCESS 表达式（与 parse_dot 中的逻辑一致）
-            Ast* expr = ast_new(AST_MODULE_ACCESS, line);
-            expr->u.module_access.module_name = first_ident;
-            expr->u.module_access.member_name = member_name;
-            expr->u.module_access.ref.kind = SYM_GLOBAL;
-            expr->u.module_access.ref.index = -1;
-            expr->u.module_access.ref.name = NULL;
+            if (p->lex.current.type == TOK_LBRACKET) {
+                // ② 泛型类型引用（`alias S = m.Stack[int]`）⇒ 不是值别名，回退按类型解析
+                free(member_name);
+            } else {
+                // 构建 AST_MODULE_ACCESS 表达式（与 parse_dot 中的逻辑一致）
+                Ast* expr = ast_new(AST_MODULE_ACCESS, line);
+                expr->u.module_access.module_name = first_ident;
+                expr->u.module_access.member_name = member_name;
+                expr->u.module_access.ref.kind = SYM_GLOBAL;
+                expr->u.module_access.ref.index = -1;
+                expr->u.module_access.ref.name = NULL;
 
-            Ast* ast = ast_new(AST_ALIAS, line);
-            ast->u.alias.name = name;
-            ast->u.alias.type = NULL;  // 值别名，无类型
-            ast->u.alias.expr = expr;
-            ast->u.alias.type_params = type_params;
-            ast->u.alias.type_param_count = type_param_count;
-            // 值别名不注册到解析器别名表
-            return ast;
+                Ast* ast = ast_new(AST_ALIAS, line);
+                ast->u.alias.name = name;
+                ast->u.alias.type = NULL;  // 值别名，无类型
+                ast->u.alias.expr = expr;
+                ast->u.alias.type_params = type_params;
+                ast->u.alias.type_param_count = type_param_count;
+                // 值别名不注册到解析器别名表
+                return ast;
+            }
         }
 
         // 不是值别名，回退词法分析器状态
@@ -935,6 +945,7 @@ Ast* parse_alias_stmt(Parser* p) {
         p->lex.line_start = saved_line_start;
         p->lex.current = saved_current;
     }
+
 
     TypeInfo* type = parse_type(p);
     if (!type) {

@@ -1502,7 +1502,21 @@ Ast* parse_new(Parser* p) {
         TypeInfo* resolved_alias_type = find_alias_with_params(p, struct_name, &alias_tp_names, &alias_tp_count);
         if (resolved_alias_type && resolved_alias_type->kind == TYPE_STRUCT && resolved_alias_type->struct_name) {
             free(struct_name);
-            struct_name = strdup(resolved_alias_type->struct_name);
+            if (resolved_alias_type->module_qualifier && resolved_alias_type->module_qualifier[0]) {
+                // ★ 2026-11-25：别名体是**限定名**时（`export alias Stack[T] = ct.Stack[T]`）
+                //   必须把 `qual.name` 一起拼回去。只取 struct_name 会丢模块前缀 ⇒
+                //   报「未定义的 struct 类型 'Stack'」✗（实测 2026-11-25，LenoWeb 想
+                //   收编 web_generic.Stack 时撞到；类型注解那条路走 resolve_alias_in_type，
+                //   只有 `new` 这一处是手写的名字替换 ⇒ 单独丢前缀）。
+                size_t qn_len = strlen(resolved_alias_type->module_qualifier) + 1
+                              + strlen(resolved_alias_type->struct_name) + 1;
+                char* qn = (char*)malloc(qn_len);
+                snprintf(qn, qn_len, "%s.%s", resolved_alias_type->module_qualifier,
+                         resolved_alias_type->struct_name);
+                struct_name = qn;
+            } else {
+                struct_name = strdup(resolved_alias_type->struct_name);
+            }
             if (alias_tp_count == 0 && resolved_alias_type->generic_count > 0 && resolved_alias_type->generic_args) {
                 generic_type_count = resolved_alias_type->generic_count;
                 generic_type_args = (TypeInfo**)malloc(sizeof(TypeInfo*) * generic_type_count);

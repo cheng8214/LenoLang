@@ -738,13 +738,32 @@ static void ast_fill_one_alias(ModuleSymbolTable* table, Ast* al) {
     if (!sym) {
         // ★ 建表路径（S10 删除老解析的前置）：scan_alias.inc 整段退役后由这里建条目 ✓
         //   add_alias 内部**复制**类型（扫描链随后 type_free 临时值 ⇒ 同一约定 ✓）✓
-        module_symbol_table_add_alias(table, al->u.alias.name, t);
+        // ★ 2026-11-25：泛型形参名一起导出（`export alias Stack[T] = ct.Stack[T]`）——
+        //   不导出的话消费端 `use m.Stack` 拿到的别名没有类型参数，`new Stack[int]()` 直接报
+        //   「struct 'Stack' 不是泛型类型，不能写类型参数」✗
+        module_symbol_table_add_alias(table, al->u.alias.name, t,
+                                      (const char**)al->u.alias.type_params,
+                                      al->u.alias.type_param_count);
         type_free(t);
         return;
     }
     // 已有条目：整份替换 type_info（多轮填充会重复覆盖 ⇒ 旧副本必须先释放）
     if (sym->type_info) type_free(sym->type_info);
     sym->type_info = t;
+    // 形参名同样整份替换（多轮填充同理）
+    if (sym->type_params) {
+        for (int tpi = 0; tpi < sym->type_param_count; tpi++) free(sym->type_params[tpi]);
+        free(sym->type_params);
+        sym->type_params = NULL;
+        sym->type_param_count = 0;
+    }
+    if (al->u.alias.type_params && al->u.alias.type_param_count > 0) {
+        sym->type_param_count = al->u.alias.type_param_count;
+        sym->type_params = (char**)calloc((size_t)sym->type_param_count, sizeof(char*));
+        for (int tpi = 0; tpi < sym->type_param_count; tpi++) {
+            sym->type_params[tpi] = al->u.alias.type_params[tpi] ? strdup(al->u.alias.type_params[tpi]) : NULL;
+        }
+    }
 }
 
 // ---- var 类接管 ----
@@ -1117,7 +1136,8 @@ static void ast_transmit_type_deps(ModuleSymbolTable* table, ModuleSymbolTable* 
     if (as) {
         // add_alias 内部会 type_copy（见 ast_fill_one_alias 的注释）⇒ 这里传借用指针，
         //   再套一层 type_copy 的话那份临时副本没人释放（实测每个 alias 漏一份 TypeInfo）
-        module_symbol_table_add_alias(table, nm, as->type_info);
+        module_symbol_table_add_alias(table, nm, as->type_info,
+                                      (const char**)as->type_params, as->type_param_count);
         if (as->type_info) ast_transmit_type_deps(table, dep, as->type_info, depth + 1);
         return;
     }
@@ -1196,7 +1216,9 @@ static void ast_fill_one_use(ModuleSymbolTable* table, Ast* us) {
     if (as) {
         if (!module_symbol_table_find_alias(table, sname)) {
             // 同 ast_fill_one_use_name：add_alias 内部复制 ⇒ 传借用指针（外层 type_copy 会泄漏）
-            module_symbol_table_add_alias(table, sname, as->type_info);
+            // 形参名也要一起传导（别名再导出时不能把"泛型"这件事丢掉）
+            module_symbol_table_add_alias(table, sname, as->type_info,
+                                          (const char**)as->type_params, as->type_param_count);
         }
         if (as->type_info) ast_transmit_type_deps(table, dep, as->type_info, 0);
     }

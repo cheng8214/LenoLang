@@ -51,8 +51,19 @@ export func forEach[T](Array[T] arr, func(T) fn) {
 }
 
 // ============================================================================
-// 3. Stack[T] — **已移除**（2026-11-24），改用 LenoContainers.Stack
+// 3. Stack[T] — 指向 LenoContainers.Stack 的**别名**（名字保留，实现只有一份）
 // ============================================================================
+// 用 alias 而不是删掉：手写那份和 Containers.Stack **同名**，编译器的类型表全局按名字索引
+// ⇒ 同时 import Web 与 Containers（或 SDL3，它内部用 Containers）就运行期报
+//   「跨模块同名struct 'Stack' … 运行期只能保留一份 … 请给其中一个改名」（2026-11-24 实测，
+//   LenoWeb 自己的 test 挂了 8/13）。别名指向同一类型 ⇒ 不再有两份同名 struct，名字照旧可用。
+// ⚠ 语义随容器：长度 `len()`（不再有字段 `size`）、判空 `is_empty()`、空取**抛错**、没有 `init()`。
+//   ★ 2026-11-25：先修了三个编译器问题才写得出这条别名（值别名误判 / new 丢模块前缀 /
+//     跨模块别名没导出泛型形参名）。回归用例：assert/test_alias_generic_cross.leno。
+import "Containers" as ct
+export alias Stack[T] = ct.Stack[T]
+
+// ---- 以下是 2026-11-24 的旧说明，保留作历史 ----
 // 为什么删（和上面 Result 那次 2026-11-09 一模一样，这次还多一条硬性理由）：
 //   ① 两份同义 API，而且**契约相反**：这里空取返回 null，Containers 里抛错；
 //   ② 更致命：**同名 struct 冲突**。编译器的四张类型表**全局按名字索引**，只要用户

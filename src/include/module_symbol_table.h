@@ -221,6 +221,12 @@ typedef struct {
 typedef struct {
     char* name;                 // 别名
     TypeInfo* type_info;        // 完整类型信息（支持 Array[T]/Dict[K,V] 等复杂类型）
+    // ★ 2026-11-25：别名的**类型参数名**（`alias Stack[T] = ct.Stack[T]` 的 ["T"]）。
+    //   此前不导出 ⇒ 消费端 `use m.Stack` 拿到的别名"没有类型参数"：
+    //     new Stack[int]() ⇒「struct 'Stack' 不是泛型类型，不能写类型参数」✗
+    //   （type_info 里只有 body，形参名在 parser 的别名表里、跨模块拿不到 ⇒ 必须随符号走）
+    char** type_params;
+    int type_param_count;
 } ModuleAliasSymbol;
 
 // 模块符号表
@@ -362,7 +368,10 @@ void module_symbol_table_add_var(ModuleSymbolTable* table, const char* name, Typ
 ModuleAliasSymbol* module_symbol_table_find_alias(ModuleSymbolTable* table, const char* alias_name);
 
 // 添加别名符号
-void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, TypeInfo* type_info);
+//   type_params/type_param_count：别名的泛型形参名（`alias Stack[T] = ct.Stack[T]` ⇒ ["T"], 1）。
+//   非泛型别名传 NULL, 0 ✓（与 ModuleStructSymbol 的 type_param_names 同口径）
+void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, TypeInfo* type_info,
+                                   const char** type_params, int type_param_count);
 
 // 查找 clib 符号
 ModuleClibSymbol* module_symbol_table_find_clib(ModuleSymbolTable* table, const char* clib_name);

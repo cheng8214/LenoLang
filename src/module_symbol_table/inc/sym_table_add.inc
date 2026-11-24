@@ -473,7 +473,8 @@ ModuleAliasSymbol* module_symbol_table_find_alias(ModuleSymbolTable* table, cons
 }
 
 // 添加别名符号
-void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, TypeInfo* type_info) {
+void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, TypeInfo* type_info,
+                                   const char** type_params, int type_param_count) {
     if (!table || !name) return;
 
     // 扩容
@@ -488,6 +489,18 @@ void module_symbol_table_add_alias(ModuleSymbolTable* table, const char* name, T
     ModuleAliasSymbol* alias = &table->aliases[table->alias_count++];
     alias->name = strdup(name);
     alias->type_info = type_info ? type_copy(type_info) : NULL;
+    // ★ 2026-11-25：泛型形参名必须随符号走（body 里只有 `T` 的引用，名字在 parser 的别名表里，
+    //   跨模块拿不到 ⇒ 消费端会当成非泛型别名）
+    if (type_params && type_param_count > 0) {
+        alias->type_param_count = type_param_count;
+        alias->type_params = (char**)calloc((size_t)type_param_count, sizeof(char*));
+        for (int i = 0; i < type_param_count; i++) {
+            alias->type_params[i] = (type_params[i]) ? strdup(type_params[i]) : NULL;
+        }
+    } else {
+        alias->type_params = NULL;
+        alias->type_param_count = 0;
+    }
 }
 
 // 查找 clib 符号

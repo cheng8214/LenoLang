@@ -1348,6 +1348,18 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                     Symbol* sym = scope_define(s->current, stmt->u.alias.name, SYM_TYPE);
                     if (sym) {
                         sym->type = type_copy(stmt->u.alias.type);
+                        // ★ 2026-11-25：打上"这是别名"+ 形参名，`new 别名[int]()` 才能在
+                        //   visit_struct_init 里被展开成真实 struct（并代入实参）
+                        sym->is_type_alias = 1;
+                        if (stmt->u.alias.type_params && stmt->u.alias.type_param_count > 0) {
+                            sym->alias_type_param_count = stmt->u.alias.type_param_count;
+                            sym->alias_type_params = (char**)calloc(
+                                (size_t)stmt->u.alias.type_param_count, sizeof(char*));
+                            for (int tpi = 0; tpi < stmt->u.alias.type_param_count; tpi++) {
+                                sym->alias_type_params[tpi] = stmt->u.alias.type_params[tpi]
+                                    ? strdup(stmt->u.alias.type_params[tpi]) : NULL;
+                            }
+                        }
                     }
                 }
             }

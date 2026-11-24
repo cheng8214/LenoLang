@@ -587,6 +587,12 @@ sym_cache_write_string(f, table->funcs[i].optkeys);
     for (uint32_t i = 0; i < ac; i++) {
         sym_cache_write_string(f, table->aliases[i].name);
         sym_cache_write_type_info(f, table->aliases[i].type_info);
+        // v60：别名的泛型形参名（`alias Stack[T] = ct.Stack[T]` 的 "T"）
+        uint32_t atp = (uint32_t)table->aliases[i].type_param_count;
+        fwrite(&atp, 4, 1, f);
+        for (uint32_t ti = 0; ti < atp; ti++) {
+            sym_cache_write_string(f, table->aliases[i].type_params ? table->aliases[i].type_params[ti] : NULL);
+        }
     }
 
     // clibs
@@ -1149,6 +1155,16 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
     for (uint32_t i = 0; i < ac; i++) {
         table->aliases[i].name = sym_cache_read_string(f);
         table->aliases[i].type_info = sym_cache_read_type_info(f);
+        // v60：泛型形参名
+        uint32_t atp;
+        if (fread(&atp, 4, 1, f) != 1) goto fail;
+        if (atp > 0 && atp < 256) {
+            table->aliases[i].type_param_count = (int)atp;
+            table->aliases[i].type_params = (char**)calloc(atp, sizeof(char*));
+            for (uint32_t ti = 0; ti < atp; ti++) {
+                table->aliases[i].type_params[ti] = sym_cache_read_string(f);
+            }
+        }
         table->alias_count++;
     }
 

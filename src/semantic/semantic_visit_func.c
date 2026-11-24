@@ -352,6 +352,77 @@ int semantic_check_undefined_subtypes(Semantic* s, TypeInfo* type, int line, int
     return reported;
 }
 
+// 把 `new <类型别名>[实参…](…)` 就地改写成**真实 struct** 的构造（2026-11-25）。
+//   `export alias Stack[T] = ct.Stack[T]` + `use m.Stack` + `new Stack[int]()`
+//     ⇒ struct_name = "ct.Stack"，generic_type_args = [int]
+// 返回 1 = 改写成功（调用方**必须重新解析**名字）；0 = 不是可展开的别名。
+// 为什么要到语义期才做：别名的形参名只存在于**声明它的文件**的 parser 别名表里；
+//   跨模块（`use m.Stack`）时 parser 拿不到 ⇒ 只能把形参名随符号表导出（.lenosymc v60），
+//   在这里用调用点的实参代入。`Alias = Array[T]` 这类没有 struct 名字的别名不在此列
+//   （那条路由 resolve_alias_in_type 管）。
+int semantic_expand_alias_struct_init_ti(Ast* ast, TypeInfo* body, char** params, int param_count) {
+    if (!ast || ast->kind != AST_STRUCT_INIT || !body) return 0;
+    if (body->kind != TYPE_STRUCT || !body->struct_name) return 0;
+
+    TypeInfo* expanded = type_copy(body);
+    if (!expanded) return 0;
+    // ① 用调用点的实参代入形参（body 里是 `ct.Stack[T]`，generic_args 里是 `T`）
+    for (int pi = 0; params && pi < param_count &&
+                      pi < ast->u.struct_init.generic_type_count; pi++) {
+        if (!params[pi]) continue;
+        if (!ast->u.struct_init.generic_type_args || !ast->u.struct_init.generic_type_args[pi]) continue;
+        TypeInfo* sub = type_substitute(expanded, params[pi],
+                                        ast->u.struct_init.generic_type_args[pi]);
+        type_free(expanded);
+        expanded = sub;
+        if (!expanded) return 0;
+    }
+
+    // ② 新名字：别名体带模块前缀就拼成 `qual.name`（不拼的话就是上面两个 bug 的第 ② 条）
+    char* new_name = NULL;
+    if (expanded->module_qualifier && expanded->module_qualifier[0]) {
+        size_t n = strlen(expanded->module_qualifier) + 1 + strlen(expanded->struct_name) + 1;
+        new_name = (char*)malloc(n);
+        if (new_name) {
+            snprintf(new_name, n, "%s.%s", expanded->module_qualifier, expanded->struct_name);
+        }
+    } else {
+        new_name = strdup(expanded->struct_name);
+    }
+    if (!new_name) { type_free(expanded); return 0; }
+
+    // ③ 实参：优先用**体里代入后**的那份（`alias IntBox = ct.Stack[int]` 调用点没写实参）；
+    //    体里没有实参时沿用调用点写的
+    if (expanded->generic_count > 0 && expanded->generic_args) {
+        if (ast->u.struct_init.generic_type_args) {
+            for (int gi = 0; gi < ast->u.struct_init.generic_type_count; gi++) {
+                if (ast->u.struct_init.generic_type_args[gi]) type_free(ast->u.struct_init.generic_type_args[gi]);
+            }
+            free(ast->u.struct_init.generic_type_args);
+        }
+        ast->u.struct_init.generic_type_count = expanded->generic_count;
+        ast->u.struct_init.generic_type_args =
+            (TypeInfo**)calloc((size_t)expanded->generic_count, sizeof(TypeInfo*));
+        for (int gi = 0; gi < expanded->generic_count; gi++) {
+            ast->u.struct_init.generic_type_args[gi] = type_copy(expanded->generic_args[gi]);
+        }
+    }
+
+    free(ast->u.struct_init.struct_name);
+    ast->u.struct_init.struct_name = new_name;
+    type_free(expanded);
+    return 1;
+}
+
+// Symbol 版：别名符号（本文件 `alias` 或 `use m.X` 导入的）→ 走上面那份唯一实现
+int semantic_expand_alias_struct_init(Semantic* s, Ast* ast, Symbol* alias_sym) {
+    (void)s;
+    if (!alias_sym || !alias_sym->is_type_alias) return 0;
+    return semantic_expand_alias_struct_init_ti(ast, alias_sym->type,
+                                                alias_sym->alias_type_params,
+                                                alias_sym->alias_type_param_count);
+}
+
 // 递归解析 TypeInfo 中的 alias 类型（在 resolve_generic_in_type 之后调用）
 // 返回 1 表示有修改，0 表示无修改
 int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
@@ -435,6 +506,22 @@ int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
                     // 先复制再释放：万一 struct_def->type 与 type 是同一对象（自引用别名），
                     // 先 free 会变成"拷贝已释放内存"（UAF）
                     TypeInfo* repl = type_copy(struct_def->type);
+                    // ★ 2026-11-25：**泛型别名**要按使用处写的实参代入形参
+                    //   （`alias Stack[T] = ct.Stack[T]` + `Stack[int] s = …` ⇒ body 里的 T 换成 int）。
+                    //   不做的话声明类型停在 `Stack[T]`，与 `new Stack[int]()` 推出的类型对不上
+                    //   ⇒ 误报「类型不匹配」（跨模块 use 导入的别名尤其必现）。
+                    if (repl && struct_def->is_type_alias && struct_def->alias_type_params &&
+                        type->generic_count > 0 && type->generic_args) {
+                        for (int pi = 0; pi < struct_def->alias_type_param_count &&
+                                          pi < type->generic_count; pi++) {
+                            if (!struct_def->alias_type_params[pi] || !type->generic_args[pi]) continue;
+                            TypeInfo* sub = type_substitute(repl, struct_def->alias_type_params[pi],
+                                                            type->generic_args[pi]);
+                            type_free(repl);
+                            repl = sub;
+                            if (!repl) break;
+                        }
+                    }
                     if (s->alias_expand_depth < (int)(sizeof(s->alias_expand_stack) / sizeof(char*))) {
                         pushed_alias = strdup(type->struct_name);
                         if (pushed_alias) {

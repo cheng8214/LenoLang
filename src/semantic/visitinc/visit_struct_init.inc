@@ -19,11 +19,17 @@
                 }
 
                 // 检查是否是模块限定的 struct 名称（如 "math.Point"）
-                const char* dot_pos = strchr(ast->u.struct_init.struct_name, '.');
                 Symbol* sym = NULL;
                 // 模块限定分支会临时 calloc 一份"虚拟符号"（用于字段检查），用完要整份释放 ——
                 // 此前从不释放 ⇒ 每次模块限定实例化漏一份（S2 清理时发现，2026-09-16）。
                 int sym_is_virtual = 0;
+                int alias_hops = 0;
+
+            resolve_init_struct_name:
+                if (sym && sym_is_virtual) { symbol_free_virtual(sym); sym = NULL; sym_is_virtual = 0; }
+                {
+                int alias_expanded_via_module = 0;
+                const char* dot_pos = strchr(ast->u.struct_init.struct_name, '.');
 
                 if (dot_pos) {
                     // 模块限定的 struct：从导入的模块中查找
@@ -54,11 +60,38 @@
                             //   这里再手写一份正是它注释里说的"同一件事两处写 ⇒ 精度漂移"。
                             semantic_attach_struct_fields(sym, mod_struct);
                         }
+                        if (!mod_struct) {
+                            // ★ 2026-11-25：模块限定名也可能是**别名**（`new gen.Stack[int]()`）。
+                            //   别名不是 struct ⇒ 上面 find_struct 查不到，这里展开成真实类型
+                            //   （把调用点实参代入形参），再把名字换成 `ct.Stack` 重走一遍解析。
+                            ModuleAliasSymbol* mod_alias = module_symbol_table_find_alias(
+                                module_info->sym_table, struct_name_part);
+                            if (mod_alias && mod_alias->type_info &&
+                                semantic_expand_alias_struct_init_ti(ast, mod_alias->type_info,
+                                                                     mod_alias->type_params,
+                                                                     mod_alias->type_param_count)) {
+                                alias_expanded_via_module = 1;
+                            }
+                        }
                     }
                     free(module_name);
+                    if (alias_expanded_via_module) { goto resolve_init_struct_name; }
                 } else {
                     // 直接的 struct 名称
                     sym = scope_resolve(s->current, ast->u.struct_init.struct_name);
+                }
+                }
+
+                // ★ 2026-11-25：名字若指向**类型别名**，就地展开成真实 struct，再重新解析一次名字。
+                //   场景：模块 A 里 `export alias Stack[T] = ct.Stack[T]`，消费者 `use A.Stack`
+                //   之后写 `new Stack[int]()` —— parser 的别名表是**每文件一张**，跨模块拿不到，
+                //   只能靠符号表导出形参名（.lenosymc v60）+ 这里用实参代入。
+                //   `alias_hops < 8` 只是防御（别名套别名时的死循环保险）。
+                if (sym && !sym_is_virtual && sym->is_type_alias && alias_hops < 8) {
+                    if (semantic_expand_alias_struct_init(s, ast, sym)) {
+                        alias_hops++;
+                        goto resolve_init_struct_name;   // 名字已换成 `ct.Stack` ⇒ 重走一遍解析
+                    }
                 }
 
                 if (!sym) {

@@ -1,0 +1,15 @@
+// alias_box_mod.leno —— 给 test_alias_generic_cross.leno 当**跨模块**夹具：
+// 一个泛型 struct，供"alias 体是限定名"的几条路径用。
+export struct Box[T] {
+    Array[T] items = []
+
+    func put(T v) { items.add(v) }
+
+    func take(): T { return items.pop() }
+}
+
+// 再导出一个**泛型别名**（2026-11-25 起可跨模块：形参名随 .lenosymc v60 一起导出）
+export alias BoxAlias[T] = Box[T]
+
+// 再导出一个**已实例化**的别名（调用点不写实参的那条路径）
+export alias IntBoxAlias = Box[int]

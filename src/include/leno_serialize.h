@@ -471,8 +471,12 @@
 // v45（2026-11-09）：OP_STRUCT_DEF 的字段元数据多一个 `element_struct_name`
 //   （见 LENO_BIN_VERSION v3.2.29）。模块字节码里是同一份布局 ⇒ 必须同步升，
 //   否则旧 .lenomc 会被当成新格式读，字段定义整体错位。
-#define LENO_MODCACHE_VERSION  0x0000003C  // v59 - 同 LENO_BIN_VERSION v3.2.44（RegexMatch 字段
-                                            //   顺序变了 ⇒ 旧 .lenomc 里的字段号会读错一格）
+#define LENO_MODCACHE_VERSION  0x0000003D  // v60 - 别名符号新增泛型形参名
+                                           //   （ModuleAliasSymbol.type_params/type_param_count）：
+                                           //   跨模块 `use m.Stack` 才认得出"这是泛型别名" ✓
+                                           //   ⇒ 旧缓存里的别名条目少这段，必须重编
+                                           // v59 - 同 LENO_BIN_VERSION v3.2.44（RegexMatch 字段
+                                           //   顺序变了 ⇒ 旧 .lenomc 里的字段号会读错一格）
                                             // v58 - 同 LENO_BIN_VERSION v3.2.43（类型规格新增
                                             //   TYPE_FUNCTION：函数签名随指令尾随字节走）
                                             // v57 - 同 v3.2.42（OP_STRUCT_DEF 字段元数据追加
