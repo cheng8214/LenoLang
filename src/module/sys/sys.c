@@ -266,6 +266,29 @@ static Value native_clear(int argCount, Value* args) {
     return val_null();
 }
 
+// 控制台初始化：UTF-8 代码页 + **VT 序列支持**（Windows）
+// ----------------------------------------------------------------------------
+// 为什么必须开 VT（2026-11-24，LenoTUI 演示当场暴露）：
+//   Win10 conhost **默认不解析** ANSI 转义 ⇒ `\x1b[31m` / `\x1b[2K` 会被当成普通字符
+//   原样打印成 `←[31m`，进度条变成阶梯状刷屏（截图实测）。之前这里只设了代码页，
+//   于是"颜色/清行/光标移动"在默认 cmd 窗口里全都不可用。
+//
+// 边界：
+//   · 失败（Win7 / 输出被重定向到文件 / 管道）⇒ **静默跳过**。重定向时 GetConsoleMode
+//     返回 false，正好保证写进文件的日志里不会混入控制码 ✓
+//   · 只对**输出**句柄设置；输入不需要。
+void leno_console_setup(void) {
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (hOut != NULL && hOut != INVALID_HANDLE_VALUE && GetConsoleMode(hOut, &mode)) {
+        SetConsoleMode(hOut, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
+#endif
+}
+
 // _console(show) - 显示/隐藏控制台窗口（Windows）
 // show=true:  显示控制台（无控制台 exe 会先 AllocConsole 分配）
 // show=false: 隐藏控制台
@@ -288,9 +311,8 @@ static Value native_console(int argCount, Value* args) {
                         freopen("CONIN$", "r", stdin);
                         freopen("CONOUT$", "w", stdout);
                         freopen("CONOUT$", "w", stderr);
-                        // 设置 UTF-8 编码
-                        SetConsoleOutputCP(CP_UTF8);
-                        SetConsoleCP(CP_UTF8);
+                        // UTF-8 编码 + VT 序列（与两个入口同一实现）
+                        leno_console_setup();
                         hwnd = GetConsoleWindow();
                     }
                 }

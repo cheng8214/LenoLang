@@ -14,8 +14,8 @@ import "TUI" as tui
 tui.init()
 print(tui.fg("成功", "green") + " " + tui.bold("42"))
 
-// 进度条：返回一行字符串，自己决定 print 还是拼进日志
-print(tui.clear_line() + tui.progress(done, total, 30, "下载"))
+// 进度条：原地重绘用 render（**不换行**）；只要一行文本就 print(progress(...))
+tui.render(tui.progress(done, total, 30, "下载"))
 
 // 表格
 Array[string] headers = ["名称", "大小"]
@@ -42,7 +42,8 @@ print(tui.table(headers, rows))
 | `set_color(on)` | 手动开关颜色 |
 | `fg(s, name)` | 前景色：`black/red/green/yellow/blue/magenta/cyan/white/gray`；**未知名字原样返回**（装饰不该让程序挂） |
 | `bold(s)` / `dim(s)` / `underline(s)` | 样式 |
-| `clear_line()` | `\r` + 清行（进度条重绘用） |
+| `clear_line()` | `\r` + 清行（返回字符串，一般不用直接拼） |
+| `render(line)` | **原地重绘一行**（内部 `printf`，不带换行）——进度条用这个 |
 | `move_up(n)` / `hide_cursor()` / `show_cursor()` | 光标控制 |
 | `width(s)` | **终端显示宽度**（中文 2 列、ASCII 1 列） |
 | `progress(done, total, bar_width=30, label="")` | 一行进度条；`total<=0` 视为 0%、越界自动夹取 |

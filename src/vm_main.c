@@ -929,8 +929,11 @@ static int vm_run_main(int argc, char** argv) {
 
 #ifdef _WIN32
 int wmain(int argc, wchar_t* argv[]) {
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
+    // UTF-8 代码页 + VT 序列（颜色/清行/光标）：集中在 sys.c 的 leno_console_setup
+    {
+        extern void leno_console_setup(void);
+        leno_console_setup();
+    }
     setvbuf(stdout, NULL, _IONBF, 0);
 
     // 设置全局参数

@@ -249,11 +249,13 @@ char** g_argv = NULL;
 //   ⚠ 两个入口各自定义一份（main.c 与 vm_main.c 互斥，见 build.sh / build_vm.sh 的源清单）。
 int g_packaged_mode = 0;
 
-// 设置控制台UTF-8编码（Windows）
+// 设置控制台编码与 VT 序列支持（Windows）
+//   实现集中在 sys.c 的 leno_console_setup：UTF-8 代码页 + ENABLE_VIRTUAL_TERMINAL_PROCESSING
+//   （不开 VT 的话 ANSI 颜色/清行会被原样打印成 ←[31m，见那边的说明）
 static void setupConsole(void) {
 #ifdef _WIN32
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
+    extern void leno_console_setup(void);
+    leno_console_setup();
 #endif
 }
 

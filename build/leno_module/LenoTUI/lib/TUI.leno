@@ -51,8 +51,16 @@ export func fg(string s, string name): string {
 
 // ---- 光标 / 行控制 ----
 
-// 清掉当前行并把光标回到行首（进度条重绘用：print(tui.clear_line() + ...)）
+// 清掉当前行并把光标回到行首
 export func clear_line(): string { return ESC + "[2K\r" }
+
+// 原地重绘一行 —— **不带换行**（内部 printf，不用 print）
+// ⚠ 进度条一定用这个，别用 `print(tui.clear_line() + ...)`：
+//    print 末尾自带 `\n`，每帧都会换行 ⇒ `\r` 白回行首，结果是**阶梯状刷屏**
+//    （2026-11-24 首次演示当场踩到，截图里那一大片就是）。
+export func render(string line) {
+    printf("%s", clear_line() + line)
+}
 
 export func move_up(int n): string {
     if n <= 0 { return "" }
