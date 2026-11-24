@@ -130,7 +130,9 @@ main() {
     //     ⚠ 直接起一个"持锁的 leno 进程"验不了：控制台窗口属于 **conhost**，不在 leno 进程名下 ✗
     if Sys.os() == "windows" {
         string an = "LenoActTest"
-        string pidFile = _tmpdir() + "leno-inst-" + an + ".pid"
+        // ⚠ 必须 dirs.join：`_tmpdir()` 的末尾分隔符口径 2026-11-24 统一成"不带"
+        //   （原来 Windows 带 '\'，这行靠它才拼对；直接用 + 拼在两个平台都是错的）
+        string pidFile = dirs.join(_tmpdir(), "leno-inst-" + an + ".pid")
         var nh = _spawn("notepad.exe", "")
         assert_true(nh > 0, "notepad 应当起得来（拿它当'有窗口的持锁进程'）")
         sleep(700)   // 等它把窗口建出来

@@ -144,46 +144,6 @@ static Value native_dirs_cwd(int argCount, Value* args) {
 #endif
 }
 
-// dirs.temp_dir() - 系统临时目录（**不含末尾分隔符**）
-// ----------------------------------------------------------------------------
-// 为什么加（2026-11-24）：写临时文件的地方此前只能各自拼环境变量，实测已经拼出事故 ——
-//   LenoSDL3 的 test_virtual_window.leno 直接写死 `D:/CLeno/Leno/tmp_vwin.png`：
-//     ① 换机器/换目录 ⇒ saveImagePNG 失败（只 print ok=false，不报错）；
-//     ② 文件留在**仓库根** ⇒ run_all_tests 的"跑完不留垃圾"检查误报 1 failed。
-//   统一入口后，调用方一律 `dirs.join(dirs.temp_dir(), "x.png")`。
-//
-// 口径：
-//   · Windows：GetTempPathW（尊重 TMP/TEMP/USERPROFILE 环境变量）；
-//   · POSIX：$TMPDIR，兜底 /tmp；
-//   · 取不到 ⇒ 返回 "."（宁可写到当前目录，也不返回 null 让调用方多一条判空路径）。
-//   · 去掉末尾分隔符：Windows 的 GetTempPathW 保证带 '\'，不去掉 dirs.join 会拼出双斜杠。
-static Value native_dirs_temp_dir(int argCount, Value* args) {
-    (void)argCount;
-    (void)args;
-#ifdef _WIN32
-    wchar_t wbuf[MAX_PATH + 2];
-    DWORD n = GetTempPathW((DWORD)(sizeof(wbuf) / sizeof(wchar_t)), wbuf);
-    if (n == 0 || n > (DWORD)(sizeof(wbuf) / sizeof(wchar_t))) {
-        return val_obj((Object*)str_copy(".", 1));
-    }
-    while (n > 0 && (wbuf[n - 1] == L'\\' || wbuf[n - 1] == L'/')) {
-        wbuf[--n] = L'\0';
-    }
-    char* utf8 = utf16_to_utf8(wbuf);
-    if (!utf8) return val_obj((Object*)str_copy(".", 1));
-    Value result = val_obj((Object*)str_copy(utf8, (int)strlen(utf8)));
-    free(utf8);
-    return result;
-#else
-    const char* t = getenv("TMPDIR");
-    if (!t || !*t) t = "/tmp";
-    // 去掉末尾 '/'（保留根目录 "/" 本身）
-    size_t len = strlen(t);
-    while (len > 1 && t[len - 1] == '/') len--;
-    return val_obj((Object*)str_copy(t, (int)len));
-#endif
-}
-
 // dirs.abspath(path) - 转换为绝对路径
 static Value native_dirs_abspath(int argCount, Value* args) {
     (void)argCount;   // 个数由编译期把关（2026-10-01 实测：「参数数量不匹配」）⇒ 运行期不重复检查
@@ -1563,8 +1523,6 @@ void dirs_init_module(void) {
     native_register_module_method("dirs", "list_drives", native_dirs_list_drives, &NATIVE_T_ARR_STRING, NATIVE_FIXED_NONE(0));
 
     native_register_module_method("dirs", "cwd", native_dirs_cwd, &NATIVE_T_STRING, NATIVE_FIXED_NONE(0));
-    // 2026-11-24：系统临时目录（写截图 / 中间文件请用它，别再写死绝对路径或自己拼 TEMP）
-    native_register_module_method("dirs", "temp_dir", native_dirs_temp_dir, &NATIVE_T_STRING, NATIVE_FIXED_NONE(0));
     native_register_module_method("dirs", "abspath", native_dirs_abspath, &NATIVE_T_STRING, NATIVE_FIXED(string_params));
     native_register_module_method("dirs", "basename", native_dirs_basename, &NATIVE_T_STRING, NATIVE_FIXED(string_params));
     native_register_module_method("dirs", "dirname", native_dirs_dirname, &NATIVE_T_STRING, NATIVE_FIXED(string_params));

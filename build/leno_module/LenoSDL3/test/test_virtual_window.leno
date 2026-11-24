@@ -88,7 +88,7 @@ main() {
             bool okShot = false
             // 2026-11-24：原来写死 `D:/CLeno/Leno/tmp_vwin.png` ⇒ 换机器就静默失败，
             //   而且文件落在**仓库根**，会让 run_all_tests 的"跑完不留垃圾"检查误报。
-            string p1 = dirs.join(dirs.temp_dir(), "leno_vwin.png")
+            string p1 = dirs.join(_tmpdir(), "leno_vwin.png")
             if shot != null { okShot = SDL3.saveImagePNG(shot, p1) }
             print("[INFO] 截图 ok=" + _str(okShot) + "（" + p1 + "）\n")
         }
@@ -125,7 +125,7 @@ main() {
             var sz2 = win.getSize()
             var shot2 = r.readPixelsAt(0, 0, sz2.w, sz2.h)
             bool ok2 = false
-            string p2 = dirs.join(dirs.temp_dir(), "leno_vwin_modal.png")
+            string p2 = dirs.join(_tmpdir(), "leno_vwin_modal.png")
             if shot2 != null { ok2 = SDL3.saveImagePNG(shot2, p2) }
             print("[INFO] 模态截图 ok=" + _str(ok2) + "（" + p2 + "）\n")
         }

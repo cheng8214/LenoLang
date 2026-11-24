@@ -889,29 +889,57 @@ static Value native_homedir(int argCount, Value* args) {
     return val_null();
 }
 
-// _tmpdir() - 返回系统临时目录路径
+// _tmpdir() - 返回系统临时目录路径（**不带末尾分隔符**）
+// ----------------------------------------------------------------------------
+// ★ 2026-11-24 两处修正（压测抓到的真 bug + 一个长期平台陷阱）：
+//   ① Windows 原用 `GetTempPathA`：按**系统 ANSI 代码页**转换 ⇒ 用户名含中文时
+//      `C:\Users\张三\AppData\Local\Temp` 会变成乱码/问号路径，后续 fopen 全失败，
+//      而报错点离病因很远。改用 `GetTempPathW` + UTF-8（全仓其它路径早就这么做了）。
+//   ② **末尾分隔符统一成"不带"**：原来 Windows 的 GetTempPathA 带 '\'、POSIX 不带 ⇒
+//      46 处 `_tmpdir() + _sep()` 在 Windows 上拼出双斜杠、另一处 `+ "字面量"` 在 POSIX
+//      上拼错，两类调用方对同一返回值的前提**相反**。现在两边都不带：
+//        · `dirs.join(_tmpdir(), name)`          ✓（推荐，对口径无感）
+//        · `_tmpdir() + _sep() + name`           ✓（原来 Windows 双斜杠，现在正常）
+//        · `_tmpdir() + "字面量"`                ✗ 改为 dirs.join（全仓已扫过，只剩 0 处）
+//   ⚠ 再给"临时目录"加第二个 API 前先想想：这个就是唯一入口（`dirs.temp_dir` 曾短暂存在过，已删）。
 static Value native_tmpdir(int argCount, Value* args) {
     (void)argCount;
     (void)args;
 
     #ifdef _WIN32
-        char buf[MAX_PATH];
-        UINT len = GetTempPathA(MAX_PATH, buf);
-        if (len > 0) {
-            return val_obj((Object*)str_copy(buf, (int)len));
+        wchar_t wbuf[MAX_PATH + 2];
+        DWORD n = GetTempPathW((DWORD)(sizeof(wbuf) / sizeof(wchar_t)), wbuf);
+        if (n == 0 || n > (DWORD)(sizeof(wbuf) / sizeof(wchar_t))) return val_null();
+        // 去掉末尾 '\'；但 "C:\" 这种**盘根**要保留分隔符
+        //   （退化成 "C:" 语义是"该盘当前目录"，与"盘根"不是一回事）
+        while (n > 1 && (wbuf[n - 1] == L'\\' || wbuf[n - 1] == L'/')) {
+            wbuf[--n] = L'\0';
         }
+        if (n == 2 && wbuf[1] == L':') {
+            wbuf[2] = L'\\';
+            wbuf[3] = L'\0';
+            n = 3;
+        }
+        int len = WideCharToMultiByte(CP_UTF8, 0, wbuf, (int)n, NULL, 0, NULL, NULL);
+        if (len <= 0) return val_null();
+        char* utf8 = (char*)malloc((size_t)len + 1);
+        if (!utf8) return val_null();
+        WideCharToMultiByte(CP_UTF8, 0, wbuf, (int)n, utf8, len, NULL, NULL);
+        utf8[len] = '\0';
+        Value result = val_obj((Object*)str_copy(utf8, len));
+        free(utf8);
+        return result;
     #else
         const char* tmp = getenv("TMPDIR");
-        if (tmp != NULL) {
-            return val_obj((Object*)str_copy(tmp, (int)strlen(tmp)));
+        if (tmp == NULL || !*tmp) {
+            // 宿主注入的可写目录优先（Android 沙箱里 "/tmp" 既不存在也不可写）
+            tmp = g_data_dir[0] ? g_data_dir : "/tmp";
         }
-        // 没有 TMPDIR 时：宿主注入的可写目录优先（Android 沙箱里 "/tmp" 既不存在也不可写）
-        if (g_data_dir[0]) {
-            return val_obj((Object*)str_copy(g_data_dir, (int)strlen(g_data_dir)));
-        }
-        return val_obj((Object*)str_copy("/tmp", 4));
+        // 去掉末尾 '/'，但保留根目录 "/" 本身（len > 1）
+        size_t len = strlen(tmp);
+        while (len > 1 && tmp[len - 1] == '/') len--;
+        return val_obj((Object*)str_copy(tmp, (int)len));
     #endif
-    return val_null();
 }
 
 // _sep() - 返回路径分隔符
