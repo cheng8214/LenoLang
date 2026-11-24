@@ -10,12 +10,14 @@
 //   ② 点在弹窗内 ⇒ 事件改投给弹窗，坐标被换算成弹窗局部坐标（按钮回调被触发）
 //   ③ 非模态时，点在弹窗外 ⇒ 主窗口照常收到（不被弹窗吞掉）
 //   ④ 模态时，点在弹窗外 ⇒ 主窗口**收不到**（模态挡住下层）
-//   另外存一张 PNG（tmp_vwin.png）供人眼确认"弹窗真的合成在主窗口里"。
+//   另外存两张 PNG（`dirs.temp_dir()` 下的 leno_vwin*.png）供人眼确认
+//   "弹窗真的合成在主窗口里" —— 不写进仓库/当前目录，跑完不留垃圾。
 //
 // 用法：
 //     ./build/leno.exe build/leno_module/LenoSDL3/test/test_virtual_window.leno
 //   （要真实窗口驱动：本测试会截一张 PNG。无显示环境可设 SDL_VIDEODRIVER=dummy，
 //     此时截图那一步会失败但行为断言仍然有效 ✓）
+import dirs
 import "SDL3" as SDL3
 use SDL3.(Event, Renderer, Window, Button)
 
@@ -84,8 +86,11 @@ main() {
             var sz = win.getSize()
             var shot = r.readPixelsAt(0, 0, sz.w, sz.h)
             bool okShot = false
-            if shot != null { okShot = SDL3.saveImagePNG(shot, "D:/CLeno/Leno/tmp_vwin.png") }
-            print("[INFO] 截图 ok=" + _str(okShot) + "（tmp_vwin.png）\n")
+            // 2026-11-24：原来写死 `D:/CLeno/Leno/tmp_vwin.png` ⇒ 换机器就静默失败，
+            //   而且文件落在**仓库根**，会让 run_all_tests 的"跑完不留垃圾"检查误报。
+            string p1 = dirs.join(dirs.temp_dir(), "leno_vwin.png")
+            if shot != null { okShot = SDL3.saveImagePNG(shot, p1) }
+            print("[INFO] 截图 ok=" + _str(okShot) + "（" + p1 + "）\n")
         }
         // ---- 第 5 帧：点弹窗按钮（父窗口坐标 = 合成左上角 240,150 + 按钮中心 96,36）----
         if gFrame == 5 {
@@ -120,8 +125,9 @@ main() {
             var sz2 = win.getSize()
             var shot2 = r.readPixelsAt(0, 0, sz2.w, sz2.h)
             bool ok2 = false
-            if shot2 != null { ok2 = SDL3.saveImagePNG(shot2, "D:/CLeno/Leno/tmp_vwin_modal.png") }
-            print("[INFO] 模态截图 ok=" + _str(ok2) + "（tmp_vwin_modal.png）\n")
+            string p2 = dirs.join(dirs.temp_dir(), "leno_vwin_modal.png")
+            if shot2 != null { ok2 = SDL3.saveImagePNG(shot2, p2) }
+            print("[INFO] 模态截图 ok=" + _str(ok2) + "（" + p2 + "）\n")
         }
         if gFrame == 20 {
             check(gMainClicks == 1, "模态：弹窗外的点击被挡住（主窗口计数不变）")
