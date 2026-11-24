@@ -699,6 +699,165 @@ static Value cstruct_array_method_column_i(int argc, Value* args) {
     return csa_column(args, 0, "column_i");
 }
 
+// 把标量值写回 cstruct 内存（from_structs 用）
+static int csa_write_scalar(uint8_t* p, TypeKind t, double v) {
+    switch (t) {
+    case TYPE_I8:  { int8_t   x = (int8_t)v;   memcpy(p, &x, sizeof x); return 1; }
+    case TYPE_U8:  { uint8_t  x = (uint8_t)v;  memcpy(p, &x, sizeof x); return 1; }
+    case TYPE_I16: { int16_t  x = (int16_t)v;  memcpy(p, &x, sizeof x); return 1; }
+    case TYPE_U16: { uint16_t x = (uint16_t)v; memcpy(p, &x, sizeof x); return 1; }
+    case TYPE_I32: { int32_t  x = (int32_t)v;  memcpy(p, &x, sizeof x); return 1; }
+    case TYPE_U32: { uint32_t x = (uint32_t)v; memcpy(p, &x, sizeof x); return 1; }
+    case TYPE_I64: { int64_t  x = (int64_t)v;  memcpy(p, &x, sizeof x); return 1; }
+    case TYPE_U64: { uint64_t x = (uint64_t)v; memcpy(p, &x, sizeof x); return 1; }
+    case TYPE_F32: { float    x = (float)v;    memcpy(p, &x, sizeof x); return 1; }
+    case TYPE_F64: { double   x = v;           memcpy(p, &x, sizeof x); return 1; }
+    default:
+        return 0;
+    }
+}
+
+// ==================== 与 GC struct 互转（2026-11-24）====================
+// 场景：热循环里用连续内存（cstruct），边界处（序列化 / 传给业务层 / 复用现成方法）
+//   需要 GC struct。这两个方法就是那道门。
+//
+// ⚠ 口径：
+//   ① 目标类型按**同名**找（`V3` cstruct ↔ `V3` struct）。找不到就报错 ——
+//      不猜"最像的那个"，猜错就是整批数据错位。
+//   ② 只搬**标量**字段（i8..u64 / f32 / f64）；位域、数组字段、嵌套 cstruct 一律**跳过**
+//      （与 sum/column 同一套边界，避免半对半错的搬运）。
+//   ③ GC struct 缺某个字段 ⇒ 跳过（允许只导出子集）；类型接不住（如 cstruct 是数值
+//      而 struct 字段是 string）⇒ **报错**，不静默丢数据。
+//   ④ 这是**边界转换**：每元素一次 GC 分配，不要放进热循环。
+
+static Value cstruct_array_method_to_structs(int argc, Value* args) {
+    (void)argc;
+    if (!val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_CSTRUCT_ARRAY) {
+        native_throw_error("to_structs: 只能对 cstruct 数组调用（`V3.malloc_array(n)` 的返回值）");
+        return val_null();
+    }
+    if (!val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_STRING) {
+        native_throw_error("to_structs: 目标 struct 名必须是字符串，如 `a.to_structs(\"V3S\")`");
+        return val_null();
+    }
+    ObjCStructArray* a = (ObjCStructArray*)val_as_obj(args[0]);
+    const char* tname = ((ObjString*)val_as_obj(args[1]))->chars;
+
+    // 为什么必须显式给名字（2026-11-24 实测）：cstruct 与 struct **不能同名**
+    //   （「类型 'V3' 已经定义为 cstruct，不能重复定义为 struct」），所以"按同名找"根本
+    //   不存在候选；而类型名又**不能当值传**（「'V3S' 是类型名，不能当值用」）。
+    //   ⇒ 只剩字符串名这一条路。拼错在这里立刻报错，不会静默给空数组。
+    extern ObjStructDef* struct_def_find(const char* name);
+    ObjStructDef* sdef = struct_def_find(tname);
+    if (!sdef) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "to_structs: 找不到 struct '%s'（要先用 `struct %s { ... }` 声明目标类型）",
+                 tname, tname);
+        native_throw_error(msg);
+        return val_null();
+    }
+
+    ObjArray* out = arr_new(a->count > 0 ? a->count : 1);
+    if (!out) {
+        native_throw_error("to_structs: 分配结果数组失败");
+        return val_null();
+    }
+
+    for (int i = 0; i < a->count; i++) {
+        ObjStruct* s = struct_instance_new(sdef);
+        if (!s) {
+            native_throw_error("to_structs: 创建 struct 实例失败（内存不足）");
+            return val_null();
+        }
+        for (int fi = 0; fi < a->def->field_count; fi++) {
+            CStructFieldInfo* cf = &a->def->fields[fi];
+            if (cf->bit_width > 0 || cf->array_dim > 0) continue;   // 边界外，跳过
+            if (!csa_is_scalar(cf->type)) continue;
+
+            int gi = struct_get_field_index(sdef, cf->name);
+            if (gi < 0) continue;                                    // 目标没有这个字段：只导出子集
+
+            TypeKind gt = sdef->fields[gi].type;
+            if (gt != TYPE_INT && gt != TYPE_FLOAT) {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "to_structs: struct '%s' 的字段 '%s' 是 %d 类型，而 cstruct 侧是数值"
+                         "（只支持 int / float 接收）", sdef->name ? sdef->name : "?", cf->name, (int)gt);
+                native_throw_error(msg);
+                return val_null();
+            }
+
+            double v = 0.0;
+            if (!csa_read_scalar(a->data + (size_t)i * (size_t)a->element_size + (size_t)cf->offset,
+                                 cf->type, &v)) continue;
+            struct_set_field(s, gi, gt == TYPE_FLOAT ? val_float(v) : val_int_safe((int64_t)v));
+        }
+        out->elements[out->count++] = val_obj((Object*)s);
+    }
+    return val_obj((Object*)out);
+}
+
+static Value cstruct_method_from_structs(int argc, Value* args) {
+    (void)argc;
+    if (!val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_CSTRUCT_DEF) {
+        native_throw_error("from_structs: 只能对 cstruct **定义**调用（`V3.from_structs(arr)`）");
+        return val_null();
+    }
+    ObjCStructDef* cdef = (ObjCStructDef*)val_as_obj(args[0]);
+    if (!val_is_obj(args[1]) || val_as_obj(args[1])->type != OBJ_ARRAY) {
+        native_throw_error("from_structs: 参数必须是数组（`V3.from_structs(Array[V3])`）");
+        return val_null();
+    }
+    ObjArray* recs = (ObjArray*)val_as_obj(args[1]);
+
+    ObjCStructArray* a = cstruct_array_new(cdef, recs->count);
+    if (!a) {
+        native_throw_error("from_structs: 分配 cstruct 数组失败（内存不足）");
+        return val_null();
+    }
+
+    for (int i = 0; i < recs->count; i++) {
+        Value rv = recs->elements[i];
+        if (!val_is_obj(rv) || val_as_obj(rv)->type != OBJ_STRUCT) {
+            char msg[192];
+            snprintf(msg, sizeof(msg), "from_structs: 第 %d 个元素不是 struct（实际类型 %d）",
+                     i, val_is_obj(rv) ? (int)val_as_obj(rv)->type : -1);
+            native_throw_error(msg);
+            return val_null();
+        }
+        ObjStruct* s = (ObjStruct*)val_as_obj(rv);
+        for (int fi = 0; fi < cdef->field_count; fi++) {
+            CStructFieldInfo* cf = &cdef->fields[fi];
+            if (cf->bit_width > 0 || cf->array_dim > 0) continue;
+            if (!csa_is_scalar(cf->type)) continue;
+
+            int gi = struct_get_field_index(s->def, cf->name);
+            if (gi < 0) continue;                                    // 源没有这个字段：保留 0
+
+            Value v = s->field_values[gi];
+            double d = 0.0;
+            if (val_is_int(v)) {
+                d = (double)val_as_int(v);
+            } else if (val_is_float(v)) {
+                d = val_as_num(v);
+            } else if (val_is_bigint(v)) {
+                d = bigint_to_double(val_as_bigint(v));
+            } else {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "from_structs: 第 %d 个元素的字段 '%s' 不是数值（实际类型 %d）",
+                         i, cf->name, val_is_obj(v) ? (int)val_as_obj(v)->type : -1);
+                native_throw_error(msg);
+                return val_null();
+            }
+            csa_write_scalar(a->data + (size_t)i * (size_t)a->element_size + (size_t)cf->offset,
+                             cf->type, d);
+        }
+    }
+    return val_obj((Object*)a);
+}
+
 // cstruct.alignment() - 返回 cstruct 对齐要求（字节数）
 static Value cstruct_method_alignment(int argc, Value* args) {
     (void)argc;
@@ -1091,4 +1250,14 @@ void cstructs_init_methods(void) {
                             TYPE_ARRAY, TYPE_FLOAT, NATIVE_FIXED(field_name_params));
     cstruct_register_method("column_i", make_native(cstruct_array_method_column_i, 2, "column_i"),
                             TYPE_ARRAY, TYPE_INT, NATIVE_FIXED(field_name_params));
+
+    // ---- 与 GC struct 互转（2026-11-24）----
+    // to_structs("V3S")：cstruct 数组 → Array[那个 struct]（元素类型运行期才知道 ⇒ 裸 Array）
+    TypeKind type_name_params[] = {TYPE_STRING};
+    cstruct_register_method("to_structs", make_native(cstruct_array_method_to_structs, 2, "to_structs"),
+                            TYPE_ARRAY, TYPE_UNKNOWN, NATIVE_FIXED(type_name_params));
+    // from_structs：Array[同名 struct] → cstruct 数组（对**定义**调用：`V3.from_structs(arr)`）
+    TypeKind arr_param[] = {TYPE_ARRAY};
+    cstruct_register_method("from_structs", make_native(cstruct_method_from_structs, 2, "from_structs"),
+                            TYPE_CSTRUCT, TYPE_UNKNOWN, NATIVE_FIXED(arr_param));
 }

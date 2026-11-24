@@ -1,0 +1,111 @@
+// cstruct 数组 ↔ GC struct 数组（2026-11-24）
+//
+// ⚠ 为什么 to_structs 要传名字：cstruct 与 struct **不能同名**
+//   （「类型 'V3' 已经定义为 cstruct」），类型名也不能当值传
+//   （「'V3S' 是类型名，不能当值用」）⇒ 目标类型只能显式给字符串名。
+cstruct V3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+struct V3S {
+    float x = 0.0
+    float y = 0.0
+    float z = 0.0
+}
+
+cstruct OnlyC {
+    i32 v
+}
+
+main() {
+    // ---------- ① to_structs ----------
+    var a = V3.malloc_array(3)
+    a[0].x = 1.0
+    a[0].y = 2.0
+    a[0].z = 3.0
+    a[1].x = 4.0
+    a[2].x = 5.0
+
+    var gs = a.to_structs("V3S")
+    assert_eq(gs.len(), 3, "① 元素数")
+
+    var g0 = gs[0]
+    var x0 = _field(g0, "x")
+    if x0 is float => xf {
+        assert_eq(xf, 1.0, "① 第 0 个 x")
+    } else {
+        assert_true(false, "① x 应是 float")
+    }
+    var y0 = _field(g0, "y")
+    if y0 is float => yf {
+        assert_eq(yf, 2.0, "① 第 0 个 y")
+    } else {
+        assert_true(false, "① y 应是 float")
+    }
+    var x2 = _field(gs[2], "x")
+    if x2 is float => xf2 {
+        assert_eq(xf2, 5.0, "① 第 2 个 x")
+    } else {
+        assert_true(false, "① 第 2 个 x 应是 float")
+    }
+    // 未赋值的 z 应为 0（cstruct 侧清零 → struct 侧 0.0）
+    var z1 = _field(gs[1], "z")
+    if z1 is float => zf {
+        assert_eq(zf, 0.0, "① 未赋值字段搬成 0")
+    } else {
+        assert_true(false, "① z 应是 float")
+    }
+
+    // ---------- ② from_structs（回写） ----------
+    var b = V3.from_structs(gs)
+    assert_eq(b.len(), 3, "② 元素数")
+    assert_eq(b[0].x, 1.0, "② 第 0 个 x 回写")
+    assert_eq(b[1].x, 4.0, "② 第 1 个 x 回写")
+    assert_eq(b[2].x, 5.0, "② 第 2 个 x 回写")
+    b.free_all()
+
+    // ---------- ③ 往返：cstruct → struct → cstruct 值不变 ----------
+    var c = V3.malloc_array(1)
+    c[0].x = 9.5
+    c[0].y = -1.25
+    c[0].z = 0.0
+    var g2 = c.to_structs("V3S")
+    var c2 = V3.from_structs(g2)
+    assert_eq(c2[0].x, 9.5, "③ 往返 x")
+    assert_eq(c2[0].y, -1.25, "③ 往返 y")
+    c.free_all()
+    c2.free_all()
+
+    // ---------- ④ 目标 struct 不存在 ⇒ 报错 ----------
+    var threw = false
+    try {
+        a.to_structs("NoSuchStruct")
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true, "④ 目标类型不存在必须报错")
+
+    // ---------- ⑤ 有字段但目标类型没有任何同名字段 ⇒ 全跳过（不崩） ----------
+    var o = OnlyC.malloc_array(2)
+    o[0].v = 7
+    o[1].v = 8
+    var og = o.to_structs("V3S")     // V3S 没有 v 字段
+    assert_eq(og.len(), 2, "⑤ 元素数仍按源数组")
+    o.free_all()
+
+    // ---------- ⑥ from_structs 收到非 struct 元素 ⇒ 报错 ----------
+    Array[any] bad = []
+    bad.add(123)
+    threw = false
+    try {
+        V3.from_structs(bad)
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true, "⑥ 非 struct 元素必须报错")
+
+    a.free_all()
+    print("cstruct structs ok")
+}
