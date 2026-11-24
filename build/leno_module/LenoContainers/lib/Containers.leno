@@ -13,7 +13,7 @@
 //   · **不带锁**：Leno 的并发模型是 Channel 传值 + thread_local，不做加锁容器。
 //     要跨线程就整份传（或把容器放在一个线程里，用 Channel 收发）。
 //
-// 五个类型：Stack / Queue / PriorityQueue / LRU / ClockLRU。
+// 七个类型：Stack / Queue / Deque / PriorityQueue / LRU / ClockLRU / LRUO1。
 
 // ==================== Stack：后进先出 ====================
 export struct Stack[T] {
@@ -45,6 +45,14 @@ export struct Stack[T] {
 
     // 快照（栈底 → 栈顶），**非破坏性**：返回值是副本，改它不影响栈
     func to_array(): Array[T] { return items.copy() }
+
+    // 按**逻辑下标**看元素（0 = 栈底）；越界抛错（与 Deque.at 同口径）
+    func at(int i): T {
+        if i < 0 or i >= items.len() {
+            throw "Containers.Stack.at: 下标越界（" + _str(i) + " / " + _str(items.len()) + "）"
+        }
+        return items[i]
+    }
 }
 
 // ==================== Queue：先进先出 ====================
@@ -109,6 +117,25 @@ export struct Queue[T] {
     // 逻辑长度（扣掉已经出队、但还没压缩掉的空洞）
     func len(): int { return items.len() - head }
     func is_empty(): bool { return head >= items.len() }
+
+    // 按**逻辑下标**看元素（0 = 队首）；越界抛错（与 Deque.at 同口径）
+    func at(int i): T {
+        int n = items.len() - head
+        if i < 0 or i >= n {
+            throw "Containers.Queue.at: 下标越界（" + _str(i) + " / " + _str(n) + "）"
+        }
+        return items[head + i]
+    }
+
+    // 摘掉第 i 个（0 = 队首）。⚠ O(n)：要搬后面的元素 —— 给"按条件取走一条"的队列用，
+    //   别放进热循环（纯 FIFO 出队请继续用 pop()）。
+    func remove_at(int i): T {
+        int n = items.len() - head
+        if i < 0 or i >= n {
+            throw "Containers.Queue.remove_at: 下标越界（" + _str(i) + " / " + _str(n) + "）"
+        }
+        return items.remove(head + i)
+    }
     func clear() {
         items.clear()
         head = 0
@@ -257,6 +284,20 @@ export struct Deque[T] {
 
     func push_back(T v) { b.add(v); n = n + 1 }
     func push_front(T v) { f.add(v); n = n + 1 }
+
+    // 一次灌多个（顺序 = 数组顺序）：push_back_all 把 [a,b] 追加到尾部；
+    // push_front_all 把 [a,b] 依次从头部压入 ⇒ 逻辑顺序变成 b,a,…
+    func push_back_all(Array[T] vs) { for vs to v { b.add(v); n = n + 1 } }
+    func push_front_all(Array[T] vs) { for vs to v { f.add(v); n = n + 1 } }
+
+    // 一次性从队首取走 k 个（按出队顺序）；k 超过剩余 ⇒ 抛错（不静默少给）
+    func pop_front_n(int k): Array[T] {
+        if k < 1 { throw "Containers.Deque.pop_front_n: 个数必须 >= 1（收到 " + _str(k) + "）" }
+        if k > n { throw "Containers.Deque.pop_front_n: 只剩 " + _str(n) + " 个，要取 " + _str(k) }
+        Array[T] out = []
+        for 0 : k - 1 to _ { out.add(pop_front()) }
+        return out
+    }
 
     func pop_front(): T {
         int fn = f.len()
@@ -609,5 +650,167 @@ export struct ClockLRU[V] {
         ref.clear()
         hand = 0
         _evicted = null
+    }
+}
+
+// ==================== LRUO1：**严格**最久未使用淘汰，且 get/put 全 O(1) ====================
+// 为什么还要第三个 LRU（2026-11-25）：
+//   · `LRU`      —— 严格按最近访问淘汰，但 `get` 是 O(n)（数组里找 key 再搬位置）：
+//                   cap=1024 时 2 2 µs、cap=4096 已到 7.6 µs；
+//   · `ClockLRU` —— O(1) 且曲线平，但淘汰只是**近似**最久未使用（CLOCK 二次机会）。
+// 两者之间的空档：**既要严格淘汰顺序、又要 O(1)**。这里用手写双向链表补上 ——
+// 不是 `Ptr` 链表，而是**整数下标链表**（`prev/next` 两个 Array[int] + `slot` 字典）：
+//   · get 命中 ⇒ 从链上摘下、接到尾（最近使用），O(1)；
+//   · put 新 key ⇒ 接到尾；超容量 ⇒ 摘头（head = 最久未使用）淘汰，O(1)；
+//   · 节点被 remove/淘汰后下标进**空闲栈**复用，数组不会无限长。
+// 代价：每个键多两条 int（8 字节）+ 三个字典/数组项，比 `ClockLRU` 略费内存。
+// 选型：cap 小（≤128）三者都行，`LRU` 最省事；cap 上千且要 O(1) 又要严格 ⇒ 用这个；
+//       只求"够用的近似" ⇒ `ClockLRU`（它连链都不用维护）。
+export struct LRUO1[V] {
+    Dict[string, V] map = {}
+    Dict[string, int] slot = {}       // key → 节点下标
+    Array[int] prev = []              // 双向链表（下标索引，-1 = 无）
+    Array[int] next = []
+    Array[string] keyAt = []          // 下标 → key（淘汰时要还 key、释放要拿 key 去查值）
+    Array[int] freeIdx = []           // 空闲下标栈（remove/淘汰 留下的槽复用）
+    int head = -1                     // 最久未使用
+    int tail = -1                     // 最近使用
+    int cap = 128
+    func(string, V):void on_evict = null
+
+    func _alloc(string k): int {
+        int i = -1
+        if freeIdx.len() > 0 {
+            i = freeIdx.pop()
+            keyAt[i] = k
+        } else {
+            i = prev.len()
+            prev.add(-1)
+            next.add(-1)
+            keyAt.add(k)
+        }
+        return i
+    }
+
+    // 接到链表尾（最近使用）
+    func _link_back(int i) {
+        prev[i] = tail
+        next[i] = -1
+        if tail >= 0 { next[tail] = i }
+        tail = i
+        if head < 0 { head = i }
+    }
+
+    func _unlink(int i) {
+        int p = prev[i]
+        int n = next[i]
+        if p >= 0 { next[p] = n } else { head = n }
+        if n >= 0 { prev[n] = p } else { tail = p }
+        prev[i] = -1
+        next[i] = -1
+    }
+
+    // 摘掉 head（最久未使用）并回收：返回 key（null = 空）
+    func _evict_head(): string? {
+        if head < 0 { return null }
+        int i = head
+        string k = keyAt[i]
+        _unlink(i)
+        if on_evict != null { on_evict(k, map[k]) }
+        map.remove(k)
+        slot.remove(k)
+        keyAt[i] = ""
+        freeIdx.add(i)
+        return k
+    }
+
+    func len(): int { return map.len() }
+    func capacity(): int { return cap }
+    func has(string k): bool { return map.has(k) }
+
+    func put(string k, V v): string? {
+        if map.has(k) {
+            map[k] = v
+            int i = slot[k]
+            if i != tail {            // 已存在 ⇒ 提升到最近使用（本来就在尾部就不用动）
+                _unlink(i)
+                _link_back(i)
+            }
+            return null
+        }
+        string? evicted = null
+        while map.len() >= cap { evicted = _evict_head() }
+        int i = _alloc(k)
+        map[k] = v
+        slot[k] = i
+        _link_back(i)
+        return evicted
+    }
+
+    func get(string k, V def): V {
+        if not map.has(k) { return def }
+        int i = slot[k]
+        if i != tail {
+            _unlink(i)
+            _link_back(i)
+        }
+        return map[k]
+    }
+
+    // 只读、不提升（同 LRU.peek）
+    func peek(string k, V def): V {
+        if not map.has(k) { return def }
+        return map[k]
+    }
+
+    func remove(string k) {
+        if not map.has(k) { return }
+        int i = slot[k]
+        _unlink(i)
+        map.remove(k)
+        slot.remove(k)
+        keyAt[i] = ""
+        freeIdx.add(i)
+    }
+
+    // 现存 key：**最久未使用 → 最近使用**（与 LRU.keys() 同口径，可直接对比/调试）
+    func keys(): Array[string] {
+        Array[string] out = []
+        int i = head
+        while i >= 0 {
+            out.add(keyAt[i])
+            i = next[i]
+        }
+        return out
+    }
+
+    // 调小容量立即淘汰到新上限（返回被淘汰的 key，与 LRU 同口径）
+    func set_capacity(int n): Array[string] {
+        if n < 1 { throw "Containers.LRUO1.set_capacity: 容量必须 >= 1（收到 " + _str(n) + "）" }
+        cap = n
+        Array[string] out = []
+        while map.len() > cap {
+            string? k = _evict_head()
+            if k is string => ks { out.add(ks) }
+        }
+        return out
+    }
+
+    func clear() {
+        if on_evict != null {
+            int i = head
+            while i >= 0 {
+                on_evict(keyAt[i], map[keyAt[i]])
+                i = next[i]
+            }
+        }
+        map.clear()
+        slot.clear()
+        prev.clear()
+        next.clear()
+        keyAt.clear()
+        freeIdx.clear()
+        head = -1
+        tail = -1
     }
 }

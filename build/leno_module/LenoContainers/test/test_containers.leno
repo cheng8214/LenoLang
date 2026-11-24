@@ -470,5 +470,129 @@ main() {
     while not dq3.is_empty() { dq3.pop_front() }
     eqI(dq3.len(), 0, "⑦ 全部出队后为空")
 
+    // ==================== LRUO1：严格最近访问淘汰 + 全 O(1) ====================
+    var o = new ct.LRUO1[int](cap = 2)
+    eqI(o.capacity(), 2, "⑧ 容量")
+    o.put("a", 1)
+    o.put("b", 2)
+    eqI(o.get("a", -1), 1, "⑧ 命中 a（提升为最近使用）")
+    o.put("c", 3)                       // 此时 b 是最久未使用 ⇒ 淘汰 b（严格，不是近似）
+    if o.has("b") { fail("⑧ 应淘汰 b") }
+    if not o.has("a") or not o.has("c") { fail("⑧ a/c 应保留") }
+    eqI(o.len(), 2, "⑧ 淘汰后长度")
+    eqI(o.get("zz", -9), -9, "⑧ 缺失返回默认值")
+    eqI(o.peek("a", -1), 1, "⑧ peek 命中")
+
+    // keys() 顺序：最久未使用 → 最近使用
+    var ks = o.keys()
+    eqI(ks.len(), 2, "⑧ keys 长度")
+    if ks[0] != "a" or ks[1] != "c" { fail("⑧ keys 顺序应为 a（最旧）→ c（最新），实际 " + ks[0] + "," + ks[1]) }
+
+    // put 已有 key：值更新 + 提升到尾部，不增长度、不淘汰
+    o.put("a", 111)
+    eqI(o.len(), 2, "⑧ 覆盖写不增长度")
+    eqI(o.get("a", -1), 111, "⑧ 覆盖写生效")
+    var ks2 = o.keys()
+    if ks2[1] != "a" { fail("⑧ 覆盖写应把 a 提到最近使用") }
+
+    // remove：摘掉后可复用槽位
+    o.remove("a")
+    eqI(o.len(), 1, "⑧ remove 后长度")
+    if o.has("a") { fail("⑧ remove 后查不到") }
+    o.put("d", 4)
+    o.put("e", 5)                       // 又一次淘汰（此时 c 最旧）
+    eqI(o.len(), 2, "⑧ 复用槽位后长度仍为 2")
+
+    // set_capacity 调小立即淘汰
+    var o2 = new ct.LRUO1[int](cap = 4)
+    for 0 : 3 to i { o2.put("k" + _str(i), i) }
+    var oGone = o2.set_capacity(2)
+    eqI(oGone.len(), 2, "⑧ set_capacity 返回被淘汰的 key")
+    eqI(o2.len(), 2, "⑧ 调小后长度")
+    if oGone[0] != "k0" or oGone[1] != "k1" {
+        fail("⑧ 调小容量应按最久未使用顺序淘汰，实际 " + oGone[0] + "," + oGone[1])
+    }
+
+    // on_evict：严格淘汰时逐条通知
+    Array[string] ofired = []
+    var o3 = new ct.LRUO1[int](cap = 2, on_evict = func(string kk, int vv): void {
+        ofired.add(kk + "=" + _str(vv))
+    })
+    o3.put("a", 1)
+    o3.put("b", 2)
+    o3.put("c", 3)                      // 淘汰 a=1
+    eqI(ofired.len(), 1, "⑧ on_evict 触发一次")
+    if ofired[0] != "a=1" { fail("⑧ on_evict 参数应为淘汰的 key/value，实际 " + ofired[0]) }
+    o3.clear()
+    eqI(ofired.len(), 3, "⑧ clear 逐条通知剩余两个")
+    eqI(o3.len(), 0, "⑧ clear 后为空")
+
+    // 与 LRU 的**随机对拍**：同样的操作序列，每一步 keys() 必须完全一致
+    //   （LRU 是"教科书版"实现 ⇒ 用它对拍 LRUO1 的链表实现，能抓出摘链/接尾的错）
+    var refLru = new ct.LRU[int](cap = 16)
+    var candO1 = new ct.LRUO1[int](cap = 16)
+    int seed = 12345
+    for 0 : 1999 to step {
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        int op = seed % 10
+        int keyNo = (seed / 7) % 24
+        string key = "k" + _str(keyNo)
+        if op < 5 {
+            refLru.put(key, keyNo)
+            candO1.put(key, keyNo)
+        } else if op < 8 {
+            int a1 = refLru.get(key, -1)
+            int a2 = candO1.get(key, -1)
+            if a1 != a2 { fail("⑧ 对拍不一致（get）step=" + _str(step)) }
+        } else if op < 9 {
+            refLru.remove(key)
+            candO1.remove(key)
+        } else {
+            int b1 = refLru.peek(key, -1)
+            int b2 = candO1.peek(key, -1)
+            if b1 != b2 { fail("⑧ 对拍不一致（peek）step=" + _str(step)) }
+        }
+        if refLru.len() != candO1.len() { fail("⑧ 对拍长度不一致 step=" + _str(step)) }
+        var rk = refLru.keys()
+        var ck = candO1.keys()
+        if rk.len() != ck.len() { fail("⑧ 对拍 keys 长度不一致 step=" + _str(step)) }
+        for 0 : rk.len() - 1 to ki {
+            if rk[ki] != ck[ki] {
+                fail("⑧ 对拍 keys 第 " + _str(ki) + " 项不一致（step=" + _str(step) + "）：LRU=" + rk[ki] + " LRUO1=" + ck[ki])
+            }
+        }
+    }
+
+    // ==================== 小接口：at / remove_at / 批量 ====================
+    ct.Stack[int] sa = new ct.Stack[int]()
+    sa.push(1); sa.push(2); sa.push(3)
+    eqI(sa.at(0), 1, "⑨ Stack.at(0) 是栈底")
+    eqI(sa.at(2), 3, "⑨ Stack.at(2) 是栈顶")
+    var saOut = 0
+    try { sa.at(3) } catch e { saOut = 1 }
+    eqI(saOut, 1, "⑨ Stack.at 越界抛错")
+
+    ct.Queue[string] qa = new ct.Queue[string]()
+    qa.push("a"); qa.push("b"); qa.push("c")
+    eqI(qa.at(0).len(), 1, "⑨ Queue.at(0) 是队首")
+    if qa.at(2) != "c" { fail("⑨ Queue.at(2) 应为 c") }
+    if qa.remove_at(1) != "b" { fail("⑨ Queue.remove_at 返回值") }
+    eqI(qa.len(), 2, "⑨ remove_at 后逻辑长度")
+    if qa.at(0) != "a" or qa.at(1) != "c" { fail("⑨ remove_at 后顺序") }
+    if qa.pop() != "a" { fail("⑨ remove_at 后仍能正常出队") }
+
+    ct.Deque[int] db = new ct.Deque[int]()
+    db.push_back_all([1, 2])
+    db.push_front_all([9, 8])            // 依次压入 ⇒ 逻辑顺序 8,9,1,2
+    eqI(db.len(), 4, "⑨ 批量入队后长度")
+    if db.at(0) != 8 or db.at(1) != 9 or db.at(3) != 2 { fail("⑨ push_front_all 顺序") }
+    var two = db.pop_front_n(2)
+    eqI(two.len(), 2, "⑨ pop_front_n 个数")
+    if two[0] != 8 or two[1] != 9 { fail("⑨ pop_front_n 顺序") }
+    eqI(db.len(), 2, "⑨ pop_front_n 后长度")
+    var dbOut = 0
+    try { db.pop_front_n(5) } catch e { dbOut = 1 }
+    eqI(dbOut, 1, "⑨ pop_front_n 超过剩余必须抛错")
+
     print("test_containers passed")
 }

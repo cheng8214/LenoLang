@@ -174,15 +174,41 @@ main() {
     for 0 : G - 1 to i { cl.put("k" + _str(K - 1 - (i % 1024)), i) }
     lap("put 覆盖已有 key ×" + _str(G), G)
 
+    // ---------------- LRUO1（严格淘汰 + 全 O(1)）----------------
+    print("\n[LRUO1]（严格最久未使用淘汰，get/put 全 O(1)：整数下标双向链表）\n")
+    var o1 = new ct.LRUO1[int](cap = 1024)
+    tick()
+    for 0 : K - 1 to i { o1.put("k" + _str(i), i) }
+    lap("put 新 key ×" + _str(K) + "（cap=1024，含淘汰）", K)
+    if o1.len() != 1024 { print("  !! LRUO1 长度应恒为 1024，实际 " + _str(o1.len()) + "\n") }
+
+    tick()
+    for 0 : G - 1 to i { sink(o1.get("k" + _str(K - 1 - (i % 1024)), 0)) }
+    lap("get 命中 ×" + _str(G) + "（含提升）", G)
+
+    tick()
+    for 0 : G - 1 to i { sink(o1.peek("k" + _str(K - 1 - (i % 1024)), 0)) }
+    lap("peek 命中 ×" + _str(G) + "（不提升）", G)
+
+    tick()
+    for 0 : G - 1 to i { sink(o1.get("miss" + _str(i), -1)) }
+    lap("get 未命中 ×" + _str(G), G)
+
+    tick()
+    for 0 : G - 1 to i { o1.put("k" + _str(K - 1 - (i % 1024)), i) }
+    lap("put 覆盖已有 key ×" + _str(G), G)
+
     // cap 扫描：O(1) 的关键证据 —— 曲线必须**平**，不能随 cap 涨
     print("\n[cap 扫描] get 命中 ×200000（key 循环在 cap 个里）\n")
     for [16, 128, 1024, 4096] to capv {
         var l1 = new ct.LRU[int]()
         l1.set_capacity(capv)
         var l2 = new ct.ClockLRU[int](cap = capv)
+        var l3 = new ct.LRUO1[int](cap = capv)
         for 0 : capv - 1 to j {
             l1.put("k" + _str(j), j)
             l2.put("k" + _str(j), j)
+            l3.put("k" + _str(j), j)
         }
         tick()
         for 0 : 200000 - 1 to j { sink(l1.get("k" + _str(j % capv), 0)) }
@@ -191,6 +217,10 @@ main() {
         tick()
         for 0 : 200000 - 1 to j { sink(l2.get("k" + _str(j % capv), 0)) }
         lap("ClockLRU cap=" + _str(capv), 200000)
+
+        tick()
+        for 0 : 200000 - 1 to j { sink(l3.get("k" + _str(j % capv), 0)) }
+        lap("LRUO1 cap=" + _str(capv), 200000)
     }
 
     // ---------------- PriorityQueue ----------------
