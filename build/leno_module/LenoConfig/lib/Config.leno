@@ -1,0 +1,255 @@
+// Config.leno — LenoConfig 入口（2026-11-24）
+//
+// 把"读配置"收成一次：**JSON 文件 + ENV 覆盖 + 默认值 + 类型化读取**。
+//
+// 为什么只做 JSON、不做 TOML/YAML：
+//   · JSON 已经能表达全部配置结构，且 `jsons` 的严格解析（数字必须有数字、
+//     NaN/Inf 编码报错）已经修过一轮；
+//   · 再加一种格式就多一份"半个解析器"——规范里长尾（多行串、数组表、锚点、
+//     缩进敏感）写不全，写不全的部分就会变成**新的静默错误源**。
+//   真需要 TOML 的话，推荐先用 `leno.toml` 那套的工具链把文件转成 JSON 再进来。
+//
+// 读配置的**顺序**（每一层都能覆盖前一层）：
+//   默认值（调用点给的） < JSON 文件 < 环境变量
+//   ENV 名约定：`<PREFIX>_<KEY 全大写、点号转下划线>`，如 prefix="APP"、
+//   键 "server.port" ⇒ `APP_SERVER_PORT`。prefix 为空 ⇒ **不读 ENV**
+//   （否则会去捡一堆同名的系统环境变量，那种"配置自己变了"最难查）。
+import files
+import jsons
+import strings
+import "Result" as res
+// ⚠ 不要写 `use res.Result`：Leno 的 `use` 会把类型**再导出**，于是本模块也导出了一个
+//   `Result`，与使用方自己的 `import "Result"` 撞名（实测：测试里 `Result` 解析到本模块
+//   这个未 use 的类型 ⇒「类型 'T' 没有方法 getInt」）。
+//   代价只是把返回类型写成全限定 `res.Result[Config]`，值得。
+
+// ==================== 模块级辅助（不导出） ====================
+
+// 值的类型名（报错用；故意不依赖 reflect，保持本模块零额外依赖）
+func _typeName(any v): string {
+    if v == null { return "null" }
+    if v is bool { return "bool" }
+    if v is int { return "int" }
+    if v is float { return "float" }
+    if v is string { return "string" }
+    if v is Dict { return "Dict" }
+    if v is Array { return "Array" }
+    return "object"
+}
+
+// 点号路径是否在 JSON 里存在（**与"值是 null"区分**：显式 null 也算存在，
+// 调用方自己决定要不要把它当成"缺"）
+func _hasPath(Dict d, string key): bool {
+    if key == "" { return false }
+    var parts = strings.split(key, ".")
+    Dict cur = d
+    for 0 : parts.len() - 1 to i {
+        string p = parts[i]
+        if not cur.has(p) { return false }
+        if i == parts.len() - 1 { return true }       // 最后一段存在
+        var v = cur[p]
+        if not (v is Dict) { return false }           // 中间段不是对象 ⇒ 路径断了
+        cur = v as Dict
+    }
+    return false
+}
+
+// 点号路径取值（缺 ⇒ null）
+func _lookup(Dict d, string key): any {
+    if key == "" { return null }
+    var parts = strings.split(key, ".")
+    Dict cur = d
+    for 0 : parts.len() - 1 to i {
+        string p = parts[i]
+        if not cur.has(p) { return null }
+        var v = cur[p]
+        if i == parts.len() - 1 { return v }
+        if not (v is Dict) { return null }
+        cur = v as Dict
+    }
+    return null
+}
+
+// 布尔文本（ENV 只能给字符串）⇒ bool。认不出来的**明确报错**，不默认 false。
+func _parseBool(string s, string what): bool {
+    string t = strings.to_lower(strings.trim(s))
+    if t == "1" or t == "true" or t == "yes" or t == "on" { return true }
+    if t == "0" or t == "false" or t == "no" or t == "off" { return false }
+    throw what + " 的布尔值无法识别：「" + s + "」"
+          + "（可用 1/0、true/false、yes/no、on/off）"
+}
+
+// ==================== Config ====================
+
+export struct Config {
+    Dict[string, any] data = {}
+    string prefix = ""
+    string path = ""
+
+    // ---------- ENV ----------
+    // 环境变量名：<PREFIX>_<KEY 大写、点转下划线>；prefix 为空 ⇒ 返回 ""（= 不启用）
+    func envName(string key): string {
+        if prefix == "" { return "" }
+        return strings.to_upper(prefix + "_" + strings.replace(key, ".", "_"))
+    }
+
+    func envValue(string key): any {
+        string n = envName(key)
+        if n == "" { return null }
+        return _env(n)
+    }
+
+    // ---------- 查询 ----------
+    // 是否存在（ENV 或文件；显式 null 算"存在"）
+    func has(string key): bool {
+        return envValue(key) != null or _hasPath(data, key)
+    }
+
+    // 值来自哪：env / file / missing —— 排查"这个端口怎么是 8080"时一步到位
+    func source(string key): string {
+        if envValue(key) != null { return "env" }
+        if _hasPath(data, key) { return "file" }
+        return "missing"
+    }
+
+    // 顶层键（调试用；不含 ENV 覆盖出来的键）
+    func keys(): Array[string] {
+        Array[string] out = []
+        var ks = data.keys()
+        for ks to k { out.add(_str(k)) }
+        return out
+    }
+
+    // ---------- 类型化读取（缺 ⇒ 默认值） ----------
+    func getStr(string key, string def): string {
+        var e = envValue(key)
+        if e is string => s { return s }
+        var v = _lookup(data, key)
+        if v == null { return def }
+        if v is string => s { return s }
+        // 数字/布尔转成字符串是安全的（无损），其它类型是配置写错了
+        if v is int => i { return _str(i) }
+        if v is float => f { return _str(f) }
+        if v is bool => b { return _str(b) }
+        throw "配置项 '" + key + "' 期望字符串，实际是 " + _typeName(v)
+    }
+
+    func getInt(string key, int def): int {
+        var e = envValue(key)
+        if e is string => s {
+            var r = res.parseInt(strings.trim(s))
+            if r.isErr() { throw "环境变量 " + envName(key) + " 不是整数：" + s }
+            return r.get()
+        }
+        var v = _lookup(data, key)
+        if v == null { return def }
+        if v is int => i { return i }
+        // 1.0 这种浮点**不**静默截断成 1：配置里写成小数通常就是写错了
+        throw "配置项 '" + key + "' 期望 int，实际是 " + _typeName(v) + "（" + _str(v) + "）"
+    }
+
+    func getFloat(string key, float def): float {
+        var e = envValue(key)
+        if e is string => s {
+            var r = res.parseFloat(strings.trim(s))
+            if r.isErr() { throw "环境变量 " + envName(key) + " 不是数字：" + s }
+            return r.get()
+        }
+        var v = _lookup(data, key)
+        if v == null { return def }
+        if v is float => f { return f }
+        if v is int => i { return _float(i) }          // 整数→浮点是无损的，放行
+        throw "配置项 '" + key + "' 期望 float，实际是 " + _typeName(v) + "（" + _str(v) + "）"
+    }
+
+    func getBool(string key, bool def): bool {
+        var e = envValue(key)
+        if e is string => s { return _parseBool(s, "环境变量 " + envName(key)) }
+        var v = _lookup(data, key)
+        if v == null { return def }
+        if v is bool => b { return b }
+        // JSON 里写成 "true"（字符串）是配置错误，不猜
+        throw "配置项 '" + key + "' 期望 bool，实际是 " + _typeName(v) + "（" + _str(v) + "）"
+    }
+
+    func getAny(string key, any def): any {
+        var e = envValue(key)
+        if e != null { return e }
+        var v = _lookup(data, key)
+        if v == null { return def }
+        return v
+    }
+
+    // ---------- 必填（缺 ⇒ 抛错，带可用键提示） ----------
+    func _missing(string key): string {
+        return "缺少必填配置项 '" + key + "'（环境变量 " + envName(key)
+               + " 也没设；文件顶层可用的键：" + strings.join(keys(), ", ") + "）"
+    }
+
+    func requireStr(string key): string {
+        if envValue(key) is string { return getStr(key, "") }
+        if not _hasPath(data, key) { throw _missing(key) }
+        var v = _lookup(data, key)
+        if v == null { throw _missing(key) }             // 显式 null 也算"没给值"
+        return getStr(key, "")
+    }
+
+    func requireInt(string key): int {
+        if envValue(key) is string { return getInt(key, 0) }
+        if not _hasPath(data, key) { throw _missing(key) }
+        var v = _lookup(data, key)
+        if v == null { throw _missing(key) }
+        return getInt(key, 0)
+    }
+}
+
+// ==================== 构造 ====================
+
+// 从已有的 Dict 建配置（测试 / 动态配置用）
+export func fromDict(Dict[string, any] d, string prefix = ""): Config {
+    Config c = new Config()
+    c.data = d
+    c.prefix = prefix
+    return c
+}
+
+// 从 JSON 文本建配置
+export func loadJson(string text, string prefix = ""): res.Result[Config] {
+    var v = jsons.decode(text)
+    if v == null {
+        return res.err[Config](res.ErrCode.PARSE, "配置内容不是合法 JSON（空内容也算错误）")
+    }
+    if not (v is Dict) {
+        return res.err[Config](res.ErrCode.PARSE, "配置文件顶层必须是 JSON 对象 {…}")
+    }
+    Config c = new Config()
+    c.data = v as Dict
+    c.prefix = prefix
+    return res.ok(c)
+}
+
+// 从文件建配置。
+//   **文件不存在 ⇒ ok（空配置）**：绝大多数程序没有配置文件也能跑，
+//   把"没配置"当成错误会逼调用方在每个入口写 exists 判断。
+//   文件存在但读不出/解析失败 ⇒ err（这才是真错）。
+export func load(string path, string prefix = ""): res.Result[Config] {
+    if not files.exists(path) {
+        Config c = new Config()
+        c.prefix = prefix
+        c.path = path
+        return res.ok(c)
+    }
+    string text = ""
+    try {
+        text = files.read(path)
+    } catch e {
+        return res.err[Config](res.ErrCode.IO, "读取配置失败：" + path + "（" + _str(e) + "）")
+    }
+    var r = loadJson(text, prefix)
+    if r.isErr() {
+        return res.err[Config](r.code, path + "：" + r.msg)
+    }
+    Config c = r.get()
+    c.path = path
+    return res.ok(c)
+}

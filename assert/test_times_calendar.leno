@@ -1,0 +1,108 @@
+// times 的日历能力：make / parse / datetime(ts) / utc_offset / format_utc（2026-11-24）
+//
+// 背景：此前是"半个闭环" —— 能 format、能拆"现在"，但
+//   · 不能把字符串解析回时间戳（做 TTL / 过期判断只能拿字符串比大小）
+//   · 不能把部件合成时间戳（datetime 的反向没有）
+//   · 不能拆任意时间戳（datetime 连参数都不收）
+//   · 没有 UTC 侧（format 写死 localtime）
+//
+// ⚠ 本用例的所有断言都**与时区无关**：要么用 format/parse 互相往返，
+//   要么用 utc_offset 现场算偏移再对齐；不假设东八区。
+import times
+
+main() {
+    // ---- ① make → format ----
+    var ts = times.make(2026, 11, 24, 13, 5, 9)
+    assert_eq(times.format(ts, "%Y-%m-%d %H:%M:%S"), "2026-11-24 13:05:09",
+        "① make 后再 format 应还原同一钟面")
+
+    // ---- ② parse ↔ format 往返 ----
+    assert_eq(times.parse("2026-11-24 13:05:09", "%Y-%m-%d %H:%M:%S"), ts,
+        "② parse 与 make 必须给出同一个时间戳")
+
+    // ---- ③ datetime(ts) 拆任意时间戳 ----
+    var p = times.datetime(ts)
+    assert_eq(p.len(), 6, "③ 六元组")
+    assert_eq(p[0], 2026, "③ 年")
+    assert_eq(p[1], 11, "③ 月（1-12，不是 0-11）")
+    assert_eq(p[2], 24, "③ 日")
+    assert_eq(p[3], 13, "③ 时")
+    assert_eq(p[4], 5, "③ 分")
+    assert_eq(p[5], 9, "③ 秒")
+
+    // ---- ④ datetime() 无参 = 拆现在（与 now 的差在 2 秒内）----
+    var now = times.now()
+    var pn = times.datetime()
+    assert_eq(pn.len(), 6, "④ 无参仍可用（老行为）")
+    var back = times.make(pn[0], pn[1], pn[2], pn[3], pn[4], pn[5])
+    var d = back - now
+    assert_true(d <= 2 and d >= -2, "④ datetime() 应接近 now()（差 " + _str(d) + " 秒）")
+
+    // ---- ⑤ UTC 侧的锚点：epoch 0 ----
+    assert_eq(times.format_utc(0, "%Y-%m-%d %H:%M:%S"), "1970-01-01 00:00:00",
+        "⑤ epoch 0 的 UTC 表示")
+
+    // ---- ⑥ utc_offset 与 format_utc 自洽（不假设具体时区）----
+    var off = times.utc_offset(ts)
+    assert_eq(off % 60, 0, "⑥ 时区偏移应是整分钟（实际 " + _str(off) + " 秒）")
+    var utc_str = times.format_utc(ts, "%Y-%m-%d %H:%M:%S")
+    // 把 UTC 钟面**当本地**解析 ⇒ 得到的 epoch 比真实值早 offset 秒
+    assert_eq(times.parse(utc_str, "%Y-%m-%d %H:%M:%S"), ts - off,
+        "⑥ 本地 = UTC + offset")
+
+    // ---- ⑦ 不存在的日期要报错，而不是滚到 3 月 2 日 ----
+    var threw = false
+    try {
+        times.make(2026, 2, 30)
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true, "⑦ 2 月 30 日必须报错")
+
+    // ---- ⑧ 月份越界 ----
+    threw = false
+    try {
+        times.make(2026, 13, 1)
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true, "⑧ 13 月必须报错")
+
+    // ---- ⑨ parse 不支持的说明符（%b）要明确报错 ----
+    threw = false
+    try {
+        times.parse("2026-11-24 Nov", "%Y-%m-%d %b")
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true, "⑨ %b 不在支持集里，必须报错")
+
+    // ---- ⑩ 格式串没覆盖整串（多出来的时间部分）----
+    threw = false
+    try {
+        times.parse("2026-11-24 13:00:00", "%Y-%m-%d")
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true, "⑩ 残留学符必须报错（否则会静默丢掉后半段）")
+
+    // ---- ⑪ 格式串没有 %Y ⇒ 算不出完整日期 ----
+    threw = false
+    try {
+        times.parse("11-24", "%m-%d")
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true, "⑪ 没有年份必须报错")
+
+    // ---- ⑫ 不支持两位年份（%y）----
+    threw = false
+    try {
+        times.parse("26-11-24", "%y-%m-%d")
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true, "⑫ %y 必须报错并提示改用 %Y")
+
+    print("times calendar ok")
+}

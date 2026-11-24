@@ -1,0 +1,134 @@
+// LenoConfig 自测：JSON + ENV 覆盖 + 默认值 + 类型化读取（2026-11-24）
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoConfig\test\test_config.leno
+import "Config" as config
+use config.Config
+import "Result" as res
+use res.Result
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqI(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func eqS(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到「" + got + "」期望「" + want + "」") }
+}
+
+main() {
+    // ---------- ① 嵌套读取 + 默认值 ----------
+    var text = "{\"server\":{\"port\":8080,\"host\":\"127.0.0.1\"},"
+        + "\"debug\":true,\"ratio\":1.5,\"name\":\"demo\"}"
+    var r = config.loadJson(text)
+    if r.isErr() { fail("① 解析失败：" + r.msg) }
+    Config c = r.get()
+
+    eqI(c.getInt("server.port", 0), 8080, "① 嵌套 int")
+    eqS(c.getStr("server.host", ""), "127.0.0.1", "① 嵌套 string")
+    eqI(c.getInt("missing.key", 42), 42, "① 缺失走默认值")
+    eqS(c.getStr("name", ""), "demo", "① 顶层 string")
+    if not c.getBool("debug", false) { fail("① bool") }
+    if c.getFloat("ratio", 0.0) != 1.5 { fail("① float") }
+
+    // 安全的隐式转换：int → float（无损）、int/bool → str（无损）
+    if c.getFloat("server.port", 0.0) != 8080.0 { fail("① int 当 float 读") }
+    eqS(c.getStr("server.port", ""), "8080", "① int 当 str 读")
+
+    // ---------- ② source：值来自哪 ----------
+    eqS(c.source("server.port"), "file", "② 来自文件")
+    eqS(c.source("nope"), "missing", "② 不存在")
+    eqS(c.source("debug"), "file", "② bool 也算存在")
+
+    // ---------- ③ has / keys ----------
+    if not c.has("server.port") { fail("③ has 嵌套键") }
+    if c.has("server.nope") { fail("③ has 不存在的键") }
+    eqI(c.keys().len(), 4, "③ 顶层 4 个键")
+
+    // ---------- ④ ENV 覆盖 ----------
+    // 用独立前缀，避免与真实环境变量撞名；用完清空
+    _env("LENOCFG_A_PORT", "9090")
+    _env("LENOCFG_A_DEBUG", "no")
+    var r2 = config.loadJson("{\"port\":8080,\"debug\":true}", "LENOCFG_A")
+    Config c2 = r2.get()
+    eqI(c2.getInt("port", 0), 9090, "④ ENV 覆盖 int")
+    if c2.getBool("debug", true) { fail("④ ENV 覆盖 bool") }
+    eqS(c2.source("port"), "env", "④ source=env")
+    _env("LENOCFG_A_PORT", "")
+    _env("LENOCFG_A_DEBUG", "")
+
+    // ENV 值不是整数 ⇒ 报错（不静默给 0）
+    _env("LENOCFG_B_N", "abc")
+    var r3 = config.loadJson("{\"n\":1}", "LENOCFG_B")
+    Config c3 = r3.get()
+    var threwEnv = false
+    try {
+        c3.getInt("n", 0)
+    } catch e {
+        threwEnv = true
+    }
+    if not threwEnv { fail("④ ENV 非整数必须报错") }
+    _env("LENOCFG_B_N", "")
+
+    // ---------- ⑤ 文件不存在 ⇒ ok（空配置） ----------
+    var r5 = config.load("__no_such_config__.json", "")
+    if r5.isErr() { fail("⑤ 文件不存在不该算错误") }
+    Config c5 = r5.get()
+    eqI(c5.getInt("x", 7), 7, "⑤ 空配置用默认值")
+
+    // ---------- ⑥ 类型不符 ⇒ 报错（不猜） ----------
+    var threw = false
+    try {
+        c.getInt("server.host", 0)          // string 当 int
+    } catch e {
+        threw = true
+    }
+    if not threw { fail("⑥ string 当 int 读必须报错") }
+
+    threw = false
+    try {
+        c.getInt("ratio", 0)                // 1.5 是 float，不静默截断
+    } catch e {
+        threw = true
+    }
+    if not threw { fail("⑥ float 当 int 读必须报错") }
+
+    // ---------- ⑦ 必填缺失 ⇒ 抛错 ----------
+    threw = false
+    try {
+        c.requireStr("nope")
+    } catch e {
+        threw = true
+    }
+    if not threw { fail("⑦ 必填缺失要抛错") }
+
+    // ---------- ⑧ 显式 null 算"没给值" ----------
+    var r8 = config.loadJson("{\"k\":null}")
+    Config c8 = r8.get()
+    var threw8 = false
+    try {
+        c8.requireStr("k")
+    } catch e {
+        threw8 = true
+    }
+    if not threw8 { fail("⑧ null 不能当有值") }
+    eqS(c8.getStr("k", "def"), "def", "⑧ null 走默认值")
+
+    // ---------- ⑨ 顶层必须是对象 ----------
+    var r9 = config.loadJson("[1,2,3]")
+    if not r9.isErr() { fail("⑨ 顶层数组要报错") }
+
+    // ---------- ⑩ 坏 JSON ----------
+    var r10 = config.loadJson("{bad")
+    if not r10.isErr() { fail("⑩ 坏 JSON 要报错") }
+
+    // ---------- ⑪ 空文本 ----------
+    var r11 = config.loadJson("")
+    if not r11.isErr() { fail("⑪ 空内容要报错") }
+
+    print("test_config passed")
+}

@@ -349,6 +349,45 @@ enum 值反查（enum 成员运行期就是 `int`，无从知道属于哪个 enu
 
 ---
 
+## 6.3 读配置：用 `LenoConfig`，别自己手拼
+
+```leno
+import "Config" as config
+use config.Config
+
+var r = config.load("app.json", "APP")     // 第二个参数 = ENV 前缀
+if r.isErr() { … }
+Config c = r.get()                          // ⚠ 必须显式标注类型（见最后一条）
+var port = c.getInt("server.port", 8080)
+```
+
+- 取值顺序：**默认值 < JSON 文件 < ENV**（`APP_SERVER_PORT`，全大写、点转下划线）
+- `prefix` 为空 ⇒ **不读 ENV**（否则会捡一堆同名系统变量，"配置自己变了"最难查）
+- 类型**不猜**：JSON 里把 `"8080"` 当 int 读会报错；ENV 走严格解析（`res.parseInt`）
+- `requireStr/requireInt` 缺（含显式 `null`）⇒ 抛错；`getX(key, default)` 缺 ⇒ 默认值
+- 只做 JSON。**别**为配置引入 TOML/YAML 的"够用版"解析器 —— 长尾写不全就是新的静默错源
+- ⚠ `Result[T].get()` 跨模块不会自动代入成具体类型 ⇒ 必须写 `Config c = r.get()`，
+  写 `var c = r.get()` 会得到未约束的 `T`（报「类型 'T' 没有方法 getInt」）
+
+## 6.4 时间：只有「本地 / UTC」两种口径
+
+```leno
+times.now()                              // epoch 秒
+times.format(ts, "%Y-%m-%d")             // 本地时区
+times.format_utc(ts, "%Y-%m-%d")         // UTC
+times.parse("2026-11-24", "%Y-%m-%d")    // 按本地时区解释
+times.make(2026, 11, 24, 13, 5, 9)       // 本地时区；不存在的日期会报错
+times.datetime(ts)                       // [年,月,日,时,分,秒]；不传参 = 现在
+times.utc_offset(ts)                     // 该时刻本地相对 UTC 的偏移秒数（东八 = 28800）
+```
+
+- **没有 IANA 时区名**（`Asia/Shanghai` 那种）。要按别的时区算，用 `utc_offset` 自己加减秒
+- `parse` 只支持 `%Y %m %d %H %M %S`（Windows 没有 strptime）—— 别拿 `%b` / `%z` 去解析
+- `make` / `parse` 会**反查校验**：2 月 30 日不会被静默滚到 3 月 2 日
+- `times.ms/us/ns` 是**单调计时**（取差值用），不是挂钟；挂钟走 `now`
+
+---
+
 ## 7. 可空：`T?` + `is` 收窄，不要 `any` + 双检
 
 ```leno

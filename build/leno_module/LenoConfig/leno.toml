@@ -1,0 +1,12 @@
+[package]
+name = "LenoConfig"
+version = "0.1.0"
+description = "Leno config loader: JSON file + ENV override + typed getters with defaults (no native deps)"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库。
+# 运行时只依赖内置 jsons / files / strings，外加扩展模块 Result。
