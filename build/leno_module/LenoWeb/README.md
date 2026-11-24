@@ -25,7 +25,32 @@ main() {
 | `web_gzip.leno` | **转发层**：gzip / DEFLATE 解压实现已收编到 `LenoCompress`（函数名不变，`.gz` sitemap 用） |
 | `web_ws.leno` | **纯 Leno 的 WebSocket 客户端**（CDP 的通道） |
 | `web_cdp.leno` | **无头浏览器 / 动态渲染**（CDP 驱动 Chrome/Edge + 进程管理） |
-| `web_generic.leno` | `Result[T]` 等泛型小工具 |
+| `web_generic.leno` | 泛型小工具：`map/filter/reduce/forEach` + `LinkedList`（**`Result` 2026-11-09 已删、`Stack` 2026-11-24 已删**，改用 `Result` / `Containers` 模块） |
+
+### ⚠ 破坏性变更（2026-11-24）：`Stack` 已从这里移除
+
+`web_generic.Stack`（手写、空取返回 null、字段 `size`）与 `LenoContainers.Stack`
+**同名**，而编译器的类型表**全局按名字索引** —— 用户同时 `import "Web"` 与
+`import "Containers"`（或任何间接引入容器的模块，如 `LenoSDL3`）会在运行期直接报：
+
+```
+跨模块同名struct 'Stack'：… 各定义了一份且无法证明等价 … 四张类型表全局只按名字索引、
+运行期只能保留一份 … 请给其中一个改名
+```
+
+2026-11-24 实测：本模块自己的 `test/` 有 8/13 因为这一条挂掉。所以**只留一份实现**：
+
+```leno
+import "Containers" as ct
+var s = new ct.Stack[int]()      // 取代 new web.Stack[int]() / gen.Stack[int]()
+s.push(1)
+s.len()                          // 取代字段 size
+s.is_empty()                     // 取代 isEmpty()
+s.pop()                          // 空栈**抛错**（不再返回 null）
+```
+
+与 2026-11-09 删除 `web_generic.Result` 同一处理方式。爬虫的优先队列也已改用
+`LenoContainers.PriorityQueue`（`web_crawler.leno` 里那 60 行手写堆已删）。
 
 原生依赖：`lib/win/libcurl-x64.dll`（Windows）/ `lib/linux/libcurl.so`（Linux），已在 `leno.toml` 的 `[native-libs]` 声明。
 库文件自 2026-11-19 起**按平台分目录**存放（与 LenoSqlite / LenoMusic / LenoQR / LenoSDL3 统一）。

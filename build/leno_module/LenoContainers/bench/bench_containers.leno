@@ -164,6 +164,35 @@ main() {
         lap("ClockLRU cap=" + _str(capv), 200000)
     }
 
+    // ---------------- PriorityQueue ----------------
+    print("\n[PriorityQueue]（二叉堆，大顶）\n")
+    var pq = new ct.PriorityQueue[int](cmp = func(int a, int b): int {
+        if a > b { return -1 }
+        if a < b { return 1 }
+        return 0
+    })
+    int PN = 500000
+    tick()
+    for 0 : PN - 1 to i { pq.push((i * 7919) % 1000003) }     // 伪随机优先级
+    lap("push ×" + _str(PN), PN)
+    tick()
+    for 0 : PN - 1 to i { sink(pq.pop()) }
+    lap("pop ×" + _str(PN) + "（含 sink）", PN)
+    if not pq.is_empty() { print("  !! 堆未清空\n") }
+
+    // 对照：入数组 + 全量 sort（"批处理一次"才划算；边插边取就该用堆）
+    var arr2 = []
+    tick()
+    for 0 : PN - 1 to i { arr2.add((i * 7919) % 1000003) }
+    lap("对照：Array.add ×" + _str(PN), PN)
+    tick()
+    arr2.sort(func(int a, int b): int {
+        if a > b { return -1 }
+        if a < b { return 1 }
+        return 0
+    })
+    lap("对照：全量 sort ×" + _str(PN), PN)
+
     // 对照：裸 Dict
     print("\n[对照] 裸 Dict\n")
     var d = {}

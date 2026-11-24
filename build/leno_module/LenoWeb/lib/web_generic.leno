@@ -51,38 +51,21 @@ export func forEach[T](Array[T] arr, func(T) fn) {
 }
 
 // ============================================================================
-// 3. Stack[T] — 后进先出栈（爬虫 DFS）
+// 3. Stack[T] — **已移除**（2026-11-24），改用 LenoContainers.Stack
 // ============================================================================
-
-export struct Stack[T] {
-    Array[T] items
-    int size = 0
-
-    func init() {
-        self.items = []
-        self.size = 0
-    }
-
-    func push(T val) {
-        self.items.add(val)
-        self.size = self.size + 1
-    }
-
-    func pop(): T {
-        if self.size == 0 { return null }
-        self.size = self.size - 1
-        return self.items.pop()
-    }
-
-    func peek(): T {
-        if self.size == 0 { return null }
-        return self.items[self.size - 1]
-    }
-
-    func isEmpty(): bool {
-        return self.size == 0
-    }
-}
+// 为什么删（和上面 Result 那次 2026-11-09 一模一样，这次还多一条硬性理由）：
+//   ① 两份同义 API，而且**契约相反**：这里空取返回 null，Containers 里抛错；
+//   ② 更致命：**同名 struct 冲突**。编译器的四张类型表**全局按名字索引**，只要用户
+//      同时 import 了 Web 和 Containers（或者 SDL3 —— 它内部已用 Containers），
+//      运行期就直接报：
+//        「跨模块同名struct 'Stack' … 四张类型表全局只按名字索引、运行期只能保留一份
+//          （保留先注册的定义）… 请给其中一个改名」
+//      2026-11-24 实测：LenoWeb 自己的 test/ 齐刷刷挂掉（8/13 FAIL）就是这条。
+//   所以留一份实现，用容器的：
+//       import "Containers" as ct
+//       var s = new ct.Stack[int]()
+//       s.push(1); s.len(); s.is_empty(); s.pop()   // 空栈抛错（不返回 null）
+//   ⚠ 破坏性变更：`use web.Stack` / `gen.Stack` / 字段 `size` / `init()` 都不再存在。
 
 // ============================================================================
 // 4. LinkedList[T] — 链表队列（大规模 URL 队列，O(1) 追加）

@@ -1,0 +1,12 @@
+// func_field_mod.leno —— 给 test_struct_init_func_field_cross.leno 当**跨模块**夹具
+// 要点：泛型 struct 的字段类型是 func(T, T):int（不是 Array[T] 那种宽松类型），
+//   命名构造时要靠"类型参数替换"把 T 换成实参，替换漏了就直接类型不匹配。
+export struct Holder[T] {
+    Array[T] items = []
+    func(T, T):int cmp = null
+
+    func better(T a, T b): bool {
+        if cmp == null { return false }
+        return cmp(a, b) < 0
+    }
+}

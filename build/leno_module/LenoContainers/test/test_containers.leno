@@ -44,6 +44,23 @@ main() {
     st.push("x")
     if st.pop() != "x" { fail("① 字符串栈") }
 
+    // 命名参数构造直接灌初值（原来 README 没写，实测可用）
+    var s2 = new ct.Stack[int](items = [1, 2, 3])
+    eqI(s2.len(), 3, "① 命名参数灌初值")
+    eqI(s2.pop(), 3, "① 灌初值后仍是后进先出")
+
+    // push_all + to_array（非破坏性快照，栈底 → 栈顶）
+    var s3 = new ct.Stack[int]()
+    s3.push_all([1, 2, 3])
+    eqI(s3.len(), 3, "① push_all")
+    Array[int] snap = s3.to_array()
+    eqI(snap.len(), 3, "① to_array 长度")
+    eqI(snap[0], 1, "① to_array[0] 是栈底")
+    eqI(snap[2], 3, "① to_array[2] 是栈顶")
+    eqI(s3.len(), 3, "① to_array 不消耗栈")
+    snap.add(99)
+    eqI(s3.len(), 3, "① to_array 返回副本（改它不影响栈）")
+
     // ==================== Queue ====================
     var q = new ct.Queue[int]()
     q.push(10)
@@ -83,6 +100,46 @@ main() {
     q2.clear()
     eqI(q2.len(), 0, "② clear 后长度 0")
     if not q2.is_empty() { fail("② clear 后 is_empty") }
+
+    // push_all + to_array（逻辑顺序，扣 head）
+    var q3 = new ct.Queue[int]()
+    q3.push_all([1, 2, 3, 4])
+    eqI(q3.len(), 4, "② push_all")
+    q3.pop()
+    Array[int] qs = q3.to_array()
+    eqI(qs.len(), 3, "② to_array 扣掉已出队")
+    eqI(qs[0], 2, "② to_array 第一个是队首")
+
+    // pop_n：一次出队 n 个，按出队顺序返回
+    var q4 = new ct.Queue[int]()
+    q4.push_all([10, 20, 30, 40, 50])
+    Array[int] three = q4.pop_n(3)
+    eqI(three.len(), 3, "② pop_n 个数")
+    eqI(three[0], 10, "② pop_n 顺序 1")
+    eqI(three[2], 30, "② pop_n 顺序 3")
+    eqI(q4.len(), 2, "② pop_n 后剩余长度")
+    eqI(q4.pop(), 40, "② pop_n 之后队首正确")
+
+    // pop_n 边界：n < 1 抛错；n 超过剩余抛错（不静默少给）
+    var threwN1 = false
+    try {
+        q4.pop_n(0)
+    } catch e {
+        threwN1 = true
+    }
+    if not threwN1 { fail("② pop_n(0) 必须抛错") }
+
+    var threwN2 = false
+    try {
+        q4.pop_n(5)          // 只剩 1 个
+    } catch e {
+        threwN2 = true
+    }
+    if not threwN2 { fail("② pop_n 超过剩余必须抛错") }
+    eqI(q4.len(), 1, "② 抛错后队列不变")
+
+    // pop_n 用满全部（边界 n == len）
+    eqI(q4.pop_n(1).len(), 1, "② pop_n(n == len)")
 
     // ==================== LRU ====================
     var l = new ct.LRU[int](cap = 2)
@@ -130,6 +187,29 @@ main() {
     if lp.has("a") { fail("③ peek 不该提升访问序（a 应被淘汰）") }
     if not lp.has("b") { fail("③ peek 后 b 必须保留") }
 
+    // put 必须把被淘汰的 key 交出来（缓存里装 Ptr/文件句柄时要当场释放）
+    var le = new ct.LRU[int](cap = 2)
+    le.put("x", 1)
+    le.put("y", 2)
+    string? gone = le.put("z", 3)
+    if gone is string => gk {
+        if gk != "x" { fail("③ put 返回的被淘汰 key 应为 x，实际 " + gk) }
+    } else {
+        fail("③ put 满了必须返回被淘汰的 key（否则资源泄漏）")
+    }
+    string? none = le.put("z", 9)      // 覆盖已存在的 key ⇒ 不淘汰
+    if none != null { fail("③ 覆盖已存在 key 不该报告淘汰") }
+
+    // keys()：最久 → 最近
+    Array[string] lk = le.keys()
+    eqI(lk.len(), 2, "③ keys 长度")
+    if lk[1] != "z" { fail("③ keys 末尾应是最新访问的 z，实际 " + lk[1]) }
+
+    // set_capacity 缩容 ⇒ 返回被淘汰的全部 key
+    Array[string] dropped = le.set_capacity(1)
+    eqI(dropped.len(), 1, "③ 缩容返回被淘汰的 key 个数")
+    eqI(le.len(), 1, "③ 缩容后长度")
+
     // ==================== ClockLRU（O(1) 近似 LRU）====================
     var c = new ct.ClockLRU[int](cap = 4)
     eqI(c.capacity(), 4, "④ 容量")
@@ -141,10 +221,22 @@ main() {
     eqI(c.get("nope", -1), -1, "④ 缺失返回默认值")
     eqI(c.peek("nope", -7), -7, "④ peek 缺失返回默认值")
 
-    c.put("k4", 4)              // 满 ⇒ 淘汰一格，长度必须恒定
+    // 满了再写 ⇒ 淘汰一格，长度必须恒定；被淘汰的 key 必须交出来（缓存装 Ptr 时要释放）
+    string? ev = c.put("k4", 4)
     eqI(c.len(), 4, "④ 淘汰后长度恒定")
     if not c.has("k4") { fail("④ 新写的 key 必须在") }
     if not c.has("k1") { fail("④ k1 刚被 get 提升过，必须留下") }
+    if ev is string => ek {
+        if c.has(ek) { fail("④ 报告被淘汰的 key " + ek + " 仍在容器里") }
+    } else {
+        fail("④ 满了再 put 必须返回被淘汰的 key（否则资源泄漏）")
+    }
+
+    // keys()：环上还活着的 key 都要在
+    Array[string] ck = c.keys()
+    eqI(ck.len(), 4, "④ keys 长度 = len")
+    string? again = c.put("k4", 44)
+    if again != null { fail("④ 覆盖写不该报告淘汰") }
 
     // 覆盖写：不新增长度、值要换掉
     c.put("k1", 111)
@@ -186,6 +278,126 @@ main() {
     eqI(c.len(), 0, "④ clear")
     c.put("x", 1)
     eqI(c.get("x", -1), 1, "④ clear 后重新写入")
+
+    // ==================== PriorityQueue（二叉堆）====================
+    var pq = new ct.PriorityQueue[int](cmp = func(int a, int b): int {
+        if a > b { return -1 }      // 大顶堆：大的先出
+        if a < b { return 1 }
+        return 0
+    })
+    if not pq.is_empty() { fail("⑤ 新堆应为空") }
+    pq.push(5)
+    pq.push(1)
+    pq.push(9)
+    pq.push(3)
+    pq.push(7)
+    eqI(pq.len(), 5, "⑤ 入堆 5 个")
+    eqI(pq.top(), 9, "⑤ top 是最大值")
+    eqI(pq.len(), 5, "⑤ top 不出队")
+
+    Array[int] want5 = [9, 7, 5, 3, 1]
+    for 0 : 4 to i {
+        int gotv = pq.pop()
+        if gotv != want5[i] {
+            fail("⑤ 大顶堆出队顺序第 " + _str(i) + " 个应为 " + _str(want5[i]) + "，实际 " + _str(gotv))
+        }
+    }
+    if not pq.is_empty() { fail("⑤ 全部出队后应为空") }
+
+    // 空堆取值必须抛错
+    var threwP1 = false
+    try {
+        pq.pop()
+    } catch e {
+        threwP1 = true
+    }
+    if not threwP1 { fail("⑤ 空堆 pop 必须抛错") }
+
+    var threwP2 = false
+    try {
+        pq.top()
+    } catch e {
+        threwP2 = true
+    }
+    if not threwP2 { fail("⑤ 空堆 top 必须抛错") }
+
+    // 同优先级 FIFO（堆本身不稳定，容器内部用入队序号打破）
+    struct PQItem {
+        string name = ""
+        int w = 0
+    }
+    var ps = new ct.PriorityQueue[PQItem](cmp = func(PQItem a, PQItem b): int {
+        if a.w > b.w { return -1 }
+        if a.w < b.w { return 1 }
+        return 0
+    })
+    ps.push(new PQItem(name = "a", w = 1))
+    ps.push(new PQItem(name = "x", w = 5))
+    ps.push(new PQItem(name = "b", w = 1))
+    ps.push(new PQItem(name = "y", w = 5))
+    ps.push(new PQItem(name = "c", w = 1))
+    Array[string] wantNames = ["x", "y", "a", "b", "c"]
+    Array[PQItem] drained = ps.drain_sorted()
+    eqI(drained.len(), 5, "⑤ drain_sorted 长度")
+    for 0 : 4 to i {
+        if drained[i].name != wantNames[i] {
+            fail("⑤ 同优先级应 FIFO：第 " + _str(i) + " 个应为 " + wantNames[i] + "，实际 " + drained[i].name)
+        }
+    }
+    if not ps.is_empty() { fail("⑤ drain_sorted 后应为空") }
+
+    // 不给比较器 ⇒ 全部相等 ⇒ 退化成先进先出
+    var pf = new ct.PriorityQueue[int]()
+    pf.push(3)
+    pf.push(1)
+    pf.push(2)
+    Array[int] fifo = pf.drain_sorted()
+    if fifo[0] != 3 or fifo[1] != 1 or fifo[2] != 2 {
+        fail("⑤ 无比较器时退化为 FIFO（实际 " + _str(fifo[0]) + "," + _str(fifo[1]) + "," + _str(fifo[2]) + "）")
+    }
+
+    // to_array 是堆序（只保证父优于子），长度必须对；clear 后能复用
+    var pc = new ct.PriorityQueue[int](cmp = func(int a, int b): int { return a - b })   // 小顶堆
+    for [4, 2, 8] to v { pc.push(v) }
+    eqI(pc.to_array().len(), 3, "⑤ to_array 长度")
+    eqI(pc.top(), 2, "⑤ 小顶堆 top 是最小值")
+    pc.clear()
+    eqI(pc.len(), 0, "⑤ clear")
+    pc.push(1)
+    eqI(pc.top(), 1, "⑤ clear 后复用")
+
+    // ==================== on_evict：自动淘汰时交还资源 ====================
+    // 为什么必须有：缓存里装的是纹理 Ptr / 文件句柄时，淘汰那一刻得释放，否则就是泄漏。
+    Array[string] fired = []
+    var lo = new ct.LRU[int](cap = 2, on_evict = func(string k, int v): void {
+        fired.add(k + "=" + _str(v))
+    })
+    lo.put("a", 1)
+    lo.put("b", 2)
+    eqI(fired.len(), 0, "⑥ 未超容量时不该触发")
+    lo.put("c", 3)
+    eqI(fired.len(), 1, "⑥ 超容量淘汰触发一次")
+    if fired[0] != "a=1" { fail("⑥ 回调参数应为被淘汰的 key/value，实际 " + fired[0]) }
+    lo.remove("b")
+    eqI(fired.len(), 1, "⑥ 显式 remove 不触发回调（调用方自己收尾）")
+    lo.clear()
+    eqI(fired.len(), 2, "⑥ clear 触发剩余条目（c=3）")
+    if fired[1] != "c=3" { fail("⑥ clear 回调参数错，实际 " + fired[1]) }
+
+    // ClockLRU 同一语义
+    Array[string] cfired = []
+    var co = new ct.ClockLRU[int](cap = 2, on_evict = func(string k, int v): void {
+        cfired.add(k + "=" + _str(v))
+    })
+    co.put("a", 1)
+    co.put("b", 2)
+    eqI(cfired.len(), 0, "⑥ ClockLRU 未超容量不触发")
+    co.put("c", 3)
+    eqI(cfired.len(), 1, "⑥ ClockLRU 淘汰触发")
+    co.remove("b")
+    eqI(cfired.len(), 1, "⑥ ClockLRU remove 不触发")
+    co.clear()
+    eqI(cfired.len(), 2, "⑥ ClockLRU clear 触发剩余")
 
     print("test_containers passed")
 }

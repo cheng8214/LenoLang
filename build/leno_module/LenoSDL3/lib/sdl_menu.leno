@@ -27,6 +27,7 @@
 //   transparent     是否透明背景（默认 false，不画菜单栏背景，嵌入标题栏时推荐 true）
 //   auto_width      是否自动计算宽度（默认 false，使用 opts.w；true 时根据菜单项自适应）
 import "sdl_renderer.leno" as ren; use ren.Renderer
+import "Containers" as ct          // 图标纹理缓存用 ct.ClockLRU（O(1) 命中 + 容量封顶）
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
@@ -38,6 +39,13 @@ import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 import maths                      // 只需要 ceil：把内容裁剪矩形对齐到"面板的真实覆盖"（见 drawPanel ✓）
+
+// 图标纹理淘汰回调（给 `ct.ClockLRU` 的 `on_evict` 用）：缓存淘汰 / 清空时当场销毁纹理。
+// 做成**模块级函数**而不是闭包：容器把回调存成函数值，这里不需要任何上下文
+// （销毁只要指针），写成模块级可以直接传函数名，也避免闭包捕获 self。
+func destroyTex(string path, Ptr[u8] t) {
+    if t != null { core.lib().SDL_DestroyTexture(t) }
+}
 
 // 单个菜单项（可被子菜单嵌套）
 
@@ -155,10 +163,17 @@ export struct MenuBar impl Widget, Themeable {
     pri float imgSize = 16.0      // 图标边长（0 = 不绘制图标）
     pri float imgPad = 10.0       // 图标左侧内边距
     pri float imgGap = 6.0        // 图标与文字间距
-    pri Array[string]  imgCachePaths = []   // 纹理缓存路径
-    pri Array[Ptr[u8]] imgCacheTex = []     // 纹理缓存指针
-    pri string  imgLastPath = ""            // MRU 快路径：最近访问的纹理路径
-    pri Ptr[u8] imgLastTex = null           // MRU 快路径：最近访问的纹理指针
+    // 图标纹理缓存（路径 → 纹理）。★ 2026-11-24：原来两条平行数组 + 线性扫描，而且
+    // **没有容量上限**（只增不减 ⇒ 长跑的菜单应用持续占显存，等于泄漏）。现在换成
+    // LenoContainers.ClockLRU：
+    //   · 命中 O(1)（路径→槽位字典），取代原来的 O(n) 线性扫描；
+    //   · 容量封顶 imgCacheMax，满了按 CLOCK 近似 LRU 淘汰，淘汰那一刻用 on_evict
+    //     **当场 SDL_DestroyTexture**（这是换容器前必须先有回调的原因，见 Containers README）；
+    //   · 下面那层单槽 MRU 快路径保留：同一图标在相邻行连续绘制时连字典都不碰（~10ns 级）。
+    pri ct.ClockLRU[Ptr[u8]]? imgCache = null   // 懒建（构造时才知道 cap/回调）
+    pri int imgCacheMax = 64                    // 上限：菜单图标就几十种，64 足够
+    pri string  imgLastPath = ""                // MRU 快路径：最近访问的纹理路径
+    pri Ptr[u8] imgLastTex = null               // MRU 快路径：最近访问的纹理指针
     pri float fontH = 0.0                   // 字体行高缓存（避免每帧 measureString）
 
     // 配色 — 打包 int 颜色
@@ -742,26 +757,35 @@ export struct MenuBar impl Widget, Themeable {
     }
 
     // 纹理缓存：按 path 取/载纹理，避免每帧重载与纹理泄漏（对齐 Table/ComboBox 模式）
-    // ★ MRU 快路径：连续多行常共用同一图标（如全选复制/粘贴），单槽快路径将 O(n) 线性扫描降为 O(1)
+    // ★ MRU 快路径：连续多行常共用同一图标（如全选复制/粘贴），单槽快路径连字典都不碰
+    // ★ 2026-11-24：缓存本体换成 ct.ClockLRU（O(1) 命中 + 容量封顶 + 淘汰即销毁）
+    pri func _icon_cache(): ct.ClockLRU[Ptr[u8]] {
+        var c = imgCache
+        if c != null { return c }        // 分支内视作非空（否则「可空值流入非可空」警告）
+        var n = new ct.ClockLRU[Ptr[u8]](cap = imgCacheMax, on_evict = destroyTex)
+        imgCache = n
+        return n
+    }
+
     pri func get_tex(Renderer r, string path): Ptr[u8] {
         if path == imgLastPath and imgLastTex != null { return imgLastTex }
-        for imgCachePaths.len() to i {
-            if imgCachePaths[i] == path {
-                imgLastPath = path; imgLastTex = imgCacheTex[i]
-                return imgCacheTex[i]
-            }
+        var cache = _icon_cache()
+        Ptr[u8] hit = cache.get(path, null)
+        if hit != null {
+            imgLastPath = path; imgLastTex = hit
+            return hit
         }
         Ptr[u8] t = img.loadTexture(r.handle, path)
-        imgCachePaths.add(path); imgCacheTex.add(t)
+        // 满了会淘汰一个并当场销毁（on_evict）。MRU 不会悬空：下面一行立刻把 MRU 指向新纹理，
+        // 而被淘汰的若是旧 MRU，那个指针此刻只留在 MRU 槽里（sdl_font 当年的"错字"bug 是
+        // **环数组槽位被覆盖、索引还留着旧值** —— 这条路径在这里不存在）。
+        cache.put(path, t)
         imgLastPath = path; imgLastTex = t
         return t
     }
     pri func free_img_cache() {
-        sdl3 _lib = core.lib()
-        for imgCacheTex.len() to i {
-            if imgCacheTex[i] != null { _lib.SDL_DestroyTexture(imgCacheTex[i]) }
-        }
-        imgCachePaths = []; imgCacheTex = []
+        var c = imgCache
+        if c != null { c.clear() }   // clear 对每条现存缓存触发 on_evict ⇒ 纹理全部销毁
         imgLastPath = ""; imgLastTex = null
     }
 

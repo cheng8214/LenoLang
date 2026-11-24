@@ -249,57 +249,32 @@
                             TypeInfo* actual_type = infer_expr_type(s, field_value);
 
                             // 泛型 struct：用具体类型参数替换字段类型中的泛型参数
+                            // ★ 2026-11-24（跨模块 func 字段被拒，实测抓到的**既存 bug**）：
+                            //   这里原来靠"遍历 root AST 找本单元的 struct 定义"拿类型参数名 ⇒
+                            //   **跨模块**构造时 struct_def_ast 恒为 NULL，一个参数都不替换，合法代码被拒：
+                            //     new ct.PriorityQueue[int](cmp = func(int, int): int { … })
+                            //     ⇒「字段 'cmp' 类型不匹配: 期望 'func(T, T):int'，实际 'func(int, int):int'」✗
+                            //   （`Array[T]` 这类字段没暴露，是因为兼容检查对未替换的数组宽；func 的
+                            //     参数类型是逐个严格比对 ⇒ 必崩。）
+                            //   修法：类型参数名改从**符号表**取（sym->struct_type_params，跨模块也有值 ✓），
+                            //   与上面 161-187 的约束校验同一个来源。
+                            //   约束校验仍走上面的 sym 版（`semantic_check_struct_type_arg_constraint`）——
+                            //   原来这里那份 AST 版是"同一件事两处写"，去掉一份只会更一致。
+                            //   历史（2026-10-03）：**前向引用**时字段类型曾是占位形式 ⇒ 替换不生效 ⇒
+                            //     new Cell[int](value=1) ⇒「期望 'struct T'，实际 'int'」✗（同一条替换路径）
                             TypeInfo* check_type = expected_type;
-                            if (ast->u.struct_init.generic_type_count > 0) {
-                                // 查找 struct 定义获取 type_params
-                                Ast* struct_def_ast = NULL;
-                                // 遍历 root AST 查找
-                                if (s->root) {
-                                    for (int si = 0; si < s->root->u.block.count; si++) {
-                                        Ast* stmt = s->root->u.block.items[si];
-                                        if (stmt->kind == AST_STRUCT_DEF && 
-                                            stmt->u.struct_def.name &&
-                                            strcmp(stmt->u.struct_def.name, ast->u.struct_init.struct_name) == 0) {
-                                            struct_def_ast = stmt;
-                                            break;
-                                        }
-                                    }
-                                }
-                                if (struct_def_ast && struct_def_ast->u.struct_def.type_param_count > 0) {
-                                    // 用具体类型替换泛型参数
-                                    // ⚠ 用 semantic_substitute_generic_param：它现在是 `type_substitute` 的**转发**
-                                    //   （2026-10-03 收编，唯一实现 ✓），两者都认 "TYPE_GENERIC_PARAM" 与历史遗留的
-                                    //   "TYPE_STRUCT + struct_name=T" 占位 ✓
-                                    //   ★ 同日起**产生端根治**：AST 路径只产生前者（parser 三处声明统一转换 ✓）
-                                    //     ⇒ 占位兼容只用来兜**跨模块缓存 / 外部符号表**里的旧内容 ✓
-                                    //   历史实测（2026-10-03）：**struct 定义在使用之后**（前向引用）时字段类型曾是
-                                    //   占位形式 ⇒ 替换不生效 ⇒ 合法代码被拒：
-                                    //     new Cell[int](value=1) ⇒「字段 'value' 类型不匹配: 期望 'struct T'，实际 'int'」✗
-                                    check_type = type_copy(expected_type);
-                                    for (int gi = 0; gi < struct_def_ast->u.struct_def.type_param_count && gi < ast->u.struct_init.generic_type_count; gi++) {
-                                        // ★ 2026-10-03：类型参数写了**具体类型约束**（`struct Cell[T: string]`）
-                                        //   ⇒ 在实例化处校验实参类型 ✓
-                                        //   为什么必须有这一条：约束存在时，native 实参检查会**直接放行**（约束已保证 ✓）
-                                        //   而不再记"需求" ⇒ 若这里不校验，`new Cell[int](...)` 会静默通过 ✗
-                                        const char* cons = struct_def_ast->u.struct_def.type_param_constraints
-                                                               ? struct_def_ast->u.struct_def.type_param_constraints[gi]
-                                                               : NULL;
-                                        TypeKind ck = semantic_constraint_builtin_kind(cons);
-                                        TypeInfo* arg_ti = ast->u.struct_init.generic_type_args[gi];
-                                        if (ck != TYPE_UNKNOWN && arg_ti &&
-                                            !(arg_ti->kind == ck || (ck == TYPE_INT && arg_ti->kind == TYPE_BIGINT))) {
-                                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
-                                                     "类型 '%s' 不满足约束 '%s'（struct '%s' 的类型参数 '%s' 被约束为具体类型）",
-                                                     type_kind_to_string(arg_ti->kind), cons,
-                                                     ast->u.struct_init.struct_name,
-                                                     struct_def_ast->u.struct_def.type_params[gi]);
-                                        }
-                                        TypeInfo* sub = semantic_substitute_generic_param(check_type,
-                                            struct_def_ast->u.struct_def.type_params[gi],
-                                            ast->u.struct_init.generic_type_args[gi]);
-                                        type_free(check_type);
-                                        check_type = sub;
-                                    }
+                            if (ast->u.struct_init.generic_type_count > 0 &&
+                                sym->struct_type_param_count > 0 && sym->struct_type_params) {
+                                check_type = type_copy(expected_type);
+                                for (int gi = 0; gi < sym->struct_type_param_count &&
+                                                    gi < ast->u.struct_init.generic_type_count; gi++) {
+                                    if (!sym->struct_type_params[gi] ||
+                                        !ast->u.struct_init.generic_type_args[gi]) continue;
+                                    TypeInfo* sub = semantic_substitute_generic_param(check_type,
+                                        sym->struct_type_params[gi],
+                                        ast->u.struct_init.generic_type_args[gi]);
+                                    type_free(check_type);
+                                    check_type = sub;
                                 }
                             }
                             

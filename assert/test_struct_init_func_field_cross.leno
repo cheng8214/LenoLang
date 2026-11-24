@@ -1,0 +1,61 @@
+// test_struct_init_func_field_cross.leno —— 跨模块泛型 struct 的 **func 类型字段** 命名构造（2026-11-24 钉住）
+//
+// 修前：`new m.Holder[int](cmp = func(int, int): int { … })`
+//   报「字段 'cmp' 类型不匹配: 期望 'func(T, T):int'，实际 'func(int, int):int'」✗
+//   （同模块内同一句是好的 ⇒ 只在"库 + 应用"跨模块时暴露。）
+// 根因：visit_struct_init 替换字段类型里的泛型参数时，靠"遍历本编译单元的 root AST 找 struct 定义"
+//   拿类型参数名 —— 跨模块时那个 AST 根本不在本单元 ⇒ 一个参数都没替换。
+//   `Array[T]` / `struct T` 这类字段没暴露，是因为兼容检查对未替换的数组/结构宽；
+//   func 的**参数类型逐个严格比对** ⇒ 必崩。
+// 修法：类型参数名改从符号表 `sym->struct_type_params` 取（跨模块同样有值），
+//   与上面已有的约束校验同一来源（原来那是"同一件事两处写"）。
+//
+// 本用例钉住三条：命名构造给 lambda、构造后赋值、不给（走 null 默认）——
+// 任何一条退回"替换不生效"都会立刻红。
+import "helpers/func_field_mod.leno" as m
+
+main() {
+    // ① 命名构造直接给 lambda（本条就是原 bug 的写法）
+    var h = new m.Holder[int](cmp = func(int a, int b): int {
+        if a > b { return -1 }      // 大顶
+        if a < b { return 1 }
+        return 0
+    })
+    assert_true(h.better(9, 3), "①a 命名构造传入的比较器生效（9 优于 3）")
+    assert_false(h.better(3, 9), "①b 反向不成立")
+    assert_false(h.better(3, 3), "①c 相等时 better 为假")
+
+    // ② struct 实参也一样（lambda 参数是结构体类型）
+    var s = new m.Holder[string](cmp = func(string a, string b): int {
+        return a.len() - b.len()
+    })
+    assert_true(s.better("a", "bbb"), "② 结构体实参下的比较器生效")
+
+    // ③ 先构造后赋值（一直可用的写法，别回归）
+    var h2 = new m.Holder[int]()
+    h2.cmp = func(int a, int b): int { return a - b }
+    assert_true(h2.better(1, 9), "③ 构造后赋值仍生效")
+
+    // ④ 不给 func 字段 ⇒ 走声明处默认值 null，方法里必须安全
+    var h3 = new m.Holder[int]()
+    assert_false(h3.better(1, 2), "④ cmp 为 null 时不炸、返回 false")
+
+    // ⑤ 同模块泛型 struct 不受影响（回归）
+    var local = new LocalBox[int](cmp = func(int a, int b): int { return a - b })
+    assert_true(local.better(1, 2), "⑤ 同模块命名构造仍正常")
+
+    // ⑥ 普通字段与泛型字段混用
+    var h4 = new m.Holder[int](items = [3, 1, 2])
+    assert_eq(h4.items.len(), 3, "⑥ 泛型容器字段照常灌初值")
+
+    print("test_struct_init_func_field_cross passed")
+}
+
+struct LocalBox[T] {
+    func(T, T):int cmp = null
+
+    func better(T a, T b): bool {
+        if cmp == null { return false }
+        return cmp(a, b) < 0
+    }
+}

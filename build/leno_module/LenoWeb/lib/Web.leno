@@ -21,7 +21,10 @@ use core.(curl, Code, Opt, Info, Global, HttpVersion, SslVersion)
 use net.(Response, HttpClient, Session, MimeField, ProxyPool, ProxyStats, BatchResult)
 use htmls.(HtmlNode)
 use crawler.(Url, Crawler, CrawlItem, Page, SitemapEntry, SitemapReport)
-use generic.(map, filter, reduce, forEach, Stack, LinkedList, ListNode)
+// ★ 2026-11-24：`Stack` 不再从这里导出（web_generic 里那份手写 Stack 已删）——
+//   两份同名 struct 会撞全局类型表，用户同时 import Web 与 Containers 就运行期报错。
+//   要栈请 `import "Containers" as ct; new ct.Stack[T]()`（见 web_generic.leno 那段说明）
+use generic.(map, filter, reduce, forEach, LinkedList, ListNode)
 use gzip.(Inflated)
 use ws.(WsClient, WsUrl, WsMessage)
 use browser.(Browser, BrowserConfig, CdpClient, RenderResult, RenderOptions)

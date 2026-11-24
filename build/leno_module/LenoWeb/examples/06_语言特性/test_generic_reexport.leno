@@ -6,6 +6,7 @@
 import "web_generic" as gen
 import "Web" as web
 import "Result" as res
+import "Containers" as ct     // ★ 2026-11-24：Stack 已从 web_generic 移到 LenoContainers
 
 main()
 {
@@ -78,19 +79,18 @@ main()
     })
     assert_eq(joined, "abc")
 
-    // ---------- 10. Stack 泛型 ----------
-    var stack = new gen.Stack[int]()
-    stack.init()
+    // ---------- 10. Stack 泛型（2026-11-24 起来自 LenoContainers） ----------
+    var stack = new ct.Stack[int]()
     stack.push(10)
     stack.push(20)
     stack.push(30)
-    assert_eq(stack.size, 3)
+    assert_eq(stack.len(), 3)
     assert_eq(stack.peek(), 30)
     assert_eq(stack.pop(), 30)
     assert_eq(stack.pop(), 20)
-    assert_eq(stack.isEmpty(), false)
+    assert_eq(stack.is_empty(), false)
     assert_eq(stack.pop(), 10)
-    assert_eq(stack.isEmpty(), true)
+    assert_eq(stack.is_empty(), true)
 
     // ---------- 11. LinkedList 泛型 ----------
     var list = new gen.LinkedList[int]()

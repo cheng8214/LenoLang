@@ -1,14 +1,19 @@
-// Containers.leno — LenoContainers 入口（2026-11-24）
+// Containers.leno — LenoContainers 入口（2026-11-24，0.3.0）
 // 纯 Leno，无原生依赖。
 //
-// 为什么需要它：内置只有 Array / Dict，而"队列 / 栈 / LRU"这三个容器几乎每个项目都要重写一遍。
-// 重写时**最容易错的不是主体，是边界**——空取返回什么、容量淘汰按插入还是按访问、
-// 队列头指针漂移后 len 怎么算。这里把边界行为固定成契约：
+// 为什么需要它：内置只有 Array / Dict，而"栈 / 队列 / 优先队列 / 缓存淘汰"这几样几乎
+// 每个项目都要重写一遍。重写时**最容易错的不是主体，是边界**——空取返回什么、容量淘汰
+// 按插入还是按访问、队列头指针漂移后 len 怎么算。这里把边界行为固定成契约：
 //
 //   · **空容器取值一律抛错**，不返回 null/0/默认值。空栈 pop 是写错了，
 //     给它一个 0 只会让错误漂到很远的地方（Leno 一贯的取向）。
+//     错误串统一前缀 `Containers.<类型>.<方法>:`，调用方要按字符串分支也有得抓。
 //   · `len()` 始终是**逻辑元素个数**（Queue 的 head 偏移已经扣掉）。
-//   · LRU 的淘汰按**最近访问**（get 会提升），不是按插入。
+//   · LRU 的淘汰按**最近访问**（get 会提升，peek 不会）；ClockLRU 是**近似**。
+//   · **不带锁**：Leno 的并发模型是 Channel 传值 + thread_local，不做加锁容器。
+//     要跨线程就整份传（或把容器放在一个线程里，用 Channel 收发）。
+//
+// 五个类型：Stack / Queue / PriorityQueue / LRU / ClockLRU。
 
 // ==================== Stack：后进先出 ====================
 export struct Stack[T] {
@@ -18,20 +23,28 @@ export struct Stack[T] {
         items.add(v)
     }
 
+    // 一次灌多个（`new Stack[int](items = arr)` 也能直接给初值，见 README）
+    func push_all(Array[T] vs) {
+        for vs to v { items.add(v) }
+    }
+
     // 空栈 ⇒ 抛错（不返回 null）
     func pop(): T {
-        if items.len() == 0 { throw "Stack.pop: 空栈" }
+        if items.len() == 0 { throw "Containers.Stack.pop: 空栈" }
         return items.pop()
     }
 
     func peek(): T {
-        if items.len() == 0 { throw "Stack.peek: 空栈" }
+        if items.len() == 0 { throw "Containers.Stack.peek: 空栈" }
         return items[items.len() - 1]
     }
 
     func len(): int { return items.len() }
     func is_empty(): bool { return items.len() == 0 }
     func clear() { items.clear() }
+
+    // 快照（栈底 → 栈顶），**非破坏性**：返回值是副本，改它不影响栈
+    func to_array(): Array[T] { return items.copy() }
 }
 
 // ==================== Queue：先进先出 ====================
@@ -46,11 +59,15 @@ export struct Queue[T] {
         items.add(v)
     }
 
+    func push_all(Array[T] vs) {
+        for vs to v { items.add(v) }
+    }
+
     func pop(): T {
         // len 只取一次：items.len() 在这里是方法调用，原来空判断和压缩判断各调一次。
         // A/B 实测（bench，N=2M 三轮交替）100 → 94 ns/op，约 -6%
         int n = items.len()
-        if head >= n { throw "Queue.pop: 空队列" }
+        if head >= n { throw "Containers.Queue.pop: 空队列" }
         T v = items[head]
         head = head + 1
         // 惰性压缩：死元素超过一半且总量超过 64 时才搬
@@ -65,8 +82,27 @@ export struct Queue[T] {
         return v
     }
 
+    // 一次出队 n 个（按出队顺序返回）。n 超过实际数量 ⇒ 抛错（不静默少给）
+    func pop_n(int n): Array[T] {
+        if n < 1 { throw "Containers.Queue.pop_n: 数量必须 >= 1（收到 " + _str(n) + "）" }
+        int total = items.len()
+        int avail = total - head
+        if n > avail {
+            throw "Containers.Queue.pop_n: 只剩 " + _str(avail) + " 个，取不到 " + _str(n) + " 个"
+        }
+        Array[T] out = items[head : head + n - 1]
+        head = head + n
+        if head > 64 and head * 2 > total {
+            Array[T] keep = []
+            for head : total - 1 to i { keep.add(items[i]) }
+            items = keep
+            head = 0
+        }
+        return out
+    }
+
     func peek(): T {
-        if head >= items.len() { throw "Queue.peek: 空队列" }
+        if head >= items.len() { throw "Containers.Queue.peek: 空队列" }
         return items[head]
     }
 
@@ -77,35 +113,169 @@ export struct Queue[T] {
         items.clear()
         head = 0
     }
+
+    // 快照（队首 → 队尾），**非破坏性**：返回副本，出队游标不动
+    func to_array(): Array[T] {
+        int n = items.len()
+        if head == 0 { return items.copy() }
+        if head >= n { return [] }
+        return items[head : n - 1]
+    }
+}
+
+// ==================== PriorityQueue：二叉堆（优先队列）====================
+// 为什么需要：内置没有堆，而"任务调度 / 定时器 / A* / top-K / 带权 BFS"都要用；
+// 实测 LenoWeb 的爬虫就自己内联抄了一份（web_crawler.leno 的 _siftUp/_siftDown）。
+// 手写堆最容易错的两处这里都固定住：
+//   · **同优先级 FIFO**：比较器返回 0 时按**入队序号**先入先出（堆本身不稳定，
+//     LenoWeb 当年为此另加了一个 seq 字段自己比）；
+//   · **空堆取值抛错**（不是返回 null，那样错误会漂走）。
+export struct PriorityQueue[T] {
+    Array[T] heap = []
+    Array[int] seqs = []              // 与 heap 平行的入队序号（做"同优先级 FIFO"的稳定打破）
+    int next_seq = 0
+    // < 0 ⇒ a 先出；> 0 ⇒ b 先出；0 ⇒ 相等（容器内部按入队序打破）
+    // null ⇒ 全部视为相等（等价于先进先出队列，用于"只想按插入序处理"的兜底）
+    func(T, T):int cmp = null
+
+    // ⚠ 比较与交换**必须内联**在这个两个循环里，不能抽成 `_better(i,j)` / `_swap(i,j)`：
+    //   每层堆操作各调一次 ⇒ 每次 push/pop 白花 (log n) 次方法调用。
+    //   实测（N=500k 随机优先级）：抽成方法时 pop 7 421 ns/op，内联后见 bench 的当前读数
+    //   （每次比较里已含一次 `cmp` 函数调用 ~55 ns，那是必须付的）。
+
+    func push(T v) {
+        heap.add(v)
+        seqs.add(next_seq)
+        next_seq = next_seq + 1
+        int i = heap.len() - 1
+        while i > 0 {
+            int p = (i - 1) / 2
+            int c = 0
+            if cmp != null { c = cmp(heap[i], heap[p]) }
+            if c > 0 { break }                        // i 不比父优先
+            if c == 0 and not (seqs[i] < seqs[p]) { break }   // 同优先级：先入先出
+            T t = heap[i]
+            heap[i] = heap[p]
+            heap[p] = t
+            int s = seqs[i]
+            seqs[i] = seqs[p]
+            seqs[p] = s
+            i = p
+        }
+    }
+
+    func pop(): T {
+        int n = heap.len()
+        if n == 0 { throw "Containers.PriorityQueue.pop: 空堆" }
+        T top = heap[0]
+        T last = heap[n - 1]
+        int last_seq = seqs[n - 1]
+        heap.remove(n - 1)
+        seqs.remove(n - 1)
+        n = n - 1
+        if n > 0 {
+            heap[0] = last
+            seqs[0] = last_seq
+            int i = 0
+            while true {
+                int l = i * 2 + 1
+                if l >= n { break }
+                int best = i
+                int c1 = 0
+                if cmp != null { c1 = cmp(heap[l], heap[best]) }
+                if c1 < 0 or (c1 == 0 and seqs[l] < seqs[best]) { best = l }
+                int r = l + 1
+                if r < n {
+                    int c2 = 0
+                    if cmp != null { c2 = cmp(heap[r], heap[best]) }
+                    if c2 < 0 or (c2 == 0 and seqs[r] < seqs[best]) { best = r }
+                }
+                if best == i { break }
+                T t = heap[i]
+                heap[i] = heap[best]
+                heap[best] = t
+                int s = seqs[i]
+                seqs[i] = seqs[best]
+                seqs[best] = s
+                i = best
+            }
+        }
+        return top
+    }
+
+    // 看一眼队首（最小/最高优先级），不出队；空堆抛错
+    func top(): T {
+        if heap.len() == 0 { throw "Containers.PriorityQueue.top: 空堆" }
+        return heap[0]
+    }
+
+    func len(): int { return heap.len() }
+    func is_empty(): bool { return heap.len() == 0 }
+    func clear() {
+        heap.clear()
+        seqs.clear()
+        next_seq = 0
+    }
+
+    // ⚠ 这是**堆序**（只保证父优于子），不是出队顺序。
+    //   要真实出队顺序用 drain_sorted()（会清空），或自己循环 pop。
+    func to_array(): Array[T] { return heap.copy() }
+
+    // 依次弹出全部元素 ⇒ 真实的出队顺序（用完堆为空）。
+    // 给"要按优先级持久化 / 打印整队"的场景（LenoWeb 存断点就是先把堆倒空再压回去）。
+    func drain_sorted(): Array[T] {
+        Array[T] out = []
+        while heap.len() > 0 { out.add(pop()) }
+        return out
+    }
 }
 
 // ==================== LRU：最近最少使用淘汰 ====================
 // 容量淘汰的容器，适合"缓存最近 N 条"（日志尾部、最近打开的文件、热数据）。
 //
 // ⚠ 复杂度：`get` / `put` 是 **O(n)**（数组里找 key 再搬位置）。cap 在几千以内没问题；
-//   真要 O(1) 得做双向链表 + 节点表，Leno 里手写那套的复杂度远超收益（见 README）。
+//   要 O(1) 用 ClockLRU（近似淘汰）。`peek` 不搬位置，是 O(1)。
 export struct LRU[V] {
     Dict[string, V] map = {}
     Array[string] order = []          // 顺序 = 最近使用（末尾最新）
     int cap = 128
+    // 淘汰回调（可选）：`on_evict(key, value)` —— **自动淘汰**（超容量 / set_capacity 缩容 /
+    // clear）时逐条触发，用于释放 V 里装的资源（纹理 Ptr、打开的文件、socket）。
+    // ⚠ 显式 `remove(k)` **不触发**：那是调用方主动拿走的，由它自己负责收尾。
+    func(string, V):void on_evict = null
 
-    // 超出容量时淘汰**最久未使用**的那个。
-    // 常规 put 只超 1 个 ⇒ 走原地 remove(0)（不分配新数组）；
-    // set_capacity 一次缩很多个时走批量裁剪，否则是 O(over×n) 的搬移
-    // （4096 → 128：批量裁剪实测 426 us，逐次 remove(0) 是几十毫秒）。
-    func _trim() {
-        int over = order.len() - cap
-        if over <= 0 { return }
-        if over == 1 {
-            map.remove(order[0])
-            order.remove(0)
-            return
-        }
-        for 0 : over - 1 to i { map.remove(order[i]) }
-        order = order[over : order.len() - 1]
+    func _fire(string k) {
+        if on_evict != null { on_evict(k, map[k]) }
     }
 
-    func put(string k, V v) {
+    // 超出容量时淘汰**最久未使用**的那个，返回被淘汰的 key（null = 没淘汰）。
+    // 为什么要把淘汰的 key 交出去：除了 on_evict 回调，调用方有时还要记账（日志/统计）。
+    //
+    // 常规 put 只超 1 个 ⇒ 走原地 remove(0)（不分配新数组）；
+    // set_capacity 一次缩很多个时走批量裁剪，否则是 O(over×n) 的搬移
+    // （4096 → 128：批量裁剪实测 251 us，逐次 remove(0) 是几十毫秒）。
+    func _trim(): Array[string] {
+        Array[string] out = []
+        int over = order.len() - cap
+        if over <= 0 { return out }
+        if over == 1 {
+            string k0 = order[0]
+            _fire(k0)
+            out.add(k0)
+            map.remove(k0)
+            order.remove(0)
+            return out
+        }
+        for 0 : over - 1 to i {
+            _fire(order[i])
+            out.add(order[i])
+            map.remove(order[i])
+        }
+        order = order[over : order.len() - 1]
+        return out
+    }
+
+    func put(string k, V v): string? {
         if not map.has(k) {
             order.add(k)
         } else {
@@ -117,7 +287,9 @@ export struct LRU[V] {
             }
         }
         map[k] = v
-        _trim()
+        Array[string] gone = _trim()
+        if gone.len() > 0 { return gone[0] }
+        return null
     }
 
     // 缺失 ⇒ 返回调用点显式给的默认值（与 Result.orElse 同风格：默认值必须写明）
@@ -151,14 +323,22 @@ export struct LRU[V] {
     func len(): int { return order.len() }
     func capacity(): int { return cap }
 
-    // 调小容量会立刻淘汰到新上限（调大不会补数据）
-    func set_capacity(int n) {
-        if n < 1 { throw "LRU.set_capacity: 容量必须 >= 1（收到 " + _str(n) + "）" }
+    // 现存 key，顺序 = 最久未使用 → 最近使用（order 的原始顺序，**非破坏性**）
+    func keys(): Array[string] { return order.copy() }
+
+    // 调小容量会立刻淘汰到新上限（调大不会补数据），返回被淘汰的 key（最久 → 较新）
+    func set_capacity(int n): Array[string] {
+        if n < 1 { throw "Containers.LRU.set_capacity: 容量必须 >= 1（收到 " + _str(n) + "）" }
         cap = n
-        _trim()
+        return _trim()
     }
 
+    // 清空；挂了 on_evict 就逐条通知（整表释放资源用）
     func clear() {
+        if on_evict != null {
+            Array[string] ks = order.copy()
+            for ks to k { on_evict(k, map[k]) }
+        }
         map.clear()
         order.clear()
     }
@@ -180,10 +360,13 @@ export struct LRU[V] {
 export struct ClockLRU[V] {
     Dict[string, V] map = {}          // 值
     Dict[string, int] slot = {}       // key → 环上下标（命中不用遍历）
-    Array[string] keys = []           // 环：装满后长度恒为 cap
+    Array[string] ring = []           // 环：装满后长度恒为 cap
     Array[int] ref = []               // 1 = 最近用过，0 = 这一圈没用过，-1 = 死槽（remove 留下的）
     int cap = 128
     int hand = 0                      // CLOCK 指针
+    string? _evicted = null           // put 内部淘汰的 key（返回给调用方记账用）
+    // 淘汰回调（可选）：语义与 LRU.on_evict **完全一致**（自动淘汰 + clear 触发，remove 不触发）
+    func(string, V):void on_evict = null
 
     func _next(int i): int {
         int n = i + 1
@@ -193,19 +376,21 @@ export struct ClockLRU[V] {
 
     // 取一个可写的环槽：环没满就追加（只发生在预热阶段），满了就按 CLOCK 走指针
     func _slot(): int {
-        if keys.len() < cap {
-            keys.add("")
+        if ring.len() < cap {
+            ring.add("")
             ref.add(0)
-            return keys.len() - 1
+            return ring.len() - 1
         }
         while true {
             int r = ref[hand]
             if r <= 0 {
                 if r == 0 {
                     // 二次机会用尽 ⇒ 淘汰这一格（死槽 r=-1 时 map 里早就没了）
-                    string old = keys[hand]
+                    string old = ring[hand]
+                    if on_evict != null { on_evict(old, map[old]) }
                     map.remove(old)
                     slot.remove(old)
+                    _evicted = old
                 }
                 int idx = hand
                 hand = _next(hand)
@@ -216,17 +401,20 @@ export struct ClockLRU[V] {
         }
     }
 
-    func put(string k, V v) {
+    // 返回被淘汰的 key（null = 没淘汰）：缓存里装 Ptr/文件句柄时靠它当场释放
+    func put(string k, V v): string? {
         if map.has(k) {
             map[k] = v
             ref[slot[k]] = 1
-            return
+            return null
         }
+        _evicted = null
         int i = _slot()
-        keys[i] = k
+        ring[i] = k
         ref[i] = 1
         slot[k] = i
         map[k] = v
+        return _evicted
     }
 
     // 命中 ⇒ 打 ref 位（O(1)），缺失 ⇒ 返回调用点显式给的默认值
@@ -249,7 +437,7 @@ export struct ClockLRU[V] {
     func remove(string k) {
         if not map.has(k) { return }
         int i = slot[k]
-        keys[i] = ""                      // 键本身在 slot/map 里删掉，环上留死槽
+        ring[i] = ""                      // 键本身在 slot/map 里删掉，环上留死槽
         ref[i] = -1
         slot.remove(k)
         map.remove(k)
@@ -257,20 +445,37 @@ export struct ClockLRU[V] {
 
     // ⚠ 只支持**调大**。环是定长数组，缩容要把还活着的项重排进更小的环
     //   —— 那和"定长环换 O(1)"是两套结构，收益远小于复杂度。
-    //   真要缩小就 clear() 重来，或者用 LRU。
-    func set_capacity(int n) {
-        if n < 1 { throw "ClockLRU.set_capacity: 容量必须 >= 1（收到 " + _str(n) + "）" }
+    //   真要缩小就 clear() 重来，或者用 LRU。返回空数组（保持与 LRU.set_capacity 同形）。
+    func set_capacity(int n): Array[string] {
+        if n < 1 { throw "Containers.ClockLRU.set_capacity: 容量必须 >= 1（收到 " + _str(n) + "）" }
         if n < cap {
-            throw "ClockLRU.set_capacity: 不支持缩容（当前 " + _str(cap) + " → " + _str(n) + "）；定长环只能调大，需要缩小请 clear() 后重建"
+            throw "Containers.ClockLRU.set_capacity: 不支持缩容（当前 " + _str(cap) + " → " + _str(n) + "）；定长环只能调大，需要缩小请 clear() 后重建"
         }
         cap = n
+        return []
     }
 
+    // 现存 key（**环序**，不是访问序；要知道"谁最该被淘汰"只有 LRU 能给）
+    func keys(): Array[string] {
+        Array[string] out = []
+        for 0 : ring.len() - 1 to i {
+            if ref[i] >= 0 { out.add(ring[i]) }
+        }
+        return out
+    }
+
+    // 清空；挂了 on_evict 就逐条通知（整表释放资源用）
     func clear() {
+        if on_evict != null {
+            for 0 : ring.len() - 1 to i {
+                if ref[i] >= 0 { on_evict(ring[i], map[ring[i]]) }
+            }
+        }
         map.clear()
         slot.clear()
-        keys.clear()
+        ring.clear()
         ref.clear()
         hand = 0
+        _evicted = null
     }
 }

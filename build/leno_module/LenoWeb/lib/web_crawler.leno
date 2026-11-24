@@ -15,6 +15,9 @@ use res.Result
 use gzip.(Inflated)
 use browser.(Browser, BrowserConfig, RenderOptions, RenderResult)
 use htmls.(HtmlNode)
+// ★ 2026-11-24：自带的内联二叉堆已收编到 LenoContainers.PriorityQueue（同一份实现，
+//   别再在本文件里手写 sift_up/sift_down —— 那正是"每个项目重写一遍、边界各错一次"的来源）
+import "Containers" as ct
 
 // ==================== 辅助转换 ====================
 // 通用 any -> 具体类型安全转换（处理仍使用 Dict 的旧路径）
@@ -419,7 +422,7 @@ export struct Crawler {
     bool respect_robots = false
     string robots_rules = ""
     Dict[string, bool] visited
-    Array[CrawlItem] queue                  // 二叉大顶堆（优先队列），见 _push/_pop
+    ct.PriorityQueue[CrawlItem] queue       // 二叉大顶堆（LenoContainers.PriorityQueue），见 _push/_pop
     int page_count = 0
     bool running = false
 
@@ -622,64 +625,18 @@ export struct Crawler {
 
     // ==================== 优先队列（二叉大顶堆）====================
     // 排序键：`priority` 大者先出；同优先级按 `seq`（入队先后）⇒ FIFO 稳定。
-    // 为什么用堆：数组"排序插入"每次要搬移 O(n)，出队也要搬移；堆的入队/出队都是 O(log n)。
-    // 队列规模上千时差别明显（爬虫的队列经常是上万条）。
-    // 堆数组里没有"已出队的前缀"，所以 block saveState 直接把整个数组存下来即可。
-
-    // i 是否应比 j 先出队
-    func _higher(int i, int j): bool {
-        if queue[i].priority != queue[j].priority {
-            return queue[i].priority > queue[j].priority
-        }
-        return queue[i].seq < queue[j].seq
-    }
-
-    func _swap(int i, int j) {
-        CrawlItem t = queue[i]
-        queue[i] = queue[j]
-        queue[j] = t
-    }
-
-    func _siftUp(int i) {
-        while i > 0 {
-            int p = (i - 1) / 2
-            if not _higher(i, p) { break }
-            _swap(i, p)
-            i = p
-        }
-    }
-
-    func _siftDown(int i) {
-        int n = queue.len()
-        while true {
-            int l = i * 2 + 1
-            int r = l + 1
-            int best = i
-            if l < n and _higher(l, best) { best = l }
-            if r < n and _higher(r, best) { best = r }
-            if best == i { break }
-            _swap(i, best)
-            i = best
-        }
-    }
-
+    // ★ 2026-11-24：堆的实现搬到 LenoContainers.PriorityQueue（原来这里有手写的
+    //   `_higher/_swap/_siftUp/_siftDown`，和容器里那份逐行同构）。保留 `_push/_pop`
+    //   两个薄包装，是为了不动 nextUrl / saveState / loadState 的调用点。
+    //   比较器见模块级 `_crawl_cmp`（`seq` 仍由本模块发号，存档往返才保得住同优先级 FIFO）。
     func _push(CrawlItem it) {
-        queue.add(it)
-        _siftUp(queue.len() - 1)
+        queue.push(it)
     }
 
-    // 调用前请确保队列非空（空时返回 null）
+    // 调用前请确保队列非空（空时返回 null —— nextUrl 的主循环靠它 break）
     func _pop(): CrawlItem? {
-        int n = queue.len()
-        if n == 0 { return null }
-        CrawlItem top = queue[0]
-        CrawlItem last = queue[n - 1]
-        queue.remove(n - 1)
-        if queue.len() > 0 {
-            queue[0] = last
-            _siftDown(0)
-        }
-        return top
+        if queue.is_empty() { return null }
+        return queue.pop()
     }
 
     // 标记已访问（键为归一化 URL，与 nextUrl/enqueue 保持同一口径）
@@ -776,7 +733,7 @@ export struct Crawler {
         visited = newVisited
         _queued = newQueued
         // 逐个 _push 重建堆（顺带恢复优先级次序；同优先级按存档顺序重新编号 FIFO）
-        queue = []
+        queue = newCrawlQueue()
         for restored.len() to i {
             _push(restored[i])
         }
@@ -845,6 +802,25 @@ func newCrawlItem(string url, int depth): CrawlItem {
     return item
 }
 
+// 爬虫队列的排序键：`priority` 大者先出；同优先级按 `seq` 升序（入队先后 ⇒ FIFO 稳定）。
+// 为什么 seq 由本模块发号，而不是靠容器内部的入队序：**断点续爬**时 loadState 是
+// "先倒空、再按存档顺序重新压回"，容器内部序号会重排，必须靠存档里的 seq 才能还原。
+func _crawl_cmp(CrawlItem a, CrawlItem b): int {
+    if a.priority != b.priority {
+        if a.priority > b.priority { return -1 }
+        return 1
+    }
+    if a.seq < b.seq { return -1 }
+    if a.seq > b.seq { return 1 }
+    return 0
+}
+
+// 造一个空队列。Crawler 的 `queue` 字段没有默认值（struct 字段默认值不接受"调用构造"），
+// 所以**构造与重置都必须走这里** —— 别写 `queue = []`。
+func newCrawlQueue(): ct.PriorityQueue[CrawlItem] {
+    return new ct.PriorityQueue[CrawlItem](cmp = _crawl_cmp)
+}
+
 // 内部构造实现：从配置 Dict 初始化 Crawler
 func _buildCrawler(Dict config): Crawler {
     Crawler c = new Crawler()
@@ -857,7 +833,7 @@ func _buildCrawler(Dict config): Crawler {
     c.respect_robots = false
     c.robots_rules = ""
     c.visited = {}
-    c.queue = []
+    c.queue = newCrawlQueue()
     c.page_count = 0
     c.running = false
     var v_start = config["start_urls"]

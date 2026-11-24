@@ -4,7 +4,10 @@
 import "Web" as web
 import "web_generic" as gen
 import "Result" as res          // ★ 2026-11-15：Result/Ok/Err 已从 web_generic 拆到独立模块
-use gen.(Stack, LinkedList, ListNode)
+use gen.(LinkedList, ListNode)
+// ★ 2026-11-24：Stack 已从 web_generic 移除（与 Containers.Stack 同名会撞全局类型表），改用容器
+import "Containers" as ct
+use ct.Stack
 
 main()
 {
@@ -58,12 +61,11 @@ main()
     print("=== 场景3: Stack[T] DFS 模拟 ===")
 
     var dfsStack = new Stack[string]()
-    dfsStack.init()
     dfsStack.push("root")
     dfsStack.push("child1")
     dfsStack.push("child2")
     print("DFS 遍历:")
-    while not dfsStack.isEmpty() {
+    while not dfsStack.is_empty() {
         print("  -> " + dfsStack.pop())
     }
 
