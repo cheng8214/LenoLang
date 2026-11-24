@@ -663,6 +663,18 @@
             if (ast->u.for_.end) visit(s, ast->u.for_.end);
             if (ast->u.for_.step) visit(s, ast->u.for_.step);
 
+            // ★ 2026-11-25：容器/缓存可**直接遍历** —— `for st to v`。
+            //   本语言的 `for struct to k, v` 原是遍历**字段**，对 Stack/Queue/LRU 这些容器没意义
+            //   （遍历出来是 items/head/map…）。这里把被遍历对象改写成 `st.to_array()` /
+            //   `c.keys()`，之后走**普通数组迭代**的既有路径。
+            //   ⚠ 必须在 `visit(end)` **之后**做：infer_expr_type 对"尚未 visit"的节点会走
+            //   它自己的捷径（AST_CALL 会顺带解析 callee、把半成品留在节点上），
+            //   实测会让 `for n.children.len() to i` 报「不能在 any 类型上直接访问字段 'len'」。
+            //   改写出来的方法调用要**立刻 visit**，否则它没经过方法解析（codegen 会拿不到方法表）。
+            if (ast->u.for_.end && semantic_rewrite_for_iterable(s, ast)) {
+                visit(s, ast->u.for_.end);
+            }
+
             // ★ 2026-11-08：for 头的类型检查。
             //   此前 `for 0:10:"x"`（步长是字符串）**静默一次都不执行** ✗；
             //   `for true to i` / `for null to i` 同样静默 0 次。

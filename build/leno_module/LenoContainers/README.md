@@ -53,6 +53,38 @@ c.put("k", 1)
 print(c.get("k", -1))       // 1
 ```
 
+## 直接遍历（`for c to v`，2026-11-25 起）
+
+容器和缓存都能直接 `for` 遍历，**顺序就是各自的逻辑顺序**：
+
+```leno
+var st = new ct.Stack[int]()
+st.push(1); st.push(2); st.push(3)
+for st to v { print(v) }        // 1 2 3（栈底 → 栈顶）
+
+var q = new ct.Queue[string]()
+q.push("a"); q.push("b")
+for q to s { print(s) }         // a b（队首 → 队尾；已出队的不算）
+
+var l = new ct.LRU[int](cap = 4)
+l.put("x", 1); l.put("y", 2)
+for l to k { print(k) }         // 缓存遍历的是 **key**
+```
+
+| 容器 | 遍历到 | 顺序 |
+|---|---|---|
+| `Stack` | 元素 | 栈底 → 栈顶 |
+| `Queue` / `Deque` | 元素 | 队首 → 队尾（扣掉已出队的） |
+| `PriorityQueue` | 元素 | **堆序**（只保证父优于子；要按优先级请用 `drain_sorted()`） |
+| `LRU` / `LRUO1` | **key** | 最久未使用 → 最近使用 |
+| `ClockLRU` | **key** | 环序（不是访问序） |
+
+- 第二个循环变量仍是**下标**（容器按数组语义）：`for st to v, i { }`；
+- 普通 struct（没有 `to_array` / `keys`）**行为不变**，仍是字段遍历；
+- 可空容器（`Queue? q`）不接管，保持原来的判空诊断（先判空再遍历）；
+- 底层实现：语义期把被遍历对象改写成 `c.to_array()` / `c.keys()` ⇒ **每次遍历会分配一个快照数组**。
+  热路径上想零分配，就自己 `peek` / `at` 按下标走。
+
 ## API
 
 ### `Stack[T]`

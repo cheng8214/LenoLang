@@ -220,6 +220,10 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
 // ============================================================================
 int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line);
 
+// `for <容器> to v` 改写：struct 有 `to_array()` / `keys()` 时把被遍历对象换成一个方法调用，
+// 使容器/缓存可直接 `for c to v`（普通 struct 的字段遍历不受影响）。返回 1 = 改写成功。
+int semantic_rewrite_for_iterable(Semantic* s, Ast* for_ast);
+
 // 把 `new <类型别名>[实参…](…)` 就地改写成真实 struct 的构造（2026-11-25，见实现处注释）。
 // 返回 1 = 改写过（调用方须重新解析 struct 名）；0 = 不是可展开的别名。
 int semantic_expand_alias_struct_init(Semantic* s, Ast* ast, Symbol* alias_sym);

@@ -1,0 +1,117 @@
+// test_for_container_iter.leno —— 容器/缓存可直接 `for c to v`（2026-11-25 新增能力）
+//
+// 背景：本语言里 `for someStruct to k, v` 的语义是遍历**字段**（k=字段名, v=字段值）。
+// 对 Stack/Queue/LRU 这些容器毫无意义（遍历出来是 items/head/map/ring…）。
+// 现在语义期会把被遍历对象改写成 `c.to_array()` / `c.keys()`（**仅当该 struct 真有这个方法**）：
+//   · 顺序：Stack 栈底→栈顶；Queue/Deque 队首→队尾；PriorityQueue 是**堆序**（不是出队序）；
+//   · 缓存（LRU/ClockLRU/LRUO1）遍历的是 **key**；
+//   · 普通 struct（没有 to_array/keys）行为**完全不变**，仍是字段遍历。
+import "Containers" as ct
+
+struct Plain {
+    int x = 0
+    int y = 0
+}
+
+main() {
+    // ---------- Stack：栈底 → 栈顶 ----------
+    var st = new ct.Stack[int]()
+    st.push(1); st.push(2); st.push(3)
+    Array[int] seen = []
+    for st to v { seen.add(v) }
+    assert_eq(seen.len(), 3, "Stack 遍历 3 个")
+    assert_eq(seen[0], 1, "Stack 从栈底开始")
+    assert_eq(seen[2], 3, "Stack 到栈顶结束")
+
+    // ---------- Queue：队首 → 队尾（已出队的不算） ----------
+    var q = new ct.Queue[int]()
+    q.push(7); q.push(8); q.push(9)
+    q.pop()
+    Array[int] qs = []
+    for q to v { qs.add(v) }
+    assert_eq(qs.len(), 2, "Queue 遍历时要扣掉已出队元素")
+    assert_eq(qs[0], 8, "Queue 从队首开始")
+
+    // ---------- Deque：队首 → 队尾 ----------
+    var dq = new ct.Deque[int]()
+    dq.push_back(1); dq.push_front(0); dq.push_back(2)
+    Array[int] ds = []
+    for dq to v { ds.add(v) }
+    assert_eq(ds.len(), 3, "Deque 遍历 3 个")
+    assert_eq(ds[0], 0, "Deque 队首")
+    assert_eq(ds[2], 2, "Deque 队尾")
+
+    // ---------- PriorityQueue：遍历是**堆序**（只保证父优于子），元素不丢 ----------
+    var pq = new ct.PriorityQueue[int](cmp = func(int a, int b): int {
+        if a > b { return -1 }
+        if a < b { return 1 }
+        return 0
+    })
+    pq.push(5); pq.push(1); pq.push(9)
+    int sum = 0
+    int cnt = 0
+    for pq to v { sum = sum + v; cnt = cnt + 1 }
+    assert_eq(cnt, 3, "PriorityQueue 遍历元素个数")
+    assert_eq(sum, 15, "PriorityQueue 遍历不丢元素")
+
+    // ---------- 缓存：遍历 key（LRU 是最久→最近；ClockLRU 是环序） ----------
+    var l = new ct.LRU[int](cap = 4)
+    l.put("a", 1); l.put("b", 2)
+    l.get("a", 0)                       // a 提升 ⇒ 顺序变成 b,a
+    Array[string] ks = []
+    for l to k { ks.add(k) }
+    assert_eq(ks.len(), 2, "LRU 遍历 key 个数")
+    assert_eq(ks[0], "b", "LRU 遍历顺序 = 最久→最近（b 在前）")
+    assert_eq(ks[1], "a", "LRU 遍历顺序 = 最久→最近（a 在后）")
+
+    var o = new ct.LRUO1[int](cap = 4)
+    o.put("p", 1); o.put("q", 2)
+    int kc = 0
+    for o to k { kc = kc + 1 }
+    assert_eq(kc, 2, "LRUO1 遍历 key 个数")
+
+    var c = new ct.ClockLRU[int](cap = 4)
+    c.put("x", 1); c.put("y", 2)
+    int cc = 0
+    for c to k { cc = cc + 1 }
+    assert_eq(cc, 2, "ClockLRU 遍历 key 个数")
+
+    // ---------- 第二个循环变量：容器走数组语义 ⇒ 元素 + 下标 ----------
+    Array[int] idxs = []
+    for st to v, i { idxs.add(i) }
+    assert_eq(idxs.len(), 3, "带下标遍历个数")
+    assert_eq(idxs[0], 0, "第二个变量是下标（从 0 起）")
+    assert_eq(idxs[2], 2, "第二个变量是下标（到 len-1）")
+
+    // ---------- 空容器：0 次 ----------
+    var empty = new ct.Stack[int]()
+    int zero = 0
+    for empty to v { zero = zero + 1 }
+    assert_eq(zero, 0, "空容器一次都不进")
+
+    // ---------- 普通 struct 仍是字段遍历（不能回归） ----------
+    var p = new Plain()
+    p.x = 11
+    p.y = 22
+    Array[string] fnames = []
+    for p to k { fnames.add(k) }
+    assert_eq(fnames.len(), 2, "普通 struct 遍历字段个数")
+    assert_eq(fnames[0], "x", "普通 struct 第一个字段")
+
+    // ---------- 循环体里 break / continue 照常 ----------
+    int stopped = 0
+    for st to v {
+        if v == 2 { break }
+        stopped = stopped + 1
+    }
+    assert_eq(stopped, 1, "遍历里 break 生效")
+
+    int skipped = 0
+    for st to v {
+        if v == 2 { continue }
+        skipped = skipped + 1
+    }
+    assert_eq(skipped, 2, "遍历里 continue 生效")
+
+    print("test_for_container_iter passed")
+}

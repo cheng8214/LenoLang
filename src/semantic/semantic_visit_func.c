@@ -352,6 +352,68 @@ int semantic_check_undefined_subtypes(Semantic* s, TypeInfo* type, int line, int
     return reported;
 }
 
+// `for <容器> to v` 的容器改写（2026-11-25）。
+// 现有语义：`for someStruct to k, v` 遍历**字段**（键 = 字段名）。这对容器毫无意义 ——
+//   Stack 的字段是 `items`、Queue 是 `items/head`、ClockLRU 是 `map/slot/ring/ref`…
+// 这里在语义期把 `for c to v` 改写成 `for c.to_array() to v`（缓存类没有 to_array 时用 `keys()`），
+// 于是：类型推断、代码生成、`for c to i, x` 的第二个变量、空容器诊断……全部走**既有**的
+//   数组迭代路径，一行特判都不用加。
+// 判据是"该 struct 真的有这个方法"（运行期结构定义里的方法表）⇒ 普通 struct 的字段遍历
+//   行为**完全不变**；容器/缓存只要提供 `to_array()` 或 `keys()` 就自动可遍历。
+int semantic_rewrite_for_iterable(Semantic* s, Ast* for_ast) {
+    if (!s || !for_ast || for_ast->kind != AST_FOR) return 0;
+    Ast* end = for_ast->u.for_.end;
+    if (!end) return 0;
+    if (for_ast->u.for_.start) return 0;       // 写了起点的是数值区间，不碰
+    // ⚠ 调用方必须保证 `end` **已经 visit 过**（见 visit_control.inc 的注释：
+    //   在未 visit 的节点上做类型推断会把半成品留在树上，实测炸掉 assert 里 7 个用例）。
+    TypeInfo* et = infer_expr_type(s, end);
+    if (!et) return 0;
+    // 可空容器（`Queue? q`）不接管：`for q to v` 在 q 为 null 时该走哪条路（先判空 / 报错）
+    // 已经有既有诊断（WARN 空循环），这里改了反而把那条提示挡掉。
+    if (et->nullable) { type_free(et); return 0; }
+    char* sname = (et->kind == TYPE_STRUCT && et->struct_name) ? strdup(et->struct_name) : NULL;
+    type_free(et);
+    if (!sname) return 0;
+    ObjStructDef* def = struct_def_find(sname);
+    free(sname);
+    if (!def) return 0;
+
+    const char* pick = NULL;
+    for (int i = 0; i < def->method_count; i++) {
+        if (def->methods[i].name && strcmp(def->methods[i].name, "to_array") == 0) {
+            pick = "to_array";
+            break;
+        }
+    }
+    if (!pick) {
+        for (int i = 0; i < def->method_count; i++) {
+            if (def->methods[i].name && strcmp(def->methods[i].name, "keys") == 0) {
+                pick = "keys";
+                break;
+            }
+        }
+    }
+    if (!pick) return 0;
+
+    // 造 `obj.method()`：AST_CALL(callee = AST_FIELD_ACCESS(obj, name)) —— 与 parser 对
+    // `obj.method()` 的产出一致，所以后续 visit / codegen 不需要认识"这是改写来的"。
+    Ast* fa = ast_new(AST_FIELD_ACCESS, end->line);
+    fa->line = end->line;
+    fa->column = end->column;
+    fa->u.field_access.obj = end;
+    fa->u.field_access.field_name = strdup(pick);
+    fa->u.field_access.field_index = -1;
+
+    Ast* call = ast_new(AST_CALL, end->line);
+    call->line = end->line;
+    call->column = end->column;
+    call->u.call.callee = fa;
+
+    for_ast->u.for_.end = call;
+    return 1;
+}
+
 // 把 `new <类型别名>[实参…](…)` 就地改写成**真实 struct** 的构造（2026-11-25）。
 //   `export alias Stack[T] = ct.Stack[T]` + `use m.Stack` + `new Stack[int]()`
 //     ⇒ struct_name = "ct.Stack"，generic_type_args = [int]
