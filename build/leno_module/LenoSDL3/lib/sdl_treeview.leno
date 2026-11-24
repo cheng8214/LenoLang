@@ -22,13 +22,19 @@ import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
-import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
+import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect; use core.sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_image.leno" as img
+import "Containers" as ct          // 图标纹理缓存用 ct.ClockLRU（O(1) 命中 + 容量封顶 + 淘汰即销毁）
+
+// 图标纹理淘汰回调（给 ct.ClockLRU 的 on_evict 用）—— 同 sdl_menu / sdl_popmenu 的做法
+func treeTexEvict(string path, Ptr[u8] t) {
+    if t != null { core.lib().SDL_DestroyTexture(t) }
+}
 
 // 节点结构：children 递归构成树；_parent/_depth 为拍平遍历与连接线提供便利
 
@@ -73,10 +79,11 @@ export struct TreeView impl Widget, Themeable {
     float _imgSize = 0.0      // 图标边长（0 = 自动：取 _rowH - 8）
     pri float imgGap = 4.0       // 图标与文字间距
     pri int   imgMode = 0        // 内容模式：0=aspectFit(保持比例) 1=stretch(拉伸) 2=aspectFill(覆盖裁剪)
-    // 纹理缓存（path -> tex 平行数组）：跨拍平重建持久存在，避免每帧重载与纹理泄漏
-    pri Array[string] imgCachePaths = []
-    pri Array[Ptr[u8]] imgCacheTex = []
-    // ★ MRU 快路径：连续多行常共用同一图标（如全部是文件夹），单槽快路径将 O(n) 线性扫描降为 O(1)
+    // 纹理缓存（path -> tex）：跨拍平重建持久存在，避免每帧重载与纹理泄漏
+    // ★ 2026-11-24：两条平行数组 + 线性扫描 + **无上限** ⇒ ct.ClockLRU（O(1) 命中 + 容量封顶 + 淘汰即销毁）
+    pri ct.ClockLRU[Ptr[u8]]? texCache = null
+    pri int treeTexMax = 128
+    // ★ MRU 快路径：连续多行常共用同一图标（如全部是文件夹），单槽快路径连字典都不碰
     pri string imgLastPath = ""
     pri Ptr[u8] imgLastTex = null
     pri float textH = 16.0         // 缓存字体行高，避免渲染时每行重复 measureString
@@ -237,19 +244,29 @@ export struct TreeView impl Widget, Themeable {
         }
     }
 
+    pri func _texCache(): ct.ClockLRU[Ptr[u8]] {
+        var c = texCache
+        if c != null { return c }
+        var n = new ct.ClockLRU[Ptr[u8]](cap = treeTexMax, on_evict = treeTexEvict)
+        texCache = n
+        return n
+    }
+
     // 纹理缓存：按 path 取/载纹理，跨拍平重建持久存在，避免每帧重载与纹理泄漏
     // ★ MRU 快路径：文件管理器中连续多行常共用同一图标（如全部是文件夹），
-    //   单槽快路径将 O(n) 线性扫描降为 O(1)，消除每行 string 比较开销
+    //   单槽快路径连字典都不碰，消除每行 string 比较开销
+    // ★ 2026-11-24：两条平行数组 + 线性扫描 + **无上限**（只增不减 ⇒ 泄漏，树里图标种类
+    //   一多就明显）⇒ 换成 ct.ClockLRU：O(1) 命中、容量封顶（treeTexMax）、淘汰即销毁。
     pri func get_tex(Renderer r, string path): Ptr[u8] {
         if path == imgLastPath and imgLastTex != null { return imgLastTex }
-        for imgCachePaths.len() to i {
-            if imgCachePaths[i] == path {
-                imgLastPath = path; imgLastTex = imgCacheTex[i]
-                return imgCacheTex[i]
-            }
+        var cache = _texCache()
+        Ptr[u8] hit = cache.get(path, null)
+        if hit != null {
+            imgLastPath = path; imgLastTex = hit
+            return hit
         }
         Ptr[u8] t = img.loadTexture(r.handle, path)
-        imgCachePaths.add(path); imgCacheTex.add(t)
+        cache.put(path, t)          // 满了淘汰一个并当场销毁（on_evict）
         imgLastPath = path; imgLastTex = t
         return t
     }
@@ -964,9 +981,10 @@ export struct TreeView impl Widget, Themeable {
     func dispose() {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
         ctxMenu?.dispose(); ctxMenu = null
-        // 纹理缓存仅清空引用：其由所属渲染器在销毁时统一释放，
-        // 此处再 SDL_DestroyTexture 会造成 double-free/崩溃（见 sdl_font.leno 注释）
-        imgCacheTex = []; imgCachePaths = []
+        // 纹理缓存仅丢弃引用（**不 clear**，也就**不触发 on_evict 销毁**）：其由所属渲染器在
+        // 销毁时统一释放，此处再 SDL_DestroyTexture 会造成 double-free/崩溃
+        // （见 sdl_font.leno 注释 —— 这条语义保持原样，2026-11-24 换容器时没动它）
+        texCache = null
         imgLastPath = ""; imgLastTex = null
     }
 

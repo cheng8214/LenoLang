@@ -86,6 +86,35 @@ main() {
     for 0 : M - 1 to i { sink(_int(bad.remove(0))) }
     lap("对照：Array.remove(0) 出队 ×" + _str(M), M)
 
+    // ---------------- Deque ----------------
+    print("\n[Deque]（双端队列，两端均摊 O(1)）\n")
+    var dq = new ct.Deque[int]()
+    tick()
+    for 0 : N - 1 to i { dq.push_back(i) }
+    lap("push_back ×N", N)
+
+    tick()
+    for 0 : N - 1 to i { sink(dq.pop_front()) }
+    lap("pop_front ×N（含 sink）", N)
+    if not dq.is_empty() { print("  !! Deque 未清空\n") }
+
+    // 反向：全塞头部，再从尾部取 —— 会走"f 整体倒进 b"那条平摊路径
+    tick()
+    for 0 : N - 1 to i { dq.push_front(i) }
+    lap("push_front ×N", N)
+
+    tick()
+    for 0 : N - 1 to i { sink(dq.pop_back()) }
+    lap("pop_back ×N（倒段 + sink）", N)
+
+    // 交替两端（不起伏的稳态）
+    tick()
+    for 0 : N - 1 to i {
+        dq.push_front(i)
+        sink(dq.pop_back())
+    }
+    lap("push_front+pop_back 交替 ×N", N * 2)
+
     // ---------------- LRU ----------------
     print("\n[LRU]（严格按最近访问淘汰，O(n)）\n")
     var lru = new ct.LRU[int]()

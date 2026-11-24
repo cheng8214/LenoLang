@@ -33,6 +33,12 @@ import jsons
 import times
 import sockets
 import "web_ws.leno" as webws
+import "Containers" as ct      // events 用 ct.Deque（两端 O(1)，按 method 领取只搬一条）
+
+// 未领取事件（别人的响应）的保留上限。事件正常情况下 waitEvent/_drain 很快会领走，
+// 但调用方若只发命令不等事件（如只截图、只看返回值），这个数组会**无限增长** ⇒ 封顶丢最旧。
+// ★ 2026-11-24：原来没有上限（长跑的无头浏览器会话里是真的会涨）。
+const CDP_EVENTS_MAX = 256
 
 use webws.(WsClient)
 // ⚠ `Channel` / `Socket` 这类**原生类型**全局可见，不需要（也不能）`use`
@@ -85,7 +91,11 @@ export struct Browser {
 export struct CdpClient {
     WsClient ws
     int nextId = 1
-    Array[string] events = []  // 等响应期间收到的事件，按到达顺序留着（waitEvent 会来领）
+    // 等响应期间收到的事件，按到达顺序留着（waitEvent 会来领）。
+    // ★ 2026-11-24：`Array[string]` → `ct.Deque[string]`。原来"领走某个事件"要重建整个数组
+    //   （O(n) 拷贝）、超上限也是 `remove(0)`；换成双端队列后入队/丢最旧都是 O(1)，
+    //   "按 method 领走"走 `remove_at(i)`（本来就 O(n)，但只搬这一条，不再重建）。
+    ct.Deque[string] events
     bool ok = false
     string error = ""
     // 主文档 HTTP 状态码：从 `Network.responseReceived`（type == "Document"）里顺手记下。
@@ -446,7 +456,7 @@ func _verifyOwnership(string wsUrl, string udd): bool {
 // 连上浏览器级 WS（或某个 target 的 WS）
 export func cdpConnect(string wsUrl, int timeoutMs): CdpClient {
     CdpClient c = new CdpClient()
-    c.events = []
+    c.events = new ct.Deque[string]()
     c.nextId = 1
     c.ok = false
     c.error = ""
@@ -511,9 +521,10 @@ export func cdpCall(CdpClient c, string method, string paramsJson): string {
                 }
                 return "{}"
             }
-            // 别人的响应/事件 ⇒ 留着给 waitEvent 来领
+            // 别人的响应/事件 ⇒ 留着给 waitEvent 来领（封顶丢最旧，见 CDP_EVENTS_MAX）
             if jsons.get_str(obj, "method", "") != "" {
-                c.events.add(raw)
+                c.events.push_back(raw)
+                if c.events.len() > CDP_EVENTS_MAX { c.events.pop_front() }
             }
         }
     }
@@ -522,14 +533,9 @@ export func cdpCall(CdpClient c, string method, string paramsJson): string {
 // 等一个事件（先翻已收到的事件队列，再继续收）；超时返回 ""
 export func waitEvent(CdpClient c, string method, int timeoutMs): string {
     for c.events.len() to i {
-        var obj = jsons.decode(c.events[i])
+        var obj = jsons.decode(c.events.at(i))
         if obj is Dict[string, any] and jsons.get_str(obj, "method", "") == method {
-            // 领取（从队列里摘掉）
-            Array[string] keep = []
-            for c.events.len() to j {
-                if j != i { keep.add(c.events[j]) }
-            }
-            c.events = keep
+            c.events.remove_at(i)      // 领取（从队列里摘掉这一条；不再重建整条数组）
             return _eventParams(obj)
         }
     }
@@ -543,7 +549,7 @@ export func waitEvent(CdpClient c, string method, int timeoutMs): string {
                 return _eventParams(obj)
             }
             if jsons.get_str(obj, "method", "") != "" {
-                c.events.add(raw)
+                c.events.push_back(raw)
             }
         }
     }
@@ -910,7 +916,8 @@ func _drain(CdpClient c, int budgetMs): int {
         var obj = jsons.decode(raw)
         if obj is Dict[string, any] {
             if jsons.get_str(obj, "method", "") != "" {
-                c.events.add(raw)
+                c.events.push_back(raw)
+                if c.events.len() > CDP_EVENTS_MAX { c.events.pop_front() }
             }
         }
     }
@@ -945,27 +952,30 @@ export func waitNetworkIdle(CdpClient c, int idleMs, int timeoutMs): bool {
     bool seenRequest = false
     while _int(times.ms()) - t0 < timeoutMs {
         _drain(c, 150)
+        // 消费掉 Network.* 那几条，其余原样留在队列里（交给后续 waitEvent 领）
         Array[string] keep = []
         for c.events.len() to i {
-            var obj = jsons.decode(c.events[i])
+            string raw = c.events.at(i)
+            var obj = jsons.decode(raw)
+            bool consumed = false
             if obj is Dict[string, any] {
                 string m = jsons.get_str(obj, "method", "")
                 if m == "Network.requestWillBeSent" {
                     inflight = inflight + 1
                     seenRequest = true
                     lastActivity = _int(times.ms())
+                    consumed = true
                 } else if m == "Network.loadingFinished" or m == "Network.loadingFailed" {
                     inflight = inflight - 1
                     inflight = maths.maxi(inflight, 0)
                     lastActivity = _int(times.ms())
-                } else {
-                    keep.add(c.events[i])
+                    consumed = true
                 }
-            } else {
-                keep.add(c.events[i])
             }
+            if not consumed { keep.add(raw) }
         }
-        c.events = keep
+        c.events.clear()
+        for keep to it { c.events.push_back(_str(it)) }
         int now = _int(times.ms())
         // 除了"见过请求"之外再给 400ms 宽限：否则页面还没发出第一个请求就被判成空闲
         if seenRequest or (now - t0) > 400 {

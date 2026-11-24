@@ -11,6 +11,12 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 import "sdl_image.leno" as img
 import "sdl_edit.leno" as edt; use edt.Edit
+import "Containers" as ct          // 图标纹理缓存用 ct.ClockLRU（O(1) 命中 + 容量封顶 + 淘汰即销毁）
+
+// 图标纹理淘汰回调（给 ct.ClockLRU 的 on_evict 用）—— 同 sdl_menu / sdl_popmenu 的做法
+func cbTexEvict(string path, Ptr[u8] t) {
+    if t != null { core.lib().SDL_DestroyTexture(t) }
+}
 
 
 export struct ComboBox impl Widget, Themeable {
@@ -70,7 +76,10 @@ export struct ComboBox impl Widget, Themeable {
     pri float imgSize = 16.0             // 图标边长
     pri float imgGap  = 6.0              // 图标与文字间距
     // 纹理缓存（避免每帧重载 & 纹理泄漏）：Dict O(1) 查找替代旧双数组线性扫描
-    Dict[string, Ptr[u8]] _imgCache = {}
+    // ★ 2026-11-24：Dict → ct.ClockLRU。原来的 Dict **只增不减**（图标种类多起来就是泄漏），
+    //   换容器后仍是 O(1)，但多了容量封顶（cbTexMax）与"淘汰即销毁纹理"（on_evict）。
+    ct.ClockLRU[Ptr[u8]]? _imgCache = null
+    pri int cbTexMax = 64
     pri float fontH = 0.0             // 字体行高缓存（避免每帧 measureString("Ag")）
 
     pri func ensure_font() {
@@ -218,23 +227,26 @@ export struct ComboBox impl Widget, Themeable {
         edit?.set_window(hwnd)
     }
 
-    // 纹理缓存：按 path 取/载纹理（O(1) Dict 查找，替代旧双数组线性扫描）
+    pri func _texCache(): ct.ClockLRU[Ptr[u8]] {
+        var c = _imgCache
+        if c != null { return c }
+        var n = new ct.ClockLRU[Ptr[u8]](cap = cbTexMax, on_evict = cbTexEvict)
+        _imgCache = n
+        return n
+    }
+
+    // 纹理缓存：按 path 取/载纹理（O(1) 命中，替代旧双数组线性扫描）
     pri func get_tex(Renderer r, string path): Ptr[u8] {
-        Ptr[u8] cached = _imgCache.get(path, null)
+        var cache = _texCache()
+        Ptr[u8] cached = cache.get(path, null)
         if cached != null { return cached }
         Ptr[u8] t = img.loadTexture(r.handle, path)
-        _imgCache[path] = t
+        cache.put(path, t)       // 满了淘汰一个并当场销毁（on_evict）
         return t
     }
     pri func free_img_cache() {
-        sdl3 _lib = core.lib()
-        // 遍历 Dict 释放所有纹理
-        Array[string] keys = _imgCache.keys()
-        for keys.len() to i {
-            Ptr[u8] tex = _imgCache[keys[i]]
-            if tex != null { _lib.SDL_DestroyTexture(tex) }
-        }
-        _imgCache = {}
+        var c = _imgCache
+        if c != null { c.clear() }   // clear 逐条 on_evict ⇒ 纹理全部销毁
     }
 
     func on_change(func(int):void cb) { onChange = cb }

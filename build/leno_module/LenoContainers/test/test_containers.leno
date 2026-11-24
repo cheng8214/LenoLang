@@ -399,5 +399,76 @@ main() {
     co.clear()
     eqI(cfired.len(), 2, "⑥ ClockLRU clear 触发剩余")
 
+    // ==================== Deque：双端队列 ====================
+    var dq = new ct.Deque[int]()
+    if not dq.is_empty() { fail("⑦ 新 deque 应为空") }
+    eqI(dq.len(), 0, "⑦ 新 deque 长度 0")
+
+    var dqThrew = 0
+    try { dq.pop_front() } catch e { dqThrew = dqThrew + 1 }
+    try { dq.pop_back() } catch e { dqThrew = dqThrew + 1 }
+    try { dq.peek_front() } catch e { dqThrew = dqThrew + 1 }
+    try { dq.peek_back() } catch e { dqThrew = dqThrew + 1 }
+    eqI(dqThrew, 4, "⑦ 空 deque 两端取值都必须抛错")
+
+    dq.push_back(1)
+    dq.push_back(2)
+    dq.push_back(3)
+    dq.push_front(0)
+    dq.push_front(-1)
+    eqI(dq.len(), 5, "⑦ 两端入队后长度")
+    eqI(dq.peek_front(), -1, "⑦ peek_front")
+    eqI(dq.peek_back(), 3, "⑦ peek_back")
+    eqI(dq.at(0), -1, "⑦ at(0) = 队首")
+    eqI(dq.at(2), 1, "⑦ at(2) 跨前后段")
+    eqI(dq.at(4), 3, "⑦ at(4) = 队尾")
+
+    var dqArr = dq.to_array()
+    eqI(dqArr.len(), 5, "⑦ to_array 长度")
+    if dqArr[0] != -1 or dqArr[4] != 3 { fail("⑦ to_array 顺序不对") }
+
+    dq.set(2, 99)
+    eqI(dq.at(2), 99, "⑦ set 写入跨段槽位")
+
+    eqI(dq.pop_front(), -1, "⑦ pop_front 1")
+    eqI(dq.pop_back(), 3, "⑦ pop_back 1")
+    eqI(dq.pop_front(), 0, "⑦ pop_front 2")
+    eqI(dq.len(), 2, "⑦ 两端出队后长度")
+
+    var dqOut = 0
+    try { dq.at(5) } catch e { dqOut = 1 }
+    eqI(dqOut, 1, "⑦ at 越界必须抛错")
+
+    // 从中间摘一个（CDP 事件那种用法）
+    var dq2 = new ct.Deque[string]()
+    dq2.push_back("a"); dq2.push_back("bb"); dq2.push_back("ccc")
+    if dq2.remove_at(1) != "bb" { fail("⑦ remove_at 返回值") }
+    eqI(dq2.len(), 2, "⑦ remove_at 后长度")
+    if dq2.at(0) != "a" or dq2.at(1) != "ccc" { fail("⑦ remove_at 后顺序") }
+
+    // 空后重用
+    dq.clear()
+    eqI(dq.len(), 0, "⑦ clear 后长度 0")
+    dq.push_back(7)
+    eqI(dq.pop_back(), 7, "⑦ clear 后可重用")
+
+    // 压力：交替两端进出，顺序必须与参考数组一致
+    var dq3 = new ct.Deque[int]()
+    Array[int] ref = []
+    for 0 : 199 to i {
+        dq3.push_front(i)
+        ref.insert(0, i)
+        if i % 3 == 0 { dq3.push_back(i * 10); ref.add(i * 10) }
+        if i % 5 == 0 {
+            if dq3.pop_back() != ref.pop() { fail("⑦ 压力 pop_back 顺序错（i=" + _str(i) + "）") }
+        }
+    }
+    eqI(dq3.len(), ref.len(), "⑦ 压力后长度与参考一致")
+    for 0 : ref.len() - 1 to i {
+        if dq3.at(i) != ref[i] { fail("⑦ 压力第 " + _str(i) + " 项不一致") }
+    }
+    while not dq3.is_empty() { dq3.pop_front() }
+    eqI(dq3.len(), 0, "⑦ 全部出队后为空")
+
     print("test_containers passed")
 }

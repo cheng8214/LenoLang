@@ -13,6 +13,14 @@ use theme.Color
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_timer.leno" as tmr; use tmr.Timer
 import strings   // 2026-10-02：选词改用 `codepoint_at`（直取码点，替代逐字符 slice ✓）
+import "Containers" as ct   // 撤销/重做栈用 ct.Deque（两端 O(1)，超 200 丢最旧不再搬数组）
+
+// 一帧撤销快照：行内容 + 光标。光标沿用旧口径打包成 line*10000+col（两处原来各存一条
+// 平行数组，靠"同步摘"维持一致；合成一帧后这类隐患不存在）。
+struct UndoFrame {
+    Array[string] lines = []
+    int cursor = 0
+}
 
 
 // 双击选词的"词分隔标点"集合：由**同一份字面量**一次性算出码点（12 个 ASCII + 10 个全角 = 22 个）
@@ -84,10 +92,12 @@ bool _drawBorder = true          // 是否绘制边框（嵌入 ComboBox 时设�
     pri float cachedMaxW = 0.0            // 缓存最大行宽（脏时重算）
 
     // 撤销/重做
-    pri Array[Array[string]] undoStack = []
-    pri Array[Array[string]] redoStack = []
-    pri Array[int] undoCursorStack = []       // 撤销光标栈：每项存 line*10000+col
-    pri Array[int] redoCursorStack = []
+    // ★ 2026-11-24：原来是 4 条平行数组（行栈 + 光标栈 ×2），"超过 200 丢最旧"用 remove(0)
+    //   ⇒ 每次 save_undo 都要搬一遍整条数组。换成 ct.Deque[UndoFrame]：
+    //   尾进（新快照）/ 尾出（撤销/重做）/ 头出（丢最旧）全部 O(1)，且行 + 光标合并成一帧
+    //   （原来那种"两条平行数组必须同步摘"的隐患也没了）。
+    pri ct.Deque[UndoFrame]? _undoQ = null
+    pri ct.Deque[UndoFrame]? _redoQ = null
     pri bool mergeUndo = false              // 连续输入可合并为一次撤销
     pri int  mergePos = 0               // 合并基准：上次输入结束处的光标字符位置
     int  _lastClickTime = -100000    // 上次点击 tick（双击检测）；初值足够小，避免首点误判双击
@@ -360,7 +370,7 @@ _drawBorder = opts.get("border", true)
         dirty      = true
         cachedLen  = -1
         _lastClickTime = -100000; lastClickX = 0; lastClickY = 0
-        undoStack  = []; redoStack = []; undoCursorStack = []; redoCursorStack = []
+        _uq().clear(); _rq().clear()
         mergeUndo = false; mergePos = 0
         selStart   = -1; selEnd = 0; selActive = false
 
@@ -494,6 +504,22 @@ _drawBorder = opts.get("border", true)
         if was and _os() == "android" and hwnd != null { core.stopTextInput(hwnd) }
     }
 
+    // 撤销/重做队列（懒建，struct 字段默认值不能调用构造函数）
+    pri func _uq(): ct.Deque[UndoFrame] {
+        var q = _undoQ
+        if q != null { return q }
+        var n = new ct.Deque[UndoFrame]()
+        _undoQ = n
+        return n
+    }
+    pri func _rq(): ct.Deque[UndoFrame] {
+        var q = _redoQ
+        if q != null { return q }
+        var n = new ct.Deque[UndoFrame]()
+        _redoQ = n
+        return n
+    }
+
     // 保存当前状态到撤销栈
     pri func save_undo() {
         // 单行模式：text 是源，_lines 仅惰性同步，撤销依赖 _lines，故先同步；
@@ -503,15 +529,16 @@ _drawBorder = opts.get("border", true)
             cursorLine = 0
             cursorCol = cursorPos
         }
-        undoStack.add(lines.copy())
-        undoCursorStack.add(cursorLine * 10000 + cursorCol)
-        if undoStack.len() > 200 { undoStack.remove(0); undoCursorStack.remove(0) }
-        redoStack.clear(); redoCursorStack.clear()
+        var u = _uq()
+        u.push_back(new UndoFrame(lines = lines.copy(), cursor = cursorLine * 10000 + cursorCol))
+        if u.len() > 200 { u.pop_front() }      // 超上限丢最旧（O(1)，不再是 remove(0) 搬数组）
+        _rq().clear()
     }
 
     // Ctrl+Z
     pri func undo() {
-        if undoStack.len() == 0 { return }
+        var u = _uq()
+        if u.is_empty() { return }
         // 单行模式：先把当前 text 同步进 _lines（数据源是 text，缓存可能陈旧），
         // 保证 redo 栈存的是真实当前状态；并折出正确光标。
         if not multiline {
@@ -520,16 +547,12 @@ _drawBorder = opts.get("border", true)
             cursorCol = cursorPos
         }
         // 保存当前状态到 redo 栈
-        redoStack.add(lines.copy())
-        redoCursorStack.add(cursorLine * 10000 + cursorCol)
-        // 恢复行内容
-        lines = undoStack[undoStack.len() - 1]
-        undoStack.remove(undoStack.len() - 1)
-        // 恢复光标位置
-        var cursorInfo = undoCursorStack[undoCursorStack.len() - 1]
-        undoCursorStack.remove(undoCursorStack.len() - 1)
-        cursorLine = cursorInfo / 10000
-        cursorCol = cursorInfo % 10000
+        _rq().push_back(new UndoFrame(lines = lines.copy(), cursor = cursorLine * 10000 + cursorCol))
+        // 恢复（一帧里同时带行与光标 ⇒ 不可能出现"行出了、光标没跟上"）
+        var fr = u.pop_back()
+        lines = fr.lines
+        cursorLine = fr.cursor / 10000
+        cursorCol = fr.cursor % 10000
         textDirty = true; cachedLen = -1; cachedMaxW = -1; mergeUndo = false
         clear_sel()
         if lines.len() > 0 {
@@ -552,7 +575,8 @@ _drawBorder = opts.get("border", true)
 
     // Ctrl+Y
     pri func redo() {
-        if redoStack.len() == 0 { return }
+        var r = _rq()
+        if r.is_empty() { return }
         // 单行模式：先把当前 text 同步进 _lines，保证 undo 栈存的是真实当前状态
         if not multiline {
             rebuild_lines()
@@ -560,16 +584,12 @@ _drawBorder = opts.get("border", true)
             cursorCol = cursorPos
         }
         // 保存当前状态到 undo 栈
-        undoStack.add(lines.copy())
-        undoCursorStack.add(cursorLine * 10000 + cursorCol)
-        // 恢复行内容
-        lines = redoStack[redoStack.len() - 1]
-        redoStack.remove(redoStack.len() - 1)
-        // 恢复光标位置
-        var cursorInfo = redoCursorStack[redoCursorStack.len() - 1]
-        redoCursorStack.remove(redoCursorStack.len() - 1)
-        cursorLine = cursorInfo / 10000
-        cursorCol = cursorInfo % 10000
+        _uq().push_back(new UndoFrame(lines = lines.copy(), cursor = cursorLine * 10000 + cursorCol))
+        // 恢复（一帧带行 + 光标）
+        var fr = r.pop_back()
+        lines = fr.lines
+        cursorLine = fr.cursor / 10000
+        cursorCol = fr.cursor % 10000
         textDirty = true; cachedLen = -1; cachedMaxW = -1; mergeUndo = false
         clear_sel()
         if lines.len() > 0 {
@@ -599,8 +619,8 @@ _drawBorder = opts.get("border", true)
     pri func open_ctx_menu(float x, float y) {
         if ctxMenu == null { return }
         focus()
-        ctxMenu.setContextItemEnabled(ctxMenuH, "undo", undoStack.len() > 0)
-        ctxMenu.setContextItemEnabled(ctxMenuH, "redo", redoStack.len() > 0)
+        ctxMenu.setContextItemEnabled(ctxMenuH, "undo", not _uq().is_empty())
+        ctxMenu.setContextItemEnabled(ctxMenuH, "redo", not _rq().is_empty())
         bool hasSel = selActive and selStart >= 0 and selStart != selEnd
         ctxMenu.setContextItemEnabled(ctxMenuH, "cut", not readOnly and hasSel)
         ctxMenu.setContextItemEnabled(ctxMenuH, "copy", hasSel)

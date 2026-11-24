@@ -2,7 +2,7 @@
 
 栈 / 队列 / 优先队列 / 缓存淘汰，**边界行为固定成契约**。纯 Leno，无原生依赖。
 
-五个类型：`Stack[T]` / `Queue[T]` / `PriorityQueue[T]` /
+六个类型：`Stack[T]` / `Queue[T]` / `Deque[T]`（双端队列）/ `PriorityQueue[T]` /
 `LRU[V]`（严格按最近访问淘汰）/ `ClockLRU[V]`（CLOCK 二次机会，**O(1) 近似** LRU）。
 
 ## 用法
@@ -20,6 +20,16 @@ var q = new ct.Queue[string]()
 q.push_all(["a", "b", "c"])
 print(q.pop())              // a
 print(q.pop_n(2))           // [b, c]（一次出队 2 个；不够抛错）
+
+// 双端队列：两端都能进出（撤销栈、日志窗、事件队列）
+var dq = new ct.Deque[string]()
+dq.push_back("b")
+dq.push_front("a")
+dq.push_back("c")
+print(dq.to_array())        // [a, b, c]
+print(dq.pop_front())       // a
+print(dq.pop_back())        // c
+print(dq.at(0))             // b（逻辑下标，0 = 队首）
 
 // 优先队列：比较器 <0 ⇒ a 先出；返回 0 时**按入队序**先入先出（堆本身不稳定）
 var pq = new ct.PriorityQueue[int](cmp = func(int a, int b): int {
@@ -69,6 +79,22 @@ print(c.get("k", -1))       // 1
 
 队列是 **head 指针 + 惰性压缩**：`pop` 只挪指针，积压超过一半且超过 64 个时才整体搬一次，
 平摊 O(1) —— 不是 `Array.remove(0)` 那种每次 O(n) 整体搬移。
+
+### `Deque[T]`（双端队列）
+
+| 方法 | 说明 |
+|---|---|
+| `push_front(v)` / `push_back(v)` | 两端入队，均摊 O(1) |
+| `pop_front(): T` / `pop_back(): T` | 两端出队；**空队列抛错** |
+| `peek_front(): T` / `peek_back(): T` | 两端看一眼；空队列抛错 |
+| `at(i): T` / `set(i, v)` | 逻辑下标（0 = 队首）；越界抛错 |
+| `remove_at(i): T` | 摘掉第 i 个（**O(n)**，给"按条件取走一条"的队列用） |
+| `len()` / `is_empty()` / `clear()` / `to_array()` | |
+
+实现是**两段式**：`f` 反向存前半段、`b` 正向存后半段（`b` 的头偏移 `bh` 做惰性压缩）。
+两端 push 都是 O(1)；`pop_back` 遇到 `b` 空了就把 `f` 整体倒进 `b`（每个元素一辈子
+最多搬一次 ⇒ 平摊 O(1)）。为什么不用"单数组 + 头预留空隙"：Leno 的泛型没法造 `T` 的
+占位值来预留空隙。
 
 ### `PriorityQueue[T]`
 
@@ -150,10 +176,11 @@ tex.clear()                                                  // 逐条销毁剩�
 
 ## 复杂度
 
-| 容器 | `push` / `put` | `pop` | `get` | `peek` |
+| 容器 | `push` / `put` | `pop` | `get` / `at` | `peek` |
 |---|---|---|---|---|
 | `Stack` | 均摊 O(1) | 均摊 O(1) | — | — |
 | `Queue` | 均摊 O(1) | 均摊 O(1) | — | — |
+| `Deque` | 两端均摊 O(1) | 两端均摊 O(1) | `at` O(1)（`remove_at` O(n)） | — |
 | `PriorityQueue` | O(log n) | O(log n) | — | O(1) |
 | `LRU` | O(n) | — | O(n) | **O(1)** |
 | `ClockLRU` | **均摊 O(1)** | — | **O(1)** | **O(1)** |
@@ -172,6 +199,9 @@ LRU/ClockLRU 读数含 key 拼串。只比同机同时段的趋势，别抠小�
 | `Stack.push` / `pop` | 35 / 68 |
 | `Queue.push` / `pop` | 36 / 84 |
 | `Queue.pop` 缓存 `len` 前（A/B） | 101 → 94 |
+| `Deque.push_back` / `push_front` | 39 / 47 |
+| `Deque.pop_front` / `pop_back`（含 sink） | 113 / 124 |
+| `Deque` push_front+pop_back 交替 | 124 |
 | `Array.remove(0)` 出队（反面教材） | 16 982 |
 | `PriorityQueue.push`（N=500k 随机优先级） | 430 |
 | `PriorityQueue.pop`（N=500k，含 sink） | 4 120 |
@@ -206,6 +236,21 @@ LRU/ClockLRU 读数含 key 拼串。只比同机同时段的趋势，别抠小�
 |---|---|---|
 | `LenoWeb/lib/web_crawler.leno` | `PriorityQueue[CrawlItem]` | 爬虫的 URL 前沿本来手写了一份二叉堆（`_higher/_swap/_siftUp/_siftDown` 共 60 行）；收编后 `seq`（同优先级 FIFO）与断点续爬都靠容器的契约保住 |
 | `LenoSDL3/lib/sdl_menu.leno` | `ClockLRU[Ptr[u8]]` + `on_evict` | 菜单图标缓存原来两条平行数组 + 线性扫描、**没有容量上限**（长跑应用持续占显存）；现在 O(1) 命中、容量封顶、淘汰即 `SDL_DestroyTexture`。单槽 MRU 快路径保留（同一图标相邻行连续绘制时不碰字典） |
+| `LenoSDL3/lib/sdl_popmenu.leno` | 同上 | 弹出菜单图标缓存，形态与 sdl_menu 逐行同构（双数组 + MRU + 线性扫 + 无上限） |
+| `LenoSDL3/lib/sdl_treeview.leno` | 同上 | 树节点图标缓存：同样无上限 + 线性扫描。`dispose()` **保持原语义**（只丢引用、不销毁，交给渲染器），避免 double-free |
+| `LenoSDL3/lib/sdl_table.leno` | 同上 | 表格图标缓存：原来是"环形覆盖 + 上限"，**每个单元格要 O(imgCacheMax) 次字符串比较** ⇒ 现在 O(1)；`image_cache_max == 0`（不限制）映射成一个大 cap |
+| `LenoSDL3/lib/sdl_combobox.leno` | 同上 | 下拉项图标缓存原来是 `Dict`（O(1) 但**只增不减**）⇒ 换容器补上容量封顶与淘汰销毁 |
+| `LenoSDL3/lib/sdl_listbox.leno` | 同上（+ 日志窗借范式） | 行图标缓存：无上限 + 线性扫描；`dispose()` 同样只丢引用。另外日志窗的 `append_item/append_bottom` 原来是**每来一条就 `remove(0)` 搬一遍整表**，改成本模块 `Queue` 同款"批量裁剪"思路（一次丢 1/4 上限，用一次切片完成） |
+| `LenoSDL3/lib/sdl_edit.leno` | `Deque[UndoFrame]` | 撤销/重做原来是 **4 条平行数组**（行栈 + 光标栈 ×2），超 200 用 `remove(0)` 丢最旧（每次保存都搬一遍整表）。换成双端队列后：新快照尾进、撤销尾出、丢最旧头出，全部 O(1)，并把"行 + 光标"合成一帧（不再有两数组必须同步摘的隐患） |
+| `LenoWeb/lib/web_cdp.leno` | `Deque[string]` | 未领取事件队列：原来"按 method 领走一条"要**重建整个数组**（O(n) 拷贝）、超上限也是 `remove(0)`；现在入队/丢最旧 O(1)，领取走 `remove_at(i)`（只搬这一条） |
+
+> 六个 SDL3 控件的图标缓存现在共用一套实现（`ClockLRU[Ptr[u8]]` + `on_evict` 销毁），
+> 每处都保留各自的**单槽 MRU 快路径**（命中时不碰字典），所以热路径没变慢、只把
+> "无上限"和"线性扫描"两件事一起消掉了。
+>
+> 刻意**没换**的：`sdl_font.leno` 的 `texCache/measCache`（MRU 单槽 + 尺寸表 + `texCap` 是
+> "装得下整屏文字就不淘汰"的刻意选择）、`sdl_texcache.leno`（带 refcount 与按渲染器失效，
+> 容器没有引用计数语义）、`sdl_renderer.leno` 的裁剪栈/图集（按下标池化、不是 KV）。
 
 > ⚠ **LenoWeb 的 `web_generic.Stack` 已删除（2026-11-24，破坏性）**：它和 `Containers.Stack`
 > **同名**，而编译器的四张类型表全局按名字索引 —— 用户同时 `import "Web"` 与
@@ -229,6 +274,15 @@ build\leno.exe build\leno_module\LenoContainers\bench\bench_containers.leno
 
 ## 变更记录
 
+- **0.4.0**（2026-11-24）：新增 **`Deque[T]`**（双端队列，两端均摊 O(1)，含 `at/set/remove_at`）。
+  三处"缺双端"的真实代码因此收编：`sdl_edit` 撤销/重做（4 条平行数组 → `Deque[UndoFrame]`）、
+  `web_cdp` 事件队列（按 method 领取不再重建数组）、`sdl_listbox` 日志窗（借"批量裁剪"范式）。
+  下游同步：`LenoCleaner.top_items` 的 top-K 换 `PriorityQueue`（N=200k 实测 limit=100
+  435 ms → 19 ms）。
+- **0.3.1**（2026-11-24）：把 SDL3 其余五处图标缓存（popmenu / treeview / table / combobox / listbox）
+  一并换成 `ClockLRU` + `on_evict`（原来有的无上限、有的每格 O(n) 线性扫）；顺带给
+  `LenoWeb` 的 CDP 未领取事件加了上限（`CDP_EVENTS_MAX = 256`，原来只增不减）。
+  组件行为不变，接口零改动。
 - **0.3.0**（2026-11-24）：
   - 新增 `PriorityQueue[T]`（二叉堆；同优先级 FIFO；空堆抛错）。
   - 新增 `Stack/Queue.to_array()`、`Queue.pop_n()`、`Stack/Queue.push_all()`、`LRU/ClockLRU.keys()`。

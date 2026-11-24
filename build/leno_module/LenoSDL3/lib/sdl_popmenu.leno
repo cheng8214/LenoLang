@@ -33,7 +33,15 @@ import "sdl_font.leno" as fnt
 import "sdl_theme.leno" as thm
 import "sdl_event.leno" as evt
 import "sdl_opts.leno" as dochk    // ★ 2026-10-13：选项对账（本文件原来没接 ✗）
+import "Containers" as ct          // 图标纹理缓存用 ct.ClockLRU（O(1) 命中 + 容量封顶 + 淘汰即销毁）
 use core.(Color, SDL_Rect, sdl3, Scancode, WindowFlag)
+
+// 图标纹理淘汰回调（给 ct.ClockLRU 的 on_evict 用）—— 与 sdl_menu.leno 同一做法：
+// 模块级函数、不需要闭包上下文，容器直接存函数值。⚠ 必须写在 `use core.(…, sdl3, …)` **之后**
+// （clib 方法要先导入类型才找得到，写在前面会报「clib 'sdl3' 函数 'SDL_DestroyTexture' 未找到」）。
+func popTexEvict(string path, Ptr[u8] t) {
+    if t != null { core.lib().SDL_DestroyTexture(t) }
+}
 use wnd.Window
 use rnd.Renderer
 use evt.Event
@@ -76,8 +84,11 @@ export struct PopMenu {
     Array[func():void] _cb = []
     pri int curLevel = 0
     // 图标纹理缓存（按 path 取/载 ⇒ 避免每帧重载与泄漏 ✓ 同 sdl_menu.leno 的做法）
-    pri Array[string] texPath = []
-    pri Array[Ptr[u8]] tex = []
+    // ★ 2026-11-24：两条平行数组 + 线性扫描 + **没有上限** ⇒ 换成 ct.ClockLRU：
+    //   O(1) 命中、容量封顶（popTexMax）、淘汰即 SDL_DestroyTexture（on_evict）。
+    //   下面 lastTexPath/lastTex 这层单槽 MRU 快路径保留（连续条目常共用同一图标）。
+    pri ct.ClockLRU[Ptr[u8]]? texCache = null
+    pri int popTexMax = 64
     pri string lastTexPath = ""
     pri Ptr[u8] lastTex = null
     pri bool open = false
@@ -340,25 +351,32 @@ export struct PopMenu {
 
     // ===== 绘制 / 事件（run 循环自动驱动 ✓）=====
     // 纹理缓存：按 path 取/载（MRU 快路径，连续多条常共用同一图标 ✓）—— 同 sdl_menu.leno
+    pri func _texCache(): ct.ClockLRU[Ptr[u8]] {
+        var c = texCache
+        if c != null { return c }
+        var n = new ct.ClockLRU[Ptr[u8]](cap = popTexMax, on_evict = popTexEvict)
+        texCache = n
+        return n
+    }
+
     pri func getTex(Renderer r, string path): Ptr[u8] {
         if path == "" { return null }
         if path == lastTexPath and lastTex != null { return lastTex }
-        for texPath.len() to i {
-            if texPath[i] == path {
-                lastTexPath = path; lastTex = tex[i]
-                return tex[i]
-            }
+        var cache = _texCache()
+        Ptr[u8] hit = cache.get(path, null)
+        if hit != null {
+            lastTexPath = path; lastTex = hit
+            return hit
         }
         Ptr[u8] t = img.loadTexture(r.handle, path)
-        texPath.add(path); tex.add(t)
+        // 满了会淘汰一个并当场销毁（on_evict）；MRU 马上被下面两行改指向新纹理，不会悬空
+        cache.put(path, t)
         lastTexPath = path; lastTex = t
         return t
     }
     pri func freeTex() {
-        for tex.len() to i {
-            if tex[i] != null { _lib.SDL_DestroyTexture(tex[i]) }
-        }
-        texPath = []; tex = []
+        var c = texCache
+        if c != null { c.clear() }   // clear 逐条 on_evict ⇒ 纹理全部销毁
         lastTexPath = ""; lastTex = null
     }
 

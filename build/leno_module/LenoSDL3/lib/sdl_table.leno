@@ -26,6 +26,12 @@ import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_tooltip.leno" as tip
 import "sdl_progress.leno" as prgb    // 进度单元格复用它的观感 + 取值规则（同源 ✓）
 import "sdl_menu.leno" as menu; use menu.MenuBar
+import "Containers" as ct          // 图标纹理缓存用 ct.ClockLRU（O(1) 命中 + 容量封顶 + 淘汰即销毁）
+
+// 图标纹理淘汰回调（给 ct.ClockLRU 的 on_evict 用）—— 同 sdl_menu / sdl_popmenu / sdl_treeview
+func tableTexEvict(string path, Ptr[u8] t) {
+    if t != null { core.lib().SDL_DestroyTexture(t) }
+}
 import "sdl_image.leno" as img
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
@@ -154,15 +160,15 @@ export struct Table impl Widget, Themeable {
     pri int          imgMode = 0             // 内容模式：0=aspectFit 1=stretch 2=aspectFill
     pri float        imgPad = 4.0            // 图标在单元格内的左侧内边距
     pri float        imgGap = 4.0            // 图标与文字间距
-    pri Array[string] imgCachePaths = []     // 纹理缓存路径
-    pri Array[Ptr[u8]] imgCacheTex = []      // 纹理缓存指针
+    // 纹理缓存：★ 2026-11-24 两条平行数组 + 环形写指针 + **线性扫描**（每格 O(64) 字符串比较）
+    //   ⇒ 换成 ct.ClockLRU：O(1) 命中（路径→槽位字典）、容量封顶、淘汰即 `SDL_DestroyTexture`。
+    //   语义对照：原来"满了覆盖环形最旧一格并销毁" ⇒ 现在"满了按 CLOCK 近似 LRU 淘汰并销毁"，
+    //   两者都是"上限 + 淘汰即销毁"，只是选谁走不再按插入环序（对缓存来说更合理）。
+    pri ct.ClockLRU[Ptr[u8]]? texCache = null
     pri string imgLastPath = ""               // MRU 快路径：上次命中的图标路径
     pri Ptr[u8] imgLastTex = null             // MRU 快路径：上次命中的纹理指针
-    // 图标纹理缓存**上限 + 环形覆盖**（原来只增不减 ✗）——
-    //   表格每行一个**不同**图标时（如"每行一张海报"）显存会一路涨 ✓
-    //   0 = 不限制（老行为）；覆盖最旧一格时会 `SDL_DestroyTexture` 回收 ✓（照 `sdl_font` 的 `texCap` 样板 ✓）
+    // 图标纹理缓存上限。0 = 不限制（老行为；容器要求 cap ≥ 1，内部会映射成一个大数）
     pri int imgCacheMax = 64
-    pri int imgCacheHead = 0                 // 环形写指针
     // === 拟合文本缓存 ===
     // 预计算可见单元格的截断文本和宽度，避免 render 路径每帧调用 _fit_cell_text + measureString。
     // ★ 优化：只缓存当前视口可见行（_fittedStartRow ~ _fittedEndRow），滚动时惰性重建对应区间，
@@ -2235,37 +2241,50 @@ export struct Table impl Widget, Themeable {
         return p
     }
 
+    pri func _texCap(): int {
+        // 容器要求 cap >= 1；`imgCacheMax == 0` 是"不限制"的老语义 ⇒ 给一个大数（实际到不了）
+        if imgCacheMax <= 0 { return 1000000 }
+        return imgCacheMax
+    }
+
+    pri func _texCache(): ct.ClockLRU[Ptr[u8]] {
+        var c = texCache
+        if c != null { return c }
+        var n = new ct.ClockLRU[Ptr[u8]](cap = _texCap(), on_evict = tableTexEvict)
+        texCache = n
+        return n
+    }
+
     // 纹理缓存：按 path 取/载纹理，避免每帧重载与纹理泄漏
     // ★ MRU 快路径：文件管理器中连续多行常共用同一图标（如全部是文件夹），
-    //   单槽快路径将 O(n) 线性扫描降为 O(1)，消除每行 string 比较开销
+    //   单槽快路径连字典都不碰，消除每行 string 比较开销
     pri func get_tex(Renderer r, string path): Ptr[u8] {
         if path == imgLastPath and imgLastTex != null { return imgLastTex }
-        for imgCachePaths.len() to i {
-            if imgCachePaths[i] == path {
-                imgLastPath = path; imgLastTex = imgCacheTex[i]
-                return imgCacheTex[i]
-            }
+        var cache = _texCache()
+        Ptr[u8] hit = cache.get(path, null)
+        if hit != null {
+            imgLastPath = path; imgLastTex = hit
+            return hit
         }
         Ptr[u8] t = img.loadTexture(r.handle, path)
-        // 满了就**覆盖最旧一格**并回收它的纹理（否则缓存只增不减 ⇒ 显存泄漏 ✗）
-        if imgCacheMax > 0 and imgCachePaths.len() >= imgCacheMax {
-            Ptr[u8] old = imgCacheTex[imgCacheHead]
-            if old != null and old != t { core.lib().SDL_DestroyTexture(old) }
-            imgCachePaths[imgCacheHead] = path
-            imgCacheTex[imgCacheHead] = t
-            imgCacheHead = (imgCacheHead + 1) % imgCacheMax
-            // ⚠ 被覆盖的那一格可能正是 MRU 快路径指着的 ⇒ 必须指向**新**纹理，
-            //   否则下一次"同路径命中"会返回**已销毁**的旧纹理 ✗（下面的赋值正好覆盖这一点 ✓）
-            imgLastPath = path; imgLastTex = t
-            return t
-        }
-        imgCachePaths.add(path); imgCacheTex.add(t)
+        // 满了按 CLOCK 淘汰一个并**当场销毁**（否则缓存只增不减 ⇒ 显存泄漏 ✗）。
+        // MRU 马上被下面两行改指向新纹理，所以不会像旧环形覆盖那样出现"MRU 指向已销毁纹理"。
+        cache.put(path, t)
         imgLastPath = path; imgLastTex = t
         return t
     }
 
     // 图标纹理缓存上限（0 = 不限制）；比"同时可见的行数"大一些最稳（否则每帧反复重载 ✗）
-    func set_image_cache_max(int n) { if n >= 0 { imgCacheMax = n } }
+    // 改上限 ⇒ 丢掉旧缓存重建（ClockLRU 只支持扩容，缩容要换实例；重建时 on_evict 会销毁旧纹理，
+    // 下一帧按需重新加载，代价一次性）
+    func set_image_cache_max(int n) {
+        if n < 0 or n == imgCacheMax { return }
+        imgCacheMax = n
+        var c = texCache
+        if c != null { c.clear() }
+        texCache = null
+        imgLastPath = ""; imgLastTex = null
+    }
 
     // 运行时开关行号列（改完必须重算列宽 —— 行号槽是从可用宽里扣出来的 ✓）
     func set_row_numbers(bool on) {
@@ -2276,7 +2295,11 @@ export struct Table impl Widget, Themeable {
         core.markFrameRedraw()
     }
     // 当前缓存条数（调试/自测用 ✓）
-    func img_cache_count(): int { return imgCachePaths.len() }
+    func img_cache_count(): int {
+        var c = texCache
+        if c == null { return 0 }
+        return c.len()
+    }
 
     // 在图标列单元格内绘制 [图标+文字]（对齐 Treeview 的 icon+text 模式）
     // 返回图标占据的宽度（0 = 无图标），供调用方在文字绘制时偏移
@@ -2763,12 +2786,10 @@ export struct Table impl Widget, Themeable {
         if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null
         _edit?.dispose(); _edit = null
         ctxMenu?.dispose(); ctxMenu = null
-        // 纹理缓存仅清空引用：其由所属渲染器在销毁时统一释放，
-        // 此处再 SDL_DestroyTexture 会造成 double-free/崩溃（见 sdl_font.leno 注释）
-        //   ★ 2026-10-13 补充：`get_tex` 里**已被覆盖淘汰**的那些纹理是**当场销毁**的（照 sdl_font 的 texCap ✓），
-        //     这里剩下的只是"还没被淘汰的那 ≤ imgCacheMax 张"⇒ 交给渲染器统一释放 ✓（两条路不重叠 ⇒ 不会 double-free ✓）
-        imgCacheTex = []; imgCachePaths = []
-        imgCacheHead = 0
+        // 纹理缓存仅丢弃引用（**不 clear**，也就不触发 on_evict 销毁）：剩余那 ≤ imgCacheMax 张
+        // 交给所属渲染器在销毁时统一释放；`get_tex` 里**已被淘汰**的则当场销毁过了 ⇒ 两条路不重叠 ✓
+        // （2026-11-24 换容器时保持这条语义不变 —— 见 sdl_font.leno 的 double-free 注释）
+        texCache = null
         imgLastPath = ""; imgLastTex = null
         fittedText = []; fittedW = []; fittedValid = false; fittedStartRow = 0; fittedEndRow = 0
         selSet = []; checkedCount = -1

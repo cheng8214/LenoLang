@@ -230,6 +230,138 @@ export struct PriorityQueue[T] {
     }
 }
 
+// ==================== Deque：双端队列 ====================
+// 为什么需要它（2026-11-24）：`Queue` 只能"尾进头出"，`Stack` 只能"一头进出"，
+// 而下面这些真实需求两头都要动：
+//   · 撤销/重做（`sdl_edit`）：新快照压到**尾**、旧快照从**头**丢；
+//   · 日志窗（`sdl_listbox`）：追加到尾部、超过上限丢最旧的头；
+//   · CDP 事件队列（`web_cdp`）：按到达序入队、按 method 从**中间**取走。
+// 用 `Array.remove(0)` 硬凑都是 O(n) 搬移。
+//
+// 实现：**两段式**（不做环形、也不用占位符）——
+//   · `f` 反向存前半段（`f` 的末尾就是逻辑第一个）；
+//   · `b` 正向存后半段（`b[bh]` 是前半段之后的下一个，`bh` 是惰性头偏移）。
+//   两端 push 都是 O(1)；`pop_back` 遇到 `b` 空了就把 `f` 整体倒进 `b`
+//   （每个元素一辈子最多搬一次 ⇒ **平摊 O(1)**）。
+//   为什么不用"单数组 + 头预留空隙"：Leno 的泛型没法造 `T` 的占位值来预留空隙。
+export struct Deque[T] {
+    Array[T] f = []                  // 前半段（反向）：f[f.len()-1] = 逻辑第 0 个
+    Array[T] b = []                  // 后半段（正向）
+    int bh = 0                       // b 的头偏移（出队只挪它，超过一半且 >64 才真正搬）
+    // 逻辑长度单独维护：`len()` 走字段读（~5 ns），而不是两次方法调用（~50 ns）。
+    // 每次进出队都要同步改它 —— 这是唯一容易出错的地方，单测里覆盖了压力场景。
+    int n = 0
+
+    func len(): int { return n }
+    func is_empty(): bool { return n == 0 }
+
+    func push_back(T v) { b.add(v); n = n + 1 }
+    func push_front(T v) { f.add(v); n = n + 1 }
+
+    func pop_front(): T {
+        int fn = f.len()
+        if fn > 0 { n = n - 1; return f.pop() }
+        int bn = b.len()
+        if bh >= bn { throw "Containers.Deque.pop_front: 空队列" }
+        T v = b[bh]
+        bh = bh + 1
+        n = n - 1
+        // 惰性压缩（同 Queue）：死元素超过一半且总量超过 64 时才搬一次
+        if bh > 64 and bh * 2 > bn {
+            Array[T] keep = []
+            for bh : bn - 1 to i { keep.add(b[i]) }
+            b = keep
+            bh = 0
+        }
+        return v
+    }
+
+    func pop_back(): T {
+        int bn = b.len()
+        if bn > bh {
+            T v = b.pop()
+            if bh >= bn - 1 { b.clear(); bh = 0 }
+            n = n - 1
+            return v
+        }
+        if n == 0 { throw "Containers.Deque.pop_back: 空队列" }
+        // b 空了但 f 还有：整体倒进 b（f 的末尾 = 逻辑第一个 ⇒ 逐个 pop 出来 add 到 b
+        // 正好恢复正序）。每元素最多搬这一次 ⇒ 平摊 O(1)。
+        b.clear()
+        bh = 0
+        while f.len() > 0 { b.add(f.pop()) }
+        T v = b.pop()
+        if b.len() == 0 { b.clear(); bh = 0 }
+        n = n - 1
+        return v
+    }
+
+    func peek_front(): T {
+        int fn = f.len()
+        if fn > 0 { return f[fn - 1] }
+        if bh >= b.len() { throw "Containers.Deque.peek_front: 空队列" }
+        return b[bh]
+    }
+
+    func peek_back(): T {
+        int bn = b.len()
+        if bn > bh { return b[bn - 1] }
+        if n == 0 { throw "Containers.Deque.peek_back: 空队列" }
+        return f[0]
+    }
+
+    // 按**逻辑下标**取（0 = 队首）；越界抛错（不返回 null）
+    func at(int i): T {
+        int fn = f.len()
+        if i < 0 or i >= n {
+            throw "Containers.Deque.at: 下标越界（" + _str(i) + " / " + _str(n) + "）"
+        }
+        if i < fn { return f[fn - 1 - i] }
+        return b[bh + i - fn]
+    }
+
+    func set(int i, T v) {
+        int fn = f.len()
+        if i < 0 or i >= n {
+            throw "Containers.Deque.set: 下标越界（" + _str(i) + " / " + _str(n) + "）"
+        }
+        if i < fn { f[fn - 1 - i] = v; return }
+        b[bh + i - fn] = v
+    }
+
+    // ⚠ O(n)：要搬后面所有元素。给"按条件摘一个"的队列用（如 CDP 事件），别放进热循环。
+    func remove_at(int i): T {
+        if i < 0 or i >= n {
+            throw "Containers.Deque.remove_at: 下标越界（" + _str(i) + " / " + _str(n) + "）"
+        }
+        Array[T] all = to_array()
+        T v = all[i]
+        f.clear()
+        b.clear()
+        bh = 0
+        n = 0
+        for 0 : all.len() - 1 to j {
+            if j != i { b.add(all[j]); n = n + 1 }
+        }
+        return v
+    }
+
+    func to_array(): Array[T] {
+        Array[T] out = []
+        int fn = f.len()
+        for 0 : fn - 1 to i { out.add(f[fn - 1 - i]) }
+        for bh : b.len() - 1 to i { out.add(b[i]) }
+        return out
+    }
+
+    func clear() {
+        f.clear()
+        b.clear()
+        bh = 0
+        n = 0
+    }
+}
+
 // ==================== LRU：最近最少使用淘汰 ====================
 // 容量淘汰的容器，适合"缓存最近 N 条"（日志尾部、最近打开的文件、热数据）。
 //
