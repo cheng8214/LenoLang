@@ -510,6 +510,195 @@ static Value cstruct_array_method_len(int argc, Value* args) {
     return val_int(array->count);
 }
 
+// ==================== 数组按字段批量读（2026-11-24） ====================
+// 数据导向真正卡手的地方：手里有连续内存，却只能 `arr[i].x` 一格一格读。
+//   sum / min / max       —— 不分配，直接扫
+//   column_i / column_f   —— 按字段取一列成 GC 数组
+//
+// ⚠ 三条边界（一开始就说死，避免"看起来能用"的半个实现）：
+//   ① 只支持**非位域标量**（i8..u64 / f32 / f64）；位域（`u32 x : 3`）和数组字段
+//      （`u8 data[4]`）**报错**——位域跨字节，批量读的语义最容易写错。
+//   ② column_i / column_f **分开**，不做"自动选类型"：混着 int/float 的 `Array[float]`
+//      会让下游每次取值都要 `_int`/`_float` 收窄。
+//   ③ 空数组：sum 给 0.0（与 arrays.sum 同口径），min/max **报错**（没有定义）。
+
+static int csa_is_scalar(TypeKind t) {
+    switch (t) {
+    case TYPE_I8:  case TYPE_U8:  case TYPE_I16: case TYPE_U16:
+    case TYPE_I32: case TYPE_U32: case TYPE_I64: case TYPE_U64:
+    case TYPE_F32: case TYPE_F64:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+// 从 p 处按 t 读一个标量（memcpy 避免未对齐访问）
+static int csa_read_scalar(const uint8_t* p, TypeKind t, double* out) {
+    switch (t) {
+    case TYPE_I8:  { int8_t   v; memcpy(&v, p, sizeof v); *out = (double)v; return 1; }
+    case TYPE_U8:  { uint8_t  v; memcpy(&v, p, sizeof v); *out = (double)v; return 1; }
+    case TYPE_I16: { int16_t  v; memcpy(&v, p, sizeof v); *out = (double)v; return 1; }
+    case TYPE_U16: { uint16_t v; memcpy(&v, p, sizeof v); *out = (double)v; return 1; }
+    case TYPE_I32: { int32_t  v; memcpy(&v, p, sizeof v); *out = (double)v; return 1; }
+    case TYPE_U32: { uint32_t v; memcpy(&v, p, sizeof v); *out = (double)v; return 1; }
+    case TYPE_I64: { int64_t  v; memcpy(&v, p, sizeof v); *out = (double)v; return 1; }
+    case TYPE_U64: { uint64_t v; memcpy(&v, p, sizeof v); *out = (double)v; return 1; }
+    case TYPE_F32: { float    v; memcpy(&v, p, sizeof v); *out = (double)v; return 1; }
+    case TYPE_F64: { double   v; memcpy(&v, p, sizeof v); *out = v;        return 1; }
+    default:
+        return 0;
+    }
+}
+
+// 取字段下标并校验；失败 ⇒ 抛错并返回 0
+static int csa_field_of(ObjCStructArray* a, Value fv, const char* api,
+                        CStructFieldInfo** out) {
+    if (!val_is_obj(fv) || val_as_obj(fv)->type != OBJ_STRING) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "%s: 字段名必须是字符串", api);
+        native_throw_error(msg);
+        return 0;
+    }
+    const char* fname = ((ObjString*)val_as_obj(fv))->chars;
+    int idx = cstruct_get_field_index(a->def, fname);
+    if (idx < 0 || idx >= a->def->field_count) {
+        char msg[224];
+        snprintf(msg, sizeof(msg), "%s: cstruct '%s' 没有字段 '%s'", api,
+                 a->def && a->def->name ? a->def->name : "?", fname);
+        native_throw_error(msg);
+        return 0;
+    }
+    CStructFieldInfo* f = &a->def->fields[idx];
+    if (f->bit_width > 0) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "%s: 字段 '%s' 是位域（%d 位），批量读不支持 —— 位域跨字节，请逐元素读",
+                 api, fname, f->bit_width);
+        native_throw_error(msg);
+        return 0;
+    }
+    if (f->array_dim > 0) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "%s: 字段 '%s' 是数组（%d 个元素），批量读不支持 —— 请逐元素读",
+                 api, fname, f->array_dim);
+        native_throw_error(msg);
+        return 0;
+    }
+    if (!csa_is_scalar(f->type)) {
+        char msg[256];
+        snprintf(msg, sizeof(msg),
+                 "%s: 字段 '%s' 不是数值标量（kind=%d）—— 批量读只支持 i8..u64 / f32 / f64",
+                 api, fname, (int)f->type);
+        native_throw_error(msg);
+        return 0;
+    }
+    *out = f;
+    return 1;
+}
+
+// sum / min / max 共用：mode 0=sum, 1=min, 2=max
+static Value csa_scan(Value* args, int mode, const char* api) {
+    if (!val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_CSTRUCT_ARRAY) {
+        char msg[192];
+        snprintf(msg, sizeof(msg),
+                 "%s: 只能对 cstruct 数组调用（`Vec3.malloc_array(n)` 的返回值）", api);
+        native_throw_error(msg);
+        return val_null();
+    }
+    ObjCStructArray* a = (ObjCStructArray*)val_as_obj(args[0]);
+    CStructFieldInfo* f = NULL;
+    if (!csa_field_of(a, args[1], api, &f)) return val_null();
+
+    if (a->count <= 0) {
+        if (mode == 0) return val_float(0.0);
+        char msg[128];
+        snprintf(msg, sizeof(msg), "%s: 空数组没有 %s", api, mode == 1 ? "min" : "max");
+        native_throw_error(msg);
+        return val_null();
+    }
+
+    double acc = 0.0;
+    for (int i = 0; i < a->count; i++) {
+        const uint8_t* p = a->data + (size_t)i * (size_t)a->element_size + (size_t)f->offset;
+        double v = 0.0;
+        if (!csa_read_scalar(p, f->type, &v)) {
+            char msg[192];
+            snprintf(msg, sizeof(msg), "%s: 读字段 '%s' 失败（类型不支持）", api, f->name);
+            native_throw_error(msg);
+            return val_null();
+        }
+        if (i == 0) {
+            acc = v;
+        } else if (mode == 0) {
+            acc += v;
+        } else if (mode == 1) {
+            if (v < acc) acc = v;
+        } else {
+            if (v > acc) acc = v;
+        }
+    }
+    return val_float(acc);
+}
+
+// column_i / column_f 共用：按字段取一列
+static Value csa_column(Value* args, int as_float, const char* api) {
+    if (!val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_CSTRUCT_ARRAY) {
+        char msg[192];
+        snprintf(msg, sizeof(msg),
+                 "%s: 只能对 cstruct 数组调用（`Vec3.malloc_array(n)` 的返回值）", api);
+        native_throw_error(msg);
+        return val_null();
+    }
+    ObjCStructArray* a = (ObjCStructArray*)val_as_obj(args[0]);
+    CStructFieldInfo* f = NULL;
+    if (!csa_field_of(a, args[1], api, &f)) return val_null();
+
+    ObjArray* out = arr_new(a->count > 0 ? a->count : 1);
+    if (!out) {
+        native_throw_error("column: 分配结果数组失败");
+        return val_null();
+    }
+    for (int i = 0; i < a->count; i++) {
+        const uint8_t* p = a->data + (size_t)i * (size_t)a->element_size + (size_t)f->offset;
+        double v = 0.0;
+        if (!csa_read_scalar(p, f->type, &v)) {
+            char msg[192];
+            snprintf(msg, sizeof(msg), "%s: 读字段 '%s' 失败（类型不支持）", api, f->name);
+            native_throw_error(msg);
+            return val_null();
+        }
+        out->elements[out->count++] = as_float ? val_float(v) : val_int_safe((int64_t)v);
+    }
+    return val_obj((Object*)out);
+}
+
+static Value cstruct_array_method_sum(int argc, Value* args) {
+    (void)argc;
+    return csa_scan(args, 0, "sum");
+}
+
+static Value cstruct_array_method_min(int argc, Value* args) {
+    (void)argc;
+    return csa_scan(args, 1, "min");
+}
+
+static Value cstruct_array_method_max(int argc, Value* args) {
+    (void)argc;
+    return csa_scan(args, 2, "max");
+}
+
+static Value cstruct_array_method_column_f(int argc, Value* args) {
+    (void)argc;
+    return csa_column(args, 1, "column_f");
+}
+
+static Value cstruct_array_method_column_i(int argc, Value* args) {
+    (void)argc;
+    return csa_column(args, 0, "column_i");
+}
+
 // cstruct.alignment() - 返回 cstruct 对齐要求（字节数）
 static Value cstruct_method_alignment(int argc, Value* args) {
     (void)argc;
@@ -888,4 +1077,18 @@ void cstructs_init_methods(void) {
     // 注册 cstruct 数组的方法（OBJ_CSTRUCT_ARRAY 实例方法）
     // len() - 返回数组长度
     cstruct_register_method("len", make_native(cstruct_array_method_len, 1, "len"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+
+    // ---- 按字段批量读（2026-11-24）----
+    // 参数统一是 (field: string)；返回 Array[float]/Array[int] 用 (TYPE_ARRAY, 元素kind) 表达。
+    TypeKind field_name_params[] = {TYPE_STRING};
+    cstruct_register_method("sum", make_native(cstruct_array_method_sum, 2, "sum"),
+                            TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(field_name_params));
+    cstruct_register_method("min", make_native(cstruct_array_method_min, 2, "min"),
+                            TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(field_name_params));
+    cstruct_register_method("max", make_native(cstruct_array_method_max, 2, "max"),
+                            TYPE_FLOAT, TYPE_UNKNOWN, NATIVE_FIXED(field_name_params));
+    cstruct_register_method("column_f", make_native(cstruct_array_method_column_f, 2, "column_f"),
+                            TYPE_ARRAY, TYPE_FLOAT, NATIVE_FIXED(field_name_params));
+    cstruct_register_method("column_i", make_native(cstruct_array_method_column_i, 2, "column_i"),
+                            TYPE_ARRAY, TYPE_INT, NATIVE_FIXED(field_name_params));
 }

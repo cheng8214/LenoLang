@@ -1,0 +1,90 @@
+// cstruct 数组的按字段批量读：sum / min / max / column_f / column_i（2026-11-24）
+//
+// 背景：cstructs 此前只有 malloc / len / size / offset_of 这些**单点**能力 ——
+//   手里有连续内存，却只能 `arr[i].x` 一格一格读。数据导向真正卡手的地方就在这。
+cstruct V3 {
+    f32 x
+    f32 y
+    f32 z
+}
+
+cstruct Mix {
+    i32 id
+    u8 flag
+    u32 bits : 3
+    f64 ratio
+    u8 data[4]
+}
+
+main() {
+    // ---------- ① sum / min / max ----------
+    var a = V3.malloc_array(4)
+    a[0].x = 1.0
+    a[1].x = 2.0
+    a[2].x = 3.0
+    a[3].x = 4.0
+
+    assert_eq(a.sum("x"), 10.0, "① sum")
+    assert_eq(a.min("x"), 1.0, "① min")
+    assert_eq(a.max("x"), 4.0, "① max")
+    // malloc_array 应清零 ⇒ 未赋值的 y 全是 0
+    assert_eq(a.sum("y"), 0.0, "① 未赋值字段按 0 参与求和（malloc_array 必须清零）")
+
+    // ---------- ② column_f / column_i ----------
+    var cf = a.column_f("x")
+    assert_eq(cf.len(), 4, "② 列长度")
+    assert_eq(cf[0], 1.0, "② 列首元素")
+    assert_eq(cf[3], 4.0, "② 列尾元素")
+
+    var ci = a.column_i("x")
+    assert_eq(ci.len(), 4, "② 整数列长度")
+    assert_eq(ci[2], 3, "② f32 → int 截断")
+    a.free_all()
+
+    // ---------- ③ 位域 / 数组字段 / 拼错字段名都要报错 ----------
+    var m = Mix.malloc_array(2)
+    var threw = false
+    try {
+        m.sum("bits")
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true, "③ 位域字段必须报错（跨字节，语义易错）")
+
+    threw = false
+    try {
+        m.sum("data")
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true, "③ 数组字段必须报错")
+
+    threw = false
+    try {
+        m.sum("nope")
+    } catch e {
+        threw = true
+    }
+    assert_eq(threw, true, "③ 不存在的字段必须报错")
+
+    // ---------- ④ 有符号 int 字段 ----------
+    m[0].id = 7
+    m[1].id = 9
+    assert_eq(m.sum("id"), 16.0, "④ i32 求和")
+    assert_eq(m.max("id"), 9.0, "④ i32 最大值")
+    m.free_all()
+
+    // ---------- ⑤ 空数组：sum = 0，min/max 报错 ----------
+    var e = V3.malloc_array(0)
+    assert_eq(e.sum("x"), 0.0, "⑤ 空数组求和为 0")
+    threw = false
+    try {
+        e.min("x")
+    } catch err {
+        threw = true
+    }
+    assert_eq(threw, true, "⑤ 空数组的 min 必须报错")
+    e.free_all()
+
+    print("cstruct batch ok")
+}
