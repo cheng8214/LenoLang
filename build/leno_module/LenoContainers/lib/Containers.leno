@@ -1,0 +1,148 @@
+// Containers.leno — LenoContainers 入口（2026-11-24）
+// 纯 Leno，无原生依赖。
+//
+// 为什么需要它：内置只有 Array / Dict，而"队列 / 栈 / LRU"这三个容器几乎每个项目都要重写一遍。
+// 重写时**最容易错的不是主体，是边界**——空取返回什么、容量淘汰按插入还是按访问、
+// 队列头指针漂移后 len 怎么算。这里把边界行为固定成契约：
+//
+//   · **空容器取值一律抛错**，不返回 null/0/默认值。空栈 pop 是写错了，
+//     给它一个 0 只会让错误漂到很远的地方（Leno 一贯的取向）。
+//   · `len()` 始终是**逻辑元素个数**（Queue 的 head 偏移已经扣掉）。
+//   · LRU 的淘汰按**最近访问**（get 会提升），不是按插入。
+
+// ==================== Stack：后进先出 ====================
+export struct Stack[T] {
+    Array[T] items = []
+
+    func push(T v) {
+        items.add(v)
+    }
+
+    // 空栈 ⇒ 抛错（不返回 null）
+    func pop(): T {
+        if items.len() == 0 { throw "Stack.pop: 空栈" }
+        return items.pop()
+    }
+
+    func peek(): T {
+        if items.len() == 0 { throw "Stack.peek: 空栈" }
+        return items[items.len() - 1]
+    }
+
+    func len(): int { return items.len() }
+    func is_empty(): bool { return items.len() == 0 }
+    func clear() { items.clear() }
+}
+
+// ==================== Queue：先进先出 ====================
+// 为什么不用 `Array.remove(0)` 实现：那是 O(n) 整体搬移，出队一多就是平方复杂度。
+// 这里用 **head 指针 + 惰性压缩**：正常出队只挪指针；积压超过一半且超过 64 个时才真正搬一次，
+// 平摊下来是 O(1)。
+export struct Queue[T] {
+    Array[T] items = []
+    int head = 0
+
+    func push(T v) {
+        items.add(v)
+    }
+
+    func pop(): T {
+        if head >= items.len() { throw "Queue.pop: 空队列" }
+        T v = items[head]
+        head = head + 1
+        // 惰性压缩：死元素超过一半且总量超过 64 时才搬
+        if head > 64 and head * 2 > items.len() {
+            Array[T] keep = []
+            for head : items.len() - 1 to i {
+                keep.add(items[i])
+            }
+            items = keep
+            head = 0
+        }
+        return v
+    }
+
+    func peek(): T {
+        if head >= items.len() { throw "Queue.peek: 空队列" }
+        return items[head]
+    }
+
+    // 逻辑长度（扣掉已经出队、但还没压缩掉的空洞）
+    func len(): int { return items.len() - head }
+    func is_empty(): bool { return head >= items.len() }
+    func clear() {
+        items.clear()
+        head = 0
+    }
+}
+
+// ==================== LRU：最近最少使用淘汰 ====================
+// 容量淘汰的容器，适合"缓存最近 N 条"（日志尾部、最近打开的文件、热数据）。
+//
+// ⚠ 复杂度：`get` / `put` 是 **O(n)**（数组里找 key 再搬位置）。cap 在几千以内没问题；
+//   真要 O(1) 得做双向链表 + 节点表，Leno 里手写那套的复杂度远超收益（见 README）。
+export struct LRU[V] {
+    Dict[string, V] map = {}
+    Array[string] order = []          // 顺序 = 最近使用（末尾最新）
+    int cap = 128
+
+    // 超出容量时淘汰**最久未使用**的那个
+    func _trim() {
+        while order.len() > cap {
+            string old = order[0]
+            order.remove(0)
+            map.remove(old)
+        }
+    }
+
+    func put(string k, V v) {
+        if not map.has(k) {
+            order.add(k)
+        } else {
+            // 已存在 ⇒ 提升到末尾（最近使用）
+            int i = order.index_of(k)
+            if i >= 0 and i < order.len() - 1 {
+                order.remove(i)
+                order.add(k)
+            }
+        }
+        map[k] = v
+        _trim()
+    }
+
+    // 缺失 ⇒ 返回调用点显式给的默认值（与 Result.orElse 同风格：默认值必须写明）
+    func get(string k, V def): V {
+        if not map.has(k) { return def }
+        // 命中 ⇒ 提升为最近使用
+        int i = order.index_of(k)
+        if i >= 0 and i < order.len() - 1 {
+            order.remove(i)
+            order.add(k)
+        }
+        return map[k]
+    }
+
+    func has(string k): bool { return map.has(k) }
+
+    func remove(string k) {
+        if not map.has(k) { return }
+        int i = order.index_of(k)
+        if i >= 0 { order.remove(i) }
+        map.remove(k)
+    }
+
+    func len(): int { return order.len() }
+    func capacity(): int { return cap }
+
+    // 调小容量会立刻淘汰到新上限（调大不会补数据）
+    func set_capacity(int n) {
+        if n < 1 { throw "LRU.set_capacity: 容量必须 >= 1（收到 " + _str(n) + "）" }
+        cap = n
+        _trim()
+    }
+
+    func clear() {
+        map.clear()
+        order.clear()
+    }
+}

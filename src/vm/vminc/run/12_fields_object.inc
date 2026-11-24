@@ -309,7 +309,17 @@
         Value receiver = R(b);
         ObjType rt = get_receiver_type(receiver);
 
-        if (ic_type_supported(rt)) {
+        // ★ 2026-11-24：`OBJ_STRUCT` **不走**这里的原生快路。
+        //   为什么：`struct` 类型注册了原生 `len`（返回**字段个数**，给迭代器协议用）
+        //   和 `copy`；而容器类几乎都会定义自己的 `len() / copy()`。
+        //   跨模块调用走的是 GET_METHOD + CALL 两指令形状（codegen 不为它们发融合指令），
+        //   原先进来先查 `struct_find_method("len")` 命中 ⇒ **脚本方法永远轮不到**。
+        //   实测：两个跨模块 struct 各有 1 个字段、都定义了 len()，结果两个都返回 1
+        //   （字段数），而不是各自逻辑的结果。
+        //   同模块内看不出来：那边走融合指令，直接按 def 查脚本方法 ✓。
+        //   现在改为"**脚本方法优先**"：OBJ_STRUCT 先走下面的 def->methods 分支，
+        //   找不到再回退原生表（见该分支尾部）。
+        if (ic_type_supported(rt) && rt != OBJ_STRUCT) {
             // ★ 内联缓存：此前 vm.ic_cache 是**死字段** —— leno_vm.h 里定义了、
             //   vm_init.inc 里初始化了、vm_ic.inc 里连 ic_cache_index() 都写好了，
             //   但**全仓库没有一处读写它**。于是每次 `arr.len()` / `str.len()` /
@@ -484,6 +494,23 @@
                 int fi = struct_get_field_index(def, name->chars);
                 if (fi >= 0) {
                     R(a) = struct_get_field(so, fi);
+                    DISPATCH();
+                }
+            }
+
+            // ★ 2026-11-24：脚本方法 / 同名字段都没有 ⇒ **最后**回退到 struct 的原生方法表
+            //   （`copy` / `len` 这些通用能力）。顺序必须是"脚本优先"：
+            //   原生 `len` 给的是**字段个数**（迭代器协议），而用户定义的 `len()`
+            //   才是这个类型自己的语义 —— 上面那段抢跑就是反过来的教训。
+            //   这里不做窥孔（不走 337 行那条免分配快路）：能落到这儿说明脚本里
+            //   没有同名方法，调用频率低；简单构造绑定对象即可，少一条要同步维护的分支。
+            {
+                extern ObjNative* struct_find_method(const char* name);
+                ObjNative* native_struct_method = struct_find_method(name->chars);
+                if (native_struct_method) {
+                    ObjBoundMethod* bound = bound_method_new(receiver, native_struct_method);
+                    if (unlikely(!bound)) { runtime_error("内存分配失败", line); return -1; }
+                    R(a) = val_obj((Object*)bound);
                     DISPATCH();
                 }
             }

@@ -1,0 +1,124 @@
+// LenoContainers 自测：Stack / Queue / LRU（2026-11-24）
+//
+// 重点不是"能用"，而是**边界契约**：空容器抛错、Queue 惰性压缩后顺序不乱、
+// LRU 按最近访问淘汰（不是按插入）。
+import "Containers" as ct
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqI(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+main() {
+    // ==================== Stack ====================
+    var s = new ct.Stack[int]()
+    if not s.is_empty() { fail("① 新栈应为空") }
+    s.push(1)
+    s.push(2)
+    s.push(3)
+    eqI(s.len(), 3, "① 栈长度")
+    eqI(s.peek(), 3, "① peek 取栈顶")
+    eqI(s.pop(), 3, "① 后进先出 1")
+    eqI(s.pop(), 2, "① 后进先出 2")
+    eqI(s.len(), 1, "① 出栈后长度")
+
+    var threw1 = false
+    s.pop()          // 弹掉最后一个（值 1）⇒ 此刻已空
+    try {
+        s.pop()      // 再弹 ⇒ 必须抛错
+    } catch e {
+        threw1 = true
+    }
+    if not threw1 { fail("① 空栈 pop 必须抛错（不返回 null/0）") }
+
+    s.push(9)
+    s.clear()
+    if not s.is_empty() { fail("① clear 后应为空") }
+
+    // 泛型实参不同互不影响
+    var st = new ct.Stack[string]()
+    st.push("x")
+    if st.pop() != "x" { fail("① 字符串栈") }
+
+    // ==================== Queue ====================
+    var q = new ct.Queue[int]()
+    q.push(10)
+    q.push(20)
+    eqI(q.len(), 2, "② 队列长度")
+    eqI(q.peek(), 10, "② peek 取队首")
+    eqI(q.pop(), 10, "② 先进先出 1")
+    eqI(q.pop(), 20, "② 先进先出 2")
+
+    var threw2 = false
+    try {
+        q.pop()
+    } catch e {
+        threw2 = true
+    }
+    if not threw2 { fail("② 空队列 pop 必须抛错") }
+
+    // 惰性压缩：塞 100 个、出队 90 个（中途会压缩），剩下的顺序必须还是 90..99
+    for 0 : 99 to i {
+        q.push(i)
+    }
+    for 0 : 89 to i {
+        var v = q.pop()
+        if v != i { fail("② 第 " + _str(i) + " 次出队应为 " + _str(i) + "，实际 " + _str(v)) }
+    }
+    eqI(q.len(), 10, "② 压缩后逻辑长度")
+    eqI(q.pop(), 90, "② 压缩后队首仍是 90")
+
+    // len 必须扣掉 head 空洞
+    var q2 = new ct.Queue[int]()
+    for 0 : 4 to i {
+        q2.push(i)
+    }
+    q2.pop()
+    q2.pop()
+    eqI(q2.len(), 3, "② len 扣掉已出队元素")
+    q2.clear()
+    eqI(q2.len(), 0, "② clear 后长度 0")
+    if not q2.is_empty() { fail("② clear 后 is_empty") }
+
+    // ==================== LRU ====================
+    var l = new ct.LRU[int](cap = 2)
+    eqI(l.capacity(), 2, "③ 容量")
+    l.put("a", 1)
+    l.put("b", 2)
+    eqI(l.len(), 2, "③ 装满")
+
+    // 命中 a 会把它提升为"最近使用"⇒ 再插 c 时要淘汰的是 b
+    eqI(l.get("a", -1), 1, "③ 命中 a")
+    l.put("c", 3)
+    if l.has("b") { fail("③ b 应被淘汰（按最近访问，不是按插入）") }
+    if not l.has("a") { fail("③ a 应保留") }
+    eqI(l.get("b", -1), -1, "③ 缺失返回调用点给的默认值")
+    eqI(l.len(), 2, "③ 淘汰后仍是 2")
+
+    l.remove("a")
+    eqI(l.len(), 1, "③ remove 后长度")
+    if l.has("a") { fail("③ remove 后查不到") }
+
+    // 调小容量 ⇒ 立刻淘汰到新上限
+    l.put("d", 4)
+    l.put("e", 5)
+    l.set_capacity(1)
+    eqI(l.len(), 1, "③ set_capacity 调小后立刻裁剪")
+
+    var threw3 = false
+    try {
+        l.set_capacity(0)
+    } catch e {
+        threw3 = true
+    }
+    if not threw3 { fail("③ 容量 0 必须报错") }
+
+    l.clear()
+    eqI(l.len(), 0, "③ clear")
+
+    print("test_containers passed")
+}
