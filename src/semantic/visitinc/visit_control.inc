@@ -663,17 +663,19 @@
             if (ast->u.for_.end) visit(s, ast->u.for_.end);
             if (ast->u.for_.step) visit(s, ast->u.for_.step);
 
-            // ★ 2026-11-25：容器/缓存可**直接遍历** —— `for st to v`。
-            //   本语言的 `for struct to k, v` 原是遍历**字段**，对 Stack/Queue/LRU 这些容器没意义
-            //   （遍历出来是 items/head/map…）。这里把被遍历对象改写成 `st.to_array()` /
-            //   `c.keys()`，之后走**普通数组迭代**的既有路径。
-            //   ⚠ 必须在 `visit(end)` **之后**做：infer_expr_type 对"尚未 visit"的节点会走
-            //   它自己的捷径（AST_CALL 会顺带解析 callee、把半成品留在节点上），
-            //   实测会让 `for n.children.len() to i` 报「不能在 any 类型上直接访问字段 'len'」。
-            //   改写出来的方法调用要**立刻 visit**，否则它没经过方法解析（codegen 会拿不到方法表）。
-            if (ast->u.for_.end && semantic_rewrite_for_iterable(s, ast)) {
-                visit(s, ast->u.for_.end);
-            }
+            // ★ 2026-11-25（撤销当天早些时候的"容器自动改写"）：
+            //   曾经这里把 `for c to v` 按**方法名**改写成 `c.to_array()` / `c.keys()` / `c.raw()`，
+            //   让容器"直接可遍历"。删掉的理由 —— **编译器不该猜方法名**：
+            //     · 用户结构体只要碰巧有个 `raw()`/`keys()`（哪怕返回 int），`for f to v`
+            //       就会被静默劫持（实测 `func raw(): int` ⇒ 变成 `for 7 to v`，遍历 0..6，
+            //       不报错也不符合预期）；
+            //     · 三个名字的优先级（raw > to_array > keys）纯属约定，无处声明、无处检查，
+            //       与本仓"注册即数据、拒绝名字特判"的取向冲突（同 `_env` 特判被否决那次）。
+            //   现在语义回到**唯一一条**：`for <struct> to k, v` 遍历**字段**；
+            //   要遍历元素就写清楚 —— `for st.raw() to v`（零分配）/ `for st.to_array() to v`（快照）
+            //   / `var it = st.iter()` 游标。这些都是普通表达式，编译器一行特判都不需要。
+            //   若将来要恢复语法糖，应做成**声明式**的（struct 上标注"迭代用哪个方法"），
+            //   让信息来自声明而不是名字猜测。
 
             // ★ 2026-11-08：for 头的类型检查。
             //   此前 `for 0:10:"x"`（步长是字符串）**静默一次都不执行** ✗；

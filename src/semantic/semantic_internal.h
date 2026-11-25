@@ -220,9 +220,9 @@ void transform_method_body(Ast* ast, char** field_names, int field_count, char**
 // ============================================================================
 int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line);
 
-// `for <容器> to v` 改写：struct 有 `to_array()` / `keys()` 时把被遍历对象换成一个方法调用，
-// 使容器/缓存可直接 `for c to v`（普通 struct 的字段遍历不受影响）。返回 1 = 改写成功。
-int semantic_rewrite_for_iterable(Semantic* s, Ast* for_ast);
+// （已删除，2026-11-25）曾声明 `semantic_rewrite_for_iterable()`：按方法名把 `for c to v`
+// 改写成 `c.to_array()/c.keys()/c.raw()`。删除理由见 semantic_visit_func.c 里的说明 ——
+// 编译器不该靠方法名猜测语义（同名方法会被静默劫持）。
 
 // 把 `new <类型别名>[实参…](…)` 就地改写成真实 struct 的构造（2026-11-25，见实现处注释）。
 // 返回 1 = 改写过（调用方须重新解析 struct 名）；0 = 不是可展开的别名。

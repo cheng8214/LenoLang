@@ -685,15 +685,16 @@ main() {
         fail("⑮ iter() 遍历 10 万项不该分配，young 增量 " + _str(y1 - y0) + " B")
     }
 
-    // ==================== ⑯ P1.1：`for 容器 to v` 走 raw() —— 零分配 ====================
-    // 语义期优先挑 `raw()`（返回内部数组，不复制）；Stack/PriorityQueue/LRU 提供，
-    // Queue/Deque/ClockLRU 不提供 ⇒ 自动回落 to_array()/keys() 的快照路径。
+    // ==================== ⑯ 零分配遍历：**显式**写 `for st.raw() to v` ====================
+    // ⚠ 这里原先是 `for st to v`（靠语义期按方法名改写）。那个机制已删除 ——
+    //   编译器不该猜方法名（同名 `raw()` 会被静默劫持）。现在要零分配就写 `.raw()`，
+    //   要快照就写 `.to_array()`，两者都是普通表达式。
     ct.Stack[int] fst = new ct.Stack[int]()
     for 0 : 199999 to i { fst.push(i) }
     var fg0 = _gc_stats()
     int fy0 = _int(fg0["young_bytes"])
     int fsum = 0
-    for fst to v { fsum = fsum + _int(v) }
+    for fst.raw() to v { fsum = fsum + _int(v) }
     var fg1 = _gc_stats()
     int fy1 = _int(fg1["young_bytes"])
     eqI(fsum, 19999900000, "⑯ for 遍历求和正确")
@@ -704,7 +705,7 @@ main() {
     var ftmp = fst.to_array()
     int fbad = 0
     int fi = 0
-    for fst to v {
+    for fst.raw() to v {
         if _int(v) != ftmp[fi] { fbad = fbad + 1 }
         fi = fi + 1
     }
@@ -716,7 +717,7 @@ main() {
     var fpqArr = fpq.to_array()
     int fpqBad = 0
     int fpqI = 0
-    for fpq to v {
+    for fpq.raw() to v {
         if _int(v) != fpqArr[fpqI] { fpqBad = fpqBad + 1 }
         fpqI = fpqI + 1
     }
@@ -730,7 +731,7 @@ main() {
     var flruKeys = flru.keys()
     int flruBad = 0
     int flruI = 0
-    for flru to k {
+    for flru.raw() to k {
         if _str(k) != flruKeys[flruI] { flruBad = flruBad + 1 }
         flruI = flruI + 1
     }
@@ -741,7 +742,7 @@ main() {
     for 0 : 3 to i { fq.push(i * 7) }
     fq.pop()
     Array[int] fqGot = []
-    for fq to v { fqGot.add(_int(v)) }
+    for fq.to_array() to v { fqGot.add(_int(v)) }
     eqI(fqGot.len(), 3, "⑯ Queue（无 raw）仍可遍历")
     eqI(fqGot[0], 7, "⑯ Queue 首项正确")
 
@@ -749,7 +750,7 @@ main() {
     fd.push_back(2)
     fd.push_front(1)
     Array[int] fdGot = []
-    for fd to v { fdGot.add(_int(v)) }
+    for fd.to_array() to v { fdGot.add(_int(v)) }
     eqI(fdGot.len(), 2, "⑯ Deque（无 raw）仍可遍历")
     eqI(fdGot[0], 1, "⑯ Deque 首项正确")
 

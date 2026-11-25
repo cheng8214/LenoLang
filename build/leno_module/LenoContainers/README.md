@@ -83,60 +83,62 @@ for l to k { print(k) }         // 缓存遍历的是 **key**
 - 普通 struct（没有 `to_array` / `keys`）**行为不变**，仍是字段遍历；
 - 可空容器（`Queue? q`）不接管，保持原来的判空诊断（先判空再遍历）；
 - 底层实现：语义期把被遍历对象改写成 `c.to_array()` / `c.keys()` ⇒ **每次遍历会分配一个快照数组**。
-  0.7.0 起：容器只要提供 `raw()`（返回内部数组，不复制），语义期就优先用它 ⇒ **`for` 本身就零分配**；
-  Queue/Deque 这类元素不连续的容器没有 `raw()`，仍走快照。细节与实测见下一节。
+  ⚠ `for c to v` **不会**自动变成"遍历元素"（编译器不认方法名、也不猜）——
+  要遍历元素请显式写 `for c.raw() to v` / `for c.to_array() to v`，见下一节。
   热路径上想零分配，就自己 `peek` / `at` 按下标走。
 
-## 零分配遍历（2026-11-25，0.7.0 起 `for` 本身就零分配）
+## 遍历：三条路，**自己写清楚走哪条**（2026-11-25）
 
-**默认写法就行**：`for c to v` 现在会优先找容器上的 `raw()`（返回**内部数组本身**、不复制），
-找不到才回落 `to_array()`。所以：
+先说规则：**`for <struct> to k, v` 永远是字段遍历**（k = 字段名）。容器不会"自动变成可遍历" ——
+编译器不认识任何方法名，也不会去猜（曾经按 `raw`/`to_array`/`keys` 猜过一版，**已删除**：
+用户结构体碰巧有个同名 `raw()` 就会被静默劫持，实测 `for f to v` 变成 `for 7 to v`）。
+
+要遍历元素，写表达式（都是普通语法，编译器零特判）：
 
 ```leno
-for st to v { }          // Stack：raw() 路径 ⇒ 零分配 + 数组满速（34 ns/op）
-for pq to v { }          // PriorityQueue：raw() 路径（堆序）
-for lru to k { }         // LRU：raw() 路径（最久 → 最近，同 keys()）
-for q to v { }           // Queue：没有 raw（有 head 偏移）⇒ 仍走 to_array() 快照
-for d to v { }           // Deque：同理（两段结构）
+for st.raw() to v { }        // 0 复制 + 数组满速（34 ns/op）—— raw 返回**内部数组本身**
+for st.to_array() to v { }   // 快照（57 ns/op）—— 循环体里改容器不影响本轮
+for lru.keys() to k { }      // 缓存遍历 key（最久 → 最近）
+for q.to_array() to v { }    // Queue / Deque / PriorityQueue 同理：显式 to_array()
 ```
 
-要**显式**控制走哪条路，用游标（每元素不复制，但两次方法调用）：
+元素一次都不复制、也不想快照？用游标（每元素两次方法调用，慢一点，但元素不连续的容器也能用）：
 
 ```leno
 var it = st.iter()                       // Stack / Queue / PriorityQueue / Deque 都有
 while it.has_next() {
     if it.next() is int => v { sink(v) }  // next() 返回 T?（走完给 null）
 }
-var kit = lru.keys_iter()                 // 缓存：遍历 key（最久 → 最近）
+var kit = lru.keys_iter()                 // 缓存：遍历 key
 ```
 
-| 容器 | `for` 走哪条 | 零分配 | `iter()` / `keys_iter()` |
+| 容器 | 零分配遍历 | 快照遍历 | 游标 |
 |---|---|---|---|
-| `Stack` | `raw()` | ✅ | ✅ |
-| `PriorityQueue` | `raw()`（堆序） | ✅ | ✅ |
-| `LRU` | `raw()`（顺序 = `keys()`） | ✅ | ✅ |
-| `Queue` | `to_array()`（head 偏移） | ❌ | ✅ |
-| `Deque` | `to_array()`（f/b 两段） | ❌ | ✅ |
-| `ClockLRU` | `keys()`（有死槽） | ❌ | ❌（用 `keys()`） |
-| `LRUO1` | `keys()`（链表） | ❌ | ❌（用 `keys()`） |
+| `Stack` | `for st.raw() to v` ✅ | `for st.to_array() to v` | `st.iter()` |
+| `PriorityQueue` | `for pq.raw() to v` ✅（堆序） | `.to_array()` | `pq.iter()` |
+| `LRU` | `for lru.raw() to k` ✅（顺序 = `keys()`） | `.keys()` | `lru.keys_iter()` |
+| `Queue` | ❌（有 head 偏移，内部不连续） | `.to_array()` | `q.iter()` ✅ |
+| `Deque` | ❌（f/b 两段） | `.to_array()` | `dq.iter()` ✅ |
+| `ClockLRU` | ❌（环里有死槽） | `.keys()` | ❌（用 `keys()`） |
+| `LRUO1` | ❌（链表结构） | `.keys()` | ❌（用 `keys()`） |
 
 ### 实测（N=1,000,000，本机）
 
 | 写法 | 时间 | 每轮分配 |
 |---|---|---|
-| `for st to v`（0.7.0 起，走 `raw()`） | **34 ns/op** | **~0**（20 万项实测 1,271 B） |
-| `for st to v`（0.6.0 及以前，快照） | 55 ns/op | 8 MB |
-| `iter()` + `has_next()` | 106~121 ns/op | ~0 |
-| `for st.items to v`（手写内部数组） | ~51 ns/op | ~0 |
+| `for st.raw() to v` | **34 ns/op** | **~0**（20 万项实测 1,271 B） |
+| `for st.to_array() to v` | 57 ns/op | 8 MB |
+| `iter()` + `has_next()` | 104~121 ns/op | ~0 |
 
-读法：`raw()` 是把"内部数组"直接交给 `for`，所以**既省掉复制、又保留数组顺序扫的速度**；
-游标省的是复制但每元素两次方法调用，反而更慢（它是给"元素不连续"的容器用的兜底）。
+读法：`raw()` 把"内部数组"直接交给 `for` ⇒ 既省掉复制、又保留数组顺序扫的速度，
+所以它**比快照还快**（少一次 8MB 复制）。游标省的是复制，但每元素两次方法调用，
+因此更慢 —— 它是给"元素不连续"的容器（Queue/Deque）用的兜底。
 
-**语义：`raw()` 是实时视图**（不是快照）。
+**语义差别（必须知道）**：
 
-- `for c to v` 在 Stack/PriorityQueue/LRU 上 ⇒ 循环体里 `push`/`pop` 会**被看到**
-  （边遍历边改容器本来就该避免；0.6.0 及以前的快照只是把它掩盖了）；
-- `for q to v` / `for d to v`（无 `raw`）⇒ 仍是快照，行为与以前完全一样。
+- `raw()` 是**实时视图**：循环体里 `push`/`pop` 会被看到（边遍历边改容器本来就该避免）；
+- `to_array()` / `keys()` 是**快照**：循环体里改容器不影响本轮（但每轮分配）；
+- 游标 `iter()` 也是实时视图。
 
 ## API
 
@@ -390,10 +392,11 @@ build\leno.exe build\leno_module\LenoContainers\bench\bench_containers.leno
 
 ## 变更记录
 
-- **0.7.0**（2026-11-25）：**`for c to v` 本身零分配** —— 语义期优先挑 `raw()`（返回内部数组），
-  `Stack` / `PriorityQueue` / `LRU` 各加一个 `raw()`。实测 1M 项：**55 → 34 ns/op**、
-  分配 **8 MB → ~0**（20 万项 1,271 B）；Queue/Deque/ClockLRU/LRUO1 保持快照路径不变。
-  测试新增第 ⑯ 组（零分配断言、顺序与 `to_array()`/`keys()` 一致、无 `raw()` 的容器行为不变）。
+- **0.7.0**（2026-11-25）：新增 `raw()`（返回**内部数组本身**）—— `Stack` / `PriorityQueue` / `LRU`。
+  用法是**显式**的 `for st.raw() to v`：实测 1M 项 **34 ns/op、~0 分配**（对照
+  `to_array()` 57 ns/op + 8 MB）。⚠ 同一天内曾有一版让语义期按方法名自动改写 `for c to v`，
+  **已删除**（编译器不该猜方法名：同名 `raw()` 会被静默劫持）；`for <struct> to k, v`
+  回到唯一的"字段遍历"语义。测试第 ⑯ 组改为显式写法，并加"撞名不被劫持"的反面断言。
 
 - **0.6.0**（2026-11-25）：新增**零分配遍历**——`Iter[T]` / `DequeIter[T]` 游标 +
   `Stack/Queue/Deque/PriorityQueue.iter()`、`LRU.keys_iter()`。实测遍历 20 万项：
