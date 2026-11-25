@@ -30,15 +30,29 @@ var d = img.decodePNGFile("in.png")
 | 函数 | 说明 |
 |---|---|
 | `newImage(w, h)` / `fromPixels(w, h, px)` | 构造（`px` 长度必须 = w·h·4） |
+| `clone(img)` | 深拷贝（在原图上画又不想毁原图时先克隆） |
 | `Image.set/get/getA/setA` | 单点读写（RGBA 序；越界抛错） |
 | `Image.fill(r,g,b,a)` / `fillRect(x0,y0,x1,y1,…)` | 全图 / 矩形填充 |
 | `resize(src, dw, dh, mode)` | 按采样方式缩放（`MODE_NEAREST/BOX/BILINEAR`） |
 | `resizeAuto(src, dw, dh, pxArt)` | 缩小→box、放大→bilinear；`pxArt` 一律 nearest |
 | `scaleToLongEdge(src, longEdge, pxArt)` | 长边等比缩放 |
+| `scaleToFit(src, maxW, maxH, pxArt)` | 等比装进 `maxW×maxH` 的框（**只缩不放**） |
 | `crop(src, x, y, w, h)` / `flipH` / `flipV` | 裁剪 / 翻转 |
 | `rotate90` / `rotate180` / `rotate270` | 像素完美旋转（90/270 宽高互换） |
+| `blit(dst, src, x, y)` | 贴图**覆盖**（含 alpha；越界部分自动裁掉） |
+| `blitAlpha(dst, src, x, y)` | 贴图**alpha 混合**（source-over，按 src.a） |
+| `fillCircle(img, cx, cy, r, r,g,b,a)` | 实心圆（原地画） |
+| `drawRect(img, x0,y0,x1,y1, …)` | 矩形**描边**（填充用 `Image.fillRect`） |
+| `line(img, x0,y0,x1,y1, …)` | 直线（Bresenham，八方向） |
+| `toGray(img)` / `invert(img)` | 灰度（BT.601，保留 alpha）/ 反色（返回新图） |
 | `decodePNG(data)` / `encodePNG(img)` | PNG 编解码（返回 `Result`） |
 | `decodePNGFile(path)` / `encodePNGFile(img, path)` | 文件版 |
+
+**原地 vs 新图**：`blit/blitAlpha/fillCircle/drawRect/line` 都是**原地改 dst**（拼图/水印/标注的语义）；
+`toGray/invert/crop/flip*/rotate*/resize*/scaleTo*` 返回**新图**、不改入参。
+
+**越界策略（故意分两种）**：贴图越界**自动裁掉**（边缘贴半张是常态）；图元坐标**钳到图内**
+（画到图外的部分直接不画，不抛错）。
 
 ## 口径
 

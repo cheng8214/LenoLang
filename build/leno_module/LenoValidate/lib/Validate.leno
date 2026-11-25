@@ -33,6 +33,9 @@ import regexs
 
 export struct Rule {
     bool required = false
+    // ★ 2026-11-25：required 只拒"缺失 / 显式 null"，**空串能过**（常见坑）。
+    //   要"非空"就加 notEmpty（空串 / 空数组 / 空 Dict 都拒）。
+    bool notEmpty = false
     string typ = ""            // "" = 不检查类型
     float? minNum = null       // null = 不检查
     float? maxNum = null
@@ -41,6 +44,10 @@ export struct Rule {
     Array[string] oneOf = []   // [] = 不检查枚举
     string pattern = ""        // "" = 不检查正则
     func(any): string? check = null
+    // 嵌套：val 是 Dict ⇒ 按 sub 再验一层（错误字段名会拼成 `父.子`）
+    Schema? sub = null
+    // 数组元素：val 是 Array ⇒ 每个元素按 item 验（错误字段名 `父[i]`）
+    Rule? item = null
 }
 
 export struct Schema {
@@ -104,88 +111,168 @@ func _inList(any v, Array[string] list): bool {
     return false
 }
 
+// ==================== 结构化错误 ====================
+
+// 一条错误：字段路径 + 消息 + 类别。字段路径对嵌套/数组是 `addr.city`、`tags[2]`。
+// 为什么要有：只返回 "field: 消息" 字符串时，调用方要**自己拆字段名**才能把错误
+//   标到表单控件上（split(":") 一遇到消息里有冒号就错）。
+export struct FieldError {
+    string field = ""
+    string message = ""
+    string kind = ""     // required / empty / type / range / len / enum / pattern / check
+}
+
 // ==================== 校验 ====================
 
-func _checkField(string field, any val, bool has, Rule r, Array[string] errs) {
+// prefix 是"父字段路径"（顶层为空串、嵌套是 `addr.`、数组元素是 `tags[2]`）
+func _chk(string prefix, string field, any val, bool has, Rule r, Array[FieldError] errs) {
+    string full = prefix + field
     if r.required and (not has or val == null) {
-        errs.add(field + ": 必填")
+        errs.add(new FieldError(field = full, message = "必填", kind = "required"))
         return
     }
     if not has or val == null { return }
 
-    // 类型
-    if r.typ != "" and r.typ != "any" {
-        if not _typeOk(r.typ, val) {
-            errs.add(field + ": 期望 " + r.typ + "，实际 " + _typeName(val))
+    // 非空（空串 / 空数组 / 空 Dict）
+    if r.notEmpty {
+        bool empty = false
+        if val is string { empty = (val as string).len() == 0 }
+        else if val is Array { empty = (val as Array).len() == 0 }
+        else if val is Dict { empty = (val as Dict).len() == 0 }
+        if empty {
+            errs.add(new FieldError(field = full, message = "不能为空", kind = "empty"))
             return
         }
     }
-    // 数值范围
+
+    // 类型
+    if r.typ != "" and r.typ != "any" {
+        if not _typeOk(r.typ, val) {
+            errs.add(new FieldError(field = full,
+                message = "期望 " + r.typ + "，实际 " + _typeName(val), kind = "type"))
+            return
+        }
+    }
+
+    // 数值范围。★ 2026-11-25：原来"值不是数值就静默跳过" ⇒ 给 string 字段配了
+    // minNum 时规则等于没写（错误数据一路放过）。现在明确报错。
     if r.minNum != null or r.maxNum != null {
-        if _typeOk("number", val) {
+        if not _typeOk("number", val) {
+            errs.add(new FieldError(field = full,
+                message = "不是数值，无法比较范围（实际 " + _typeName(val) + "）", kind = "range"))
+        } else {
             float f = _asFloat(val)
-            float mn = r.minNum ?? 0.0
-            float mx = r.maxNum ?? 0.0
-            if r.minNum != null and f < mn {
-                errs.add(field + ": 小于最小值 " + _str(mn))
+            if r.minNum != null {
+                float mn = r.minNum ?? 0.0
+                if f < mn {
+                    errs.add(new FieldError(field = full, message = "小于最小值 " + _str(mn), kind = "range"))
+                }
             }
-            if r.maxNum != null and f > mx {
-                errs.add(field + ": 大于最大值 " + _str(mx))
+            if r.maxNum != null {
+                float mx = r.maxNum ?? 0.0
+                if f > mx {
+                    errs.add(new FieldError(field = full, message = "大于最大值 " + _str(mx), kind = "range"))
+                }
             }
         }
     }
+
     // 长度
     if r.minLen >= 0 or r.maxLen >= 0 {
         int len = _valLen(val)
         if len >= 0 {
             if r.minLen >= 0 and len < r.minLen {
-                errs.add(field + ": 长度小于 " + _str(r.minLen))
+                errs.add(new FieldError(field = full, message = "长度小于 " + _str(r.minLen), kind = "len"))
             }
             if r.maxLen >= 0 and len > r.maxLen {
-                errs.add(field + ": 长度大于 " + _str(r.maxLen))
+                errs.add(new FieldError(field = full, message = "长度大于 " + _str(r.maxLen), kind = "len"))
             }
         }
     }
+
     // 枚举
     if r.oneOf.len() > 0 {
         if not _inList(val, r.oneOf) {
-            errs.add(field + ": 不在允许值内（" + r.oneOf.join(", ") + "）")
+            errs.add(new FieldError(field = full,
+                message = "不在允许值内（" + r.oneOf.join(", ") + "）", kind = "enum"))
         }
     }
+
     // 正则
     if r.pattern != "" {
         if not (val is string) {
-            errs.add(field + ": 不是字符串，无法正则匹配")
+            errs.add(new FieldError(field = full, message = "不是字符串，无法正则匹配", kind = "pattern"))
         } else if not regexs.match(val as string, r.pattern) {
-            errs.add(field + ": 不匹配 " + r.pattern)
+            errs.add(new FieldError(field = full, message = "不匹配 " + r.pattern, kind = "pattern"))
         }
     }
+
     // 自定义
     if r.check != null {
         var msg = r.check(val)
-        if msg != null { errs.add(field + ": " + msg) }
+        if msg != null { errs.add(new FieldError(field = full, message = _str(msg), kind = "check")) }
+    }
+
+    // 嵌套对象：val 是 Dict ⇒ 逐个子字段再验一层（字段路径拼上 `父.`）
+    if r.sub is Schema => sb {
+        if val is Dict {
+            var subData = val as Dict
+            var skeys = sb.fields.keys()
+            for skeys to sf {
+                Rule sr = sb.fields[_str(sf)]
+                bool sh = subData.has(_str(sf))
+                var sv = subData.get(_str(sf), null)
+                _chk(full + ".", _str(sf), sv, sh, sr, errs)
+            }
+        }
+    }
+
+    // 数组元素：val 是 Array ⇒ 每个元素按 item 验（字段路径拼上 `[i]`）
+    if r.item is Rule => ir {
+        if val is Array {
+            Array arr = val as Array
+            for 0 : arr.len() - 1 to i {
+                _chk(full + "[" + _str(i) + "]", "", arr[i], true, ir, errs)
+            }
+        }
     }
 }
 
-// 校验整个 Dict，返回错误列表（空 = 全部通过）。只检查 schema 里声明的字段，
-// 未声明的字段不报错（容忍多余字段）。
-export func validate(Dict[string, any] data, Schema schema): Array[string] {
-    Array[string] errs = []
+// 校验整个 Dict，返回**结构化**错误列表（空 = 全部通过）。
+// 只检查 schema 里声明的字段，未声明的字段不报错（容忍多余字段）。
+export func validateDetailed(Dict[string, any] data, Schema schema): Array[FieldError] {
+    Array[FieldError] errs = []
     var keys = schema.fields.keys()
     for keys to field {
-        Rule r = schema.fields[field]
-        bool has = data.has(field)
-        var val = data.get(field, null)
-        _checkField(field, val, has, r, errs)
+        string f = _str(field)
+        Rule r = schema.fields[f]
+        bool has = data.has(f)
+        var val = data.get(f, null)
+        _chk("", f, val, has, r, errs)
     }
     return errs
+}
+
+// 校验整个 Dict，返回 "字段: 消息" 字符串列表（老接口，保持兼容）。
+// 需要按字段定位（表单标红）就用 validateDetailed。
+export func validate(Dict[string, any] data, Schema schema): Array[string] {
+    Array[string] out = []
+    var ds = validateDetailed(data, schema)
+    for 0 : ds.len() - 1 to i {
+        out.add(ds[i].field + ": " + ds[i].message)
+    }
+    return out
 }
 
 // 校验单值（不涉及必填）：给"只验一个字段"的调用点，返回错误列表（空 = 通过）
 export func checkValue(any val, Rule r): Array[string] {
-    Array[string] errs = []
-    _checkField("value", val, true, r, errs)
-    return errs
+    Array[FieldError] errs = []
+    _chk("", "value", val, true, r, errs)
+    Array[string] out = []
+    for 0 : errs.len() - 1 to i {
+        out.add(errs[i].field + ": " + errs[i].message)
+    }
+    return out
 }
 
 // 便捷：错误列表是否为空

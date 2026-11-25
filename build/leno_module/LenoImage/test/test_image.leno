@@ -160,5 +160,85 @@ main() {
     eqBool(img.decodePNG("not a png").isErr(), true, "坏输入返回失败")
     eqBool(img.decodePNG("").isErr(), true, "空输入返回失败")
 
-    print("test_image passed（6 组 / 构造·读写·缩放·几何·PNG 往返）")
+    // ==================== ⑦ 绘制 / 合成 ====================
+    // blit：整块覆盖，越界部分裁掉
+    Image canvas = img.newImage(4, 4)
+    Image dot = img.newImage(2, 2)
+    dot.fill(10, 20, 30, 255)
+    img.blit(canvas, dot, 3, 3)                 // 只落 1 个像素在 (3,3)
+    var c33 = canvas.get(3, 3)
+    eqInt(c33[0], 10, "blit 右下落点 R")
+    eqInt(c33[2], 30, "blit 右下落点 B")
+    eqInt(canvas.getA(0, 0), 0, "blit 未覆盖处仍是透明")
+    img.blit(canvas, dot, -1, -1)               // 左上越界：只落 (0,0)
+    eqInt(canvas.get(0, 0)[1], 20, "blit 左上越界落点 G")
+
+    // blitAlpha：半透明叠加（50% 白 over 黑 ⇒ 约 128）
+    Image base = img.newImage(1, 1)
+    base.fill(0, 0, 0, 255)
+    Image half = img.newImage(1, 1)
+    half.fill(255, 255, 255, 128)
+    img.blitAlpha(base, half, 0, 0)
+    int mixR = base.get(0, 0)[0]
+    eqBool(mixR >= 126 and mixR <= 130, true, "blitAlpha 半透明混色 ≈128（实际 " + _str(mixR) + "）")
+    eqInt(base.getA(0, 0), 255, "blitAlpha 结果 alpha = 255")
+    // sa=0 不改变目标
+    Image clear = img.newImage(1, 1)            // 全透明
+    img.blitAlpha(base, clear, 0, 0)
+    eqInt(base.get(0, 0)[0], mixR, "blitAlpha sa=0 不改目标")
+
+    // fillCircle：圆心在 (3,3) r=2 ⇒ (3,3) 实心、(0,0) 不受影响
+    Image circ = img.newImage(7, 7)
+    img.fillCircle(circ, 3, 3, 2, 200, 100, 50, 255)
+    eqInt(circ.get(3, 3)[0], 200, "fillCircle 圆心")
+    eqInt(circ.getA(0, 0), 0, "fillCircle 不碰远处")
+    eqInt(circ.get(3, 1)[0], 200, "fillCircle 上边缘在圆内")
+    eqInt(circ.getA(3, 0), 0, "fillCircle 圆外左侧(3,0)不在圆内")
+
+    // drawRect：只描边，内部不变
+    Image rct = img.newImage(5, 5)
+    img.drawRect(rct, 1, 1, 3, 3, 9, 9, 9, 255)
+    eqInt(rct.getA(1, 1), 255, "drawRect 左上角")
+    eqInt(rct.getA(3, 3), 255, "drawRect 右下角")
+    eqInt(rct.getA(2, 2), 0, "drawRect 内部不填")
+
+    // line：水平线 + 对角线
+    Image ln = img.newImage(5, 5)
+    img.line(ln, 0, 0, 4, 0, 1, 2, 3, 255)
+    eqInt(ln.getA(4, 0), 255, "line 水平到端点")
+    eqInt(ln.getA(0, 1), 0, "line 不溢出到下一行")
+    Image dg = img.newImage(5, 5)
+    img.line(dg, 0, 0, 4, 4, 7, 7, 7, 255)
+    eqInt(dg.getA(2, 2), 255, "line 对角线经过中点")
+
+    // toGray / invert
+    Image col = img.newImage(1, 1)
+    col.set(0, 0, 255, 0, 0, 200)               // 纯红，alpha=200
+    Image gray = img.toGray(col)
+    int gv = gray.get(0, 0)[0]
+    eqBool(gv >= 75 and gv <= 77, true, "toGray 亮度 ≈76（0.299*255，实际 " + _str(gv) + "）")
+    eqInt(gray.get(0, 0)[1], gv, "toGray 三通道相等")
+    eqInt(gray.getA(0, 0), 200, "toGray 保留 alpha")
+    Image inv = img.invert(col)
+    eqInt(inv.get(0, 0)[0], 0, "invert R")
+    eqInt(inv.get(0, 0)[1], 255, "invert G")
+    eqInt(inv.getA(0, 0), 200, "invert 保留 alpha")
+    eqInt(col.get(0, 0)[0], 255, "toGray/invert 不改入参")
+
+    // clone：改副本不影响原图
+    Image cp = img.clone(col)
+    cp.set(0, 0, 0, 0, 0, 0)
+    eqInt(col.get(0, 0)[0], 255, "clone 后改副本不影响原图")
+
+    // scaleToFit：200x100 装进 50x50 ⇒ 50x25；小图不放大
+    Image big = img.newImage(200, 100)
+    Image fit = img.scaleToFit(big, 50, 50, false)
+    eqInt(fit.w, 50, "scaleToFit 宽")
+    eqInt(fit.h, 25, "scaleToFit 高")
+    Image tiny = img.newImage(10, 10)
+    Image same = img.scaleToFit(tiny, 64, 64, false)
+    eqInt(same.w, 10, "scaleToFit 不放大（宽）")
+    eqInt(same.h, 10, "scaleToFit 不放大（高）")
+
+    print("test_image passed（7 组 / 构造·读写·缩放·几何·PNG 往返·绘制）")
 }

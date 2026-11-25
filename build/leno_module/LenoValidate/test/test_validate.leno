@@ -144,5 +144,72 @@ main() {
     d9["extra"] = "随便"
     eqInt(v.validate(d9, s9).len(), 0, "多余字段容忍")
 
-    print("test_validate passed（9 组 / 必填·类型·范围·长度·枚举·正则·自定义）")
+    // ==================== ⑩ 结构化错误（validateDetailed）====================
+    Schema s10 = new Schema()
+    s10.fields["name"] = new Rule(required = true)
+    s10.fields["age"] = new Rule(typ = "int", minNum = 0.0)
+    Dict[string, any] bad = {}
+    bad["age"] = 3.5
+    var errs10 = v.validateDetailed(bad, s10)
+    eqInt(errs10.len(), 2, "⑩ 两个字段各一条错误")
+    eqBool(errs10[0].field == "name" and errs10[0].kind == "required", true, "⑩ 字段/类别：name/required")
+    eqBool(errs10[1].field == "age" and errs10[1].kind == "type", true, "⑩ 字段/类别：age/type")
+    // 老接口仍能拿到同样信息（兼容）
+    eqInt(v.validate(bad, s10).len(), 2, "⑩ 字符串版数量一致")
+
+    // ==================== ⑪ notEmpty（空串/空数组/空 Dict）====================
+    Schema s11 = new Schema()
+    s11.fields["title"] = new Rule(required = true, notEmpty = true)
+    Dict[string, any] d11 = {title: ""}
+    eqInt(v.validate(d11, s11).len(), 1, "⑪ 空串被 notEmpty 拒绝")
+    d11["title"] = "x"
+    eqInt(v.validate(d11, s11).len(), 0, "⑪ 非空串通过")
+    // 不写 notEmpty 时，required 仍放行空串（老语义，别改）
+    Schema s11b = new Schema()
+    s11b.fields["title"] = new Rule(required = true)
+    Dict[string, any] d11b = {title: ""}
+    eqInt(v.validate(d11b, s11b).len(), 0, "⑪ required 本身不拒空串（保持兼容）")
+
+    // ==================== ⑫ 范围对非数值不再静默 ====================
+    Schema s12 = new Schema()
+    s12.fields["n"] = new Rule(minNum = 1.0)
+    Dict[string, any] d12 = {n: "abc"}
+    var e12 = v.validateDetailed(d12, s12)
+    eqInt(e12.len(), 1, "⑫ 非数值 + 范围规则 ⇒ 报错")
+    eqBool(e12[0].kind == "range", true, "⑫ 类别是 range")
+
+    // ==================== ⑬ 嵌套对象（Rule.sub）====================
+    Schema addr = new Schema()
+    addr.fields["city"] = new Rule(required = true, minLen = 2)
+    addr.fields["zip"] = new Rule(pattern = "^\\d{6}$")
+    Schema s13 = new Schema()
+    s13.fields["name"] = new Rule(required = true)
+    s13.fields["addr"] = new Rule(sub = addr)
+    Dict[string, any] d13 = {name: "x"}
+    Dict[string, any] a13 = {}
+    a13["zip"] = "12"
+    d13["addr"] = a13
+    var e13 = v.validateDetailed(d13, s13)
+    eqInt(e13.len(), 2, "⑬ 嵌套两个错误")
+    eqBool(e13[0].field == "addr.city" and e13[0].kind == "required", true, "⑬ 嵌套字段路径 addr.city")
+    eqBool(e13[1].field == "addr.zip" and e13[1].kind == "pattern", true, "⑬ 嵌套字段路径 addr.zip")
+    // 嵌套全对时 0 条
+    a13["city"] = "北京"
+    a13["zip"] = "100000"
+    eqInt(v.validate(d13, s13).len(), 0, "⑬ 嵌套补齐后通过")
+
+    // ==================== ⑭ 数组元素（Rule.item）====================
+    Schema s14 = new Schema()
+    s14.fields["tags"] = new Rule(typ = "array", maxLen = 3,
+                                  item = new Rule(required = true, notEmpty = true, maxLen = 5))
+    Dict[string, any] d14 = {}
+    d14["tags"] = ["ok", "", "工具ongg"]
+    var e14 = v.validateDetailed(d14, s14)
+    eqInt(e14.len(), 2, "⑭ 两个不合规元素")
+    eqBool(e14[0].field == "tags[1]" and e14[0].kind == "empty", true, "⑭ 元素路径 tags[1]")
+    eqBool(e14[1].field == "tags[2]" and e14[1].kind == "len", true, "⑭ 元素路径 tags[2]")
+    d14["tags"] = ["a", "b"]
+    eqInt(v.validate(d14, s14).len(), 0, "⑭ 数组合规通过")
+
+    print("test_validate passed（14 组 / 必填·类型·范围·长度·枚举·正则·自定义·结构化·嵌套·数组）")
 }

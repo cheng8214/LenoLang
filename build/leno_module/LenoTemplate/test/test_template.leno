@@ -96,5 +96,53 @@ main() {
     eqStr(toks[2].kind, "text", "token[2] 是 text")
     eqStr(toks[3].kind, "raw", "token[3] 是 raw")
 
-    print("test_template passed（9 组 / 变量·转义·点路径·区块·嵌套）")
+    // ==================== ⑩ 结构检查 / 严格渲染 ====================
+    // 未闭合
+    var e1 = tpl.check("{{#list}} x")
+    eqStr(_str(e1.len()), "1", "check 抓到未闭合区块")
+    // 闭合名字不匹配
+    var e2 = tpl.check("{{#a}}x{{/b}}")
+    eqStr(_str(e2.len()), "1", "check 抓到名字不匹配")
+    // 多出来的闭合
+    var e3 = tpl.check("x{{/a}}")
+    eqStr(_str(e3.len()), "1", "check 抓到多余闭合")
+    // `{{>}}` 缺名字
+    var e4 = tpl.check("x{{>}}y")
+    eqStr(_str(e4.len()), "1", "check 抓到空片段名")
+    // 正常嵌套（同名不同层）不算错
+    var e5 = tpl.check("{{#a}}{{#b}}{{/b}}{{/a}}")
+    eqStr(_str(e5.len()), "0", "check 正常嵌套无错")
+
+    // renderStrict：结构错直接抛
+    var threw = 0
+    try { tpl.renderStrict("{{#list}}x", d) } catch e { threw = 1 }
+    eqStr(_str(threw), "1", "renderStrict 对未闭合抛错")
+    // 结构对时等同 render
+    Dict[string, any] dd = {who: "Leno"}
+    eqStr(tpl.renderStrict("hi {{who}}", dd), "hi Leno", "renderStrict 正常渲染")
+
+    // ★ 名字匹配修复：错位写法不再"强行配对"（旧实现会渲染出 b-a 顺序的错文本）
+    Dict[string, any] nest = {a: true, b: [{v: "1"}, {v: "2"}]}
+    eqStr(tpl.render("{{#a}}A{{#b}}{{v}}{{/b}}Z{{/a}}", nest), "A12Z", "嵌套区块顺序正确")
+
+    // ==================== ⑪ 片段 {{> name }} ====================
+    Dict[string, string] parts = {}
+    parts["head"] = "<h1>{{title}}</h1>"
+    parts["row"] = "<li>{{.}}</li>"
+    Dict[string, any] pd = {title: "标题", items: ["a", "b"]}
+    eqStr(tpl.renderWithPartials("{{> head }}{{#items}}{{> row }}{{/items}}", pd, parts),
+          "<h1>标题</h1><li>a</li><li>b</li>", "片段渲染")
+    // 缺失片段 = 空串（不报错、不中断）
+    eqStr(tpl.renderWithPartials("x{{> nope }}y", pd, parts), "xy", "缺失片段渲染为空")
+    // 片段递归有上限（a 引 a 不死循环）
+    Dict[string, string] loop = {}
+    loop["a"] = "{{> a }}"
+    string loopOut = tpl.renderWithPartials("{{> a }}", pd, loop)
+    eqStr(_str(loopOut.len()), "0", "自引用片段不会死循环（深度上限）")
+
+    // ==================== ⑫ 转义补全（` 和 =） ====================
+    Dict[string, any] esc = {v: "a`b=c"}
+    eqStr(tpl.render("{{v}}", esc), "a&#96;b&#61;c", "转义包含反引号与等号")
+
+    print("test_template passed（12 组 / 变量·转义·点路径·区块·嵌套·检查·片段）")
 }

@@ -31,6 +31,7 @@
 import "image_core.leno" as core
 import "image_scale.leno" as scale
 import "image_geom.leno" as geom
+import "image_draw.leno" as draw
 import "image_png.leno" as png
 import "Result" as res
 use core.Image
@@ -40,6 +41,9 @@ use res.Result
 
 export func newImage(int w, int h): Image { return core.newImage(w, h) }
 export func fromPixels(int w, int h, Array[int] px): Image { return core.fromPixels(w, h, px) }
+
+// 深拷贝（想"在原图上画、又不想毁掉原图"时先克隆）
+export func clone(Image src): Image { return core.clone(src) }
 
 // ==================== 缩放 ====================
 
@@ -56,6 +60,29 @@ export func resizeAuto(Image src, int dw, int dh, bool pxArt): Image {
 export func scaleToLongEdge(Image src, int longEdge, bool pxArt): Image {
     return scale.scaleToLongEdge(src, longEdge, pxArt)
 }
+// 等比装进 maxW × maxH 的框（只缩不放）
+export func scaleToFit(Image src, int maxW, int maxH, bool pxArt): Image {
+    return scale.scaleToFit(src, maxW, maxH, pxArt)
+}
+
+// ==================== 绘制 / 合成（原地改 dst） ====================
+
+export func blit(Image dst, Image src, int x, int y) { draw.blit(dst, src, x, y) }
+export func blitAlpha(Image dst, Image src, int x, int y) { draw.blitAlpha(dst, src, x, y) }
+export func fillCircle(Image img, int cx, int cy, int r, int cr, int cg, int cb, int ca) {
+    draw.fillCircle(img, cx, cy, r, cr, cg, cb, ca)
+}
+export func drawRect(Image img, int x0, int y0, int x1, int y1, int cr, int cg, int cb, int ca) {
+    draw.drawRect(img, x0, y0, x1, y1, cr, cg, cb, ca)
+}
+export func line(Image img, int x0, int y0, int x1, int y1, int cr, int cg, int cb, int ca) {
+    draw.line(img, x0, y0, x1, y1, cr, cg, cb, ca)
+}
+
+// ==================== 颜色变换（返回新图） ====================
+
+export func toGray(Image src): Image { return draw.toGray(src) }
+export func invert(Image src): Image { return draw.invert(src) }
 
 // ==================== 几何 ====================
 

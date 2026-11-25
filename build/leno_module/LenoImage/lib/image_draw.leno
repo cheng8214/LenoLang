@@ -1,0 +1,201 @@
+// image_draw.leno —— 绘制 / 合成（**原地**改 dst）+ 颜色变换（返回新图）
+//
+// 为什么单独一份：core/geom/scale 都是"输入一张图 → 输出一张图"，而
+//   拼图（把缩略图贴到画布）、水印、画标注框、生成占位图这类需求是**往已有图上画**。
+//   以前只能在调用方手写 `for` 双层循环 + `set()`（每像素一次方法调用），这里给现成的。
+//
+// 口径（与 core 一致）：像素内存序 B,G,R,A；对外参数一律 R,G,B,A 逻辑序。
+//   · 画图函数都**原地改** dst、返回 void（拼图是"往同一张画布上叠"的语义）；
+//   · 颜色变换（toGray/invert）返回**新图**、不改入参（与 geom/scale 一致）。
+//
+// 越界策略（**故意分两种**，都写进注释，别猜）：
+//   · blit / blitAlpha：越界部分**自动裁掉**（贴图在边缘被切一半是正常需求）；
+//   · fillCircle / drawRect / line：坐标**钳到图内**（画到边外的部分直接不画）；
+//     半径/端点为负也不抛错 —— 它们只是"画不出东西"。
+
+import "image_core.leno" as core
+use core.Image
+
+func _clampI(int v, int lo, int hi): int {
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+
+// ==================== 贴图 ====================
+
+// 把 src 盖到 dst 的 (x, y)：**连 alpha 一起覆盖**（不做混合）。
+// 想按半透明叠加用 blitAlpha。
+export func blit(Image dst, Image src, int x, int y) {
+    for 0 : src.h - 1 to sy {
+        int dy = y + sy
+        if dy < 0 or dy >= dst.h { continue }
+        int soff = sy * src.w * 4
+        int doff = (dy * dst.w + x) * 4
+        for 0 : src.w - 1 to sx {
+            int dx = x + sx
+            if dx < 0 or dx >= dst.w { continue }
+            int s = soff + sx * 4
+            int d = doff + sx * 4
+            dst.px[d] = src.px[s]
+            dst.px[d + 1] = src.px[s + 1]
+            dst.px[d + 2] = src.px[s + 2]
+            dst.px[d + 3] = src.px[s + 3]
+        }
+    }
+}
+
+// source-over 混合（直通 alpha，非预乘）：
+//   outA = sa + da*(1-a)；outC = (sC*sa + dC*da*(1-a)) / outA
+// sa=0 跳过、sa=255 直接覆盖（省掉除法，常见情况快路径）。
+export func blitAlpha(Image dst, Image src, int x, int y) {
+    for 0 : src.h - 1 to sy {
+        int dy = y + sy
+        if dy < 0 or dy >= dst.h { continue }
+        int soff = sy * src.w * 4
+        int doff = (dy * dst.w + x) * 4
+        for 0 : src.w - 1 to sx {
+            int dx = x + sx
+            if dx < 0 or dx >= dst.w { continue }
+            int s = soff + sx * 4
+            int d = doff + sx * 4
+            int sa = src.px[s + 3]
+            if sa == 0 { continue }
+            if sa == 255 {
+                dst.px[d] = src.px[s]
+                dst.px[d + 1] = src.px[s + 1]
+                dst.px[d + 2] = src.px[s + 2]
+                dst.px[d + 3] = 255
+                continue
+            }
+            int da = dst.px[d + 3]
+            float a = _float(sa) / 255.0
+            float ia = 1.0 - a
+            float daF = _float(da) / 255.0
+            float outA = a + daF * ia
+            if outA <= 0.0 {
+                dst.px[d] = 0; dst.px[d + 1] = 0; dst.px[d + 2] = 0; dst.px[d + 3] = 0
+                continue
+            }
+            // 分量按 B,G,R 顺序算（内存序）
+            int sb = src.px[s]; int sg = src.px[s + 1]; int sr = src.px[s + 2]
+            int db = dst.px[d]; int dg = dst.px[d + 1]; int dr = dst.px[d + 2]
+            dst.px[d]     = _int((_float(sb) * a + _float(db) * daF * ia) / outA + 0.5)
+            dst.px[d + 1] = _int((_float(sg) * a + _float(dg) * daF * ia) / outA + 0.5)
+            dst.px[d + 2] = _int((_float(sr) * a + _float(dr) * daF * ia) / outA + 0.5)
+            dst.px[d + 3] = _int(outA * 255.0 + 0.5)
+        }
+    }
+}
+
+// ==================== 基本图元（原地画） ====================
+
+// 实心圆（闭区间：含边界）；圆心/半径越界不会抛错，只画落在图内的部分
+export func fillCircle(Image img, int cx, int cy, int r, int cr, int cg, int cb, int ca) {
+    if r < 0 { return }
+    int y0 = _clampI(cy - r, 0, img.h - 1)
+    int y1 = _clampI(cy + r, 0, img.h - 1)
+    int rr = r * r
+    for y0 : y1 to y {
+        int dy = y - cy
+        int dy2 = dy * dy
+        // x 方向半径：sqrt(rr - dy2)，避免逐像素开方 ⇒ 先算半宽
+        int rem = rr - dy2
+        if rem < 0 { continue }
+        int dx = 0
+        while (dx + 1) * (dx + 1) <= rem { dx = dx + 1 }
+        int x0 = _clampI(cx - dx, 0, img.w - 1)
+        int x1 = _clampI(cx + dx, 0, img.w - 1)
+        int off = (y * img.w + x0) * 4
+        for x0 : x1 to _ {
+            img.px[off] = cb
+            img.px[off + 1] = cg
+            img.px[off + 2] = cr
+            img.px[off + 3] = ca
+            off = off + 4
+        }
+    }
+}
+
+// 矩形**描边**（闭区间；填充请用 Image.fillRect）
+export func drawRect(Image img, int x0, int y0, int x1, int y1, int cr, int cg, int cb, int ca) {
+    int ax0 = _clampI(x0, 0, img.w - 1)
+    int ax1 = _clampI(x1, 0, img.w - 1)
+    int ay0 = _clampI(y0, 0, img.h - 1)
+    int ay1 = _clampI(y1, 0, img.h - 1)
+    if ax0 > ax1 or ay0 > ay1 { return }
+    for ax0 : ax1 to x { _put(img, x, ay0, cr, cg, cb, ca) }
+    for ax0 : ax1 to x { _put(img, x, ay1, cr, cg, cb, ca) }
+    for ay0 : ay1 to y { _put(img, ax0, y, cr, cg, cb, ca) }
+    for ay0 : ay1 to y { _put(img, ax1, y, cr, cg, cb, ca) }
+}
+
+// 直线（Bresenham，八个方向都对；端点越界不抛错）
+export func line(Image img, int x0, int y0, int x1, int y1, int cr, int cg, int cb, int ca) {
+    int dx = x1 - x0
+    int dy = y1 - y0
+    int ax = dx
+    if ax < 0 { ax = -ax }
+    int ay = dy
+    if ay < 0 { ay = -ay }
+    int sx = 1
+    if dx < 0 { sx = -1 }
+    int sy = 1
+    if dy < 0 { sy = -1 }
+    int err = ax - ay
+    int x = x0
+    int y = y0
+    while true {
+        _put(img, x, y, cr, cg, cb, ca)
+        if x == x1 and y == y1 { break }
+        int e2 = err * 2
+        if e2 > -ay { err = err - ay; x = x + sx }
+        if e2 < ax { err = err + ax; y = y + sy }
+    }
+}
+
+// 单点写：越界**静默跳过**（图元内部用；外部要严格就用 Image.set）
+func _put(Image img, int x, int y, int cr, int cg, int cb, int ca) {
+    if x < 0 or x >= img.w or y < 0 or y >= img.h { return }
+    int o = (y * img.w + x) * 4
+    img.px[o] = cb
+    img.px[o + 1] = cg
+    img.px[o + 2] = cr
+    img.px[o + 3] = ca
+}
+
+// ==================== 颜色变换（返回新图） ====================
+
+// 灰度：亮度 = 0.299R + 0.587G + 0.114B（BT.601），**保留 alpha**
+export func toGray(Image src): Image {
+    Image dst = core.newImage(src.w, src.h)
+    int n = src.px.len()
+    int o = 0
+    while o < n {
+        float y = 0.299 * _float(src.px[o + 2]) + 0.587 * _float(src.px[o + 1]) + 0.114 * _float(src.px[o])
+        int g = _int(y + 0.5)
+        if g > 255 { g = 255 }
+        if g < 0 { g = 0 }
+        dst.px[o] = g
+        dst.px[o + 1] = g
+        dst.px[o + 2] = g
+        dst.px[o + 3] = src.px[o + 3]
+        o = o + 4
+    }
+    return dst
+}
+
+// 反色（保留 alpha）
+export func invert(Image src): Image {
+    Image dst = core.newImage(src.w, src.h)
+    int n = src.px.len()
+    int o = 0
+    while o < n {
+        dst.px[o] = 255 - src.px[o]
+        dst.px[o + 1] = 255 - src.px[o + 1]
+        dst.px[o + 2] = 255 - src.px[o + 2]
+        dst.px[o + 3] = src.px[o + 3]
+        o = o + 4
+    }
+    return dst
+}

@@ -1,6 +1,6 @@
 [package]
 name = "LenoTemplate"
-version = "0.1.0"
+version = "0.2.0"
 description = "Mustache 风格文本模板引擎（变量/循环/条件，纯 Leno）"
 authors = ""
 license = "Apache-2.0"

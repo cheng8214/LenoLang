@@ -115,3 +115,13 @@ func _clampI(int v, int lo, int hi): int {
     if v > hi { return hi }
     return v
 }
+
+// 深拷贝（像素缓冲是独立的 Array[int]，`copy()` 即可）。
+// 用途：`scaleToFit` 不放大时要返回副本（不能让调用方拿到同一份缓冲 —— 它可能原地画）。
+export func clone(Image src): Image {
+    Image img = new Image()
+    img.w = src.w
+    img.h = src.h
+    img.px = src.px.copy()
+    return img
+}

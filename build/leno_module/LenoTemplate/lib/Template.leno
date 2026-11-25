@@ -60,6 +60,10 @@ func _addTag(Array[Token] toks, string content) {
     } else if first == "/" {
         t.kind = "close"
         t.name = strings.trim(content.slice(1, content.len() - 1))
+    } else if first == ">" {
+        // {{> name }} 引入片段（由 renderWithPartials 的 partials 表提供）
+        t.kind = "partial"
+        t.name = strings.trim(content.slice(1, content.len() - 1))
     } else if first == "&" {
         t.kind = "raw"
         t.name = strings.trim(content.slice(1, content.len() - 1))
@@ -146,20 +150,28 @@ func _strVal(any v): string {
     return _str(v)
 }
 
-// HTML 转义（顺序：先 &，避免二次转义）
+// HTML 转义（顺序：先 &，避免二次转义）。
+// ★ 2026-11-25：补上 ` 和 =（OWASP 建议的六个字符：& < > " ' ` =）——
+//   只转前五个时，`{{x}}` 落在属性名的边界上仍可能被拼出奇怪的东西。
 func _escape(string s): string {
     string out = strings.replace(s, "&", "&amp;")
     out = strings.replace(out, "<", "&lt;")
     out = strings.replace(out, ">", "&gt;")
     out = strings.replace(out, "\"", "&quot;")
     out = strings.replace(out, "'", "&#39;")
+    out = strings.replace(out, "`", "&#96;")
+    out = strings.replace(out, "=", "&#61;")
     return out
 }
 
 // ==================== 渲染 ====================
 
-// 找与 openIdx 配对的 close（跳过嵌套），没找到返回末尾
+// 找与 openIdx 配对的 close：**名字必须相同**，嵌套按深度跳（返回 -1 = 没找到）。
+// ★ 2026-11-25：原来只数深度、不比名字 ⇒ `{{#a}}{{#b}}{{/a}}{{/b}}` 这种写错也会
+//   被"强行配对"，渲染出静默错位的文本。现在名字对不上就返回 -1（渲染时按未闭合处理，
+//   由 check()/renderStrict() 报明确错误）。
 func _findClose(Array[Token] toks, int openIdx): int {
+    string want = toks[openIdx].name
     int depth = 1
     int i = openIdx + 1
     while i < toks.len() {
@@ -167,14 +179,18 @@ func _findClose(Array[Token] toks, int openIdx): int {
         if k == "open" or k == "inverted" { depth = depth + 1 }
         else if k == "close" {
             depth = depth - 1
-            if depth == 0 { return i }
+            if depth == 0 {
+                if toks[i].name == want { return i }
+                return -1
+            }
         }
         i = i + 1
     }
-    return toks.len() - 1
+    return -1
 }
 
-func _renderTokens(Array[Token] toks, int start, int end, Dict ctx, Array[string] out) {
+func _renderTokens(Array[Token] toks, int start, int end, Dict ctx, Array[string] out,
+                   Dict partials, int depth) {
     int i = start
     while i <= end {
         string k = toks[i].kind
@@ -184,14 +200,27 @@ func _renderTokens(Array[Token] toks, int start, int end, Dict ctx, Array[string
             out.add(_escape(_strVal(_lookup(ctx, toks[i].name))))
         } else if k == "raw" {
             out.add(_strVal(_lookup(ctx, toks[i].name)))
+        } else if k == "partial" {
+            // 片段：用**当前上下文**渲染 partials[name]（与 Mustache 一致）。
+            //   depth 上限 64 防循环引用（a 引 b、b 引 a）；缺失的片段静默为空
+            //   （渲染期拿不到表就报错会很吵，check() 已经在编译期管结构）。
+            if depth < 64 and partials.len() > 0 and partials.has(toks[i].name) {
+                var pv = partials[toks[i].name]
+                if pv is string {
+                    Array[Token] sub = tokenize(pv as string)
+                    _renderTokens(sub, 0, sub.len() - 1, ctx, out, partials, depth + 1)
+                }
+            }
         } else if k == "open" or k == "inverted" {
             int closeIdx = _findClose(toks, i)
+            // 没配到（未闭合 / 名字不匹配）：宽松渲染到末尾，结构问题由 check() 报
+            if closeIdx < 0 { closeIdx = toks.len() - 1 }
             var v = _lookup(ctx, toks[i].name)
             bool tv = _truthy(v)
             if k == "open" and tv {
-                _renderSection(toks, i + 1, closeIdx - 1, ctx, v, out)
+                _renderSection(toks, i + 1, closeIdx - 1, ctx, v, out, partials, depth)
             } else if k == "inverted" and not tv {
-                _renderTokens(toks, i + 1, closeIdx - 1, ctx, out)
+                _renderTokens(toks, i + 1, closeIdx - 1, ctx, out, partials, depth)
             }
             i = closeIdx + 1
             continue
@@ -201,34 +230,83 @@ func _renderTokens(Array[Token] toks, int start, int end, Dict ctx, Array[string
     }
 }
 
-func _renderSection(Array[Token] toks, int start, int end, Dict ctx, any v, Array[string] out) {
+func _renderSection(Array[Token] toks, int start, int end, Dict ctx, any v, Array[string] out,
+                    Dict partials, int depth) {
     if v is Array {
         Array arr = v as Array
         for arr to item {
             if item is Dict {
-                _renderTokens(toks, start, end, item as Dict, out)
+                _renderTokens(toks, start, end, item as Dict, out, partials, depth)
             } else {
                 // 标量元素：塞进 {".": item}，让 {{.}} 取得到
                 Dict[string, any] c = {}
                 c["."] = item
-                _renderTokens(toks, start, end, c, out)
+                _renderTokens(toks, start, end, c, out, partials, depth)
             }
         }
     } else if v is Dict {
-        _renderTokens(toks, start, end, v as Dict, out)
+        _renderTokens(toks, start, end, v as Dict, out, partials, depth)
     } else {
         // truthy 标量：用原上下文渲染一次
-        _renderTokens(toks, start, end, ctx, out)
+        _renderTokens(toks, start, end, ctx, out, partials, depth)
     }
+}
+
+// ==================== 结构检查（编译期用法） ====================
+
+// 检查模板结构，返回错误列表（空 = 可渲染）。**不渲染、不需要数据**。
+// 能抓：未闭合区块、闭合标签没有对应开启、闭合名字与最近开启不匹配、`{{>}}` 缺名字。
+// 为什么要有：`render` 是宽松的（老代码可能依赖"少写一个 {{/x}} 也能跑"），
+//   但代码生成 / 配置模板这类场景更需要**尽早炸**，用 renderStrict 或先 check。
+export func check(string tpl): Array[string] {
+    Array[Token] toks = tokenize(tpl)
+    Array[string] errs = []
+    Array[string] stack = []
+    for 0 : toks.len() - 1 to i {
+        string k = toks[i].kind
+        if k == "open" or k == "inverted" {
+            stack.add(toks[i].name)
+        } else if k == "close" {
+            if stack.len() == 0 {
+                errs.add("标签 " + _str(i + 1) + "：闭合 {{/" + toks[i].name + "}} 没有对应的开启标签")
+            } else {
+                string top = stack[stack.len() - 1]
+                if top != toks[i].name {
+                    errs.add("标签 " + _str(i + 1) + "：{{/" + toks[i].name
+                             + "}} 与最近开启的 {{#" + top + "}} 名字不匹配")
+                }
+                stack.pop()          // 容错：仍弹出，继续找后面的错误
+            }
+        } else if k == "partial" {
+            if toks[i].name == "" { errs.add("标签 " + _str(i + 1) + "：{{>}} 缺少片段名") }
+        }
+    }
+    for 0 : stack.len() - 1 to i {
+        errs.add("区块 {{#" + stack[i] + "}} 未闭合")
+    }
+    return errs
 }
 
 // ==================== 公开 API ====================
 
 export func render(string tpl, Dict[string, any] data): string {
+    return renderWithPartials(tpl, data, {})
+}
+
+// 带片段的渲染：`{{> head }}` 从 partials 里取（缺失 = 空串，递归深度上限 64）
+export func renderWithPartials(string tpl, Dict[string, any] data,
+                               Dict[string, string] partials): string {
     Array[Token] toks = tokenize(tpl)
     Array[string] out = []
-    _renderTokens(toks, 0, toks.len() - 1, data, out)
+    _renderTokens(toks, 0, toks.len() - 1, data, out, partials, 0)
     return out.join("")
+}
+
+// 严格渲染：结构有问题直接抛错（把 check() 的第一条错误带出来）
+export func renderStrict(string tpl, Dict[string, any] data): string {
+    Array[string] errs = check(tpl)
+    if errs.len() > 0 { throw "Template.renderStrict: " + errs[0] }
+    return render(tpl, data)
 }
 
 export func escape(string s): string { return _escape(s) }

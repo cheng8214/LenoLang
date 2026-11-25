@@ -211,3 +211,21 @@ export func scaleToLongEdge(Image src, int longEdge, bool pxArt): Image {
     if dh < 1 { dh = 1 }
     return resizeAuto(src, dw, dh, pxArt)
 }
+
+// 等比缩到"装进 maxW × maxH 的框"（**只缩不放**：比框小的图原样返回副本）。
+// 缩略图/头像/预览图的常规需求 —— 以前得自己算 min(maxW/w, maxH/h) 再调 resizeAuto。
+export func scaleToFit(Image src, int maxW, int maxH, bool pxArt): Image {
+    if maxW < 1 or maxH < 1 {
+        throw "Image.scaleToFit: 框必须 >= 1x1（收到 " + _str(maxW) + "x" + _str(maxH) + "）"
+    }
+    float sw = _float(maxW) / _float(src.w)
+    float sh = _float(maxH) / _float(src.h)
+    float s = sw
+    if sh < s { s = sh }
+    if s >= 1.0 { return core.clone(src) }
+    int dw = _int(_float(src.w) * s + 0.5)
+    int dh = _int(_float(src.h) * s + 0.5)
+    if dw < 1 { dw = 1 }
+    if dh < 1 { dh = 1 }
+    return resizeAuto(src, dw, dh, pxArt)
+}
