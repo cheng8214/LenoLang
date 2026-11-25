@@ -379,11 +379,25 @@ int semantic_rewrite_for_iterable(Semantic* s, Ast* for_ast) {
     free(sname);
     if (!def) return 0;
 
+    // ★ 2026-11-25（P1.1）：**优先 `raw()`** —— 它按约定返回"容器内部那个数组本身"
+    //   （不复制），于是 `for st to v` 既零分配、又走既有数组迭代的满速路径。
+    //   这就是 `bench_containers` 里 55 ns/op（快照）vs 106 ns/op（游标）那组数据的解法：
+    //   不是把 `for` 改成走协议（每元素两次方法调用），而是让它拿到真数组。
+    //   ⚠ 只有"元素本来就连续"的容器才该提供 raw()（Stack / PriorityQueue / LRU 的 order）；
+    //     Queue 有 head 偏移、Deque 分两段、ClockLRU 有死槽 ⇒ 它们**不提供**，自动回落 to_array()。
     const char* pick = NULL;
     for (int i = 0; i < def->method_count; i++) {
-        if (def->methods[i].name && strcmp(def->methods[i].name, "to_array") == 0) {
-            pick = "to_array";
+        if (def->methods[i].name && strcmp(def->methods[i].name, "raw") == 0) {
+            pick = "raw";
             break;
+        }
+    }
+    if (!pick) {
+        for (int i = 0; i < def->method_count; i++) {
+            if (def->methods[i].name && strcmp(def->methods[i].name, "to_array") == 0) {
+                pick = "to_array";
+                break;
+            }
         }
     }
     if (!pick) {

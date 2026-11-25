@@ -83,13 +83,24 @@ for l to k { print(k) }         // 缓存遍历的是 **key**
 - 普通 struct（没有 `to_array` / `keys`）**行为不变**，仍是字段遍历；
 - 可空容器（`Queue? q`）不接管，保持原来的判空诊断（先判空再遍历）；
 - 底层实现：语义期把被遍历对象改写成 `c.to_array()` / `c.keys()` ⇒ **每次遍历会分配一个快照数组**。
-  不想分配就用下一节的 `iter()` 游标（**快照 vs 实时视图**的行为差异也在那一节）。
+  0.7.0 起：容器只要提供 `raw()`（返回内部数组，不复制），语义期就优先用它 ⇒ **`for` 本身就零分配**；
+  Queue/Deque 这类元素不连续的容器没有 `raw()`，仍走快照。细节与实测见下一节。
   热路径上想零分配，就自己 `peek` / `at` 按下标走。
 
-## 零分配遍历：`iter()` 游标（2026-11-25 新增）
+## 零分配遍历（2026-11-25，0.7.0 起 `for` 本身就零分配）
 
-`for c to v` 是**语义期改写成 `c.to_array()`** ⇒ 每轮遍历先复制一份快照。要避免这次复制，
-用游标：
+**默认写法就行**：`for c to v` 现在会优先找容器上的 `raw()`（返回**内部数组本身**、不复制），
+找不到才回落 `to_array()`。所以：
+
+```leno
+for st to v { }          // Stack：raw() 路径 ⇒ 零分配 + 数组满速（34 ns/op）
+for pq to v { }          // PriorityQueue：raw() 路径（堆序）
+for lru to k { }         // LRU：raw() 路径（最久 → 最近，同 keys()）
+for q to v { }           // Queue：没有 raw（有 head 偏移）⇒ 仍走 to_array() 快照
+for d to v { }           // Deque：同理（两段结构）
+```
+
+要**显式**控制走哪条路，用游标（每元素不复制，但两次方法调用）：
 
 ```leno
 var it = st.iter()                       // Stack / Queue / PriorityQueue / Deque 都有
@@ -99,33 +110,33 @@ while it.has_next() {
 var kit = lru.keys_iter()                 // 缓存：遍历 key（最久 → 最近）
 ```
 
-| 容器 | 方法 | 顺序 | 底层 |
+| 容器 | `for` 走哪条 | 零分配 | `iter()` / `keys_iter()` |
 |---|---|---|---|
-| `Stack` | `iter()` | 栈底 → 栈顶 | `items` 连续段 |
-| `Queue` | `iter()` | 队首 → 队尾 | `items` 从 `head` 起（自动跳过空洞） |
-| `Deque` | `iter()` | 队首 → 队尾 | 跨 `f`/`b` 两段（`DequeIter`） |
-| `PriorityQueue` | `iter()` | **堆序**（不是出队序） | `heap` |
-| `LRU` | `keys_iter()` | 最久 → 最近 | `order` |
+| `Stack` | `raw()` | ✅ | ✅ |
+| `PriorityQueue` | `raw()`（堆序） | ✅ | ✅ |
+| `LRU` | `raw()`（顺序 = `keys()`） | ✅ | ✅ |
+| `Queue` | `to_array()`（head 偏移） | ❌ | ✅ |
+| `Deque` | `to_array()`（f/b 两段） | ❌ | ✅ |
+| `ClockLRU` | `keys()`（有死槽） | ❌ | ❌（用 `keys()`） |
+| `LRUO1` | `keys()`（链表） | ❌ | ❌（用 `keys()`） |
 
-### 代价：省的是**分配**，不是时间（实测，N=1,000,000）
+### 实测（N=1,000,000，本机）
 
 | 写法 | 时间 | 每轮分配 |
 |---|---|---|
-| `for st to v`（快照） | **55 ns/op** | 8 MB |
-| `iter()` + `has_next()` | 106 ns/op | ~0 |
-| `iter()` + `while true { … break }` | 100 ns/op | ~0 |
-| `for st.items to v`（**Stack 专用**，直接走内部数组） | **~51 ns/op** | ~0 |
+| `for st to v`（0.7.0 起，走 `raw()`） | **34 ns/op** | **~0**（20 万项实测 1,271 B） |
+| `for st to v`（0.6.0 及以前，快照） | 55 ns/op | 8 MB |
+| `iter()` + `has_next()` | 106~121 ns/op | ~0 |
+| `for st.items to v`（手写内部数组） | ~51 ns/op | ~0 |
 
-读法：快照是"**一次复制 + 数组顺序扫**"，复制成本被整轮摊薄 ⇒ 单趟遍历它反而更快；
-但**每轮**都遍历（比如每帧刷 UI）就是每轮 8MB 垃圾，这时必须用游标。
-`Stack` 的 `items` 是公开字段，`for st.items to v` 是"零分配 + 全速"的最优解（代价：绕过
-`Stack` 的边界语义，且是实时视图）。
+读法：`raw()` 是把"内部数组"直接交给 `for`，所以**既省掉复制、又保留数组顺序扫的速度**；
+游标省的是复制但每元素两次方法调用，反而更慢（它是给"元素不连续"的容器用的兜底）。
 
-**实时 vs 快照**（这是行为差异，不只是性能差异）：
+**语义：`raw()` 是实时视图**（不是快照）。
 
-- `for c to v` 走**快照** ⇒ 循环体里 `pop`/`add` 不影响本轮；
-- `iter()` 走**实时视图** ⇒ 循环体里改容器会影响本轮（与"按下标走"一致）。
-  想两者兼得：热路径用 `iter()`，循环体别改容器。
+- `for c to v` 在 Stack/PriorityQueue/LRU 上 ⇒ 循环体里 `push`/`pop` 会**被看到**
+  （边遍历边改容器本来就该避免；0.6.0 及以前的快照只是把它掩盖了）；
+- `for q to v` / `for d to v`（无 `raw`）⇒ 仍是快照，行为与以前完全一样。
 
 ## API
 
@@ -378,6 +389,11 @@ build\leno.exe build\leno_module\LenoContainers\bench\bench_containers.leno
 ```
 
 ## 变更记录
+
+- **0.7.0**（2026-11-25）：**`for c to v` 本身零分配** —— 语义期优先挑 `raw()`（返回内部数组），
+  `Stack` / `PriorityQueue` / `LRU` 各加一个 `raw()`。实测 1M 项：**55 → 34 ns/op**、
+  分配 **8 MB → ~0**（20 万项 1,271 B）；Queue/Deque/ClockLRU/LRUO1 保持快照路径不变。
+  测试新增第 ⑯ 组（零分配断言、顺序与 `to_array()`/`keys()` 一致、无 `raw()` 的容器行为不变）。
 
 - **0.6.0**（2026-11-25）：新增**零分配遍历**——`Iter[T]` / `DequeIter[T]` 游标 +
   `Stack/Queue/Deque/PriorityQueue.iter()`、`LRU.keys_iter()`。实测遍历 20 万项：

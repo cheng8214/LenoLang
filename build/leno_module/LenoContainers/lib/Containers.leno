@@ -94,6 +94,11 @@ export struct Stack[T] {
 
     // 零分配遍历（栈底 → 栈顶）：`var it = st.iter(); while it.has_next() { it.next() }`
     func iter(): Iter[T] { return new Iter[T](items = items, pos = 0, stop = items.len()) }
+
+    // ★ 2026-11-25（P1.1）：**返回内部数组本身**（不复制）。语义期看到 `raw` 就把
+    //   `for st to v` 改写成 `for st.raw() to v` ⇒ 零分配 + 数组迭代的满速路径。
+    //   代价：这是**实时视图**（循环体里 push/pop 会被看到；边遍历边改容器本来就不该做）。
+    func raw(): Array[T] { return items }
     func clear() { items.clear() }
 
     // 快照（栈底 → 栈顶），**非破坏性**：返回值是副本，改它不影响栈
@@ -297,6 +302,9 @@ export struct PriorityQueue[T] {
 
     // 零分配遍历：**堆序**（只保证父优于子，不是出队顺序；要优先级顺序用 drain_sorted）
     func iter(): Iter[T] { return new Iter[T](items = heap, pos = 0, stop = heap.len()) }
+
+    // 内部堆数组本身（P1.1：让 `for pq to v` 零分配）
+    func raw(): Array[T] { return heap }
     func clear() {
         heap.clear()
         seqs.clear()
@@ -563,6 +571,9 @@ export struct LRU[V] {
 
     // 零分配遍历 key（最久 → 最近）：省掉 keys() 的那次复制
     func keys_iter(): Iter[string] { return new Iter[string](items = order, pos = 0, stop = order.len()) }
+
+    // 内部 order 数组本身（P1.1：让 `for lru to k` 零分配；顺序同 keys()）
+    func raw(): Array[string] { return order }
 
     // 调小容量会立刻淘汰到新上限（调大不会补数据），返回被淘汰的 key（最久 → 较新）
     func set_capacity(int n): Array[string] {
