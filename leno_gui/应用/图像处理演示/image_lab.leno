@@ -1,0 +1,206 @@
+// image_lab.leno —— LenoImage 可视化演示（SDL3 窗口）
+//
+// 为什么要有这个窗口：LenoImage 的断言只能证明"像素值对"，但"画出来什么效果"必须用眼睛看
+//   （缩放边缘是否发黑、描边是否断线、水印混色是否自然、灰度是不是脏）。
+//
+// 六格各演示一组能力：
+//   ① 绘制（渐变底 + 实心圆 + 矩形描边 + 一组直线）
+//   ② toGray（BT.601 亮度，保留 alpha）
+//   ③ invert
+//   ④ rotate90（先 scaleToFit 再转，验证宽高互换）
+//   ⑤ 真图：decodePNG → scaleToFit（用仓库里的截图）
+//   ⑥ 水印：clone + blitAlpha 半透明块 + 描边
+// 顶部两行文字是 PNG 编码的 A/B 结果（自适应滤波 vs None），这也是"看效果"的一部分：
+//   同一张图两种编码的字节数用眼睛对比。
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe leno_gui\应用\图像处理演示\image_lab.leno
+//   ESC / 关窗退出。
+import "SDL3" as SDL3
+import "Image" as img
+use img.Image
+use SDL3.Event
+use SDL3.Scancode
+use SDL3.WindowFlag
+use SDL3.(Renderer, PixelBuffer)
+
+const int WIN_W = 1120
+const int WIN_H = 640
+const float TILE_W = 300.0
+const float TILE_H = 220.0
+const float CELL_W = 340.0
+const float CELL_H = 268.0
+const float PAD = 24.0
+const float TOP = 56.0
+
+// Image（BGRA）→ PixelBuffer（RGBA）：等比装进 tw×th，居中放
+func toBuf(Image src, int tw, int th): PixelBuffer {
+    Image f = img.scaleToFit(src, tw, th, false)
+    var b = new PixelBuffer()
+    b.init(tw, th)
+    int ox = (tw - f.w) / 2
+    int oy = (th - f.h) / 2
+    for 0 : f.h - 1 to y {
+        int ro = y * f.w * 4
+        for 0 : f.w - 1 to x {
+            int o = ro + x * 4
+            b.setPixel(ox + x, oy + y, f.px[o + 2], f.px[o + 1], f.px[o], f.px[o + 3])
+        }
+    }
+    return b
+}
+
+func kb(int n): string {
+    if n < 1024 { return _str(n) + " B" }
+    return _str(n / 1024) + "." + _str((n % 1024) * 10 / 1024) + " KB"
+}
+
+main() {
+    // 无窗口模式：`image_lab.leno save` ⇒ 把六格拼成一张 3×2 的对比图写成 PNG 后退出。
+    //   用途：CI 回归、以及"不开窗口也能看效果"（本人就是用这个验的）。
+    var cli = _args()
+    bool saveOnly = (cli.len() > 0 and _str(cli[0]) == "save")
+
+    var win = SDL3.createWindow({title: "LenoImage 演示 — ESC 退出", w: WIN_W, h: WIN_H})
+    if not win.ok {
+        print("建窗失败\n")
+        return
+    }
+    SDL3.ttfInit()
+    var font = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 15.0)
+    if not font.ok { font = SDL3.createFont("C:/Windows/Fonts/consola.ttf", 15.0) }
+    var ren = SDL3.createRenderer(win.handle)
+    if not ren.ok {
+        print("建渲染器失败\n")
+        return
+    }
+    ren.setVSync(1)
+
+    // ==================== ① 造图：绘制 API ====================
+    Image art = img.newImage(300, 220)
+    for 0 : 219 to y {
+        for 0 : 299 to x {
+            art.set(x, y, x * 255 / 299, y * 255 / 219, 90, 255)
+        }
+    }
+    img.fillCircle(art, 88, 108, 62, 255, 214, 64, 255)
+    img.drawRect(art, 8, 8, 291, 211, 255, 255, 255, 200)
+    for 0 : 7 to k {
+        img.line(art, 170 + k * 14, 16, 285, 205 - k * 10, 255, 80, 80, 220)
+    }
+
+    // ==================== ②③ 颜色变换 ====================
+    Image gray = img.toGray(art)
+    Image inv = img.invert(art)
+
+    // ==================== ④ 几何：缩到 200 再转 90° ====================
+    Image rot = img.rotate90(img.scaleToFit(art, 200, 200, false))
+
+    // ==================== ⑤ 真图 ====================
+    Image photo = img.newImage(300, 220)
+    var d = img.decodePNGFile("assets/screenshots/dashboard-main.png")
+    if d.isOk() { photo = img.scaleToFit(d.val, 300, 220, false) }
+
+    // ==================== ⑥ 水印 ====================
+    Image mark = img.clone(art)
+    Image chip = img.newImage(140, 42)
+    chip.fill(0, 0, 0, 150)
+    img.blitAlpha(mark, chip, 10, 164)
+    img.drawRect(mark, 10, 164, 149, 205, 255, 255, 255, 210)
+
+    // ==================== PNG 编码 A/B（同一张图两种滤波）====================
+    var e1 = img.encodePNG(art)
+    var e2 = img.encodePNGNoFilter(art)
+    string pngLine = "PNG 编码 300×220："
+    if e1.isOk() and e2.isOk() {
+        int a1 = e1.val.len()
+        int a2 = e2.val.len()
+        pngLine = pngLine + "自适应 " + kb(a1) + " / None " + kb(a2)
+        if a2 > 0 { pngLine = pngLine + "（省 " + _str(100 - a1 * 100 / a2) + "%）" }
+    } else {
+        pngLine = pngLine + "编码失败"
+    }
+
+    // ==================== 转 PixelBuffer（只做一次）====================
+    Array[PixelBuffer] bufs = []
+    bufs.add(toBuf(art, 300, 220))
+    bufs.add(toBuf(gray, 300, 220))
+    bufs.add(toBuf(inv, 300, 220))
+    bufs.add(toBuf(rot, 300, 220))
+    bufs.add(toBuf(photo, 300, 220))
+    bufs.add(toBuf(mark, 300, 220))
+
+    Array[string] titles = [
+        "① 绘制：渐变+圆+描边+线",
+        "② toGray 灰度（保留 alpha）",
+        "③ invert 反色",
+        "④ rotate90（先 scaleToFit）",
+        "⑤ 真图 decode → scaleToFit",
+        "⑥ 水印 clone + blitAlpha"
+    ]
+
+    // 拼图（3×2）落盘：给 CI / 无窗口检查用
+    if saveOnly {
+        Array[Image] imgs = [art, gray, inv, rot, photo, mark]
+        Image sheet = img.newImage(3 * 310, 2 * 230)
+        sheet.fill(20, 22, 28, 255)
+        for 0 : 5 to i {
+            int cx = (i % 3) * 310 + 5
+            int cy = (i / 3) * 230 + 5
+            img.blit(sheet, imgs[i], cx, cy)
+            img.drawRect(sheet, cx, cy, cx + 299, cy + 219, 90, 96, 110, 255)
+        }
+        var wr = img.encodePNGFile(sheet, "leno_gui/应用/图像处理演示/preview.png")
+        print(pngLine + "\n")
+        if wr.isOk() { print("已写出 leno_gui/应用/图像处理演示/preview.png\n") }
+        else { print("写文件失败\n") }
+        ren.destroy()
+        win.destroy()
+        SDL3.ttfQuit()
+        return
+    }
+
+    // ==================== 主循环 ====================
+    var ev = SDL3.createEvent()
+    bool running = true
+    while running {
+        while ev.poll() {
+            if ev.isQuit() or ev.isWindowClose() { running = false }
+            if ev.isKeyDown() {
+                if ev.scancode() == Scancode.ESCAPE { running = false }
+            }
+        }
+
+        ren.setColor(#14161CFF)
+        ren.clear()
+
+        // 顶部两行文字：标题 + PNG A/B
+        ren.drawText(font, "LenoImage 可视化演示（纯 Leno 图像处理 → SDL3 显示）", PAD, 12.0, #E8ECF2FF)
+        ren.drawText(font, pngLine, PAD, 32.0, #8FD3A0FF)
+
+        for 0 : 5 to i {
+            int col = i % 3
+            int row = i / 3
+            float x = PAD + _float(col) * CELL_W
+            float y = TOP + _float(row) * CELL_H
+
+            // 卡片底 + 标题
+            ren.setColor(#1E2128FF)
+            ren.fillRect(x, y, TILE_W + 20.0, TILE_H + 44.0)
+            ren.setColor(#2E3340FF)
+            ren.fillRect(x, y, TILE_W + 20.0, 1.0)
+            ren.drawText(font, titles[i], x + 4.0, y + 6.0, #BFC7D5FF)
+
+            // 图（300×220）
+            ren.blitBuffer(bufs[i], x + 10.0, y + 30.0, TILE_W, TILE_H)
+        }
+
+        ren.present()
+        SDL3.delay(16)
+    }
+
+    ren.destroy()
+    win.destroy()
+    SDL3.ttfQuit()
+    print("image_lab 退出\n")
+}

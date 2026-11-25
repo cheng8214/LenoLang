@@ -98,6 +98,13 @@ export func rotate270(Image src): Image { return geom.rotate270(src) }
 // ==================== PNG 编解码 ====================
 
 export func decodePNG(string data): Result[Image] { return png.decodePNG(data) }
+// 自适应滤波（逐行在 None/Sub/Up/Average/Paeth 里挑最优）—— 文件更小，默认用它
 export func encodePNG(Image img): Result[string] { return png.encodePNG(img) }
+// 对照用：恒 filter=None（旧行为，文件更大）；只用于 A/B 测量或逐字节比对
+export func encodePNGNoFilter(Image img): Result[string] { return png.encodePNGNoFilter(img) }
+// 指定滤波（0=None 1=Sub 2=Up 3=Average 4=Paeth，-1=自适应）
+export func encodePNGWithFilter(Image img, int filter): Result[string] {
+    return png.encodePNGWithFilter(img, filter)
+}
 export func decodePNGFile(string path): Result[Image] { return png.decodePNGFile(path) }
 export func encodePNGFile(Image img, string path): Result[bool] { return png.encodePNGFile(img, path) }

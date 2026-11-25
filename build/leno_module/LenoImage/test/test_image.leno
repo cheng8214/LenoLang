@@ -240,5 +240,26 @@ main() {
     eqInt(same.w, 10, "scaleToFit 不放大（宽）")
     eqInt(same.h, 10, "scaleToFit 不放大（高）")
 
-    print("test_image passed（7 组 / 构造·读写·缩放·几何·PNG 往返·绘制）")
+    // ==================== ⑧ PNG 滤波：五种都能自解回来 + 自适应当真更小 ====================
+    Image pf = img.newImage(64, 48)
+    for 0 : 47 to y {
+        for 0 : 63 to x { pf.set(x, y, x * 4, y * 5, (x + y) * 2, 255) }
+    }
+    // 每种固定滤波编出来的流都必须能被自己解开（解码侧要认全部 5 种）
+    for 0 : 4 to ft {
+        var r = img.encodePNGWithFilter(pf, ft)
+        if r.isErr() { fail("filter=" + _str(ft) + " 编码失败：" + r.errText()) }
+        var back = img.decodePNG(r.val)
+        if back.isErr() { fail("filter=" + _str(ft) + " 往返解码失败：" + back.errText()) }
+        eqImage(back.val, pf, "filter=" + _str(ft) + " 往返逐像素一致")
+    }
+    // 自适应 vs None：渐变图应当明显更小（同一份像素，只是滤波选择不同）
+    var rAd = img.encodePNG(pf)
+    var rNo = img.encodePNGNoFilter(pf)
+    eqBool(rAd.val.len() < rNo.val.len(), true,
+           "自适应当比 None 小（自适应 " + _str(rAd.val.len()) + " / None " + _str(rNo.val.len()) + "）")
+    // 非法滤波值要报错，不静默
+    eqBool(img.encodePNGWithFilter(pf, 9).isErr(), true, "filter 越界报错")
+
+    print("test_image passed（8 组 / 构造·读写·缩放·几何·PNG 往返/滤波·绘制）")
 }

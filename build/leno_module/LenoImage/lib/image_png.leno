@@ -218,28 +218,123 @@ func _chunk(string ctype, string data): string {
     return _be32str(strings.byte_len(data)) + ctype + data + _be32str(crc)
 }
 
+// 单字节滤波值（不含 filter 字节）：row/prev 都是 PNG 通道序（R,G,B,A）字节
+func _filterByte(Array[int] row, Array[int] prev, int i, int bpp, int type): int {
+    int left = if i >= bpp then row[i - bpp] else 0
+    int up = prev[i]
+    int upLeft = if i >= bpp then prev[i - bpp] else 0
+    int v = 0
+    if type == 0 {
+        v = row[i]
+    } else if type == 1 {
+        v = row[i] - left
+    } else if type == 2 {
+        v = row[i] - up
+    } else if type == 3 {
+        v = row[i] - ((left + up) / 2)
+    } else {
+        v = row[i] - _paeth(left, up, upLeft)
+    }
+    return v & 0xFF
+}
+
+// 取一行像素的 PNG 通道序字节（R,G,B,A）到 row
+func _rowBytes(Image img, int y, Array[int] row) {
+    int base = y * img.w * 4
+    for 0 : img.w - 1 to x {
+        int di = base + x * 4
+        row[x * 4]     = img.px[di + 2]   // R（px 是 BGRA）
+        row[x * 4 + 1] = img.px[di + 1]   // G
+        row[x * 4 + 2] = img.px[di]       // B
+        row[x * 4 + 3] = img.px[di + 3]   // A
+    }
+}
+
+// ★ 2026-11-25：编码器从"恒 filter=None"改成**逐行自适应滤波**
+//   （None/Sub/Up/Average/Paeth 各算一遍，取"滤波后字节绝对值之和最小"的那行 ——
+//    这就是 libpng 的默认启发式）。原来的 None 让 IDAT 全是原始梯度，zlib 压不动，
+//    渐变/照片类图能大 30~50%。实测数字写在 README 的变更记录里。
+//   解码侧本来就支持全部 5 种滤波（_unfilter），所以旧的 filter=None 文件照样能读 ✓。
 export func encodePNG(Image img): Result[string] {
     if img.w < 1 or img.h < 1 {
         return res.err[string](res.ErrCode.INVALID_ARG, "空图不能编码")
     }
-    // 扫描线：每行 filter=0(None) + RGBA
+    int bpp = 4
+    int rowLen = img.w * bpp
     Array[int] scan = []
+    Array[int] row = _blank(rowLen)
+    Array[int] prev = _blank(rowLen)
     for 0 : img.h - 1 to y {
-        scan.add(0)
-        for 0 : img.w - 1 to x {
-            int di = (y * img.w + x) * 4
-            scan.add(img.px[di + 2])   // R（px 是 BGRA，+2 是 R）
-            scan.add(img.px[di + 1])   // G
-            scan.add(img.px[di])       // B
-            scan.add(img.px[di + 3])   // A
+        _rowBytes(img, y, row)
+        // ① 先只算每种滤波的**代价**（滤波后字节按有符号取绝对值求和）—— 不物化数组。
+        //    ⚠ 这里原来是"每种滤波都物化一份候选数组再比"，512×512 就是 5×512 个 2KB 数组
+        //    的分配/丢弃 ⇒ GC 压力极大（实测：同一进程连编两张 1280×800 会撞到 VM 的
+        //    野指针崩溃，报在 LenoCompress 的 deflate 里，其实是上游分配太凶）。
+        //    现在两趟都是纯计算，一行只多两个临时 int。
+        int bestType = 0
+        int bestScore = -1
+        for 0 : 4 to ft {
+            int score = 0
+            for 0 : rowLen - 1 to i {
+                int v = _filterByte(row, prev, i, bpp, ft)
+                if v >= 128 { v = 256 - v }
+                score = score + v
+            }
+            if bestScore < 0 or score < bestScore {
+                bestScore = score
+                bestType = ft
+            }
         }
+        // ② 再按选中的滤波把这一行写进扫描线
+        scan.add(bestType)
+        for 0 : rowLen - 1 to i {
+            scan.add(_filterByte(row, prev, i, bpp, bestType))
+        }
+        // 下一行的 Up/Paeth 要用"本行**原始**字节"
+        for 0 : rowLen - 1 to i { prev[i] = row[i] }
     }
+    return _emitPng(img.w, img.h, scan)
+}
+
+// 指定滤波方式的编码（0=None 1=Sub 2=Up 3=Average 4=Paeth，-1=逐行自适应）。
+//   用途：A/B 测量、需要"逐字节可预测"的输出、或某类图已知哪种滤波最省。
+//   正常情况直接用 encodePNG（自适应）。
+export func encodePNGWithFilter(Image img, int filter): Result[string] {
+    if img.w < 1 or img.h < 1 {
+        return res.err[string](res.ErrCode.INVALID_ARG, "空图不能编码")
+    }
+    if filter < -1 or filter > 4 {
+        return res.err[string](res.ErrCode.INVALID_ARG, "filter 只能是 -1..4（收到 " + _str(filter) + "）")
+    }
+    if filter != -1 {
+        Array[int] scan = []
+        Array[int] row = _blank(img.w * 4)
+        Array[int] prev = _blank(img.w * 4)
+        for 0 : img.h - 1 to y {
+            _rowBytes(img, y, row)
+            scan.add(filter)
+            for 0 : img.w * 4 - 1 to i { scan.add(_filterByte(row, prev, i, 4, filter)) }
+            for 0 : img.w * 4 - 1 to i { prev[i] = row[i] }
+        }
+        return _emitPng(img.w, img.h, scan)
+    }
+    return encodePNG(img)
+}
+
+// 对照用：**恒 filter=None** 的编码（2026-11-25 之前的旧行为）。
+//   文件通常更大，只用于 A/B 测量、"逐字节可预测"或与旧文件比对；正常请用 encodePNG。
+export func encodePNGNoFilter(Image img): Result[string] {
+    return encodePNGWithFilter(img, 0)
+}
+
+// 把"每行 = filter 字节 + 数据"的扫描线打成 PNG 字节流（两种编码共用）
+func _emitPng(int w, int h, Array[int] scan): Result[string] {
     string idat = z.zlib(strings.from_bytes(scan))
 
     // IHDR（13 字节）
     Array[int] ihdr = []
-    _addBe32(ihdr, img.w)
-    _addBe32(ihdr, img.h)
+    _addBe32(ihdr, w)
+    _addBe32(ihdr, h)
     ihdr.add(8)   // 位深
     ihdr.add(6)   // 颜色类型 6 = RGBA
     ihdr.add(0)   // 压缩
