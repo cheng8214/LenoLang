@@ -13,6 +13,7 @@
 
 import strings
 import files
+import dirs      // encodePNGFile 先判父目录（否则 files.write 抛得含糊，看不出是目录问题）
 import "image_core.leno" as core
 import "Result" as res
 import "Compress" as z
@@ -371,6 +372,15 @@ export func decodePNGFile(string path): Result[Image] {
 export func encodePNGFile(Image img, string path): Result[bool] {
     var r = encodePNG(img)
     if r.isErr() { return res.err[bool](r.code, r.msg) }
+    // ★ 2026-11-25：父目录不存在时**返回 Result 错误**，别让 `files.write` 直接抛。
+    //   原来用户看到的是一条「无法创建文件 'xxx/yyy.png'」+ 调用栈 —— 完全看不出是
+    //   "目录不存在"（实测：在子目录里用"仓库根相对路径"写盘，拼出的是根本不存在的路径）。
+    //   现在给一句话说清是哪一层目录缺了，以及怎么办。
+    string dir = dirs.dirname(path)
+    if dir != "" and dir != "." and not dirs.exists(dir) {
+        return res.err[bool](res.ErrCode.IO,
+            "目录不存在：" + dir + "（先 dirs.mkdir_p；或把 path 换成相对**脚本**的路径）")
+    }
     files.write(path, r.val)
     return res.ok(true)
 }

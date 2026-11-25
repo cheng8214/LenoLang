@@ -1,6 +1,6 @@
 [package]
 name = "LenoImage"
-version = "0.3.0"
+version = "0.3.1"
 description = "纯 Leno 图像处理：像素读写 + 缩放 + 裁剪/翻转/旋转 + PNG 编解码（不依赖 SDL）"
 authors = ""
 license = "Apache-2.0"

@@ -48,7 +48,7 @@ var d = img.decodePNGFile("in.png")
 | `decodePNG(data)` / `encodePNG(img)` | PNG 编解码（返回 `Result`）；编码**逐行自适应滤波** |
 | `encodePNGWithFilter(img, f)` | 指定滤波（0=None 1=Sub 2=Up 3=Average 4=Paeth，-1=自适应） |
 | `encodePNGNoFilter(img)` | 旧行为（恒 None）；体积对照 / 逐字节可预测时用 |
-| `decodePNGFile(path)` / `encodePNGFile(img, path)` | 文件版 |
+| `decodePNGFile(path)` / `encodePNGFile(img, path)` | 文件版（**父目录不存在时返回 `Result` 错误**，不抛异常） |
 
 **原地 vs 新图**：`blit/blitAlpha/fillCircle/drawRect/line` 都是**原地改 dst**（拼图/水印/标注的语义）；
 `toGray/invert/crop/flip*/rotate*/resize*/scaleTo*` 返回**新图**、不改入参。
@@ -77,6 +77,11 @@ var d = img.decodePNGFile("in.png")
   对这类图可以两种都编一遍取小的（或者直接指定 None）。照片/渐变/绘制图仍然是自适应明显更省。
 
 ## 变更记录
+
+- **0.3.1**（2026-11-25）：`encodePNGFile` 先判**父目录存在**，缺失时返回
+  `Result` 错误（"目录不存在：xxx（先 dirs.mkdir_p；或把 path 换成相对**脚本**的路径）"），
+  不再让 `files.write` 抛一条「无法创建文件」+ 调用栈（实测：在子目录里用"仓库根相对路径"
+  写盘就会踩到，报错完全看不出是目录问题）。回归用例：`test/test_image.leno` 第 ⑨ 组。
 
 - **0.3.0**（2026-11-25）：PNG 编码改成**逐行自适应滤波**（渐变 −98%、绘制图 −92%，
   但界面截图这类大片纯色的反而 +12% ⇒ 同时给出 `encodePNGWithFilter` / `encodePNGNoFilter`

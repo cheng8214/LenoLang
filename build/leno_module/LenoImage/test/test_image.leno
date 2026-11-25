@@ -4,6 +4,7 @@
 //   build\leno.exe build\leno_module\LenoImage\test\test_image.leno
 //   或 build\leno.exe build\leno_module\run_all_tests.leno --only LenoImage
 import "Image" as img
+import files
 use img.Image
 
 func fail(string msg) {
@@ -261,5 +262,17 @@ main() {
     // 非法滤波值要报错，不静默
     eqBool(img.encodePNGWithFilter(pf, 9).isErr(), true, "filter 越界报错")
 
-    print("test_image passed（8 组 / 构造·读写·缩放·几何·PNG 往返/滤波·绘制）")
+    // ==================== ⑨ 写文件：缺父目录要**返回 Result 错误**，不能抛 ====================
+    //   背景（2026-11-25 实测）：调用方在子目录里用"仓库根相对路径"写盘 ⇒ 父目录不存在
+    //   ⇒ 旧写法由 files.write 直接抛「无法创建文件 '…'」+ 调用栈，看不出是目录问题。
+    var badPath = img.encodePNGFile(pf, "__no_such_dir_xyz__/x.png")
+    eqBool(badPath.isErr(), true, "缺父目录 ⇒ 返回错误（不抛异常）")
+    eqBool(badPath.errText().find("目录不存在") >= 0, true, "错误信息指明是目录不存在")
+
+    // 正常路径仍能写（写完删掉，别在仓库里留垃圾）
+    var okPath = img.encodePNGFile(pf, "test_image_tmp.png")
+    eqBool(okPath.isOk(), true, "正常路径写文件成功")
+    files.delete("test_image_tmp.png")
+
+    print("test_image passed（9 组 / 构造·读写·缩放·几何·PNG 往返/滤波·绘制·写文件）")
 }

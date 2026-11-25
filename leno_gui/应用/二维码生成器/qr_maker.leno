@@ -17,6 +17,7 @@
 import "SDL3" as SDL3
 import "QR" as qr
 import "Image" as img
+import dirs                  // 输出路径按 dirs.script_dir() 拼（与启动目录无关）
 use SDL3.(Event, Renderer, WindowFlag, Scancode)
 use SDL3.(Window, Edit, Button, Label, HBox, VBox, PixelBuffer, Font, Timer)
 use img.Image
@@ -27,8 +28,18 @@ const int TOOLBAR_H = 44
 const int STATUS_H = 26
 const float QR_BOX = 620.0      // 二维码显示区的最大边长（像素）
 const int QUIET = 4             // 静区：4 个模块（少了很多识别器扫不到）
-const string OUT_PNG = "leno_gui/应用/二维码生成器/qr_out.png"
-const string OUT_SHOT = "leno_gui/应用/二维码生成器/window.png"
+// ⚠ 输出路径**相对脚本自己所在目录**，不要写死 `leno_gui/应用/...`：
+//   那样只有在仓库根目录启动才成立。实测用户在该子目录里 `leno qr_maker.leno` 跑，
+//   存 PNG 直接报「无法创建文件 'leno_gui/应用/二维码生成器/qr_out.png'」（相对 CWD 拼出来的假路径）。
+//   `dirs.script_dir()` 给的是**脚本**所在目录（与 CWD 无关）⇒ 从哪儿启动都写对地方。
+const string OUT_PNG_NAME = "qr_out.png"
+const string OUT_SHOT_NAME = "window.png"
+
+func outPath(string name): string {
+    string d = dirs.script_dir()
+    if d == "" { return name }          // 极端情况（无脚本路径）：退回 CWD
+    return dirs.join(d, name)
+}
 
 // ==================== 矩阵 → Image ====================
 // scale = 每个模块画几个像素；静区 QUIET 格白边（QR 规范要求 ≥4）
@@ -186,8 +197,9 @@ struct QrApp {
             status.set_text("先输入内容再存 PNG")
             return
         }
-        var wr = img.encodePNGFile(lastImage, OUT_PNG)
-        if wr.isOk() { status.set_text("已保存：" + OUT_PNG) }
+        string path = outPath(OUT_PNG_NAME)
+        var wr = img.encodePNGFile(lastImage, path)
+        if wr.isOk() { status.set_text("已保存：" + path) }
         else { status.set_text("保存失败：" + wr.errText()) }
     }
 
@@ -237,9 +249,10 @@ struct QrApp {
             var st = shotTimer
             if st != null { st.stop() }
             var surf = r.readPixelsAt(0, 0, WIN_W, WIN_H)
+            string shotPath = outPath(OUT_SHOT_NAME)
             bool saved = false
-            if surf != null { saved = SDL3.saveImagePNG(surf, OUT_SHOT) }
-            if saved { status.set_text("已存窗口截图：" + OUT_SHOT) }
+            if surf != null { saved = SDL3.saveImagePNG(surf, shotPath) }
+            if saved { status.set_text("已存窗口截图：" + shotPath) }
             else { status.set_text("窗口截图失败（surf=" + _str(surf) + "）") }
         }
     }
@@ -252,10 +265,11 @@ func saveOnly(string text) {
     Array[string] rows = r["rows"] as Array[string]
     int size = _int(r.size)
     var qi = buildQrImage(rows, size, pickScale(size))
-    var wr = img.encodePNGFile(qi.pic, OUT_PNG)
+    string path = outPath(OUT_PNG_NAME)
+    var wr = img.encodePNGFile(qi.pic, path)
     print("v" + _str(r.version) + " / " + _str(r.eccName) + " / mask=" + _str(r.mask)
         + "  " + _str(size) + "×" + _str(size) + " 模块 → " + _str(qi.dim) + "×" + _str(qi.dim) + " px\n")
-    if wr.isOk() { print("已写出 " + OUT_PNG + "\n") }
+    if wr.isOk() { print("已写出 " + path + "\n") }
     else { print("写文件失败：" + wr.errText() + "\n") }
 }
 
