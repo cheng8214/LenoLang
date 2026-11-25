@@ -1325,12 +1325,17 @@ void gc_scan_children(Object* obj) {
 //   直接给出「持有者类型 → 子对象类型」。
 // 开销：默认零（`gc_verify_graph_on == 0` 时每个 free 只多一次 int 判断）；
 //   验图本身只在 `--gc-stress` 下跑。
+// 开关本身是**全局**的（`gc_init` 里一次性按 --gc-stress 设好，所有线程共享）
 static int gc_verify_graph_on = 0;
-// ⚠ 必须和"开关"分开：验图开关开着时，**正常标记**也在跑（mark_roots / 记忆集），
-//   若让 gc_mark_object 无条件改道成"只查不标"，这一轮就什么都标不上 ⇒ 全是假阳性。
-//   只有本标志为 1（= 正在 gc_verify_mark_complete 里面）才改道。
-static int gc_verify_pass_active = 0;
-static Object* gc_verify_owner = NULL;   // 正在验证的持有者（报告用）
+// ⚠ 下面三个必须是 **THREAD_LOCAL**：它们是"本线程正在做什么"的状态。
+//   曾经全是普通 static —— 两个子线程同时 GC 时，A 刚建好索引、B 就把 cnt 清 0 重建
+//   ⇒ A 在自己的堆里"查不到"对象，报出**假**的悬空根（实测 test_threads_native_state
+//   间歇复现：young_heap 明明等于那个对象）。同理 `pass_active` 被别的线程置 1 时，
+//   本线程的正常标记会被改道成"只查不标"⇒ 整轮标不上。
+//   （`gc_verify_graph_on` 不 TLS 是**故意**的：新线程的 TLS 会被初始化成 0，
+//     那样子线程根本不开校验。）
+static THREAD_LOCAL int gc_verify_pass_active = 0;
+static THREAD_LOCAL Object* gc_verify_owner = NULL;   // 正在验证的持有者（报告用）
 
 int gc_get_verify_graph(void) { return gc_verify_graph_on; }
 
@@ -1357,15 +1362,22 @@ static const char* gc_obj_type_name(int t) {
 
 static void gc_verify_fail(const char* what, Object* child) {
     Object* owner = gc_verify_owner;
+    int owner_in_remset = (owner && (owner->flags & OBJ_FLAG_IN_REMSET)) ? 1 : 0;
     fprintf(stderr,
             "[GC-VERIFY] 对象图损坏：%s\n"
-            "            持有者 = %p (%s, gen=%d, marked=%d)\n"
-            "            子对象 = %p (%s, gen=%d, marked=%d)\n",
+            "            持有者 = %p (%s, gen=%d, marked=%d, remset=%d, owner_thread=%d)\n"
+            "            子对象 = %p (%s, gen=%d, marked=%d, owner_thread=%d)\n"
+            "            本轮：mode=%s thread_serial=%d rem_before=%d\n",
             what,
             (void*)owner, owner ? gc_obj_type_name((int)owner->type) : "?",
             owner ? (int)owner->generation : -1, owner ? (int)owner->marked : -1,
+            owner_in_remset, owner ? (int)owner->owner_thread : -1,
             (void*)child, child ? gc_obj_type_name((int)child->type) : "?",
-            child ? (int)child->generation : -1, child ? (int)child->marked : -1);
+            child ? (int)child->generation : -1, child ? (int)child->marked : -1,
+            child ? (int)child->owner_thread : -1,
+            (gc.mode == GC_MODE_FULL) ? "FULL" : "MINOR",
+            gc.vm ? (int)gc.vm->thread_serial : -1,
+            gc.remembered_count);
     fflush(stderr);
     abort();
 }
@@ -1400,15 +1412,21 @@ static void gc_verify_ref(Object* child) {
 //   原地帧复用窗口后，寄存器里残留的旧 Value 指向**上一轮已回收**的对象。
 //   那种指针不在 young/old 链上（内存已还给 malloc）⇒ 一查就露。
 //   如果先扫它（= 当根标记），轻则误保活垃圾、重则解引用已释放内存 ⇒ 0xC0000005。
-// 做法：每轮建一个"堆上对象指针"的有序表（只在 --gc-stress 下），根逐个 bsearch。
-static Object** gc_heap_index = NULL;
-static int gc_heap_index_cnt = 0;
-static int gc_heap_index_cap = 0;
+// 做法：每轮把"堆上对象指针"收进一张表（只在 --gc-stress 下），根逐个查表（线性扫）。
+// 索引是**本线程**的（同 gc_verify_pass_active 的理由：多线程同时 GC 会互相清表）
+static THREAD_LOCAL Object** gc_heap_index = NULL;
+static THREAD_LOCAL int gc_heap_index_cnt = 0;
+static THREAD_LOCAL int gc_heap_index_cap = 0;
 
-static int gc_ptr_cmp_asc(const void* a, const void* b) {
-    unsigned long long x = (unsigned long long)(size_t)*(void* const*)a;
-    unsigned long long y = (unsigned long long)(size_t)*(void* const*)b;
-    return (x < y) ? -1 : ((x > y) ? 1 : 0);
+// ⚠ 这里原本用 qsort + bsearch，实测**查不到明明在堆里的对象**（同一次调用里
+//   `young_heap` 指向的地址 bsearch 说"不在"）。堆规模在压力模式下也就几千个对象，
+//   根也只有几十个 ⇒ 直接线性扫最省心，先把正确性钉住（性能是 --gc-stress 唯一场景，不在乎）。
+static int gc_ptr_in_heap(Object* o) {
+    if (!o || gc_heap_index_cnt == 0) return 0;
+    for (int i = 0; i < gc_heap_index_cnt; i++) {
+        if (gc_heap_index[i] == o) return 1;
+    }
+    return 0;
 }
 
 static void gc_heap_index_push(Object* o) {
@@ -1422,25 +1440,18 @@ static void gc_heap_index_push(Object* o) {
     gc_heap_index[gc_heap_index_cnt++] = o;
 }
 
-static int gc_ptr_in_heap(Object* o) {
-    if (!o || gc_heap_index_cnt == 0) return 0;
-    return bsearch(&o, gc_heap_index, (size_t)gc_heap_index_cnt,
-                   sizeof(Object*), gc_ptr_cmp_asc) != NULL;
-}
+
 
 static void gc_verify_roots(void) {
     if (!gc_verify_graph_on) return;
-    // 子线程 VM 的堆与主线程是**各自独立**的，跨堆指针在那里是常态（threads.start 的返回、
-    //   Channel 载荷、线程间交接的临时对象都可能落在别人堆上）⇒ 这一层只对主线程 VM 做。
-    //   实测：reflect_stress / threads_native_state / async_io_limit 三个并发用例都会假阳性。
-    if (gc.vm && gc.vm->thread_serial != 0) return;
+    // 子线程 VM 也做（P0.1）：跨堆指针靠下面逐值的 `owner_thread != 当前 serial` 跳过 ——
+    //   **owner_thread 就是"这个对象属于哪个 VM 的堆"的权威标记**（分配时抄的），
+    //   所以不需要全局堆注册表，也不需要去走别人正在改的堆链（那才是数据竞争）。
+    if (gc.vm == NULL) return;
     // 1) 建索引（年轻代 + 老年代 + 已晋升的）
     gc_heap_index_cnt = 0;
     for (Object* o = gc.young_heap; o; o = o->next) gc_heap_index_push(o);
     for (Object* o = gc.old_heap; o; o = o->next) gc_heap_index_push(o);
-    if (gc_heap_index_cnt > 1) {
-        qsort(gc_heap_index, (size_t)gc_heap_index_cnt, sizeof(Object*), gc_ptr_cmp_asc);
-    }
 
     // 2) 逐类根校验：值里的对象指针必须在堆上
     gc_verify_owner = NULL;
@@ -1465,10 +1476,14 @@ static void gc_verify_roots(void) {
                 fprintf(stderr,
                         "[GC-VERIFY] 悬空根：帧 %d 的寄存器 %d 指向**不在堆上**的对象 %p"
                         "（type=%s owner_thread=%d 本VM serial=%d）\n"
-                        "            （典型原因：这段寄存器槽没被初始化/清理，残留着上一轮已回收对象的指针）\n"
+                        "            本VM堆：young=%p old=%p 索引数=%d 帧数=%d\n"
+                        "            （典型原因：这段寄存器槽没被初始化/清理，残留着上一轮已回收对象的指针；"
+                        "或对象在已摘堆的 dead heap 里）\n"
                         "            该帧 func=%s local_count=%d\n",
                         fi, j, (void*)o, gc_obj_type_name((int)o->type),
                         (int)o->owner_thread, (int)gc.vm->thread_serial,
+                        (void*)gc.young_heap, (void*)gc.old_heap, gc_heap_index_cnt,
+                        gc.vm->frame_cnt,
                         (fr->closure && fr->closure->function && fr->closure->function->name)
                             ? fr->closure->function->name : "?",
                         fr->local_count);
@@ -1482,11 +1497,9 @@ static void gc_verify_roots(void) {
 //   只扫 marked 的对象 —— 未标记的本来就是垃圾，扫它只会被内存复用搞出误报。
 static void gc_verify_mark_complete(void) {
     if (!gc_verify_graph_on) return;
-    // 只对**主线程 VM** 做完整性校验：子线程 VM 的 marked 位会被别的线程的 GC 留下 stale 值
-    //   （gc_mark_object 里对 Channel/Thread 的那段注释就是这件事），而且跨堆引用在那里是常态。
-    //   实测：test_threads_native_state 在压力下会间歇报"标记不完整"，属工具的这一层覆盖不到。
-    //   ⇒ 子线程的堆仍需别的办法（见文档 P0.1：按 vm.thread_serial 分别建索引再比对）。
-    if (gc.vm && gc.vm->thread_serial != 0) return;
+    // 子线程 VM 也做（P0.1）：跨堆子引用已在 gc_verify_ref 里按 owner_thread 跳过，
+    //   Channel/Thread/ffi 库对象也各自白名单 —— 剩下"同一堆里没被标记"的就是真漏标。
+    if (gc.vm == NULL) return;
     gc_verify_pass_active = 1;
     int live = 0;
     for (Object* o = gc.young_heap; o; o = o->next) {
