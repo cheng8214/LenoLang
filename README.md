@@ -449,16 +449,17 @@ Leno/
 
 ## 文档
 
-**文档站（HTML，95 篇，带全文搜索）在独立仓库 `LenoDocsSrc`**，本仓库不再带文档：
+**文档站（HTML，138 篇，带全文搜索）在独立仓库 `LenoDocsSrc`**，本仓库不再带文档：
 
 ```
 D:\CLeno\LenoDocsSrc\
 ├── *.md                ← 源（改文档只改这里）
+├── _tpl\               ← 页面模板 / CSS / 分类表
 ├── site\index.html     ← 生成好的站点（入口；按 / 聚焦搜索）
-└── build_html.py       ← 生成器
+└── build_html.leno     ← 生成器（纯 Leno + LenoMarkdown）
 ```
 
-- **改/加文档**：改 `*.md` → `cd D:\CLeno\LenoDocsSrc && python build_html.py`
+- **改/加文档**：改 `*.md` → `cd D:\CLeno\LenoDocsSrc && d:\CLeno\Leno\build\leno.exe build_html.leno`
   （会整目录重建 `site/`；细节与约定见那边的 `README.md`）
 - 代码注释里引用文档写 `LenoDocsSrc/site/<名字>.html`
 - 模块自带的文档仍在 `build/leno_module/*/docs/*.md`（如

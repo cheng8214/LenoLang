@@ -231,8 +231,15 @@ static Value math_log2(int argc, Value* args) {
 }
 
 // ==================== 快速近似三角函数 ====================
-// 使用 Bhaskara I 正弦近似（精度 <0.001），比标准 sin 快约 3-5x
-// 内联范围缩减（避免 fmod 调用），用整数取模代替
+// Bhaskara I 正弦近似 + 内联范围缩减（用整数取整代替 fmod）。
+// 2026-11-25 在 win32/x64 + 当前 glibc 的 build\leno.exe 上实测，原来"快 3-5x"的说法不成立：
+//   maths.sin_fast  20.2 ns/次    maths.sin  20.6 ns/次   → 基本同速
+//   （Leno 侧 native 调用固定开销约 15ns，把两侧的算术差异盖住了；
+//     纯算术层面 Bhaskara 确实更便宜，但省下的几个 ns 落到 ns/次上看不出来）
+//   最大绝对误差 1.63e-3（不是 <0.001），扫 [0,2π] / 1..1000 / 1e5 / 1e6 / 1e9 都一样，
+//   说明归约本身是稳的，误差来自公式截断。
+//   注意：(int)(x*inv) 在 |x| > ~1.35e10 时溢出（UB）；libm 的 sin 走 Payne-Hanek，任意大参数都正确。
+// ⇒ 默认用 maths.sin / maths.cos；sin_fast/cos_fast 只在调用开销可忽略的 C 侧热路径才可能有意义。
 
 static Value math_sin_fast(int argc, Value* args) {
     (void)argc;

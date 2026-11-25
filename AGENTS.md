@@ -12,12 +12,14 @@
 D:\CLeno\LenoDocsSrc\
 ├── *.md                ← 唯一的源（改文档只改这里）
 ├── archive\  images\
-├── site\               ← 生成好的 HTML 站点（index.html + 95 篇 + 搜索索引，**产物**）
-└── build_html.py       ← 生成器
+├── site\               ← 生成好的 HTML 站点（index.html + 138 篇 + 搜索索引，**产物**）
+├── build_html.leno     ← 生成器（纯 Leno + LenoMarkdown，不再用 python）
+└── _tpl\               ← 页面模板 / CSS / 分类表（site_data.leno）
 ```
 
 - **本仓库没有 `docs/`**。要看文档：打开 `D:\CLeno\LenoDocsSrc\site\index.html`（带全文搜索）。
-- 改/加文档：改 md → `cd D:\CLeno\LenoDocsSrc && python build_html.py`（整目录重建 `site/`）。
+- 改/加文档：改 md → `cd D:\CLeno\LenoDocsSrc && d:\CLeno\Leno\build\leno.exe build_html.leno`
+  （整目录重建 `site/`；旧版 `build_html.py` 已删除，别照着以前的笔记去 `python build_html.py`）。
 - 代码注释里引用文档写 `LenoDocsSrc/site/<名字>.html`（如 `LenoDocsSrc/site/语言陷阱速查.html`）；
   引用**模块自带**文档仍写 `.md`（`build/leno_module/*/docs/*.md` 没转 HTML）。
 - 别手改 `site/*.html`：下次生成会覆盖，且 3 MB 搜索索引会与正文不一致。

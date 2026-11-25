@@ -448,17 +448,18 @@ Leno/
 
 ## Documentation
 
-**The docs site (HTML, 95 pages, full-text search) lives in the separate repo `LenoDocsSrc`** —
+**The docs site (HTML, 138 pages, full-text search) lives in the separate repo `LenoDocsSrc`** —
 this repository no longer carries documentation:
 
 ```
 D:\CLeno\LenoDocsSrc\
 ├── *.md                ← sources (edit these only)
+├── _tpl\               ← page templates / CSS / category table
 ├── site\index.html     ← generated site (entry; press / to search)
-└── build_html.py       ← generator
+└── build_html.leno     ← generator (pure Leno + LenoMarkdown)
 ```
 
-- **Edit / add docs**: edit the `.md` files → `cd D:\CLeno\LenoDocsSrc && python build_html.py`
+- **Edit / add docs**: edit the `.md` files → `cd D:\CLeno\LenoDocsSrc && d:\CLeno\Leno\build\leno.exe build_html.leno`
   (rebuilds `site/` from scratch; see its `README.md` for conventions)
 - Code comments reference docs as `LenoDocsSrc/site/<name>.html`
 - Module-owned docs stay at `build/leno_module/*/docs/*.md` (e.g.
