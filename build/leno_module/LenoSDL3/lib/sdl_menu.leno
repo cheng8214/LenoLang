@@ -90,7 +90,11 @@ export func parseMenuItems(Array[Dict] src): Array[MenuItem] {
 }
 
 // ==================== 几何辅助（模块级，供命中判定/绘制共用） ====================
-func _colW(Array[MenuItem] items, Font f, float itemH, float imgSize, float imgPad, float imgGap): float {
+// `Font?`：菜单的字体是**字段** `_font`，字段判空不收窄类型 ⇒ 形参写非可空等于没写。
+// 没字体时无法测量文字，返回"仅图标 + 内边距"的下界宽度，避免 null 流进 measureString。
+func _colW(Array[MenuItem] items, Font? font, float itemH, float imgSize, float imgPad, float imgGap): float {
+    if font == null { return 60.0 + imgSize + imgPad * 2.0 + imgGap }
+    var f = font      // font 已被收窄为 Font，这行只为下文沿用 `f` 这个名字
     float mw = 120.0
     for items.len() to i {
         var it = items[i]

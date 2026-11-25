@@ -247,7 +247,11 @@ func _ensureFont(Renderer r) {
 //   为什么不用固定字符数：CJK 与 ASCII 宽度差一倍，按字数切会一半溢出、一半留白 ✗
 //   slice 是**字符**下标（闭区间），s.len() 也是字符数 ⇒ 中文不会切出半个字节 ✓
 //   每次换文本才走一次，log2(n) 次 measureString（且有缓存），可忽略 ✓
-func _fit(Font f, string s, float maxW): string {
+// `Font?`：`_font` 是字段，字段判空不收窄 ⇒ 形参写非可空等于没写。
+// 没字体就没法测量，直接不截断（返回原文），避免 null 流进 measureString。
+func _fit(Font? font, string s, float maxW): string {
+    if font == null { return s }
+    var f = font      // font 已被收窄为 Font，这行只为下文沿用 `f` 这个名字
     if s == _fitSrc and maxW == _fitMaxW { return _fitOut }
     string out = s
     var[float, float](w0, h0) = f.measureString(s)

@@ -51,8 +51,9 @@ func _fmtNum(float v): string {
 }
 
 // 超长标签截断为 availW 宽度并追加省略号（复用 sdl_table 的二分 + slice 范式）
-func _truncLabel(Font f, string t, float availW): string {
-    if availW <= 0.0 { return t }
+func _truncLabel(Font? font, string t, float availW): string {
+    if font == null or availW <= 0.0 { return t }
+    var f = font      // font 已被收窄为 Font，这行只为下文沿用 `f` 这个名字
     var[float, float](ew_w, ew_h) = f.measureString("\u2026")   // "…"
     float limit = availW - ew_w
     if limit <= 0.0 { return "\u2026" }
@@ -68,7 +69,9 @@ func _truncLabel(Font f, string t, float availW): string {
 }
 
 // 绘制悬停提示气泡（背景圆角框 + 描边 + 文字）
-func _drawTip(Renderer r, Font f, float mx, float my, string text) {
+func _drawTip(Renderer r, Font? font, float mx, float my, string text) {
+    if font == null { return }       // 没字体就画不了提示框（调用方传入的 _font 是字段，可能为 null）
+    var f = font                     // font 已被收窄为 Font，这行只为下文沿用 `f` 这个名字
     Theme th = theme.getTheme()
     var[float, float](tw, th2) = f.measureString(text)
     float bx = mx + 12.0; float by = my + 12.0

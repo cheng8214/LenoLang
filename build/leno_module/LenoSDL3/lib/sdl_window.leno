@@ -3300,7 +3300,11 @@ func _dRow(Array[Widget] cs, Array[Dict] opts, Array[float] natW, Array[float] n
 }
 
 // 递归打印一个控件；`optStr` 为父容器记录给它的 flex 选项（根为空 ✓）
-func _dWalk(Widget c, int depth, string optStr, float natW, float natH) {
+// 参数改成 `Widget?`：调用方常从**字段**里取子控件（`root`、`c._content`），
+// 而字段的判断**不会**收窄类型 ⇒ 声明成非可空只会让 12 处 null 静默流进来 ✗。
+// 这里统一在入口判空返回，调用方的判空保留着也无害 ✓。
+func _dWalk(Widget? c, int depth, string optStr, float natW, float natH) {
+    if c == null { return }
     string natS = ""
     if natW >= 0.0 { natS = "  nat=" + _dNum(natW) + "x" + _dNum(natH) }
     print(_dInd(depth) + _dName(c) + "  " + _dNum(c.get_w()) + "x" + _dNum(c.get_h()) + natS + optStr + "\n")
