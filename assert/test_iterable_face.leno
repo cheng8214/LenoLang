@@ -9,6 +9,7 @@
 //
 // `Iterable { func each(): Array }` 只是 LenoContainers 里的一个普通 face 声明。
 import "Containers" as ct
+import files
 
 // 自定义：实现协议 ⇒ 可被 for 遍历元素
 struct MyRange impl Iterable {
@@ -30,6 +31,18 @@ struct Plain {
 struct Clash {
     int v = 5
     func raw(): int { return 7 }
+}
+
+// 形状诱饵：单方法 + 返回 Array，但**不是** Iterable ⇒ 绝不能被"形状判定"误捕
+//   （曾经的实现就是这么错的：`for b to k` 会遍历 bytes 而不是字段）
+face Snapshot {
+    func bytes(): Array
+}
+
+struct Buf impl Snapshot {
+    int id = 1
+    Array[int] data = [7, 8, 9]
+    func bytes(): Array { return data }
 }
 
 main() {
@@ -120,11 +133,31 @@ main() {
     assert_eq(cf.len(), 1, "Clash 字段只有 1 个")
     assert_eq(cf[0], "v", "Clash 字段名 v（不是被 raw() 劫持的 0..6）")
 
+    // ---------- 形状诱饵：实现的是**别的** face ⇒ 仍是字段遍历（不许按形状猜） ----------
+    var b = new Buf()
+    Array[string] bf = []
+    for b to f { bf.add(f) }
+    assert_eq(bf.len(), 2, "Buf 字段 2 个（id / data）")
+    assert_eq(bf[0], "id", "Buf 第一个字段名 —— 而不是被 bytes() 劫持成 7,8,9")
+
     // ---------- 空容器 ----------
     var empty = new ct.Stack[int]()
     int zero = 0
     for empty to v { zero = zero + 1 }
     assert_eq(zero, 0, "空容器一次都不进")
+
+    // ---------- `Iterable` 是保留名：形状不对必须**编译期报错**（不能静默退回字段遍历） ----------
+    string badPath = "__iterable_shape_bad.leno"
+    files.write(badPath,
+        "face Iterable {\n" +
+        "    func each(): int\n" +          // 返回的不是 Array ⇒ 形状不合法
+        "}\n")
+    var chk = _exec(_executable() + " --check \"" + badPath + "\"", 30000)
+    assert_true((chk.code as int) != 0, "Iterable 形状不合法 ⇒ --check 退出非 0")
+    var chkOut = chk.output as string
+    assert_true(chkOut.has("Iterable"), "报错里点名 Iterable")
+    assert_true(chkOut.has("遍历协议"), "报错里说明它是遍历协议")
+    files.delete(badPath)
 
     print("test_iterable_face passed")
 }

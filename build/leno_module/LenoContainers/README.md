@@ -98,13 +98,19 @@ export face Iterable {
 export struct Stack[T] impl Iterable { … func each(): Array[T] { return items } … }
 ```
 
-`for c to v` 的判定规则（**编译器只做结构判定，源码里没有 `Iterable`/`each` 任何字符串**）：
+`for c to v` 的判定规则很简单：**`impl` 列表里有 `Iterable`**。
 
-| struct 的 face 情况 | `for c to v` 的语义 |
+| struct 的声明 | `for c to v` 的语义 |
 |---|---|
-| 恰好 1 个 face，且它恰好 1 个方法、该方法返回 `Array` | 遍历 `c.<那个方法>()` 的结果（元素） |
-| 0 个 face | **字段遍历**（k = 字段名，本语言原有语义） |
-| ≥2 个 face | 字段遍历（不猜是哪一个） |
+| `impl Iterable` | 遍历 `c.<Iterable 声明里的那个方法>()`（元素） |
+| 没 impl Iterable（包括实现了别的 face） | **字段遍历**（k = 字段名，本语言原有语义） |
+
+两点要注意：
+
+- `Iterable` 是**语言保留的 face 名**（地位同 `main`：不是关键字，但语言赋予语义）。
+  它的形状被钉死为「恰好 1 个方法、无参数、返回 `Array`」，写歪了**编译期报错**；
+- 编译器里出现的只有 `"Iterable"` 这一个名字（一处）；方法名（`each`）来自 face 声明，
+  不在编译器里。所以自定义别的 face（哪怕形状一样）**不会**被误捕成可迭代。
 
 所以容器直接写就行：
 
@@ -425,10 +431,12 @@ build\leno.exe build\leno_module\LenoContainers\bench\bench_containers.leno
 
 ## 变更记录
 
+- **0.8.1**（2026-11-26）：`Iterable` 定为**语言保留的 face 名**，判定从"看形状"改成
+  "看 impl 列表"。修掉一个真隐患：旧规则会把任何「单 face＋单方法＋返回 Array」的类型
+  误判成可迭代（实测 `face Snapshot { func bytes(): Array }` ⇒ `for b to k` 遍历 bytes
+  而不是字段）。现在形状在 face 声明处校验（1 个无参方法、返回 Array），写歪编译期报错。
 - **0.8.0**（2026-11-25）：新增 `face Iterable { func each(): Array }`，七个类型全部 `impl Iterable`
-  ⇒ **`for st to v` 直接遍历元素/键**（37 ns/op、20 万项 ≈ 0 分配）。判定是**结构式**的
-  （恰好 1 个 face + 该 face 恰好 1 个方法 + 返回 Array），编译器源码里没有任何
-  `Iterable`/`each` 字符串；自定义类型只要 `impl Iterable` 就能被 `for` 遍历。
+  ⇒ **`for st to v` 直接遍历元素/键**（37 ns/op、20 万项 ≈ 0 分配）。
   显式写法（`.raw()` / `.to_array()` / `.keys()` / `iter()`）继续保留。
 
 - **0.7.0**（2026-11-25）：新增 `raw()`（返回**内部数组本身**）—— `Stack` / `PriorityQueue` / `LRU`。

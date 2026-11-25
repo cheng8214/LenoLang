@@ -1,6 +1,6 @@
 [package]
 name = "LenoContainers"
-version = "0.8.0"
+version = "0.8.1"
 description = "Leno containers: Stack / Queue / Deque / PriorityQueue / LRU / ClockLRU / LRUO1 with fixed edge-case contracts (pure Leno)"
 authors = ""
 license = "Apache-2.0"

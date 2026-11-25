@@ -1242,6 +1242,30 @@
                                      ast->u.face_def.name, ast->u.face_def.type_param_count);
                 }
 
+                // ★ 2026-11-26：`Iterable` 是**语言保留的 face 名**（地位与 `main` 相同：不是关键字，
+                //   但语言赋予它语义）。`for c to v` 只认"impl 列表里有 Iterable"这一条声明，
+                //   所以这里必须把它的**形状**钉死，否则 `each()` 返回什么都可能：
+                //     恰好 1 个方法、0 个参数、返回 Array（元素类型不限：各容器自己写 Array[T]）
+                //   形状不对 ⇒ 报错（而不是让 `for` 静默地退回字段遍历）。
+                if (strcmp(ast->u.face_def.name, "Iterable") == 0) {
+                    int shape_ok = (ast->u.face_def.method_count == 1);
+                    if (shape_ok) {
+                        shape_ok = (ast->u.face_def.method_param_counts &&
+                                    ast->u.face_def.method_param_counts[0] == 0);
+                    }
+                    if (shape_ok) {
+                        TypeInfo* rt = ast->u.face_def.method_return_types
+                                           ? ast->u.face_def.method_return_types[0] : NULL;
+                        shape_ok = (rt && rt->kind == TYPE_ARRAY);
+                    }
+                    if (!shape_ok) {
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                            "face 'Iterable' 是语言保留的**遍历协议**，形状固定为"
+                            "「恰好 1 个方法、无参数、返回 Array」；当前声明不符合 ⇒ "
+                            "`for c to v` 不会遍历元素（要么按契约改，要么换个 face 名）");
+                    }
+                }
+
                 // 同名冲突标记（与 struct 分支同一策略：报错后不再写入全局 face 定义表）
                 int face_dup = 0;
 

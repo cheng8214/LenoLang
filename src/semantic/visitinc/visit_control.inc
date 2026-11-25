@@ -682,39 +682,36 @@
             //   且那个方法返回 Array ⇒ `for c to v` 遍历**那个方法的返回值**（元素）。
             //   除此之外（0 个 face / 多个 face / 方法不返回 Array）⇒ 仍是**字段遍历**。
             //
-            //   为什么这么写：上一版在 C 里内置了 `face Iterable { func each(): Array }`
-            //   （`strdup("each")`）—— 那只是把"写死"从 for 挪到了 face 注册处，编译器仍然
-            //   内置了 `Iterable`/`each` 两个名字。现在编译器只做**结构判定**：
-            //   `for` 用哪个方法，完全由"这个 struct 声明实现了哪个 face"决定，
-            //   而 face 是普通 Leno 声明（LenoContainers 里 `export face Iterable { func each(): Array }`）。
-            //   ⇒ 谁想自定义遍历，就自己声明 face + impl，编译器一行都不用改。
+            //   为什么不做"形状判定"（上一版就是这么写的）：形状会**误捕** —— 任何
+            //   "恰好 1 个 face + 单方法 + 返回 Array" 的类型都会被当成可迭代，
+            //   实测 `face Snapshot { func bytes(): Array }` + `impl Snapshot` 的 struct，
+            //   `for b to k` 会去遍历 bytes 而不是字段。形状像 ≠ 声明了要遍历。
+            //
+            //   ⇒ 现在的判据只有一条：**impl 列表里有 `Iterable`**。
+            //     `Iterable` 是语言**保留的 face 名**（地位同 `main`：不是关键字，但语言赋予语义），
+            //     它的形状（1 个无参方法、返回 Array）在 face 声明处校验（visit_type_def.inc）。
+            //     方法名也不是 C 里的常量 —— 从 face 声明里读（`methods[0].name`）。
             if (ast->u.for_.end && !ast->u.for_.start) {
                 TypeInfo* et = infer_expr_type(s, ast->u.for_.end);
                 if (et && !et->nullable && et->kind == TYPE_STRUCT && et->struct_name) {
                     ObjStructDef* sdef = struct_def_find(et->struct_name);
-                    // 恰好 1 个 face ⇒ 看它的唯一方法；多个 face ⇒ 不猜（字段遍历）
-                    if (sdef && sdef->impl_count == 1) {
-                        ObjFaceDef* fdef = face_def_find(sdef->impl_names[0]);
-                        if (fdef && fdef->method_count == 1 && fdef->methods[0].name &&
-                            fdef->methods[0].param_count == 0 &&
-                            fdef->methods[0].return_type &&
-                            fdef->methods[0].return_type->kind == TYPE_ARRAY) {
-                            Ast* endNode = ast->u.for_.end;
-                            Ast* fa = ast_new(AST_FIELD_ACCESS, endNode->line);
-                            fa->line = endNode->line;
-                            fa->column = endNode->column;
-                            fa->u.field_access.obj = endNode;
-                            // 方法名来自 face 声明（不是 C 里的字符串常量）
-                            fa->u.field_access.field_name = strdup(fdef->methods[0].name);
-                            fa->u.field_access.field_index = -1;
-                            Ast* call = ast_new(AST_CALL, endNode->line);
-                            call->line = endNode->line;
-                            call->column = endNode->column;
-                            call->u.call.callee = fa;
-                            ast->u.for_.end = call;
-                            // 方法调用要立刻 visit：否则没经方法解析，codegen 拿不到方法表
-                            visit(s, ast->u.for_.end);
-                        }
+                    ObjFaceDef* fdef = face_def_find("Iterable");   // ← 语言保留名，仅此一处
+                    if (sdef && fdef && struct_implements_face(sdef, fdef) &&
+                        fdef->method_count == 1 && fdef->methods[0].name) {
+                        Ast* endNode = ast->u.for_.end;
+                        Ast* fa = ast_new(AST_FIELD_ACCESS, endNode->line);
+                        fa->line = endNode->line;
+                        fa->column = endNode->column;
+                        fa->u.field_access.obj = endNode;
+                        fa->u.field_access.field_name = strdup(fdef->methods[0].name);
+                        fa->u.field_access.field_index = -1;
+                        Ast* call = ast_new(AST_CALL, endNode->line);
+                        call->line = endNode->line;
+                        call->column = endNode->column;
+                        call->u.call.callee = fa;
+                        ast->u.for_.end = call;
+                        // 方法调用要立刻 visit：否则没经方法解析，codegen 拿不到方法表
+                        visit(s, ast->u.for_.end);
                     }
                 }
                 if (et) type_free(et);
