@@ -446,13 +446,17 @@ static inline int call_reg_impl(ObjClosure* closure, int has_self, Value self,
         locals[k + i] = arg;
     }
     }
-    // 原地帧的非参数槽位不填 null：它们本来就是调用方的寄存器，里面一定是合法 Value
-    //   （调用方建帧时整块数组已初始化过），GC 扫描安全；而被调方的局部变量在声明处
-    //   必被赋值（gen_var_decl 总会发初始化/默认值）。
-    if (!locals_is_alias) {
-        for (int i = k + arg_count; i < local_count; i++) {
-            locals[i] = val_null();
-        }
+    // ★ 2026-11-25：**原地帧也必须把非参数槽位填 null**（原来只在非别名路径填）。
+    //   原注释的理由是"调用方的寄存器里一定是合法 Value"——错在**"合法"≠"仍然活着"**：
+    //   这块窗口是上一个帧用过的同一段内存，里面的旧 Value 可能指向**已经回收**的对象
+    //   （例如上一轮 zlib 的临时数组，早被 GC 回收了）。而 GC 按 `local_count` 扫这一帧的
+    //   寄存器 ⇒ 扫到那个悬空指针 ⇒ `gc_scan_children` 解引用已释放的 elements 数组 ⇒
+    //   0xC0000005（实测：`decodePNG` → 两次 `zlib(4MB)`，第二轮必崩）。
+    //   现在统一填 null：GC 看到的每个槽要么是实参、要么是本帧写过的值、要么是 null。
+    //   代价：每次调用多写 `local_count - 实参数` 个槽（典型 10~40 个 8 字节写）—— 见
+    //   `examples/性能测试` 的调用基准，属可接受（正确性优先）。
+    for (int i = k + arg_count; i < local_count; i++) {
+        locals[i] = val_null();
     }
 
     vm.frame_cnt++;

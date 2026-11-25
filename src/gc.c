@@ -376,6 +376,74 @@ static void gc_pool_apply_env(void) {
     pool_mem_limit = lim;
 }
 
+// ==================== 已释放块登记（诊断 GC use-after-free）====================
+// 为什么要它：`0xC0000005` 只说明"读了野指针"，**哪块内存、谁放的、什么时候放的**全不知道。
+//   把每次 free 的 (地址, 大小, 种类) 记进环形缓冲，崩溃时拿 fault addr 反查 ⇒ 直接看出
+//   "哪类对象的内存在被回收后还被用"（比 ASan 粗，但零依赖 —— 本仓 mingw 没有 libasan）。
+// 开销：默认 **零**（`LENO_GC_FREELOG=1` 才记录；判据是一次全局读 + 预测分支）。
+#define GC_FREELOG_N 16384
+enum {
+    GC_FREEK_OBJECT = 1,
+    GC_FREEK_STRING_CHARS,
+    GC_FREEK_ARRAY_ELEMS,
+    GC_FREEK_DICT_ENTRIES,
+    GC_FREEK_DICT_ORDER,
+    GC_FREEK_CHUNK,
+    GC_FREEK_FUNC_MISC,
+    GC_FREEK_LOCALS
+};
+typedef struct { void* addr; size_t size; int kind; } GcFreedBlock;
+static GcFreedBlock g_freelog[GC_FREELOG_N];
+static int g_freelog_pos = 0;
+static int g_freelog_on = -1;
+
+static int gc_freelog_enabled(void) {
+    if (g_freelog_on < 0) {
+        const char* e = getenv("LENO_GC_FREELOG");
+        g_freelog_on = (e && e[0] && e[0] != '0') ? 1 : 0;
+    }
+    return g_freelog_on;
+}
+
+static void gc_freelog_record(void* addr, size_t size, int kind) {
+    if (!addr || !gc_freelog_enabled()) return;
+    GcFreedBlock* b = &g_freelog[g_freelog_pos];
+    b->addr = addr;
+    b->size = size;
+    b->kind = kind;
+    g_freelog_pos = (g_freelog_pos + 1) % GC_FREELOG_N;
+}
+
+// 给崩溃报告用：addr 是否落在某块**已释放**内存里（1 = 命中，回填大小/种类）
+int gc_freelog_lookup(void* addr, size_t* size_out, int* kind_out) {
+    if (!addr || !gc_freelog_enabled()) return 0;
+    for (int i = 0; i < GC_FREELOG_N; i++) {
+        GcFreedBlock* b = &g_freelog[i];
+        if (!b->addr) continue;
+        size_t n = b->size ? b->size : 1;   // 对象块不知道大小 ⇒ 只按精确地址命中
+        if ((char*)addr >= (char*)b->addr && (char*)addr < (char*)b->addr + n) {
+            if (size_out) *size_out = b->size;
+            if (kind_out) *kind_out = b->kind;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+const char* gc_freelog_kind_name(int kind) {
+    switch (kind) {
+        case GC_FREEK_OBJECT:        return "GC 对象头";
+        case GC_FREEK_STRING_CHARS:  return "字符串字符缓冲";
+        case GC_FREEK_ARRAY_ELEMS:   return "数组元素缓冲";
+        case GC_FREEK_DICT_ENTRIES:  return "字典 entries";
+        case GC_FREEK_DICT_ORDER:    return "字典 order";
+        case GC_FREEK_CHUNK:         return "函数 chunk（字节码）";
+        case GC_FREEK_FUNC_MISC:     return "函数附属数组";
+        case GC_FREEK_LOCALS:        return "帧 locals";
+        default:                     return "?";
+    }
+}
+
 // 释放对象内存：池化对象归还 free-list，否则系统 free
 // （sweep_young / sweep_old / gc_free_all 共用；free_object_resources 已先行调用）
 static void gc_free_object(Object* obj) {
@@ -386,6 +454,12 @@ static void gc_free_object(Object* obj) {
         obj->next = pool_free_list[idx];        // 复用 next 串空闲链
         pool_free_list[idx] = obj;
     } else {
+        gc_freelog_record(obj, 0, GC_FREEK_OBJECT);
+        if (gc_freelog_enabled()) {
+            // 毒化对象头（含 elements/chars 等指针字段）：谁再用这个对象读它的字段，
+            //   拿到的是 0xDDDD… ⇒ 立刻在**真正的使用点**崩，并落进 FREELOG 的 OBJECT 记录。
+            memset(obj, 0xDD, 64);
+        }
         free(obj);
     }
 }
@@ -862,6 +936,102 @@ void gc_scan_children(Object* obj) {
         /* 数组：标记所有元素 */
         case OBJ_ARRAY: {
             ObjArray* arr = (ObjArray*)obj;
+            // 诊断（`LENO_GC_FREELOG=1`）：正在标记的数组，它的 elements 是否已经被释放过？
+            //   命中说明"标记栈/记忆集里有一个**已经死掉**的数组指针"（对象被回收后又被扫描）。
+            //   默认关（`gc_freelog_enabled()` 是一次静态读 + 预测分支，开销可忽略）。
+            if (gc_freelog_enabled() && arr->count > 1000) {
+                size_t _sz = 0; int _k = 0;
+                // 精确判定：**真实崩溃点就是这次读** —— 用 VirtualQuery 看最后一个元素所在的页
+                //   是否可读。比"地址落在曾经 free 过的区间"可靠（后者会被 malloc 复用误报）。
+                int _bad_page = 0;
+#ifdef _WIN32
+                {
+                    const char* probe = (const char*)(arr->elements + arr->count - 1);
+                    MEMORY_BASIC_INFORMATION _mbi;
+                    if (VirtualQuery(probe, &_mbi, sizeof(_mbi)) == 0 ||
+                        _mbi.State != MEM_COMMIT ||
+                        (_mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) {
+                        _bad_page = 1;
+                    }
+                }
+#endif
+                // 非 Windows：没有 VirtualQuery ⇒ 只用 FREELOG 的地址反查（会有复用误报，
+                //   够定位用；真要精确判定请在 Linux 上直接上 ASan）。
+                if (_bad_page) {
+                    fprintf(stderr, "[SANITY] 标记阶段即将越界读：arr=%p count=%d elements=%p\n",
+                            (void*)arr, arr->count, (void*)arr->elements);
+                }
+                if (_bad_page) {
+                    // 再回答一个关键问题：**这个死指针是从哪儿被扫到的**？
+                    //   ① 标记栈自身（说明是别处压进去的）② 帧寄存器/值栈 ③ 全局 ④ 记忆集
+                    {
+                        int in_mark = 0, in_frame = -1, in_slot = -1, in_global = -1, in_remset = 0;
+                        for (int mi = 0; mi < mark_stack_count; mi++) {
+                            if ((void*)mark_stack[mi] == (void*)arr) { in_mark = 1; break; }
+                        }
+                        if (gc.vm && gc.vm->frames) {
+                            for (int fi = 0; fi < gc.vm->frame_cnt && in_frame < 0; fi++) {
+                                CallFrame* fr = &gc.vm->frames[fi];
+                                if (!fr->locals) continue;
+                                for (int j = 0; j < fr->local_count; j++) {
+                                    Value v = fr->locals[j];
+                                    if (val_is_obj(v) && val_as_obj(v) == (Object*)arr) {
+                                        in_frame = fi; in_slot = j; break;
+                                    }
+                                }
+                            }
+                        }
+                        if (gc.vm && gc.vm->globals) {
+                            for (int gi = 0; gi < gc.vm->global_count; gi++) {
+                                Value v = gc.vm->globals[gi];
+                                if (val_is_obj(v) && val_as_obj(v) == (Object*)arr) { in_global = gi; break; }
+                            }
+                        }
+                        for (int ri = 0; ri < gc.remembered_count; ri++) {
+                            if ((void*)gc.remembered_set[ri] == (void*)arr) { in_remset = 1; break; }
+                        }
+                        fprintf(stderr,
+                            "         死指针来源：标记栈=%s 帧=%d(槽 %d) 全局=%d 记忆集=%s\n",
+                            in_mark ? "在" : "不在", in_frame, in_slot, in_global,
+                            in_remset ? "在" : "不在");
+                        if (in_frame >= 0) {
+                            CallFrame* hf = &gc.vm->frames[in_frame];
+                            const char* hfn = (hf->closure && hf->closure->function &&
+                                               hf->closure->function->name)
+                                              ? hf->closure->function->name : "?";
+                            fprintf(stderr,
+                                "         持有者：func=%s local_count=%d 物理容量=%d "
+                                "func->local_count=%d\n",
+                                hfn, hf->local_count, hf->locals_capacity,
+                                (hf->closure && hf->closure->function)
+                                    ? hf->closure->function->local_count : -1);
+                        }
+                        // 整条帧链（谁还在栈上、各自的寄存器数）
+                        fprintf(stderr, "         frame_cnt=%d:\n", gc.vm->frame_cnt);
+                        for (int fi = 0; fi < gc.vm->frame_cnt; fi++) {
+                            CallFrame* fr2 = &gc.vm->frames[fi];
+                            const char* fn2 = (fr2->closure && fr2->closure->function &&
+                                               fr2->closure->function->name)
+                                              ? fr2->closure->function->name : "(module)";
+                            fprintf(stderr, "           #%d %s local_count=%d locals=%p dyn=%d\n",
+                                    fi, fn2, fr2->local_count, (void*)fr2->locals,
+                                    fr2->locals_is_dynamic);
+                        }
+                    }
+                    size_t _osz = 0; int _ok = 0;
+                    int _self_freed = gc_freelog_lookup((void*)arr, &_osz, &_ok);
+                    fprintf(stderr,
+                        "[SANITY] 标记阶段读到已释放缓冲：arr=%p count=%d cap=%d elements=%p(%s, %llu B)\n"
+                        "         该数组对象自身%s已释放记录 ⇒ %s\n",
+                        (void*)arr, arr->count, arr->capacity, (void*)arr->elements,
+                        gc_freelog_kind_name(_k), (unsigned long long)_sz,
+                        _self_freed ? "**有**" : "没有",
+                        _self_freed ? "数组对象本身是死的（扫描到了垃圾指针）"
+                                    : "数组对象还活着，但 elements 已被释放（谁提前 free 了它？）");
+                    fflush(stderr);
+                    abort();
+                }
+            }
             for (int i = 0; i < arr->count; i++) {
                 gc_mark_value(arr->elements[i]);
             }
@@ -1669,6 +1839,9 @@ static void free_object_resources_ex(Object* obj, int remove_intern) {
         case OBJ_STRING: {
             ObjString* str = (ObjString*)obj;
             if (remove_intern) { intern_remove(str); }
+            gc_freelog_record(str->chars,
+                              (size_t)(str->capacity > 0 ? str->capacity : str->len + 1),
+                              GC_FREEK_STRING_CHARS);
             free(str->chars);
             break;
         }
@@ -1697,6 +1870,7 @@ static void free_object_resources_ex(Object* obj, int remove_intern) {
                 free(func->type_param_constraints);
             }
             if (func->chunk) {
+                gc_freelog_record(func->chunk, sizeof(Chunk), GC_FREEK_CHUNK);
                 chunk_free(func->chunk);
                 free(func->chunk);
             }
@@ -1722,6 +1896,13 @@ static void free_object_resources_ex(Object* obj, int remove_intern) {
         case OBJ_ARRAY: {
             ObjArray* arr = (ObjArray*)obj;
             type_free(arr->type_info);
+            gc_freelog_record(arr->elements, (size_t)arr->capacity * sizeof(Value),
+                              GC_FREEK_ARRAY_ELEMS);
+            if (gc_freelog_enabled() && arr->elements && arr->capacity > 0) {
+                // 毒化：谁在回收后还读这块，读到的是 0xDD…（int 是很大的负数或 -1 类值），
+                //   比"裸 free 后内存被复用"更容易认出（见 LENO_GC_FREELOG）。
+                memset(arr->elements, 0xDD, (size_t)arr->capacity * sizeof(Value));
+            }
             free(arr->elements);
             break;
         }
@@ -1729,6 +1910,14 @@ static void free_object_resources_ex(Object* obj, int remove_intern) {
         case OBJ_DICT: {
             ObjDict* dict = (ObjDict*)obj;
             type_free(dict->type_info);
+            gc_freelog_record(dict->array, (size_t)dict->asize * sizeof(Value),
+                              GC_FREEK_DICT_ORDER);
+            gc_freelog_record(dict->aorder, (size_t)dict->asize * sizeof(int),
+                              GC_FREEK_DICT_ORDER);
+            gc_freelog_record(dict->entries, (size_t)dict->capacity * sizeof(ObjDictEntry),
+                              GC_FREEK_DICT_ENTRIES);
+            gc_freelog_record(dict->order, (size_t)dict->order_capacity * sizeof(Value),
+                              GC_FREEK_DICT_ORDER);
             free(dict->array);
             free(dict->aorder);   // 2026-10-19：数组部分的 order 下标表
             free(dict->entries);

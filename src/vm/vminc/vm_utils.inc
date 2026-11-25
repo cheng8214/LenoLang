@@ -22,6 +22,38 @@ static void crash_put_int(char** p, char* end, int v) {
     while (n-- > 0) { if (*p < end) *(*p)++ = tmp[n]; }
 }
 
+// 崩溃时把**当前帧的寄存器**打出来（只在 LENO_GC_FREELOG=1 时由 error.c 调用）。
+//   "哪个局部量指向已释放的缓冲" 一眼就能看出来：数组/字符串把 elements/chars 也打出来，
+//   配合 gc_freelog_lookup 的命中信息即可定位是哪个变量被回收后继续用。
+void vm_dump_crash_locals(void) {
+    if (current_exec_vm == NULL || vm.frames == NULL || vm.frame_cnt <= 0) return;
+    CallFrame* f = &vm.frames[vm.frame_cnt - 1];
+    const char* fname = (f->closure && f->closure->function && f->closure->function->name)
+                        ? f->closure->function->name : "?";
+    fprintf(stderr, "  [LOCALS] 帧 %d func=%s locals=%p count=%d\n",
+            vm.frame_cnt - 1, fname, (void*)f->locals, f->local_count);
+    for (int i = 0; i < f->local_count && i < 40; i++) {
+        Value v = f->locals[i];
+        if (!val_is_obj(v)) continue;
+        Object* o = val_as_obj(v);
+        int t = (int)o->type;
+        if (t == OBJ_ARRAY) {
+            ObjArray* a = (ObjArray*)o;
+            fprintf(stderr, "    r%-2d Array  obj=%p elements=%p count=%d cap=%d\n",
+                    i, (void*)o, (void*)a->elements, a->count, a->capacity);
+        } else if (t == OBJ_STRING) {
+            ObjString* s = (ObjString*)o;
+            fprintf(stderr, "    r%-2d String obj=%p chars=%p len=%d\n",
+                    i, (void*)o, (void*)s->chars, s->len);
+        } else if (t == OBJ_STRUCT) {
+            fprintf(stderr, "    r%-2d Struct obj=%p\n", i, (void*)o);
+        } else {
+            fprintf(stderr, "    r%-2d obj=%p type=%d\n", i, (void*)o, t);
+        }
+    }
+    fflush(stderr);
+}
+
 void vm_crash_location(char* buf, int bufsz, int* out_len) {
     if (out_len) *out_len = 0;
     if (!buf || bufsz < 8) return;

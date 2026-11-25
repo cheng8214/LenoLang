@@ -1235,6 +1235,43 @@ static LONG WINAPI leno_vectored_handler(EXCEPTION_POINTERS* info) {
         if (g_crash_reported == 0) {
             g_crash_reported = 1;
             leno_crash_write("未处理的系统异常", code);
+            // ★ 2026-11-25：`LENO_GC_FREELOG=1` 时，用 fault addr 反查"这块内存是谁放的"
+            //   —— 直接区分"读已释放对象"和"读越界地址"，不必再猜。
+            if (code == 0xC0000005UL && info && info->ExceptionRecord) {
+                extern int gc_freelog_lookup(void* addr, size_t* size_out, int* kind_out);
+                extern const char* gc_freelog_kind_name(int kind);
+                void* fa = (void*)info->ExceptionRecord->ExceptionInformation[1];
+                size_t fsz = 0;
+                int fk = 0;
+                if (gc_freelog_lookup(fa, &fsz, &fk)) {
+                    fprintf(stderr, "  [FREELOG] fault addr %p 落在**已释放**的 %s（块大小 %llu 字节）\n",
+                            fa, gc_freelog_kind_name(fk), (unsigned long long)fsz);
+                } else {
+                    fprintf(stderr, "  [FREELOG] fault addr %p 不在任何已记录的空闲块里"
+                                    "（%s，%s）\n", fa,
+                            info->ExceptionRecord->ExceptionInformation[0] ? "写" : "读",
+                            "可能是越界/未初始化的指针");
+                }
+                fflush(stderr);
+                {
+                    extern void vm_dump_crash_locals(void);
+                    vm_dump_crash_locals();
+                }
+                // C 栈回溯（`LENO_GC_FREELOG=1` 时）。地址是**模块内偏移**（减去 exe 基址），
+                //   配 `-g` 编译的二进制用 `addr2line -e build\leno.exe -f -C 0x...` 即可定位
+                //   到具体 C 函数/行号 —— 这是"崩在哪个 native 里"最直接的证据。
+                {
+                    void* frames[40];
+                    USHORT nf = CaptureStackBackTrace(0, 40, frames, NULL);
+                    char* base = (char*)GetModuleHandleA(NULL);
+                    fprintf(stderr, "  [BACKTRACE] %u 帧（exe 基址偏移）:\n", (unsigned)nf);
+                    for (USHORT bi = 0; bi < nf; bi++) {
+                        fprintf(stderr, "    #%u 0x%llx\n", (unsigned)bi,
+                                (unsigned long long)((char*)frames[bi] - base));
+                    }
+                    fflush(stderr);
+                }
+            }
         }
     }
     return EXCEPTION_CONTINUE_SEARCH;

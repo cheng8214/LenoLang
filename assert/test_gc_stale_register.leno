@@ -1,0 +1,38 @@
+// test_gc_stale_register.leno —— 2026-11-25 GC use-after-free 的回归用例
+//
+// 症状（修前必崩，0xC0000005，崩在 `gc_scan_children` 里读数组元素）：
+//   同一进程里反复做「造 4MB 数组 → strings.from_bytes → zlib」，
+//   第 2 轮起会在 GC 标记阶段解引用一块**已释放**的数组缓冲。
+//
+// 根因：**原地帧（zero-copy frame）复用调用方的寄存器窗口**时，只填了实参、没清
+//   非参数槽位。那块内存正是上一个帧（比如上一轮 zlib）用过的同一段，里面残留着
+//   **指向已回收对象**的旧 Value；而 GC 按 `local_count` 扫整帧寄存器 ⇒ 把悬空指针
+//   当根扫进去 ⇒ 解引用已释放的 elements 数组 ⇒ 崩。
+// 修法：原地帧也把 `[实参之后, local_count)` 全填 null（见 vm_call.inc 的注释）。
+//
+// 这个用例只做"跑得完 + 每轮结果一致"：修前它会崩，修后稳定通过。
+// 规模取 1MB（原复现是 4MB）；`round` 多跑几轮是为了让 GC 一定落在复用窗口的帧里。
+import "Compress" as z
+import strings
+
+// 一轮：造数组 → 转字节串 → 压缩（这三步都是大分配，必然触发 GC）
+func oneRound(int n): int {
+    Array[int] scan = []
+    for 0 : n - 1 to i {
+        scan.add((i * 7) % 251)
+    }
+    string s = strings.from_bytes(scan)
+    string c = z.zlib(s)
+    return c.len()
+}
+
+main() {
+    int prev = -1
+    for 0 : 3 to r {
+        int n = oneRound(1000000)
+        assert_eq(n > 0, true, "第 " + _str(r + 1) + " 轮压缩结果非空")
+        if prev >= 0 { assert_eq(n, prev, "第 " + _str(r + 1) + " 轮与上一轮结果一致") }
+        prev = n
+    }
+    print("test_gc_stale_register passed")
+}
