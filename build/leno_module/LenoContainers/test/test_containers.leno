@@ -594,5 +594,96 @@ main() {
     try { db.pop_front_n(5) } catch e { dbOut = 1 }
     eqI(dbOut, 1, "⑨ pop_front_n 超过剩余必须抛错")
 
+    // ==================== ⑮ 零分配遍历：iter() / DequeIter / keys_iter() ====================
+    // Stack：栈底 → 栈顶，顺序必须与 to_array() 逐项一致
+    ct.Stack[int] si = new ct.Stack[int]()
+    for 0 : 4 to i { si.push(i * 10) }
+    var sit = si.iter()
+    eqI(sit.remaining(), 5, "⑮ Stack.iter 剩余数")
+    Array[int] sgot = []
+    while sit.has_next() {
+        if sit.next() is int => v { sgot.add(v) }
+    }
+    var swant = si.to_array()
+    eqI(sgot.len(), swant.len(), "⑮ Stack.iter 元素数")
+    for 0 : swant.len() - 1 to i { eqI(sgot[i], swant[i], "⑮ Stack.iter 第 " + _str(i) + " 项") }
+    eqI(sit.remaining(), 0, "⑮ 走完后剩余 0")
+    if sit.has_next() { fail("⑮ 走完后 has_next 必须 false") }
+    if sit.next() != null { fail("⑮ 走完后 next 必须 null") }
+
+    // Queue：出队过的空洞要跳过（pos 从 head 起）
+    ct.Queue[int] qi = new ct.Queue[int]()
+    for 0 : 5 to i { qi.push(i) }
+    qi.pop()
+    qi.pop()
+    var qit = qi.iter()
+    Array[int] qgot = []
+    while qit.has_next() {
+        if qit.next() is int => v { qgot.add(v) }
+    }
+    eqI(qgot.len(), 4, "⑮ Queue.iter 跳过已出队空洞")
+    eqI(qgot[0], 2, "⑮ Queue.iter 第一项是 2")
+
+    // Deque：跨 f/b 两段的顺序
+    ct.Deque[int] di = new ct.Deque[int]()
+    di.push_back(3)
+    di.push_back(4)
+    di.push_front(2)
+    di.push_front(1)                 // 逻辑顺序 1,2,3,4
+    var dit = di.iter()
+    Array[int] dgot = []
+    while dit.has_next() {
+        if dit.next() is int => v { dgot.add(v) }
+    }
+    eqI(dgot.len(), 4, "⑮ Deque.iter 元素数")
+    eqI(dgot[0], 1, "⑮ Deque.iter 首项")
+    eqI(dgot[3], 4, "⑮ Deque.iter 末项")
+
+    // PriorityQueue：iter 与 to_array 同口径（都是堆序）
+    ct.PriorityQueue[int] pi = new ct.PriorityQueue[int]()
+    for [5, 1, 4, 2] to v { pi.push(v) }
+    var pit = pi.iter()
+    var parr = pi.to_array()
+    int pk = 0
+    while pit.has_next() {
+        if pit.next() is int => v { eqI(v, parr[pk], "⑮ PriorityQueue.iter 第 " + _str(pk) + " 项"); pk = pk + 1 }
+    }
+    eqI(pk, 4, "⑮ PriorityQueue.iter 走完 4 项")
+
+    // LRU：keys_iter 顺序必须与 keys() 一致（最久 → 最近）
+    ct.LRU[int] lruKey = new ct.LRU[int](cap = 8)
+    lruKey.put("a", 1)
+    lruKey.put("b", 2)
+    lruKey.put("c", 3)
+    var lruKeyArr = lruKey.keys()
+    var lruKeyIt = lruKey.keys_iter()
+    int lruKeyN = 0
+    while lruKeyIt.has_next() {
+        if lruKeyIt.next() is string => k {
+            if k != lruKeyArr[lruKeyN] {
+                fail("⑮ LRU.keys_iter 第 " + _str(lruKeyN) + " 个 key 不一致：" + k + " vs " + lruKeyArr[lruKeyN])
+            }
+            lruKeyN = lruKeyN + 1
+        }
+    }
+    eqI(lruKeyN, lruKeyArr.len(), "⑮ LRU.keys_iter 个数")
+
+    // 零分配：遍历 20 万元素，年轻代字节增量必须是 0（快照写法会分配 ~1.6MB）
+    ct.Stack[int] big = new ct.Stack[int]()
+    for 0 : 99999 to i { big.push(i) }
+    var s0 = _gc_stats()
+    int y0 = _int(s0["young_bytes"])
+    var bit = big.iter()
+    int total = 0
+    while bit.has_next() {
+        if bit.next() is int => v { total = total + (v & 1) }
+    }
+    var s1 = _gc_stats()
+    int y1 = _int(s1["young_bytes"])
+    eqI(total, 50000, "⑮ 遍历 10 万项的奇数和")
+    if y1 - y0 >= 65536 {
+        fail("⑮ iter() 遍历 10 万项不该分配，young 增量 " + _str(y1 - y0) + " B")
+    }
+
     print("test_containers passed")
 }

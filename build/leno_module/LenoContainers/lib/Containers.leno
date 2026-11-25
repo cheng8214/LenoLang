@@ -15,6 +15,56 @@
 //
 // 七个类型：Stack / Queue / Deque / PriorityQueue / LRU / ClockLRU / LRUO1。
 
+// ==================== 零分配遍历：游标（Iter / DequeIter）====================
+// 背景：`for st to v` 是**语义期改写成 `st.to_array()`** ⇒ 每轮遍历先复制一份快照
+//   （README 里只能写"热路径请自己按下标走"）。这里给出**不复制**的写法：
+//
+//     var it = st.iter()
+//     while it.has_next() { string v = it.next() }   // 只多一个游标结构，零数组分配
+//
+// 语义差别（要知道）：
+//   · `for st to v` 走**快照** ⇒ 循环体里改容器不影响本轮遍历（安全，但每轮一次分配）；
+//   · `iter()` 走**实时**视图 ⇒ 循环体里 pop/add 会影响本轮（与"按下标走"一致）。
+//   想两者兼得：热路径用 iter()，循环体别改容器。
+//
+// 用法上的注意：`next()` 返回 `T?`（空容器/已走完给 null），所以取值要收窄：
+//     while it.has_next() { if it.next() is string => s { ... } }
+export struct Iter[T] {
+    Array[T] items = []          // 底层数组（引用语义：不复制元素）
+    int pos = 0
+    int stop = 0                 // 上界（Queue 用它扣掉 head 之前的空洞）
+
+    func has_next(): bool { return pos < stop }
+    func remaining(): int { return stop - pos }
+
+    func next(): T? {
+        if pos >= stop { return null }
+        T v = items[pos]
+        pos = pos + 1
+        return v
+    }
+}
+
+// Deque 的元素分两段（f 反向 + b 正向）⇒ 游标要多带几个字段，但同样**不复制**
+export struct DequeIter[T] {
+    Array[T] f = []
+    Array[T] b = []
+    int bh = 0
+    int n = 0
+    int pos = 0
+
+    func has_next(): bool { return pos < n }
+    func remaining(): int { return n - pos }
+
+    func next(): T? {
+        if pos >= n { return null }
+        int fn = f.len()
+        T v = if pos < fn then f[fn - 1 - pos] else b[bh + pos - fn]
+        pos = pos + 1
+        return v
+    }
+}
+
 // ==================== Stack：后进先出 ====================
 export struct Stack[T] {
     Array[T] items = []
@@ -41,6 +91,9 @@ export struct Stack[T] {
 
     func len(): int { return items.len() }
     func is_empty(): bool { return items.len() == 0 }
+
+    // 零分配遍历（栈底 → 栈顶）：`var it = st.iter(); while it.has_next() { it.next() }`
+    func iter(): Iter[T] { return new Iter[T](items = items, pos = 0, stop = items.len()) }
     func clear() { items.clear() }
 
     // 快照（栈底 → 栈顶），**非破坏性**：返回值是副本，改它不影响栈
@@ -117,6 +170,9 @@ export struct Queue[T] {
     // 逻辑长度（扣掉已经出队、但还没压缩掉的空洞）
     func len(): int { return items.len() - head }
     func is_empty(): bool { return head >= items.len() }
+
+    // 零分配遍历（队首 → 队尾）：pos 从 head 起，天然跳过已出队的空洞
+    func iter(): Iter[T] { return new Iter[T](items = items, pos = head, stop = items.len()) }
 
     // 按**逻辑下标**看元素（0 = 队首）；越界抛错（与 Deque.at 同口径）
     func at(int i): T {
@@ -238,6 +294,9 @@ export struct PriorityQueue[T] {
 
     func len(): int { return heap.len() }
     func is_empty(): bool { return heap.len() == 0 }
+
+    // 零分配遍历：**堆序**（只保证父优于子，不是出队顺序；要优先级顺序用 drain_sorted）
+    func iter(): Iter[T] { return new Iter[T](items = heap, pos = 0, stop = heap.len()) }
     func clear() {
         heap.clear()
         seqs.clear()
@@ -281,6 +340,9 @@ export struct Deque[T] {
 
     func len(): int { return n }
     func is_empty(): bool { return n == 0 }
+
+    // 零分配遍历（队首 → 队尾）：跨 f/b 两段的实时视图
+    func iter(): DequeIter[T] { return new DequeIter[T](f = f, b = b, bh = bh, n = n, pos = 0) }
 
     func push_back(T v) { b.add(v); n = n + 1 }
     func push_front(T v) { f.add(v); n = n + 1 }
@@ -498,6 +560,9 @@ export struct LRU[V] {
 
     // 现存 key，顺序 = 最久未使用 → 最近使用（order 的原始顺序，**非破坏性**）
     func keys(): Array[string] { return order.copy() }
+
+    // 零分配遍历 key（最久 → 最近）：省掉 keys() 的那次复制
+    func keys_iter(): Iter[string] { return new Iter[string](items = order, pos = 0, stop = order.len()) }
 
     // 调小容量会立刻淘汰到新上限（调大不会补数据），返回被淘汰的 key（最久 → 较新）
     func set_capacity(int n): Array[string] {

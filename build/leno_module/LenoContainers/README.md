@@ -83,7 +83,49 @@ for l to k { print(k) }         // 缓存遍历的是 **key**
 - 普通 struct（没有 `to_array` / `keys`）**行为不变**，仍是字段遍历；
 - 可空容器（`Queue? q`）不接管，保持原来的判空诊断（先判空再遍历）；
 - 底层实现：语义期把被遍历对象改写成 `c.to_array()` / `c.keys()` ⇒ **每次遍历会分配一个快照数组**。
+  不想分配就用下一节的 `iter()` 游标（**快照 vs 实时视图**的行为差异也在那一节）。
   热路径上想零分配，就自己 `peek` / `at` 按下标走。
+
+## 零分配遍历：`iter()` 游标（2026-11-25 新增）
+
+`for c to v` 是**语义期改写成 `c.to_array()`** ⇒ 每轮遍历先复制一份快照。要避免这次复制，
+用游标：
+
+```leno
+var it = st.iter()                       // Stack / Queue / PriorityQueue / Deque 都有
+while it.has_next() {
+    if it.next() is int => v { sink(v) }  // next() 返回 T?（走完给 null）
+}
+var kit = lru.keys_iter()                 // 缓存：遍历 key（最久 → 最近）
+```
+
+| 容器 | 方法 | 顺序 | 底层 |
+|---|---|---|---|
+| `Stack` | `iter()` | 栈底 → 栈顶 | `items` 连续段 |
+| `Queue` | `iter()` | 队首 → 队尾 | `items` 从 `head` 起（自动跳过空洞） |
+| `Deque` | `iter()` | 队首 → 队尾 | 跨 `f`/`b` 两段（`DequeIter`） |
+| `PriorityQueue` | `iter()` | **堆序**（不是出队序） | `heap` |
+| `LRU` | `keys_iter()` | 最久 → 最近 | `order` |
+
+### 代价：省的是**分配**，不是时间（实测，N=1,000,000）
+
+| 写法 | 时间 | 每轮分配 |
+|---|---|---|
+| `for st to v`（快照） | **55 ns/op** | 8 MB |
+| `iter()` + `has_next()` | 106 ns/op | ~0 |
+| `iter()` + `while true { … break }` | 100 ns/op | ~0 |
+| `for st.items to v`（**Stack 专用**，直接走内部数组） | **~51 ns/op** | ~0 |
+
+读法：快照是"**一次复制 + 数组顺序扫**"，复制成本被整轮摊薄 ⇒ 单趟遍历它反而更快；
+但**每轮**都遍历（比如每帧刷 UI）就是每轮 8MB 垃圾，这时必须用游标。
+`Stack` 的 `items` 是公开字段，`for st.items to v` 是"零分配 + 全速"的最优解（代价：绕过
+`Stack` 的边界语义，且是实时视图）。
+
+**实时 vs 快照**（这是行为差异，不只是性能差异）：
+
+- `for c to v` 走**快照** ⇒ 循环体里 `pop`/`add` 不影响本轮；
+- `iter()` 走**实时视图** ⇒ 循环体里改容器会影响本轮（与"按下标走"一致）。
+  想两者兼得：热路径用 `iter()`，循环体别改容器。
 
 ## API
 
@@ -336,6 +378,13 @@ build\leno.exe build\leno_module\LenoContainers\bench\bench_containers.leno
 ```
 
 ## 变更记录
+
+- **0.6.0**（2026-11-25）：新增**零分配遍历**——`Iter[T]` / `DequeIter[T]` 游标 +
+  `Stack/Queue/Deque/PriorityQueue.iter()`、`LRU.keys_iter()`。实测遍历 20 万项：
+  年轻代增量 **1,601,327 B → 808 B**（快照 vs 游标）；单趟 1M 遍历的耗时是 55 → 106 ns/op
+  （游标每元素两次方法调用），所以 README 里同时给了 `for st.items to v` 这条
+  "零分配 + 全速"的 Stack 专用写法。测试新增第 ⑮ 组（顺序对齐 `to_array()`、
+  Queue 跳空洞、Deque 跨两段、`keys_iter` 与 `keys()` 一致、10 万项零分配）。
 
 - **0.5.0**（2026-11-25）：新增 **`LRUO1[V]`** —— 严格最久未使用淘汰 + `get`/`put` 全 O(1)
   （整数下标双向链表 + 空闲下标复用）。实测 `get` 命中 493 / 507 / 502 / 513 ns（cap 16/128/1024/4096），

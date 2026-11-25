@@ -260,5 +260,45 @@ main() {
     for 0 : G - 1 to i { sink(_int(d.get("k" + _str(i % 1024), 0))) }
     lap("Dict.get 命中 ×" + _str(G), G)
 
+    // ---------------- 遍历：快照 vs 零分配游标 ----------------
+    // `for <容器> to v` 是**语义期改写成 `to_array()`** ⇒ 每轮先复制一份；
+    // `iter()` 只多一个游标结构，不复制元素。这里把两者放在同一段里对比。
+    print("\n[遍历] for <容器> to v（快照 to_array）vs iter()（零分配游标）\n")
+    ct.Stack[int] trav = new ct.Stack[int]()
+    for 0 : G - 1 to i { trav.push(i) }
+
+    tick()
+    for trav to v { sink(_int(v)) }
+    lap("for st to v（含每轮 1M 快照）", G)
+
+    tick()
+    var travIt = trav.iter()
+    while travIt.has_next() {
+        if travIt.next() is int => v { sink(v) }
+    }
+    lap("iter() 游标（零复制）", G)
+
+    // 分配账：用 20 万项（快照 1.6MB，低于年轻代阈值 ⇒ 不会被中途 GC 冲掉计数）
+    ct.Stack[int] trav2 = new ct.Stack[int]()
+    for 0 : 199999 to i { trav2.push(i) }
+
+    var ga = _gc_stats()
+    int ya = _int(ga["young_bytes"])
+    for trav2 to v { sink(_int(v)) }
+    var gb = _gc_stats()
+    int snapBytes = _int(gb["young_bytes"]) - ya
+
+    var gc2 = _gc_stats()
+    int yc = _int(gc2["young_bytes"])
+    var trav2It = trav2.iter()
+    while trav2It.has_next() {
+        if trav2It.next() is int => v { sink(v) }
+    }
+    var gd = _gc_stats()
+    int iterBytes = _int(gd["young_bytes"]) - yc
+
+    print("  20 万项遍历的年轻代增量：快照 = " + _str(snapBytes) + " B，游标 = "
+          + _str(iterBytes) + " B\n")
+
     print("\nsink = " + _str(gSink) + "（仅防优化）\n")
 }
