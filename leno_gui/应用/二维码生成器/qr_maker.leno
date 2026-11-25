@@ -1,0 +1,271 @@
+// qr_maker.leno —— 输入文字，实时生成二维码（LenoQR + LenoImage + LenoSDL3）
+//
+// 为什么值得写这个窗口：QR 模块本身只吐"矩阵文本"（`rows` 里全是 '0'/'1'），
+//   光看断言看不出**扫得出来吗**。这里把矩阵画成真正的像素图显示出来，
+//   还能一键存 PNG 拿去用手机扫 —— 是"看效果"而不是"看断言"。
+//
+// 组成：
+//   · LenoQR    `qr.encode(text, ecc)` → rows / size / version / mask
+//   · LenoImage 画模块（白底 + 黑块 + 4 格静区）→ 可直接 encodePNG 存盘
+//   · LenoSDL3  Edit 输入 + 每帧把 PixelBuffer 贴到窗口上
+//
+// 用法：
+//   build\leno.exe leno_gui\应用\二维码生成器\qr_maker.leno
+//       窗口里输入内容（实时生成），Ctrl+S 存 PNG，ESC 退出
+//   build\leno.exe leno_gui\应用\二维码生成器\qr_maker.leno save "要编码的文字"
+//       不开窗口：直接把二维码写成 qr_out.png（给 CI / 无显示器用）
+import "SDL3" as SDL3
+import "QR" as qr
+import "Image" as img
+use SDL3.(Event, Renderer, WindowFlag, Scancode)
+use SDL3.(Window, Edit, Button, Label, HBox, VBox, PixelBuffer, Font, Timer)
+use img.Image
+
+const int WIN_W = 760
+const int WIN_H = 880
+const int TOOLBAR_H = 44
+const int STATUS_H = 26
+const float QR_BOX = 620.0      // 二维码显示区的最大边长（像素）
+const int QUIET = 4             // 静区：4 个模块（少了很多识别器扫不到）
+const string OUT_PNG = "leno_gui/应用/二维码生成器/qr_out.png"
+const string OUT_SHOT = "leno_gui/应用/二维码生成器/window.png"
+
+// ==================== 矩阵 → Image ====================
+// scale = 每个模块画几个像素；静区 QUIET 格白边（QR 规范要求 ≥4）
+struct QrImage {
+    Image pic                   // ⚠ 别叫 `img`：会遮蔽 `import "Image" as img` 的模块别名
+
+    int scale = 1
+    int dim = 0
+}
+
+func buildQrImage(Array[string] rows, int size, int scale): QrImage {
+    int n = size + QUIET * 2
+    int dim = n * scale
+    Image out = img.newImage(dim, dim)
+    out.fill(255, 255, 255, 255)
+    for 0 : size - 1 to y {
+        string row = rows[y]
+        for 0 : size - 1 to x {
+            if row.slice(x, x) == "1" {
+                int px0 = (x + QUIET) * scale
+                int py0 = (y + QUIET) * scale
+                out.fillRect(px0, py0, px0 + scale - 1, py0 + scale - 1, 0, 0, 0, 255)
+            }
+        }
+    }
+    return new QrImage(pic = out, scale = scale, dim = dim)
+}
+
+// 选一个能让二维码尽量填满 box 的整数倍缩放（最少 2，避免 1 像素模块太细）
+func pickScale(int size): int {
+    int n = size + QUIET * 2
+    int s = _int(QR_BOX / _float(n))
+    if s < 2 { s = 2 }
+    return s
+}
+
+// Image（BGRA）→ PixelBuffer（RGBA），给 blitBuffer 用
+func toBuf(Image src): PixelBuffer {
+    var b = new PixelBuffer()
+    b.init(src.w, src.h)
+    for 0 : src.h - 1 to y {
+        int ro = y * src.w * 4
+        for 0 : src.w - 1 to x {
+            int o = ro + x * 4
+            b.setPixel(x, y, src.px[o + 2], src.px[o + 1], src.px[o], src.px[o + 3])
+        }
+    }
+    return b
+}
+
+// ==================== 窗口应用 ====================
+struct QrApp {
+    Window win
+    Font font
+    Edit input
+    Label status
+    Button saveBtn
+
+    PixelBuffer? buf = null
+    int bufDim = 0
+    // 自截图（`qr_maker.leno shot`）：定时器到点后置标志 + 请求重绘，
+    //   下一帧在 draw() 里把**窗口内容**回读成 PNG。用来在无人工介入时核对"窗口真实长相"。
+    //   ⚠ 不能用"数帧"：框架只在脏的时候重绘，空闲时帧数根本不涨。
+    Timer? shotTimer = null
+    bool wantShot = false
+    Renderer ren2                    // draw() 里存一份，定时器回调要知道什么时候可以截
+    string qrText = ""          // 上一次成功编码的文本（避免每帧重算）
+    string lastInfo = ""
+    Image lastImage
+
+    func run() {
+        // `shot` 模式：0.8 秒后把窗口内容存成 window.png（无人工介入也能核对长相）
+        var a = _args()
+        bool shotMode = a.len() > 0 and _str(a[0]) == "shot"
+        win = SDL3.createWindow({title: "二维码生成器 — 输入即生成（Ctrl+S 存 PNG，ESC 退出）",
+                                 w: WIN_W, h: WIN_H})
+        if not win.ok { print("建窗失败\n"); return }
+        SDL3.ttfInit()
+        font = SDL3.createFont("C:/Windows/Fonts/msyh.ttc", 15.0)
+        if not font.ok { font = SDL3.createFont("C:/Windows/Fonts/consola.ttf", 15.0) }
+        setupUI()
+        // 先填一个示例内容，让窗口一打开就有二维码（程序化 set_text 不触发 on_change）
+        input.set_text("https://gitee.com/cheng8214/LenoLang")
+        regenerate()
+        if shotMode {
+            shotTimer = win.addTimer(800, func() {
+                wantShot = true
+                SDL3.markFrameRedraw()      // 空闲时不会重绘 ⇒ 主动请求一帧
+            })
+        }
+        win.run(
+            func(Event ev): bool { return handleEvent(ev) },
+            func(Renderer r) { draw(r) }
+        )
+        SDL3.quit()
+    }
+
+    func setupUI() {
+        var toolbar = SDL3.createHBox({h: TOOLBAR_H, pad_x: 10, pad_y: 6, spacing: 8})
+        toolbar.add(SDL3.createLabel({text: "内容:", font_size: 15}), {grow: 0, shrink: 0, align: 1})
+
+        input = SDL3.createEdit({h: 30, font_size: 15, placeholder: "输入要编码的文字 / 网址…"})
+        input.set_placeholder("输入文字，右边二维码实时更新…")
+        // 每次文字变化就重算（短文本编码极快；长文本也只在按键时算一次）
+        input.on_change(func() { regenerate() })
+        toolbar.add(input, {grow: 1, shrink: 1, align: 3})
+
+        saveBtn = SDL3.createButton({w: 96, h: 30, text: "存 PNG", font_size: 15})
+        saveBtn.on_click(func() { savePng() })
+        toolbar.add(saveBtn, {grow: 0, shrink: 0, basis: 96, align: 3})
+
+        status = SDL3.createLabel({text: "", font_size: 13})
+
+        var root = SDL3.createVBox({pad_x: 8, pad_y: 6, spacing: 4})
+        root.add(toolbar, {grow: 0, shrink: 0, align: 3})
+        root.add(status, {grow: 0, shrink: 0, align: 3})
+        win.setRootAt(root, 0, 0)
+    }
+
+    // 重算二维码 → 更新 PixelBuffer + 状态文字
+    func regenerate() {
+        string t = input.get_text()
+        if t == qrText and buf != null { return }
+        qrText = t
+        if t.len() == 0 {
+            buf = null
+            bufDim = 0
+            lastInfo = "（空内容 — 输入点什么）"
+            status.set_text(lastInfo)
+            return
+        }
+        var r = qr.encode(t, "M")
+        if not r.ok {
+            buf = null
+            bufDim = 0
+            lastInfo = "编码失败：" + _str(r.err)
+            status.set_text(lastInfo)
+            return
+        }
+        Array[string] rows = r["rows"] as Array[string]
+        int size = _int(r.size)
+        int scale = pickScale(size)
+        var qi = buildQrImage(rows, size, scale)
+        lastImage = qi.pic
+        buf = toBuf(qi.pic)
+        bufDim = qi.dim
+        lastInfo = "v" + _str(r.version) + " / " + _str(r.eccName) + " / mask=" + _str(r.mask)
+            + "  " + _str(size) + "×" + _str(size) + " 模块，每模块 " + _str(scale) + " px"
+            + "  →  " + _str(qi.dim) + "×" + _str(qi.dim)
+        status.set_text(lastInfo)
+    }
+
+    func savePng() {
+        if lastImage.w <= 0 {
+            status.set_text("先输入内容再存 PNG")
+            return
+        }
+        var wr = img.encodePNGFile(lastImage, OUT_PNG)
+        if wr.isOk() { status.set_text("已保存：" + OUT_PNG) }
+        else { status.set_text("保存失败：" + wr.errText()) }
+    }
+
+    func handleEvent(Event ev): bool {
+        if ev.isQuit() or ev.isWindowClose() { return false }
+        if ev.isKeyDown() {
+            int sc = ev.scancode()
+            if sc == Scancode.ESCAPE { return false }
+            // Ctrl+S 存 PNG（输入框里的 S 由它自己吃，这里只在按住 Ctrl 时才拦）
+            // 0x00C0 = SDL_KMOD_LCTRL | SDL_KMOD_RCTRL（keyMod 是位掩码，没有命名常量包）
+            if sc == Scancode.S and (ev.keyMod() & 0x00C0) != 0 { savePng() }
+        }
+        return true
+    }
+
+    // 每帧绘制：底 → 二维码 → 提示文字（控件由框架自己画在上面）
+    func draw(Renderer r) {
+        r.setColor(#1A1D24FF)
+        r.clear()
+
+        ren2 = r
+
+        var b = buf
+        if b != null and bufDim > 0 {
+            // 水平居中，垂直放在工具栏+状态栏之间
+            float areaY = _float(TOOLBAR_H + STATUS_H + 8)
+            float areaH = _float(WIN_H) - areaY - 8.0
+            float x = (_float(WIN_W) - _float(bufDim)) / 2.0
+            float y = areaY + (areaH - _float(bufDim)) / 2.0
+            // 白底垫一层（哪怕图片自带白边，也让边缘干净）
+            r.setColor(#FFFFFFFF)
+            r.fillRect(x - 12.0, y - 12.0, _float(bufDim) + 24.0, _float(bufDim) + 24.0)
+            r.blitBuffer(b, x, y, _float(bufDim), _float(bufDim))
+
+            // 二维码下方标一行"它编码的是什么"（截图时尤其有用）
+            string cap = qrText
+            if cap.len() > 46 { cap = cap.slice(0, 46) + "…" }
+            r.drawText(font, cap, x, y + _float(bufDim) + 16.0, #C8D0E0FF)
+        } else {
+            r.setColor(#8A93A6FF)
+            r.drawText(font, "输入内容后这里会显示二维码", 250.0, 380.0, #8A93A6FF)
+        }
+
+        // 自截图：定时器到点后（wantShot）在**这一帧**回读窗口内容并存盘
+        if wantShot {
+            wantShot = false
+            var st = shotTimer
+            if st != null { st.stop() }
+            var surf = r.readPixelsAt(0, 0, WIN_W, WIN_H)
+            bool saved = false
+            if surf != null { saved = SDL3.saveImagePNG(surf, OUT_SHOT) }
+            if saved { status.set_text("已存窗口截图：" + OUT_SHOT) }
+            else { status.set_text("窗口截图失败（surf=" + _str(surf) + "）") }
+        }
+    }
+}
+
+// ==================== 无窗口模式：直接存 PNG ====================
+func saveOnly(string text) {
+    var r = qr.encode(text, "M")
+    if not r.ok { print("编码失败：" + _str(r.err) + "\n"); return }
+    Array[string] rows = r["rows"] as Array[string]
+    int size = _int(r.size)
+    var qi = buildQrImage(rows, size, pickScale(size))
+    var wr = img.encodePNGFile(qi.pic, OUT_PNG)
+    print("v" + _str(r.version) + " / " + _str(r.eccName) + " / mask=" + _str(r.mask)
+        + "  " + _str(size) + "×" + _str(size) + " 模块 → " + _str(qi.dim) + "×" + _str(qi.dim) + " px\n")
+    if wr.isOk() { print("已写出 " + OUT_PNG + "\n") }
+    else { print("写文件失败：" + wr.errText() + "\n") }
+}
+
+main() {
+    var a = _args()
+    if a.len() > 0 and _str(a[0]) == "save" {
+        string t = if a.len() > 1 then _str(a[1]) else "https://gitee.com/cheng8214/LenoLang"
+        saveOnly(t)
+        return
+    }
+    QrApp app = new QrApp()
+    app.run()
+}

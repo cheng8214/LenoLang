@@ -286,6 +286,24 @@ python build\leno_module\LenoQR\test\dev_diff_vs_python.py
   SHA256 `FBEFCF8E04BE88F1FA43C68A39C9C6C42E5AB6FE91453B614AC58250821436AA`）；
   上游文件未做任何修改（`quirc_version()` 报 `1.0`）。
 
+## 配套窗口示例（看得见的那种）
+
+`leno_gui/应用/二维码生成器/qr_maker.leno`：输入框实时生成二维码、Ctrl+S 存 PNG。
+它把 `qr.encode()` 的 `rows` 矩阵用 **LenoImage** 画成像素图（4 格静区 + 整数倍缩放），
+再经 SDL3 贴到窗口上 —— 正好演示三个模块怎么串起来。
+
+```bat
+:: 开窗口（ESC 退出，Ctrl+S 存 qr_out.png）
+build\leno.exe leno_gui\应用\二维码生成器\qr_maker.leno
+:: 不开窗口，直接出图（CI / 无显示器）
+build\leno.exe leno_gui\应用\二维码生成器\qr_maker.leno save "要编码的文字"
+:: 开窗口并在 0.8s 后把**窗口内容**回读成 window.png（核对"窗口真实长相"）
+build\leno.exe leno_gui\应用\二维码生成器\qr_maker.leno shot
+```
+
+自测口径（不靠肉眼）：生成的 PNG 再喂给本模块的 `decode_png` 示例，识别结果必须与原文一致
+（实测中英文混排 UTF-8 也一致）。
+
 ## 后续可选（都不阻塞现在）
 
 - **性能**：v10 已从 16ms 降到 5.4ms；若还要更快，下一步是把矩阵按"每行一个 int 位图"
