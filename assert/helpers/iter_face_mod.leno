@@ -1,0 +1,30 @@
+// iter_face_mod.leno —— 跨模块夹具：在**模块内**声明一个 `impl Iterable` 的类型。
+// 钉两件事：
+//   ① face `Iterable` 由 LenoContainers 声明，别的模块 import 后可以 `impl`（face 表是进程级的）；
+//   ② `impl_names` 会随 `.lenosymc` 导出 ⇒ 主模块对**这个模块定义的类型**也能 `for x to v` 遍历元素。
+import "Containers" as ct
+
+export struct Bag impl Iterable {
+    Array[string] items = []
+
+    func add(string v) { items.add(v) }
+    func size(): int { return items.len() }
+
+    // 协议方法（face 里声明的是 `func each(): Array`）
+    func each(): Array[string] { return items }
+}
+
+export func makeBag(): Bag {
+    var b = new Bag()
+    b.add("m1")
+    b.add("m2")
+    return b
+}
+
+// 再来一个泛型版本：`impl Iterable` + `Array[T]` 返回
+export struct Wrap[T] impl Iterable {
+    Array[T] data = []
+
+    func add(T v) { data.add(v) }
+    func each(): Array[T] { return data }
+}

@@ -751,6 +751,15 @@
                         "「for 的遍历对象是 null」；请先 `if x != null` 再遍历，"
                         "或把容器初始化成 `= []`",
                         type_to_string(et));
+                } else if (is_container_loop && et && et->kind == TYPE_FACE) {
+                    // ★ 2026-11-26：`for <face 类型的变量> to v` —— face 没有字段，
+                    //   也不是"实现了 Iterable 的具体类型" ⇒ VM **一次都不进**，且此前零诊断。
+                    //   实测：`Iterable it = st; for it to v { }` 静默 0 次（最难查的一类）。
+                    warning_add_at_fmt(WARN_FOR_EMPTY_RANGE, ast->line, ast->column,
+                        "for 的遍历对象是 '%s'（face 类型）⇒ 一次都不执行"
+                        "（face 本身没有字段；要遍历元素请先收窄成具体 struct，"
+                        "如 `if x is 具体类型 => t { for t to v … }`）",
+                        type_to_string(et));
                 } else if (et && (et->kind == TYPE_NULL || et->kind == TYPE_BOOL)) {
                     warning_add_at_fmt(WARN_FOR_EMPTY_RANGE, ast->line, ast->column,
                         "for 的上限是 '%s' ⇒ 循环一次都不执行；"

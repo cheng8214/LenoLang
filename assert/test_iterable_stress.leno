@@ -1,0 +1,344 @@
+// test_iterable_stress.leno —— 遍历协议的压力/边界/诊断综合用例（2026-11-26）
+//
+// 覆盖四类：
+//   ① 七个容器的 `for c to v`（元素顺序、下标变量、break/continue、空容器、嵌套）
+//   ② 跨模块：别的模块里 `impl Iterable` 的类型，主模块照样能 `for` 遍历
+//   ③ 体积：多轮 20 万次遍历（合计 100 万+ 次迭代），结果与累加和都要对
+//   ④ 人写错了：四种错误声明必须**编译期报错**（形状/缺方法），报错文案要点对地方
+import "Containers" as ct
+import "helpers/iter_face_mod.leno" as fm
+import files
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+// 多 face 夹具：同时实现 Iterable 和另一个 face ⇒ 仍然按 Iterable 遍历
+face Tagged {
+    func tag(): string
+}
+
+struct MultiFace impl Iterable, Tagged {
+    Array[int] vals = []
+    func add(int v) { vals.add(v) }
+    func each(): Array[int] { return vals }
+    func tag(): string { return "mf" }
+}
+
+// 形状诱饵：单方法 + 返回 Array，但不是 Iterable ⇒ 必须仍是字段遍历
+face Snapshot {
+    func bytes(): Array
+}
+
+struct Buf impl Snapshot {
+    int id = 1
+    Array[int] data = [7, 8, 9]
+    func bytes(): Array { return data }
+}
+
+// 用 --check 验证一份代码**必须编译失败**
+func expectBad(string name, string src, string mustContain) {
+    files.write(name, src)
+    var r = _exec(_executable() + " --check \"" + name + "\"", 30000)
+    files.delete(name)
+    if (r.code as int) == 0 {
+        fail("诊断用例「" + name + "」本应编译失败，却过了")
+    }
+    string out = r.output as string
+    if not out.has(mustContain) {
+        fail("诊断用例「" + name + "」报错文案里没有「" + mustContain + "」，实际：\n" + out)
+    }
+}
+
+main() {
+    // ==================== ① 七个容器 ====================
+    var st = new ct.Stack[int]()
+    for 0 : 4 to i { st.push(i * 2) }
+    Array[int] seen = []
+    for st to v { seen.add(v) }
+    assert_eq(seen.len(), 5, "① Stack 5 个")
+    assert_eq(seen[0], 0, "① Stack 栈底")
+    assert_eq(seen[4], 8, "① Stack 栈顶")
+
+    var q = new ct.Queue[int]()
+    for 0 : 5 to i { q.push(i) }
+    q.pop(); q.pop()
+    Array[int] qs = []
+    for q to v { qs.add(v) }
+    assert_eq(qs.len(), 4, "① Queue 扣掉出队元素")
+    assert_eq(qs[0], 2, "① Queue 队首")
+
+    var dq = new ct.Deque[int]()
+    dq.push_back(3); dq.push_front(2); dq.push_front(1); dq.push_back(4)
+    Array[int] ds = []
+    for dq to v { ds.add(v) }
+    assert_eq(ds.len(), 4, "① Deque 4 个")
+    assert_eq(ds[0], 1, "① Deque 队首")
+    assert_eq(ds[3], 4, "① Deque 队尾")
+
+    var pq = new ct.PriorityQueue[int](cmp = func(int a, int b): int {
+        if a > b { return -1 }
+        if a < b { return 1 }
+        return 0
+    })
+    for [3, 1, 2] to v { pq.push(v) }
+    int psum = 0
+    for pq to v { psum = psum + v }
+    assert_eq(psum, 6, "① PriorityQueue 不丢元素")
+
+    var lru = new ct.LRU[int](cap = 4)
+    lru.put("a", 1); lru.put("b", 2)
+    Array[string] lk = []
+    for lru to k { lk.add(k) }
+    assert_eq(lk.len(), 2, "① LRU key 2 个")
+
+    var clk = new ct.ClockLRU[int](cap = 4)
+    clk.put("x", 1); clk.put("y", 2); clk.put("z", 3)
+    int ck = 0
+    for clk to k { ck = ck + 1 }
+    assert_eq(ck, 3, "① ClockLRU key 3 个")
+
+    var o1 = new ct.LRUO1[int](cap = 4)
+    o1.put("p", 1); o1.put("q", 2)
+    int ok1 = 0
+    for o1 to k { ok1 = ok1 + 1 }
+    assert_eq(ok1, 2, "① LRUO1 key 2 个")
+
+    // ==================== 下标变量 / break / continue / 空 / 嵌套 ====================
+    Array[int] idxs = []
+    for st to v, i { idxs.add(i) }
+    assert_eq(idxs.len(), 5, "下标变量个数")
+    assert_eq(idxs[4], 4, "下标变量到 len-1")
+
+    int stopped = 0
+    for st to v {
+        if v == 4 { break }
+        stopped = stopped + 1
+    }
+    assert_eq(stopped, 2, "break 生效")
+
+    int skipped = 0
+    for st to v {
+        if v == 4 { continue }
+        skipped = skipped + 1
+    }
+    assert_eq(skipped, 4, "continue 生效")
+
+    var empty = new ct.Stack[int]()
+    int zero = 0
+    for empty to v { zero = zero + 1 }
+    assert_eq(zero, 0, "空容器 0 次")
+
+    int nested = 0
+    for st to a {
+        for st to b { nested = nested + 1 }
+    }
+    assert_eq(nested, 25, "嵌套遍历 5×5")
+
+    // ==================== ② 跨模块 ====================
+    var bag = fm.makeBag()
+    Array[string] bs = []
+    for bag to v { bs.add(_str(v)) }
+    assert_eq(bs.len(), 2, "② 跨模块 Bag 2 项")
+    assert_eq(bs[0], "m1", "② 跨模块首项")
+
+    var w = new fm.Wrap[int]()
+    w.add(9); w.add(8)
+    int wsum = 0
+    for w to v { wsum = wsum + v }
+    assert_eq(wsum, 17, "② 跨模块泛型 Wrap")
+
+    // ==================== 多 face：仍按 Iterable 遍历 ====================
+    var mf = new MultiFace()
+    mf.add(5); mf.add(6)
+    int msum = 0
+    for mf to v { msum = msum + v }
+    assert_eq(msum, 11, "实现了 2 个 face 也能遍历元素")
+
+    // ==================== 形状诱饵：不是 Iterable ⇒ 字段遍历 ====================
+    var b = new Buf()
+    Array[string] bf = []
+    for b to f { bf.add(_str(f)) }
+    assert_eq(bf.len(), 2, "形状诱饵仍是字段遍历（2 个字段）")
+    assert_eq(bf[0], "id", "形状诱饵第一个字段名 id")
+
+    // ==================== ③ 体积：多轮 20 万 ====================
+    var big = new ct.Stack[int]()
+    for 0 : 199999 to i { big.push(i) }
+    int rounds = 0
+    int total = 0
+    for 0 : 4 to r {
+        for big to v { total = total + v }
+        rounds = rounds + 1
+    }
+    assert_eq(rounds, 5, "③ 跑满 5 轮")
+    // 0..199999 求和 = 199999*200000/2 = 19999900000，×5 轮
+    assert_eq(total, 99999500000, "③ 5 轮 20 万次遍历的累加和")
+
+    // ==================== ④ 人写错了：必须编译期报错 ====================
+    // ④-1 face 有两个方法
+    expectBad("__it_bad_two_methods.leno",
+        "face Iterable {\n    func each(): Array\n    func other(): Array\n}\n",
+        "遍历协议")
+    // ④-2 方法带参数
+    expectBad("__it_bad_param.leno",
+        "face Iterable {\n    func each(int k): Array\n}\n",
+        "遍历协议")
+    // ④-3 返回不是 Array
+    expectBad("__it_bad_ret.leno",
+        "import \"Containers\" as ct\nface Iterable {\n    func each(): int\n}\n",
+        "遍历协议")
+    // ④-4 impl 了 Iterable 但没写 each()（缺方法）
+    expectBad("__it_bad_missing.leno",
+        "import \"Containers\" as ct\nstruct S impl Iterable {\n    int x = 0\n}\n",
+        "缺少方法")
+    // ④-5 impl 了不存在的 face
+    expectBad("__it_bad_noface.leno",
+        "struct S impl NotARealFace {\n    int x = 0\n}\n",
+        "未定义的 face")
+    // ④-6 each() 参数个数与 face 不符
+    expectBad("__it_bad_sig.leno",
+        "import \"Containers\" as ct\nstruct S impl Iterable {\n    func each(int k): Array { return [] }\n}\n",
+        "参数数量与 face 'Iterable' 不匹配")
+    // ④-7 each() 返回类型与 face 不符（face 要 Array，这里给 int）
+    expectBad("__it_bad_ret2.leno",
+        "import \"Containers\" as ct\nstruct S impl Iterable {\n    func each(): int { return 7 }\n}\n",
+        "返回类型与 face 'Iterable' 不匹配")
+
+    // ④-8 face 类型的变量直接遍历 ⇒ **警告**（不是错误）：VM 一次都不进，必须说出来
+    files.write("__it_warn_face.leno",
+        "import \"Containers\" as ct\nmain() {\n    var s = new ct.Stack[int]()\n    s.push(1)\n    Iterable it = s\n    for it to v { print(_str(v)) }\n}\n")
+    var wr = _exec(_executable() + " --check \"__it_warn_face.leno\"", 30000)
+    files.delete("__it_warn_face.leno")
+    var wrOut = wr.output as string
+    assert_true(wrOut.has("face 类型"), "④-8 face 变量遍历必须给警告")
+    assert_true(wrOut.has("一次都不执行"), "④-8 警告要点明是空循环")
+
+    // ==================== ⑤ 所有协议的入口都打一遍（同一份数据、逐条通道） ====================
+    // Stack：for 协议 / raw / to_array / each / iter 五条路，结果必须一致
+    var s5 = new ct.Stack[int]()
+    for 0 : 3 to i { s5.push(i) }
+    int viaFor = 0
+    for s5 to v { viaFor = viaFor + v }
+    int viaRaw = 0
+    for s5.raw() to v { viaRaw = viaRaw + v }
+    int viaCopy = 0
+    for s5.to_array() to v { viaCopy = viaCopy + v }
+    int viaEach = 0
+    for s5.each() to v { viaEach = viaEach + v }
+    var it5 = s5.iter()
+    int viaIter = 0
+    while it5.has_next() {
+        if it5.next() is int => x { viaIter = viaIter + x }
+    }
+    assert_eq(viaFor, 6, "⑤ Stack: for 协议")
+    assert_eq(viaRaw, 6, "⑤ Stack: raw()")
+    assert_eq(viaCopy, 6, "⑤ Stack: to_array()")
+    assert_eq(viaEach, 6, "⑤ Stack: each()")
+    assert_eq(viaIter, 6, "⑤ Stack: iter() 游标")
+
+    // Queue：head 偏移在三条路上都要扣掉
+    var q5 = new ct.Queue[int]()
+    for 0 : 3 to i { q5.push(i) }
+    q5.pop()
+    int qFor = 0
+    for q5 to v { qFor = qFor + v }
+    int qCopy = 0
+    for q5.to_array() to v { qCopy = qCopy + v }
+    int qEach = 0
+    for q5.each() to v { qEach = qEach + v }
+    var qit = q5.iter()
+    int qIter = 0
+    while qit.has_next() {
+        if qit.next() is int => x { qIter = qIter + x }
+    }
+    assert_eq(qFor, 6, "⑤ Queue: for 协议")
+    assert_eq(qCopy, 6, "⑤ Queue: to_array()")
+    assert_eq(qEach, 6, "⑤ Queue: each()")
+    assert_eq(qIter, 6, "⑤ Queue: iter() 游标")
+
+    // Deque：两段结构在三条路上都要一致
+    var d5 = new ct.Deque[int]()
+    d5.push_back(1); d5.push_front(0); d5.push_back(2)
+    int dFor = 0
+    for d5 to v { dFor = dFor + v }
+    int dCopy = 0
+    for d5.to_array() to v { dCopy = dCopy + v }
+    int dEach = 0
+    for d5.each() to v { dEach = dEach + v }
+    var dit = d5.iter()
+    int dIter = 0
+    while dit.has_next() {
+        if dit.next() is int => x { dIter = dIter + x }
+    }
+    assert_eq(dFor, 3, "⑤ Deque: for 协议")
+    assert_eq(dCopy, 3, "⑤ Deque: to_array()")
+    assert_eq(dEach, 3, "⑤ Deque: each()")
+    assert_eq(dIter, 3, "⑤ Deque: iter() 游标")
+
+    // PriorityQueue：堆序，四条路元素数一致
+    var pq5 = new ct.PriorityQueue[int]()
+    for [1, 2, 3] to v { pq5.push(v) }
+    int p1 = 0
+    for pq5 to v { p1 = p1 + v }
+    int p2 = 0
+    for pq5.raw() to v { p2 = p2 + v }
+    int p3 = 0
+    for pq5.to_array() to v { p3 = p3 + v }
+    int p4 = 0
+    for pq5.each() to v { p4 = p4 + v }
+    assert_eq(p1, 6, "⑤ PQ: for 协议")
+    assert_eq(p2, 6, "⑤ PQ: raw()")
+    assert_eq(p3, 6, "⑤ PQ: to_array()")
+    assert_eq(p4, 6, "⑤ PQ: each()")
+
+    // 缓存：for 协议 / raw / keys / each / keys_iter 五条路都数 key 个数
+    var l5 = new ct.LRU[int](cap = 8)
+    l5.put("a", 1); l5.put("b", 2); l5.put("c", 3)
+    int k1 = 0
+    for l5 to k { k1 = k1 + 1 }
+    int k2 = 0
+    for l5.raw() to k { k2 = k2 + 1 }
+    int k3 = 0
+    for l5.keys() to k { k3 = k3 + 1 }
+    int k4 = 0
+    for l5.each() to k { k4 = k4 + 1 }
+    var kit = l5.keys_iter()
+    int k5 = 0
+    while kit.has_next() {
+        if kit.next() is string => kk { k5 = k5 + 1 }
+    }
+    assert_eq(k1, 3, "⑤ LRU: for 协议")
+    assert_eq(k2, 3, "⑤ LRU: raw()")
+    assert_eq(k3, 3, "⑤ LRU: keys()")
+    assert_eq(k4, 3, "⑤ LRU: each()")
+    assert_eq(k5, 3, "⑤ LRU: keys_iter()")
+
+    // ClockLRU / LRUO1：for 协议 / keys / each
+    var c5 = new ct.ClockLRU[int](cap = 8)
+    c5.put("x", 1); c5.put("y", 2)
+    int c1 = 0
+    for c5 to k { c1 = c1 + 1 }
+    int c2 = 0
+    for c5.keys() to k { c2 = c2 + 1 }
+    int c3 = 0
+    for c5.each() to k { c3 = c3 + 1 }
+    assert_eq(c1, 2, "⑤ ClockLRU: for 协议")
+    assert_eq(c2, 2, "⑤ ClockLRU: keys()")
+    assert_eq(c3, 2, "⑤ ClockLRU: each()")
+
+    var o5 = new ct.LRUO1[int](cap = 8)
+    o5.put("p", 1); o5.put("q", 2)
+    int o1c = 0
+    for o5 to k { o1c = o1c + 1 }
+    int o2c = 0
+    for o5.keys() to k { o2c = o2c + 1 }
+    int o3c = 0
+    for o5.each() to k { o3c = o3c + 1 }
+    assert_eq(o1c, 2, "⑤ LRUO1: for 协议")
+    assert_eq(o2c, 2, "⑤ LRUO1: keys()")
+    assert_eq(o3c, 2, "⑤ LRUO1: each()")
+
+    print("test_iterable_stress passed")
+}
