@@ -85,6 +85,12 @@ ObjFaceDef* face_def_find(const char* name) {
     return NULL;
 }
 
+// 注：这里原本还有一个"内置 face Iterable"的注册函数（方法名 `each` 写死在 C 里）。
+//   被否掉了 —— 那只是把"写死"从 for 的改写处搬到了这里，编译器仍然内置了
+//   `Iterable` / `each` 两个名字。现在的做法是**纯结构判定**（见 visit_control.inc）：
+//   struct 恰好实现 1 个 face、该 face 恰好 1 个方法、且返回类型是 Array ⇒ 就遍历那个方法。
+//   编译器不认识任何具体名字；`Iterable` 只是 LenoContainers 里声明的一个普通 face。
+
 int struct_implements_face(ObjStructDef* struct_def, ObjFaceDef* face_def) {
     if (!struct_def || !face_def) return 0;
 

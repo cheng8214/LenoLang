@@ -112,12 +112,9 @@ main() {
     }
     assert_eq(viaIter, 17, "Queue.iter 累加 = 8+9")
 
-    // ---------- 反面：`for st to v` 是**字段遍历**，不再被方法名劫持 ----------
-    Array[string] stFields = []
-    for st to f { stFields.add(f) }
-    assert_eq(stFields.len(), 1, "Stack 的字段只有 1 个")
-    assert_eq(stFields[0], "items", "for st to f 给的是字段名 items")
-
+    // ---------- 反面：**没有 impl 协议**的 struct ⇒ 字段遍历（不许按名字猜） ----------
+    //   ⚠ Stack 现在 `impl Iterable`（见 test_iterable_face.leno），所以 `for st to v`
+    //     是**遍历元素**；这里要钉的是"不实现协议的结构体不会被任何方法名劫持"。
     var clash = new Clash()
     clash.v = 5
     Array[string] clashFields = []

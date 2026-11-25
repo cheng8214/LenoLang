@@ -677,6 +677,49 @@
             //   若将来要恢复语法糖，应做成**声明式**的（struct 上标注"迭代用哪个方法"），
             //   让信息来自声明而不是名字猜测。
 
+            // ★ 2026-11-25（声明式遍历，**编译器不认识任何名字**）：
+            //   判定规则 —— 被遍历的 struct 恰好实现 1 个 face、该 face 恰好 1 个方法、
+            //   且那个方法返回 Array ⇒ `for c to v` 遍历**那个方法的返回值**（元素）。
+            //   除此之外（0 个 face / 多个 face / 方法不返回 Array）⇒ 仍是**字段遍历**。
+            //
+            //   为什么这么写：上一版在 C 里内置了 `face Iterable { func each(): Array }`
+            //   （`strdup("each")`）—— 那只是把"写死"从 for 挪到了 face 注册处，编译器仍然
+            //   内置了 `Iterable`/`each` 两个名字。现在编译器只做**结构判定**：
+            //   `for` 用哪个方法，完全由"这个 struct 声明实现了哪个 face"决定，
+            //   而 face 是普通 Leno 声明（LenoContainers 里 `export face Iterable { func each(): Array }`）。
+            //   ⇒ 谁想自定义遍历，就自己声明 face + impl，编译器一行都不用改。
+            if (ast->u.for_.end && !ast->u.for_.start) {
+                TypeInfo* et = infer_expr_type(s, ast->u.for_.end);
+                if (et && !et->nullable && et->kind == TYPE_STRUCT && et->struct_name) {
+                    ObjStructDef* sdef = struct_def_find(et->struct_name);
+                    // 恰好 1 个 face ⇒ 看它的唯一方法；多个 face ⇒ 不猜（字段遍历）
+                    if (sdef && sdef->impl_count == 1) {
+                        ObjFaceDef* fdef = face_def_find(sdef->impl_names[0]);
+                        if (fdef && fdef->method_count == 1 && fdef->methods[0].name &&
+                            fdef->methods[0].param_count == 0 &&
+                            fdef->methods[0].return_type &&
+                            fdef->methods[0].return_type->kind == TYPE_ARRAY) {
+                            Ast* endNode = ast->u.for_.end;
+                            Ast* fa = ast_new(AST_FIELD_ACCESS, endNode->line);
+                            fa->line = endNode->line;
+                            fa->column = endNode->column;
+                            fa->u.field_access.obj = endNode;
+                            // 方法名来自 face 声明（不是 C 里的字符串常量）
+                            fa->u.field_access.field_name = strdup(fdef->methods[0].name);
+                            fa->u.field_access.field_index = -1;
+                            Ast* call = ast_new(AST_CALL, endNode->line);
+                            call->line = endNode->line;
+                            call->column = endNode->column;
+                            call->u.call.callee = fa;
+                            ast->u.for_.end = call;
+                            // 方法调用要立刻 visit：否则没经方法解析，codegen 拿不到方法表
+                            visit(s, ast->u.for_.end);
+                        }
+                    }
+                }
+                if (et) type_free(et);
+            }
+
             // ★ 2026-11-08：for 头的类型检查。
             //   此前 `for 0:10:"x"`（步长是字符串）**静默一次都不执行** ✗；
             //   `for true to i` / `for null to i` 同样静默 0 次。

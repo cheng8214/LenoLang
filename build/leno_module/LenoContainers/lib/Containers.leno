@@ -15,6 +15,22 @@
 //
 // 七个类型：Stack / Queue / Deque / PriorityQueue / LRU / ClockLRU / LRUO1。
 
+// ==================== 遍历协议：face Iterable（2026-11-25）====================
+// `for c to v` 的**声明式**入口。编译器只做结构判定、**不认识任何名字**：
+//
+//     struct 恰好实现 1 个 face、该 face 恰好 1 个方法、且该方法返回 Array
+//        ⇒ for 遍历 `c.<那个方法>()` 的结果（元素）
+//     否则（0 个 face / 多个 face / 方法不返回 Array）
+//        ⇒ 仍是**字段遍历**（本语言 for struct 的原有语义）
+//
+// 所以：想让自己的类型能被 `for` 遍历元素，就 `impl Iterable` 并实现 `each()`：
+//     export struct Stack[T] impl Iterable { func each(): Array[T] { return items } … }
+// 编译器里没有 "Iterable"、没有 "each" —— 这两个名字只存在于这份声明里。
+// （旧版曾在 C 里内置同名 face 并 `strdup("each")`，那是把写死换了个地方放，已弃用。）
+export face Iterable {
+    func each(): Array
+}
+
 // ==================== 零分配遍历：游标（Iter / DequeIter）====================
 // 背景：`for st to v` 是**语义期改写成 `st.to_array()`** ⇒ 每轮遍历先复制一份快照
 //   （README 里只能写"热路径请自己按下标走"）。这里给出**不复制**的写法：
@@ -66,7 +82,7 @@ export struct DequeIter[T] {
 }
 
 // ==================== Stack：后进先出 ====================
-export struct Stack[T] {
+export struct Stack[T] impl Iterable {
     Array[T] items = []
 
     func push(T v) {
@@ -99,6 +115,9 @@ export struct Stack[T] {
     //   `for st to v` 改写成 `for st.raw() to v` ⇒ 零分配 + 数组迭代的满速路径。
     //   代价：这是**实时视图**（循环体里 push/pop 会被看到；边遍历边改容器本来就不该做）。
     func raw(): Array[T] { return items }
+
+    // face Iterable 的契约方法：`for st to v` 走这条（栈底 → 栈顶，零复制）
+    func each(): Array[T] { return items }
     func clear() { items.clear() }
 
     // 快照（栈底 → 栈顶），**非破坏性**：返回值是副本，改它不影响栈
@@ -117,7 +136,7 @@ export struct Stack[T] {
 // 为什么不用 `Array.remove(0)` 实现：那是 O(n) 整体搬移，出队一多就是平方复杂度。
 // 这里用 **head 指针 + 惰性压缩**：正常出队只挪指针；积压超过一半且超过 64 个时才真正搬一次，
 // 平摊下来是 O(1)。
-export struct Queue[T] {
+export struct Queue[T] impl Iterable {
     Array[T] items = []
     int head = 0
 
@@ -179,6 +198,9 @@ export struct Queue[T] {
     // 零分配遍历（队首 → 队尾）：pos 从 head 起，天然跳过已出队的空洞
     func iter(): Iter[T] { return new Iter[T](items = items, pos = head, stop = items.len()) }
 
+    // face Iterable：队首 → 队尾（快照：内部有 head 空洞，不能直接给数组）
+    func each(): Array[T] { return to_array() }
+
     // 按**逻辑下标**看元素（0 = 队首）；越界抛错（与 Deque.at 同口径）
     func at(int i): T {
         int n = items.len() - head
@@ -218,7 +240,7 @@ export struct Queue[T] {
 //   · **同优先级 FIFO**：比较器返回 0 时按**入队序号**先入先出（堆本身不稳定，
 //     LenoWeb 当年为此另加了一个 seq 字段自己比）；
 //   · **空堆取值抛错**（不是返回 null，那样错误会漂走）。
-export struct PriorityQueue[T] {
+export struct PriorityQueue[T] impl Iterable {
     Array[T] heap = []
     Array[int] seqs = []              // 与 heap 平行的入队序号（做"同优先级 FIFO"的稳定打破）
     int next_seq = 0
@@ -305,6 +327,9 @@ export struct PriorityQueue[T] {
 
     // 内部堆数组本身（P1.1：让 `for pq to v` 零分配）
     func raw(): Array[T] { return heap }
+
+    // face Iterable 的契约方法：堆序（只保证父优于子；要出队序用 drain_sorted）
+    func each(): Array[T] { return heap }
     func clear() {
         heap.clear()
         seqs.clear()
@@ -338,7 +363,7 @@ export struct PriorityQueue[T] {
 //   两端 push 都是 O(1)；`pop_back` 遇到 `b` 空了就把 `f` 整体倒进 `b`
 //   （每个元素一辈子最多搬一次 ⇒ **平摊 O(1)**）。
 //   为什么不用"单数组 + 头预留空隙"：Leno 的泛型没法造 `T` 的占位值来预留空隙。
-export struct Deque[T] {
+export struct Deque[T] impl Iterable {
     Array[T] f = []                  // 前半段（反向）：f[f.len()-1] = 逻辑第 0 个
     Array[T] b = []                  // 后半段（正向）
     int bh = 0                       // b 的头偏移（出队只挪它，超过一半且 >64 才真正搬）
@@ -351,6 +376,9 @@ export struct Deque[T] {
 
     // 零分配遍历（队首 → 队尾）：跨 f/b 两段的实时视图
     func iter(): DequeIter[T] { return new DequeIter[T](f = f, b = b, bh = bh, n = n, pos = 0) }
+
+    // face Iterable：队首 → 队尾（快照：元素分 f/b 两段）
+    func each(): Array[T] { return to_array() }
 
     func push_back(T v) { b.add(v); n = n + 1 }
     func push_front(T v) { f.add(v); n = n + 1 }
@@ -478,7 +506,7 @@ export struct Deque[T] {
 //
 // ⚠ 复杂度：`get` / `put` 是 **O(n)**（数组里找 key 再搬位置）。cap 在几千以内没问题；
 //   要 O(1) 用 ClockLRU（近似淘汰）。`peek` 不搬位置，是 O(1)。
-export struct LRU[V] {
+export struct LRU[V] impl Iterable {
     Dict[string, V] map = {}
     Array[string] order = []          // 顺序 = 最近使用（末尾最新）
     int cap = 128
@@ -575,6 +603,9 @@ export struct LRU[V] {
     // 内部 order 数组本身（P1.1：让 `for lru to k` 零分配；顺序同 keys()）
     func raw(): Array[string] { return order }
 
+    // face Iterable 的契约方法：遍历 **key**（最久 → 最近，零复制）
+    func each(): Array[string] { return order }
+
     // 调小容量会立刻淘汰到新上限（调大不会补数据），返回被淘汰的 key（最久 → 较新）
     func set_capacity(int n): Array[string] {
         if n < 1 { throw "Containers.LRU.set_capacity: 容量必须 >= 1（收到 " + _str(n) + "）" }
@@ -606,7 +637,7 @@ export struct LRU[V] {
 //
 // 取舍：要"淘汰的确实是最久未使用"就用 LRU（cap 小的时候它够快）；
 // 要 cap 上千还能 O(1)，用这个，代价是淘汰顺序只是近似。
-export struct ClockLRU[V] {
+export struct ClockLRU[V] impl Iterable {
     Dict[string, V] map = {}          // 值
     Dict[string, int] slot = {}       // key → 环上下标（命中不用遍历）
     Array[string] ring = []           // 环：装满后长度恒为 cap
@@ -681,6 +712,9 @@ export struct ClockLRU[V] {
 
     func has(string k): bool { return map.has(k) }
     func len(): int { return map.len() }
+
+    // face Iterable：遍历 key（环序；死槽已剔除 —— 与 keys() 同口径）
+    func each(): Array[string] { return keys() }
     func capacity(): int { return cap }
 
     func remove(string k) {
@@ -742,7 +776,7 @@ export struct ClockLRU[V] {
 // 代价：每个键多两条 int（8 字节）+ 三个字典/数组项，比 `ClockLRU` 略费内存。
 // 选型：cap 小（≤128）三者都行，`LRU` 最省事；cap 上千且要 O(1) 又要严格 ⇒ 用这个；
 //       只求"够用的近似" ⇒ `ClockLRU`（它连链都不用维护）。
-export struct LRUO1[V] {
+export struct LRUO1[V] impl Iterable {
     Dict[string, V] map = {}
     Dict[string, int] slot = {}       // key → 节点下标
     Array[int] prev = []              // 双向链表（下标索引，-1 = 无）
@@ -801,6 +835,9 @@ export struct LRUO1[V] {
     }
 
     func len(): int { return map.len() }
+
+    // face Iterable：遍历 key（环序；死槽已剔除 —— 与 keys() 同口径）
+    func each(): Array[string] { return keys() }
     func capacity(): int { return cap }
     func has(string k): bool { return map.has(k) }
 

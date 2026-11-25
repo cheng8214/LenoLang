@@ -87,19 +87,50 @@ for l to k { print(k) }         // 缓存遍历的是 **key**
   要遍历元素请显式写 `for c.raw() to v` / `for c.to_array() to v`，见下一节。
   热路径上想零分配，就自己 `peek` / `at` 按下标走。
 
-## 遍历：三条路，**自己写清楚走哪条**（2026-11-25）
+## 遍历：`for c to v` 走**声明式协议**（2026-11-25）
 
-先说规则：**`for <struct> to k, v` 永远是字段遍历**（k = 字段名）。容器不会"自动变成可遍历" ——
-编译器不认识任何方法名，也不会去猜（曾经按 `raw`/`to_array`/`keys` 猜过一版，**已删除**：
-用户结构体碰巧有个同名 `raw()` 就会被静默劫持，实测 `for f to v` 变成 `for 7 to v`）。
+本模块声明了一个普通 face，容器都实现了它：
 
-要遍历元素，写表达式（都是普通语法，编译器零特判）：
+```leno
+export face Iterable {
+    func each(): Array          // 唯一方法：无参、返回元素数组
+}
+export struct Stack[T] impl Iterable { … func each(): Array[T] { return items } … }
+```
+
+`for c to v` 的判定规则（**编译器只做结构判定，源码里没有 `Iterable`/`each` 任何字符串**）：
+
+| struct 的 face 情况 | `for c to v` 的语义 |
+|---|---|
+| 恰好 1 个 face，且它恰好 1 个方法、该方法返回 `Array` | 遍历 `c.<那个方法>()` 的结果（元素） |
+| 0 个 face | **字段遍历**（k = 字段名，本语言原有语义） |
+| ≥2 个 face | 字段遍历（不猜是哪一个） |
+
+所以容器直接写就行：
+
+```leno
+for st to v { }        // 栈底 → 栈顶（37 ns/op、20 万项 1,271 B 分配 ≈ 0）
+for q to v { }         // 队首 → 队尾（Queue 内部有 head 空洞 ⇒ each() 给快照）
+for pq to v { }        // 堆序（不保证出队序；要优先级顺序用 drain_sorted）
+for lru to k { }       // 缓存：遍历 key（最久 → 最近）
+```
+
+想让**自己的类型**也能被 `for` 遍历？声明一个 face 并 impl 它，编译器一行都不用改：
+
+```leno
+struct MyRange impl Iterable {
+    int n = 0
+    func each(): Array[int] { … }      // 返回什么数组就遍历什么
+}
+for r to v { }                          // 直接可用
+```
+
+### 也可以完全显式（不依赖协议）
 
 ```leno
 for st.raw() to v { }        // 0 复制 + 数组满速（34 ns/op）—— raw 返回**内部数组本身**
-for st.to_array() to v { }   // 快照（57 ns/op）—— 循环体里改容器不影响本轮
-for lru.keys() to k { }      // 缓存遍历 key（最久 → 最近）
-for q.to_array() to v { }    // Queue / Deque / PriorityQueue 同理：显式 to_array()
+for st.to_array() to v { }   // 快照（52 ns/op）—— 循环体里改容器不影响本轮
+for lru.keys() to k { }      // 缓存遍历 key
 ```
 
 元素一次都不复制、也不想快照？用游标（每元素两次方法调用，慢一点，但元素不连续的容器也能用）：
@@ -107,7 +138,7 @@ for q.to_array() to v { }    // Queue / Deque / PriorityQueue 同理：显式 to
 ```leno
 var it = st.iter()                       // Stack / Queue / PriorityQueue / Deque 都有
 while it.has_next() {
-    if it.next() is int => v { sink(v) }  // next() 返回 T?（走完给 null）
+    if it.next() is int => v { sink(v) }  // next(): T?（走完给 null）
 }
 var kit = lru.keys_iter()                 // 缓存：遍历 key
 ```
@@ -126,19 +157,21 @@ var kit = lru.keys_iter()                 // 缓存：遍历 key
 
 | 写法 | 时间 | 每轮分配 |
 |---|---|---|
-| `for st.raw() to v` | **34 ns/op** | **~0**（20 万项实测 1,271 B） |
-| `for st.to_array() to v` | 57 ns/op | 8 MB |
+| `for st to v`（协议 → `each()`） | **37 ns/op** | **~0**（20 万项实测 1,271 B） |
+| `for st.raw() to v`（显式） | 34 ns/op | ~0 |
+| `for st.to_array() to v`（显式快照） | 52~57 ns/op | 8 MB |
 | `iter()` + `has_next()` | 104~121 ns/op | ~0 |
 
-读法：`raw()` 把"内部数组"直接交给 `for` ⇒ 既省掉复制、又保留数组顺序扫的速度，
-所以它**比快照还快**（少一次 8MB 复制）。游标省的是复制，但每元素两次方法调用，
+读法：协议版只多一次方法调用（`each()` 返回内部数组，不复制）⇒ 既省掉 8MB 复制、
+又保留数组顺序扫的速度，所以它**比快照还快**。游标省的是复制，但每元素两次方法调用，
 因此更慢 —— 它是给"元素不连续"的容器（Queue/Deque）用的兜底。
 
 **语义差别（必须知道）**：
 
-- `raw()` 是**实时视图**：循环体里 `push`/`pop` 会被看到（边遍历边改容器本来就该避免）；
-- `to_array()` / `keys()` 是**快照**：循环体里改容器不影响本轮（但每轮分配）；
-- 游标 `iter()` 也是实时视图。
+- `each()`（Stack/PriorityQueue/LRU）= 返回**内部数组** ⇒ **实时视图**：
+  循环体里 `push`/`pop` 会被看到（边遍历边改容器本来就该避免）；
+- `each()`（Queue/Deque）= 内部不连续 ⇒ 它们返回 `to_array()` ⇒ **快照**；
+- `to_array()` / `keys()` 显式写时都是快照；游标 `iter()` 是实时视图。
 
 ## API
 
@@ -391,6 +424,12 @@ build\leno.exe build\leno_module\LenoContainers\bench\bench_containers.leno
 ```
 
 ## 变更记录
+
+- **0.8.0**（2026-11-25）：新增 `face Iterable { func each(): Array }`，七个类型全部 `impl Iterable`
+  ⇒ **`for st to v` 直接遍历元素/键**（37 ns/op、20 万项 ≈ 0 分配）。判定是**结构式**的
+  （恰好 1 个 face + 该 face 恰好 1 个方法 + 返回 Array），编译器源码里没有任何
+  `Iterable`/`each` 字符串；自定义类型只要 `impl Iterable` 就能被 `for` 遍历。
+  显式写法（`.raw()` / `.to_array()` / `.keys()` / `iter()`）继续保留。
 
 - **0.7.0**（2026-11-25）：新增 `raw()`（返回**内部数组本身**）—— `Stack` / `PriorityQueue` / `LRU`。
   用法是**显式**的 `for st.raw() to v`：实测 1M 项 **34 ns/op、~0 分配**（对照

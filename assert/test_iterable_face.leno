@@ -1,0 +1,130 @@
+// test_iterable_face.leno —— `for c to v` 遍历元素：**声明式协议**（2026-11-25）
+//
+// 规则（编译器只做结构判定，C 源码里**没有任何** Iterable / each 这些名字）：
+//
+//     struct 恰好实现 1 个 face、该 face 恰好 1 个方法、且该方法返回 Array
+//        ⇒ `for c to v` 遍历 `c.<那个方法>()` 的结果
+//     否则（0 个 face / 多个 face / 方法不返回 Array）
+//        ⇒ 仍是**字段遍历**（本语言 `for struct to k, v` 的原有语义）
+//
+// `Iterable { func each(): Array }` 只是 LenoContainers 里的一个普通 face 声明。
+import "Containers" as ct
+
+// 自定义：实现协议 ⇒ 可被 for 遍历元素
+struct MyRange impl Iterable {
+    int n = 0
+    func each(): Array[int] {
+        Array[int] out = []
+        for 0 : n - 1 to i { out.add(i * i) }
+        return out
+    }
+}
+
+// 不实现任何 face ⇒ 字段遍历（不能回归）
+struct Plain {
+    int a = 1
+    int b = 2
+}
+
+// 撞名夹具：有 `raw()`，但没 impl ⇒ 仍是字段遍历（旧版按名字猜时会被劫持成 for 7）
+struct Clash {
+    int v = 5
+    func raw(): int { return 7 }
+}
+
+main() {
+    // ---------- Stack / Queue / Deque：元素顺序 ----------
+    var st = new ct.Stack[int]()
+    st.push(1); st.push(2); st.push(3)
+    Array[int] seen = []
+    for st to v { seen.add(v) }
+    assert_eq(seen.len(), 3, "Stack impl Iterable ⇒ 3 个元素")
+    assert_eq(seen[0], 1, "Stack 从栈底开始")
+    assert_eq(seen[2], 3, "Stack 到栈顶结束")
+
+    var q = new ct.Queue[int]()
+    q.push(7); q.push(8); q.push(9)
+    q.pop()
+    Array[int] qs = []
+    for q to v { qs.add(v) }
+    assert_eq(qs.len(), 2, "Queue 扣掉已出队元素")
+    assert_eq(qs[0], 8, "Queue 从队首开始")
+
+    var dq = new ct.Deque[int]()
+    dq.push_back(1); dq.push_front(0); dq.push_back(2)
+    Array[int] ds = []
+    for dq to v { ds.add(v) }
+    assert_eq(ds.len(), 3, "Deque 3 个")
+    assert_eq(ds[0], 0, "Deque 队首")
+    assert_eq(ds[2], 2, "Deque 队尾")
+
+    // ---------- PriorityQueue：堆序（元素不丢） ----------
+    var pq = new ct.PriorityQueue[int](cmp = func(int a, int b): int {
+        if a > b { return -1 }
+        if a < b { return 1 }
+        return 0
+    })
+    pq.push(5); pq.push(1); pq.push(9)
+    int sum = 0
+    int cnt = 0
+    for pq to v { sum = sum + v; cnt = cnt + 1 }
+    assert_eq(cnt, 3, "PriorityQueue 遍历 3 个")
+    assert_eq(sum, 15, "PriorityQueue 不丢元素")
+
+    // ---------- 缓存：遍历 key ----------
+    var l = new ct.LRU[int](cap = 4)
+    l.put("a", 1); l.put("b", 2)
+    l.get("a", 0)                       // a 提升 ⇒ b,a
+    Array[string] ks = []
+    for l to k { ks.add(k) }
+    assert_eq(ks.len(), 2, "LRU 遍历 key 2 个")
+    assert_eq(ks[0], "b", "LRU 顺序 = 最久→最近（b 在前）")
+
+    var o = new ct.LRUO1[int](cap = 4)
+    o.put("p", 1); o.put("q", 2)
+    int oc = 0
+    for o to k { oc = oc + 1 }
+    assert_eq(oc, 2, "LRUO1 遍历 key 2 个")
+
+    var c = new ct.ClockLRU[int](cap = 4)
+    c.put("x", 1); c.put("y", 2)
+    int cc = 0
+    for c to k { cc = cc + 1 }
+    assert_eq(cc, 2, "ClockLRU 遍历 key 2 个")
+
+    // ---------- 自定义类型：只要 impl 了协议就能被 for 遍历 ----------
+    var r = new MyRange(n = 4)
+    Array[int] sq = []
+    for r to v { sq.add(v) }
+    assert_eq(sq.len(), 4, "MyRange 4 个")
+    assert_eq(sq[0], 0, "MyRange 首项 0²")
+    assert_eq(sq[3], 9, "MyRange 末项 3²")
+
+    // ---------- 第二个循环变量 = 下标 ----------
+    Array[int] idxs = []
+    for r to v, i { idxs.add(i) }
+    assert_eq(idxs.len(), 4, "带下标遍历个数")
+    assert_eq(idxs[3], 3, "第二个变量是下标")
+
+    // ---------- 没实现协议的 struct：仍是字段遍历 ----------
+    var p = new Plain()
+    Array[string] pf = []
+    for p to f { pf.add(f) }
+    assert_eq(pf.len(), 2, "Plain 仍是字段遍历（2 个字段）")
+    assert_eq(pf[0], "a", "Plain 第一个字段名")
+
+    // ---------- 反面：有同名 raw() 但没有 impl ⇒ 字段遍历（不许按名字猜） ----------
+    var clash = new Clash()
+    Array[string] cf = []
+    for clash to f { cf.add(f) }
+    assert_eq(cf.len(), 1, "Clash 字段只有 1 个")
+    assert_eq(cf[0], "v", "Clash 字段名 v（不是被 raw() 劫持的 0..6）")
+
+    // ---------- 空容器 ----------
+    var empty = new ct.Stack[int]()
+    int zero = 0
+    for empty to v { zero = zero + 1 }
+    assert_eq(zero, 0, "空容器一次都不进")
+
+    print("test_iterable_face passed")
+}
