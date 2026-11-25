@@ -9,6 +9,7 @@
 // 修法：parser_func.c 的值别名探测加两条排除（带类型参数 / 成员名后跟 `[`）；
 //       parser_expr.c 的别名替换把 `qual.name` 拼回去。
 import "helpers/alias_box_mod.leno" as m
+use m.BoxAlias        // 模块级：下面的 viaParam / viaReturn 也要用（`use` 有作用域）
 
 // A) 本地泛型 alias → 本地泛型 struct
 struct LocalBox[T] {
@@ -57,7 +58,6 @@ main() {
 
     // F) 跨模块泛型别名 + use 裸名调用（2026-11-25 才通的路径：
     //    形参名随符号表导出 ⇒ 语义期把 `new BoxAlias[int]()` 展开成 `new m.Box[int]()`）
-    use m.BoxAlias
     var f = new BoxAlias[int]()
     f.put(66)
     assert_eq(f.take(), 66, "F use 导入的跨模块泛型别名")
@@ -72,5 +72,30 @@ main() {
     h.put("hh")
     assert_eq(h.take(), "hh", "H 限定名 m.BoxAlias[T]")
 
+    // I) 别名作**函数形参类型**（2026-11-25 补：签名里的别名此前不展开 ⇒ 假报类型不匹配）
+    assert_eq(viaParam(new BoxAlias[int]()), 88, "I 别名作形参")
+
+    // J) 别名作**返回类型**
+    assert_eq(viaReturn().take(), 99, "J 别名作返回类型")
+
+    // K) 别名作**局部变量注解**（走 resolve_alias_in_type 的常规路径）
+    BoxAlias[int] k = new BoxAlias[int]()
+    k.put(12)
+    assert_eq(k.take(), 12, "K 别名作局部变量注解")
+
     print("test_alias_generic_cross passed")
+}
+
+// 别名作形参类型：调用点实参是 `new BoxAlias[int]()`（已被展开成 m.Box[int]），
+// 形参若不展开就停在别名名上 ⇒ 假报「参数类型不匹配」。这个用例专门钉住那次修复。
+func viaParam(BoxAlias[int] b): int {
+    b.put(88)
+    return b.take()
+}
+
+// 别名作返回类型
+func viaReturn(): BoxAlias[int] {
+    var b = new BoxAlias[int]()
+    b.put(99)
+    return b
 }

@@ -556,14 +556,22 @@ int resolve_alias_in_type(Semantic* s, TypeInfo** type_ptr, int line) {
                     }
                 }
                 if (cycle) {
-                    error_add_at_fmt(ERR_SEMANTIC, line > 0 ? line : type->line, type->column,
-                        "类型别名 '%s' 存在循环引用（直接或间接引用了自己）—— 类型展开会无限递归，"
-                        "无法确定实际类型；请拆掉其中一个别名或换成 struct",
-                        type->struct_name);
-                    free(type->struct_name);
-                    type->struct_name = NULL;
-                    type->kind = TYPE_ANY;   // 毒化：错误已报，别再让下游级联
-                    changed = 1;
+                    // ★ 2026-11-25：**别名与目标同名**不算循环。
+                    //   `export alias Stack[T] = ct.Stack[T]` 展开成 `ct.Stack[T]`，去掉模块前缀后
+                    //   又回到 "Stack" ⇒ 展开栈命中自己，但全局 struct 表里确实**存在** Stack
+                    //   （Containers 注册的真身）⇒ 这就是终点。类型按裸名索引是既有设计，
+                    //   这里只落实一条：**真 struct 优先于同名别名**。
+                    //   （真正的自引用别名 `alias A = Array[A]` 没有对应的真 struct ⇒ 仍报错 ✓）
+                    if (struct_def_find(type->struct_name) == NULL) {
+                        error_add_at_fmt(ERR_SEMANTIC, line > 0 ? line : type->line, type->column,
+                            "类型别名 '%s' 存在循环引用（直接或间接引用了自己）—— 类型展开会无限递归，"
+                            "无法确定实际类型；请拆掉其中一个别名或换成 struct",
+                            type->struct_name);
+                        free(type->struct_name);
+                        type->struct_name = NULL;
+                        type->kind = TYPE_ANY;   // 毒化：错误已报，别再让下游级联
+                        changed = 1;
+                    }
                 } else {
                     // 先复制再释放：万一 struct_def->type 与 type 是同一对象（自引用别名），
                     // 先 free 会变成"拷贝已释放内存"（UAF）

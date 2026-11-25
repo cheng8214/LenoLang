@@ -1,0 +1,38 @@
+// test_alias_same_name.leno —— **别名与目标同名**的再导出（2026-11-25 钉住）
+//
+// 场景：`LenoWeb.web_generic` 里 `export alias Stack[T] = ct.Stack[T]`，
+//   名字 `Stack` 与目标 `ct.Stack` **同名**，再由 Web.leno 转出。
+//   展开时 `ct.Stack[T]` 去掉模块前缀又回到 "Stack" ⇒ 展开栈命中自己。
+//   ⚠ 修前被误判成「类型别名 'Stack' 存在循环引用」，整个签名/注解位置都编译不过。
+//   现在的规则：**真 struct 优先于同名别名**（全局 struct 表里有 Stack ⇒ 它就是终点；
+//   真正的自引用 `alias A = Array[A]` 仍然报循环，见 test_alias_generic_cross 的既有覆盖）。
+import "Web" as web
+import "Containers" as ct
+use web.Stack
+
+main() {
+    // A) use 再导出的同名别名 + 裸名实例化
+    var a = new Stack[int]()
+    a.push(1)
+    assert_eq(a.pop(), 1, "A use web.Stack 裸名")
+
+    // B) 限定名
+    var b = new web.Stack[string]()
+    b.push("bb")
+    assert_eq(b.pop(), "bb", "B web.Stack[string]")
+
+    // C) 与容器真身是**同一个类型**：可直接互赋
+    ct.Stack[int] c = new web.Stack[int]()
+    c.push(3)
+    assert_eq(c.pop(), 3, "C 别名 → 容器真身互赋")
+
+    // D) 作函数形参（同名别名的展开路径也要通）
+    assert_eq(takeOne(new Stack[int]()), 9, "D 同名别名作形参")
+
+    print("test_alias_same_name passed")
+}
+
+func takeOne(Stack[int] s): int {
+    s.push(9)
+    return s.pop()
+}

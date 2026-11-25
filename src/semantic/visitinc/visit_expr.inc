@@ -2202,6 +2202,15 @@
                     //   只查字面量 Dict、只警告不中断；非字面量一律放行（宁漏勿误报 ✓）
                     annos_check_call_def(ast, func_def, s);
 
+                    // ★ 2026-11-25：**返回类型**里的别名同样要展开 —— 否则调用结果被推断成
+                    //   别名名（`BoxAlias[int]`），与 `new BoxAlias[int]()` 得到的真身（`Box[int]`）
+                    //   对不上，赋值/再传参又是一串假错误。（幂等，写回 AST）
+                    if (func_def->u.func.return_type &&
+                        func_def->u.func.return_type->kind == TYPE_STRUCT &&
+                        func_def->u.func.return_type->struct_name) {
+                        resolve_alias_in_type(s, &func_def->u.func.return_type, ast->line);
+                    }
+
                     int expected_cnt = func_def->u.func.pcnt;
                     int actual_cnt = ast->u.call.args.count;
                     int default_cnt = func_def->u.func.default_count;
@@ -2223,6 +2232,19 @@
                         for (int i = 0; i < actual_cnt; i++) {
                             TypeInfo* expected_type = func_def->u.func.param_types[i];
                             if (!expected_type || expected_type->kind == TYPE_INFER) continue; // 类型推断模式，跳过检查
+
+                            // ★ 2026-11-25：形参类型若是**别名**，这里可能还没展开 ——
+                            //   前置的类型预归一化（semantic.c 的 in_type_prepass）跑在 AST_USE **之前**，
+                            //   而"被调函数定义在后面、调用点在前"时，callee 自己的 visit_func_impl
+                            //   也还没轮到 ⇒ 期望类型停在别名名（`BoxAlias[int]`），实参却已被
+                            //   `new` 展开成真身（`Box[int]`）⇒ 假报「参数类型不匹配」✗
+                            //   （实测：`use m.BoxAlias` 之后 `f(new BoxAlias[int]())`）。
+                            //   就地展开（幂等；结果写回 AST ⇒ 后续调用点不再重复干活）。
+                            if (expected_type->kind == TYPE_STRUCT && expected_type->struct_name) {
+                                resolve_alias_in_type(s, &func_def->u.func.param_types[i], ast->line);
+                                expected_type = func_def->u.func.param_types[i];
+                                if (!expected_type) continue;
+                            }
 
                             // ★ 2026-11-18（F2·L1）：`f(null)` 而形参非可空且非句柄 ⇒ 警告
                             //   （放在类型兼容检查**之前**：兼容检查认为 null 对引用类型合法，
