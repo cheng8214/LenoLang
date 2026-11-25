@@ -1092,6 +1092,18 @@ void gc_mark_object(Object* obj);
 void gc_collect(void);
 void gc_minor_collect(void);
 void gc_major_collect(void);
+
+// ============================================================================
+// GC 压力模式（`--gc-stress[=N]`，2026-11-25）
+// ============================================================================
+// 做两件事：① 每 N 次分配强制触发一次回收（默认 64）；② 每次回收**之后**
+// 立刻验一遍对象图 —— 只要发现"活对象引用了本轮刚被释放的对象"就当场报
+// `[GC-VERIFY]` 并中止，而不是几百条指令后在别处 0xC0000005。
+// 用途：把"依赖特定分配节奏才出现"的 GC 缺陷变成必现（CI 里跑一遍全量断言即可）。
+// ⚠ 慢（回收频率被放大），只用于压测；正常运行零开销（一个 int 判断）。
+void gc_request_stress(int every);   // 解析命令行时登记（gc_init 应用）
+void gc_set_stress(int every);       // 立即生效
+int  gc_get_verify_graph(void);      // 当前是否在验图模式
 Object* gc_alloc(size_t size, ObjType type);
 void gc_free_all(void);
 // 进程收尾时释放所有仍存活的 Channel（非 GC 对象，见 ObjChannel.all_next 的说明）。

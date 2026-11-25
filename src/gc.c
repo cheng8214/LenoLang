@@ -215,9 +215,11 @@ static size_t gc_env_size(const char* name, size_t def) {
  * pool_mem_limit），这里只前置声明，供 gc_init 调用（§8.74）。 */
 static void gc_pool_apply_env(void);
 
+// `--gc-stress[=N]` 的请求（命令行解析时登记，gc_init 应用；实现见文件后半的验图段）
+static int gc_stress_request = 0;
+
 void gc_init(void) {
-    // 注意：不清零 young_heap/old_heap，因为 semantic 阶段可能已经通过 gc_alloc 分配了对象
-    // 这些对象会被 gc_free_all 正确释放
+    // 注意：不清零 young_heap/old_heap，因为 semantic 阶段可能已经通过 gc_alloc 分配了对象    // 这些对象会被 gc_free_all 正确释放
     gc.young_allocated = 0;
     gc.old_allocated = 0;
     gc.young_threshold = GC_YOUNG_THRESHOLD;
@@ -253,6 +255,17 @@ void gc_init(void) {
     }
     gc.force_every = (int)gc_env_size("LENO_GC_FORCE_EVERY", 0);
     gc.trace = gc_env_on("LENO_GC_TRACE");
+
+    // `--gc-stress[=N]` 在参数解析时就登记了请求（那时 VM 还没建）⇒ 这里应用。
+    // 另给一条环境变量通道：`LENO_GC_STRESS=512` —— 子进程（断言套件是逐个子进程跑的）
+    // 不会继承命令行旗标，但会继承环境变量，这样"整套断言在压力下跑一遍"才可行。
+    if (gc_stress_request == 0) {
+        size_t es = gc_env_size("LENO_GC_STRESS", 0);
+        if (es > 0) gc_stress_request = (int)es;
+    }
+    if (gc_stress_request > 0) {
+        gc_set_stress(gc_stress_request);
+    }
 
     /* 池上限覆盖（§8.74）：实现在池常量定义之后（GC_POOL_MEM_LIMIT 在那里） */
     gc_pool_apply_env();
@@ -1301,9 +1314,228 @@ void gc_scan_children(Object* obj) {
     }
 }
 
+// ============================================================================
+// 回收后对象图自检（`--gc-stress`）
+// ============================================================================
+// 为什么要有（2026-11-25）：那次 0xC0000005 的本质是"**活对象引用了已被回收的对象**"
+//   （原地帧没清非参槽位 ⇒ 悬空指针被当成根扫进去）。这类缺陷**不会**当场崩 ——
+//   往往几百条指令之后才在别处访问违例，现场全丢，只能靠反查已释放块猜。
+//   这里在每次回收**之后**立刻验一遍对象图：遍历所有存活对象 → 枚举其子引用 →
+//   只要某个子引用指向"本轮刚被释放的地址"或类型字段已非法，就当场报错并中止，
+//   直接给出「持有者类型 → 子对象类型」。
+// 开销：默认零（`gc_verify_graph_on == 0` 时每个 free 只多一次 int 判断）；
+//   验图本身只在 `--gc-stress` 下跑。
+static int gc_verify_graph_on = 0;
+// ⚠ 必须和"开关"分开：验图开关开着时，**正常标记**也在跑（mark_roots / 记忆集），
+//   若让 gc_mark_object 无条件改道成"只查不标"，这一轮就什么都标不上 ⇒ 全是假阳性。
+//   只有本标志为 1（= 正在 gc_verify_mark_complete 里面）才改道。
+static int gc_verify_pass_active = 0;
+static Object* gc_verify_owner = NULL;   // 正在验证的持有者（报告用）
+
+int gc_get_verify_graph(void) { return gc_verify_graph_on; }
+
+static const char* gc_obj_type_name(int t) {
+    switch (t) {
+        case OBJ_STRING:      return "String";
+        case OBJ_ARRAY:       return "Array";
+        case OBJ_DICT:        return "Dict";
+        case OBJ_STRUCT:      return "Struct";
+        case OBJ_STRUCT_DEF:  return "StructDef";
+        case OBJ_CLOSURE:     return "Closure";
+        case OBJ_FUNCTION:    return "Function";
+        case OBJ_UPVALUE:     return "Upvalue";
+        case OBJ_MODULE:      return "Module";
+        case OBJ_COROUTINE:   return "Coroutine";
+        case OBJ_CHANNEL:     return "Channel";
+        case OBJ_THREAD:      return "Thread";
+        case OBJ_NATIVE:      return "Native";
+        case OBJ_FACE_DEF:    return "FaceDef";
+        case OBJ_ENUM_DEF:    return "EnumDef";
+        default:              return "?";
+    }
+}
+
+static void gc_verify_fail(const char* what, Object* child) {
+    Object* owner = gc_verify_owner;
+    fprintf(stderr,
+            "[GC-VERIFY] 对象图损坏：%s\n"
+            "            持有者 = %p (%s, gen=%d, marked=%d)\n"
+            "            子对象 = %p (%s, gen=%d, marked=%d)\n",
+            what,
+            (void*)owner, owner ? gc_obj_type_name((int)owner->type) : "?",
+            owner ? (int)owner->generation : -1, owner ? (int)owner->marked : -1,
+            (void*)child, child ? gc_obj_type_name((int)child->type) : "?",
+            child ? (int)child->generation : -1, child ? (int)child->marked : -1);
+    fflush(stderr);
+    abort();
+}
+
+// 验图模式下由 gc_mark_object 分流进来：只检查引用，不标记、不入栈。
+// 判据 = **标记完整性**：活对象（marked）的每个子引用，在本轮应当被标记到的那些
+//   （Minor：年轻代子对象；FULL：任何子对象）必须也是 marked —— 否则它马上会被 sweep 掉，
+//   而持有者还留着指针 ⇒ 就是 2026-11-25 那类"活对象指向已释放对象"。
+//   ⚠ 不检查"已释放地址"：验图在 sweep **之前**做，那时还没有本轮释放表；
+//     而跨周期比地址会被 malloc 复用搞出误报（这坑在查那次 bug 时踩过）。
+static void gc_verify_ref(Object* child) {
+    if (!child) return;
+    if (!is_valid_obj_type(child->type)) {
+        gc_verify_fail("子引用的对象类型非法（内存已被覆写/复用）", child);
+        return;
+    }
+    // 三类不走本 VM 的标记语义，跳过：
+    //   ① ffi 库对象有意"永不回收"（见 sweep 里的说明）；
+    //   ② Channel 是 malloc 的、Thread 由线程系统跨 VM 交接（全局标记由各自线程负责）；
+    //   ③ 别人堆上的对象（跨堆引用合法，本 VM 的 marked 位对它没有意义）。
+    if (child->type == OBJ_FFI_LIBRARY || child->type == OBJ_CHANNEL ||
+        child->type == OBJ_THREAD) return;
+    if (gc.vm && child->owner_thread != gc.vm->thread_serial) return;
+    if (child->marked) return;
+    // Minor GC 只扫年轻代：老年代子对象本来就不标记 ⇒ 只对年轻代子对象要求 marked
+    if (gc.mode != GC_MODE_FULL && child->generation != GEN_YOUNG) return;
+    gc_verify_fail("标记不完整：活对象引用的对象没被标记（本轮会被回收）", child);
+}
+
+// ==================== 根校验：指针必须真的指向堆上活着的对象 ====================
+// 这是能直接抓住 2026-11-25 那类 bug 的判据：
+//   原地帧复用窗口后，寄存器里残留的旧 Value 指向**上一轮已回收**的对象。
+//   那种指针不在 young/old 链上（内存已还给 malloc）⇒ 一查就露。
+//   如果先扫它（= 当根标记），轻则误保活垃圾、重则解引用已释放内存 ⇒ 0xC0000005。
+// 做法：每轮建一个"堆上对象指针"的有序表（只在 --gc-stress 下），根逐个 bsearch。
+static Object** gc_heap_index = NULL;
+static int gc_heap_index_cnt = 0;
+static int gc_heap_index_cap = 0;
+
+static int gc_ptr_cmp_asc(const void* a, const void* b) {
+    unsigned long long x = (unsigned long long)(size_t)*(void* const*)a;
+    unsigned long long y = (unsigned long long)(size_t)*(void* const*)b;
+    return (x < y) ? -1 : ((x > y) ? 1 : 0);
+}
+
+static void gc_heap_index_push(Object* o) {
+    if (gc_heap_index_cnt >= gc_heap_index_cap) {
+        int nc = gc_heap_index_cap ? gc_heap_index_cap * 2 : 4096;
+        Object** np = (Object**)realloc(gc_heap_index, (size_t)nc * sizeof(Object*));
+        if (!np) return;
+        gc_heap_index = np;
+        gc_heap_index_cap = nc;
+    }
+    gc_heap_index[gc_heap_index_cnt++] = o;
+}
+
+static int gc_ptr_in_heap(Object* o) {
+    if (!o || gc_heap_index_cnt == 0) return 0;
+    return bsearch(&o, gc_heap_index, (size_t)gc_heap_index_cnt,
+                   sizeof(Object*), gc_ptr_cmp_asc) != NULL;
+}
+
+static void gc_verify_roots(void) {
+    if (!gc_verify_graph_on) return;
+    // 子线程 VM 的堆与主线程是**各自独立**的，跨堆指针在那里是常态（threads.start 的返回、
+    //   Channel 载荷、线程间交接的临时对象都可能落在别人堆上）⇒ 这一层只对主线程 VM 做。
+    //   实测：reflect_stress / threads_native_state / async_io_limit 三个并发用例都会假阳性。
+    if (gc.vm && gc.vm->thread_serial != 0) return;
+    // 1) 建索引（年轻代 + 老年代 + 已晋升的）
+    gc_heap_index_cnt = 0;
+    for (Object* o = gc.young_heap; o; o = o->next) gc_heap_index_push(o);
+    for (Object* o = gc.old_heap; o; o = o->next) gc_heap_index_push(o);
+    if (gc_heap_index_cnt > 1) {
+        qsort(gc_heap_index, (size_t)gc_heap_index_cnt, sizeof(Object*), gc_ptr_cmp_asc);
+    }
+
+    // 2) 逐类根校验：值里的对象指针必须在堆上
+    gc_verify_owner = NULL;
+    if (gc.vm && gc.vm->frames) {
+        for (int fi = 0; fi < gc.vm->frame_cnt; fi++) {
+            CallFrame* fr = &gc.vm->frames[fi];
+            if (!fr->locals) continue;
+            for (int j = 0; j < fr->local_count; j++) {
+                Value v = fr->locals[j];
+                if (!val_is_obj(v)) continue;
+                Object* o = val_as_obj(v);
+                if (gc_ptr_in_heap(o)) continue;
+                // 跨堆引用是**合法**的：子线程 VM / 主线程 VM 各有自己的堆，Channel 传对象、
+                //   `threads.start` 的返回等都会让 A 堆的指针出现在 B 堆的值里。
+                //   Object.owner_thread 记着它属于哪个线程序号 ⇒ 不同序列直接跳过（不然必假阳性：
+                //   实测 reflect_stress / threads_native_state / thread_heap_reclaim / async_io_limit
+                //   四个并发用例全是这条）。
+                if (o->owner_thread != gc.vm->thread_serial) continue;
+                // 这两类不走普通堆语义：Channel 是 malloc 的（不进任何堆链表，channel_free_all 收尾）、
+                // Thread 由线程系统跨 VM 交接 ⇒ 出现在寄存器里完全正常。
+                if (o->type == OBJ_CHANNEL || o->type == OBJ_THREAD) continue;
+                fprintf(stderr,
+                        "[GC-VERIFY] 悬空根：帧 %d 的寄存器 %d 指向**不在堆上**的对象 %p"
+                        "（type=%s owner_thread=%d 本VM serial=%d）\n"
+                        "            （典型原因：这段寄存器槽没被初始化/清理，残留着上一轮已回收对象的指针）\n"
+                        "            该帧 func=%s local_count=%d\n",
+                        fi, j, (void*)o, gc_obj_type_name((int)o->type),
+                        (int)o->owner_thread, (int)gc.vm->thread_serial,
+                        (fr->closure && fr->closure->function && fr->closure->function->name)
+                            ? fr->closure->function->name : "?",
+                        fr->local_count);
+                fflush(stderr);
+                abort();
+            }
+        }
+    }
+}
+// 在 sweep **之前**调用：遍历所有"本轮存活"的对象，验一遍它们的子引用。
+//   只扫 marked 的对象 —— 未标记的本来就是垃圾，扫它只会被内存复用搞出误报。
+static void gc_verify_mark_complete(void) {
+    if (!gc_verify_graph_on) return;
+    // 只对**主线程 VM** 做完整性校验：子线程 VM 的 marked 位会被别的线程的 GC 留下 stale 值
+    //   （gc_mark_object 里对 Channel/Thread 的那段注释就是这件事），而且跨堆引用在那里是常态。
+    //   实测：test_threads_native_state 在压力下会间歇报"标记不完整"，属工具的这一层覆盖不到。
+    //   ⇒ 子线程的堆仍需别的办法（见文档 P0.1：按 vm.thread_serial 分别建索引再比对）。
+    if (gc.vm && gc.vm->thread_serial != 0) return;
+    gc_verify_pass_active = 1;
+    int live = 0;
+    for (Object* o = gc.young_heap; o; o = o->next) {
+        if (!o->marked) continue;
+        gc_verify_owner = o;
+        gc_scan_children(o);
+        live++;
+    }
+    if (gc.mode == GC_MODE_FULL) {
+        for (Object* o = gc.old_heap; o; o = o->next) {
+            if (!o->marked) continue;
+            gc_verify_owner = o;
+            gc_scan_children(o);
+            live++;
+        }
+    }
+    gc_verify_owner = NULL;
+    gc_verify_pass_active = 0;
+    if (gc.trace) fprintf(stderr, "[GC] verify ok: live_marked=%d\n", live);
+}
+
+// `--gc-stress[=N]`：每 N 次分配强制回收（默认 64）+ 每次回收后验对象图。
+//   目的不是"跑得快"，而是把"依赖特定分配节奏才出现"的 GC 缺陷变成必现。
+#define GC_STRESS_DEFAULT_EVERY 64
+
+// 命令行在**创建 VM 之前**就可能已经解析到 `--gc-stress`（那时 gc_init 还没跑），
+// 所以先记请求（`gc_stress_request` 定义在文件前部），由 gc_init 应用 ——
+// 免得在每个 gc_init() 调用点后面都补一句。
+void gc_request_stress(int every) {
+    gc_stress_request = (every > 0) ? every : GC_STRESS_DEFAULT_EVERY;
+}
+
+void gc_set_stress(int every) {
+    if (every <= 0) every = GC_STRESS_DEFAULT_EVERY;
+    int first = !gc_verify_graph_on;
+    gc.force_every = every;
+    gc.force_count = 0;
+    gc_verify_graph_on = 1;
+    if (first) {
+        fprintf(stderr, "[GC] stress 模式：每 %d 次分配强制回收 + 每次回收后验对象图\n", every);
+    }
+}
+
 // 标记对象：标记 + 压入显式栈（不递归，由 gc_drain_mark_stack 负责扫描子引用）
 void gc_mark_object(Object* obj) {
     if (!obj) return;
+
+    // 验图**进行中**：只查引用合法性，不参与标记（见 gc_verify_mark_complete）
+    if (gc_verify_pass_active) { gc_verify_ref(obj); return; }
 
     // 安全检查：验证对象类型是否有效
     if (!is_valid_obj_type(obj->type)) {
@@ -2276,7 +2508,7 @@ static void sweep_young(void) {
             freed_cnt++;
             // 尝试回收小数组到 free_list（保留元素缓冲区避免重复 malloc）
             if (unreached->type == OBJ_ARRAY && arr_try_recycle((ObjArray*)unreached)) {
-                continue;
+                    continue;
             }
             free_object_resources(unreached);
             gc_free_object(unreached);
@@ -2354,7 +2586,7 @@ static void sweep_old(void) {
             freed_cnt++;
             // 尝试回收小数组到 free_list
             if (unreached->type == OBJ_ARRAY && arr_try_recycle((ObjArray*)unreached)) {
-                continue;
+                    continue;
             }
             remembered_set_remove(unreached);
             free_object_resources(unreached);
@@ -2467,10 +2699,14 @@ void gc_minor_collect(void) {
         clear_young_marks();     // 纯 Minor：老年代不标记不清扫，只清年轻代
     }
 
+    gc_verify_roots();          // `--gc-stress`：先确认根里没有悬空指针（见 gc_verify_roots）
     mark_roots();
     gc_drain_mark_stack();      // 先排空根标记：FULL 模式剪枝依赖 marked 完整性
     scan_remembered_set();      // 扫描老年代→年轻代引用 + 条目剪枝
     gc_drain_mark_stack();
+
+    // 标记完成后、清除之前验一遍（`--gc-stress` 才真正跑；默认一次 int 判断就返回）
+    gc_verify_mark_complete();
 
     sweep_young();
 
@@ -2540,6 +2776,7 @@ void gc_major_collect(void) {
     gc.major_gc_count++;
 
     clear_all_marks();
+    gc_verify_roots();          // `--gc-stress`：先确认根里没有悬空指针
     mark_roots();
     gc_drain_mark_stack();      // 先排空根标记：剪枝依赖 marked 完整性
     scan_remembered_set();      // FULL 模式全量标记已完成，此处仅做条目维护/剪枝
@@ -2547,6 +2784,9 @@ void gc_major_collect(void) {
 
     // Major GC：在 sweep 之前清理无引用的内化字符串（此时 marked 标志仍有效）
     intern_sweep_unmarked();
+
+    // 标记完成后、清除之前验一遍（`--gc-stress` 才真正跑；默认一次 int 判断就返回）
+    gc_verify_mark_complete();
 
     sweep_young();
     sweep_old();

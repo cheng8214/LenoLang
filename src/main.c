@@ -282,6 +282,8 @@ static void printHelp(const char* program) {
     printf("  --debug-out <file> 字节码输出到指定文件（自动启用 --debug）\n");
     printf("  -c, --compile     编译为二进制文件（.lenb），不执行\n");
     printf("  --check           完整编译检查（含被 import 的模块），不产出 .lenb，有错非零退出\n");
+    printf("  --gc-stress[=N]   GC 压力模式：每 N 次分配强制回收一次（默认 64），并在每次回收后\n");
+    printf("                    校验对象图（发现「活对象引用已释放对象」当场报 [GC-VERIFY] 并中止）\n");
     printf("  -p, --pack        编译并打包为独立可执行文件（嵌入 leno_vm）\n");
     printf("  -o, --pack-dir <目录>  指定打包输出目录（默认 <源码目录>/dist）\n");
     printf("                    输出的 exe 与依赖的原生库（leno.toml 的 [native-libs]）\n");
@@ -2528,6 +2530,19 @@ static int main_logic(int argc, char** argv) {
                 return 1;
             }
             packConsoleMode = PACK_CONSOLE_NONE;
+            continue;
+        } else if (strcmp(argv[i], "--gc-stress") == 0 ||
+                   strncmp(argv[i], "--gc-stress=", 12) == 0) {
+            // GC 压力模式（见 leno_value.h 的说明）：每 N 次分配强制回收 + 每次回收后验对象图。
+            //   目的不是快，是把"依赖分配节奏才出现"的 GC 缺陷变成必现。
+            //   ⚠ 必须写在**脚本路径之前**（之后的参数归脚本，见 T22）。
+            int every = 64;
+            if (strncmp(argv[i], "--gc-stress=", 12) == 0) {
+                const char* spec = argv[i] + 12;
+                int parsed = atoi(spec);
+                if (parsed > 0) every = parsed;
+            }
+            gc_request_stress(every);
             continue;
         } else if (strcmp(argv[i], "--no-cache") == 0) {
             module_loader_set_cache_enabled(0);
