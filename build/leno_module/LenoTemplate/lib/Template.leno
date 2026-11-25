@@ -1,0 +1,234 @@
+// Template.leno —— Mustache 风格的文本模板引擎（纯 Leno）
+//
+// 为什么要有：代码生成 / 邮件正文 / 报告 / HTML 拼装里"手拼字符串"到处都是
+//   （值里有 " 或换行就是坏 JSON/HTML，还不报错）。这里给一个带变量、循环、条件的最小模板。
+//
+// 语法（Mustache 子集，够用不贪多）：
+//   {{ name }}        变量替换（**HTML 转义** & < > " '）
+//   {{{ name }}}      不转义（raw）
+//   {{ & name }}      同上（老写法）
+//   {{ # list }}…{{ / list }}   区块：数组→遍历、Dict→进作用域、标量 truthy→渲染一次
+//   {{ ^ list }}…{{ / list }}   反向区块：falsy 才渲染
+//   {{ ! 注释 }}       注释（不输出）
+//   {{ . }}           当前值（数组遍历里）
+//   点路径：{{ user.name }}、{{ a.b.c }}
+//
+// 数据源：Dict[string, any]（JS/JSON 那种自然嵌套）。falsy = null/false/空串/空数组/空 Dict；
+//   数字 0、0.0 是 truthy（与 Mustache 一致）。
+//
+// 用法：
+//   import "Template" as tpl
+//   Dict[string, any] d = {name: "世界", items: [{t: "甲"}, {t: "乙"}]}
+//   string s = tpl.render("<b>{{name}}</b>{{#items}} {{t}}{{/items}}", d)
+
+import strings
+
+// ==================== Token ====================
+
+export struct Token {
+    string kind = ""    // text / var / raw / open / inverted / close / comment
+    string name = ""    // 标签名（text 时为空，内容在 text 字段）
+    string text = ""    // text 的正文
+}
+
+// ==================== 词法：模板 → Token 序列 ====================
+
+func _textTok(Array[Token] toks, string s) {
+    if s == "" { return }
+    Token t = new Token()
+    t.kind = "text"
+    t.text = s
+    toks.add(t)
+}
+
+func _addTag(Array[Token] toks, string content) {
+    Token t = new Token()
+    if content == "" {
+        t.kind = "comment"
+        toks.add(t)
+        return
+    }
+    string first = content.slice(0, 0)
+    if first == "!" {
+        t.kind = "comment"
+    } else if first == "#" {
+        t.kind = "open"
+        t.name = strings.trim(content.slice(1, content.len() - 1))
+    } else if first == "^" {
+        t.kind = "inverted"
+        t.name = strings.trim(content.slice(1, content.len() - 1))
+    } else if first == "/" {
+        t.kind = "close"
+        t.name = strings.trim(content.slice(1, content.len() - 1))
+    } else if first == "&" {
+        t.kind = "raw"
+        t.name = strings.trim(content.slice(1, content.len() - 1))
+    } else {
+        t.kind = "var"
+        t.name = content
+    }
+    toks.add(t)
+}
+
+export func tokenize(string tpl): Array[Token] {
+    Array[Token] toks = []
+    int i = 0
+    int n = tpl.len()
+    while i < n {
+        int p = tpl.find("{{", i, true)
+        if p < 0 {
+            _textTok(toks, tpl.slice(i, n - 1))
+            break
+        }
+        if p > i { _textTok(toks, tpl.slice(i, p - 1)) }
+
+        // {{{ ... }}} = raw
+        bool triple = p + 2 <= n - 1 and tpl.slice(p, p + 2) == "{{{"
+        if triple {
+            int close = tpl.find("}}}", p + 3, true)
+            if close < 0 {
+                _textTok(toks, tpl.slice(p, n - 1))
+                break
+            }
+            Token t = new Token()
+            t.kind = "raw"
+            t.name = strings.trim(tpl.slice(p + 3, close - 1))
+            toks.add(t)
+            i = close + 3
+            continue
+        }
+
+        int close = tpl.find("}}", p + 2, true)
+        if close < 0 {
+            _textTok(toks, tpl.slice(p, n - 1))
+            break
+        }
+        _addTag(toks, strings.trim(tpl.slice(p + 2, close - 1)))
+        i = close + 2
+    }
+    return toks
+}
+
+// ==================== 求值 ====================
+
+func _lookup(Dict ctx, string name): any {
+    if name == "" { return null }
+    if name == "." { return ctx["."] }        // {{.}} 当前值，不是路径
+    var parts = strings.split(name, ".")
+    Dict cur = ctx
+    for 0 : parts.len() - 1 to i {
+        string p = parts[i]
+        if not cur.has(p) { return null }
+        var v = cur[p]
+        if i == parts.len() - 1 { return v }
+        if not (v is Dict) { return null }
+        cur = v as Dict
+    }
+    return null
+}
+
+func _truthy(any v): bool {
+    if v == null { return false }
+    if v is bool { bool b = v as bool; return b }
+    if v is Array { Array a = v as Array; return a.len() > 0 }
+    if v is Dict { Dict d = v as Dict; return d.len() > 0 }
+    if v is string { string s = v as string; return s != "" }
+    return true
+}
+
+// any → 显示文本
+func _strVal(any v): string {
+    if v == null { return "" }
+    if v is string { return v as string }
+    if v is bool { bool b = v as bool; return if b then "true" else "false" }
+    if v is int { return _str(v as int) }
+    if v is float { return _str(v as float) }
+    return _str(v)
+}
+
+// HTML 转义（顺序：先 &，避免二次转义）
+func _escape(string s): string {
+    string out = strings.replace(s, "&", "&amp;")
+    out = strings.replace(out, "<", "&lt;")
+    out = strings.replace(out, ">", "&gt;")
+    out = strings.replace(out, "\"", "&quot;")
+    out = strings.replace(out, "'", "&#39;")
+    return out
+}
+
+// ==================== 渲染 ====================
+
+// 找与 openIdx 配对的 close（跳过嵌套），没找到返回末尾
+func _findClose(Array[Token] toks, int openIdx): int {
+    int depth = 1
+    int i = openIdx + 1
+    while i < toks.len() {
+        string k = toks[i].kind
+        if k == "open" or k == "inverted" { depth = depth + 1 }
+        else if k == "close" {
+            depth = depth - 1
+            if depth == 0 { return i }
+        }
+        i = i + 1
+    }
+    return toks.len() - 1
+}
+
+func _renderTokens(Array[Token] toks, int start, int end, Dict ctx, Array[string] out) {
+    int i = start
+    while i <= end {
+        string k = toks[i].kind
+        if k == "text" {
+            out.add(toks[i].text)
+        } else if k == "var" {
+            out.add(_escape(_strVal(_lookup(ctx, toks[i].name))))
+        } else if k == "raw" {
+            out.add(_strVal(_lookup(ctx, toks[i].name)))
+        } else if k == "open" or k == "inverted" {
+            int closeIdx = _findClose(toks, i)
+            var v = _lookup(ctx, toks[i].name)
+            bool tv = _truthy(v)
+            if k == "open" and tv {
+                _renderSection(toks, i + 1, closeIdx - 1, ctx, v, out)
+            } else if k == "inverted" and not tv {
+                _renderTokens(toks, i + 1, closeIdx - 1, ctx, out)
+            }
+            i = closeIdx + 1
+            continue
+        }
+        // comment / close 等：跳过
+        i = i + 1
+    }
+}
+
+func _renderSection(Array[Token] toks, int start, int end, Dict ctx, any v, Array[string] out) {
+    if v is Array {
+        Array arr = v as Array
+        for arr to item {
+            if item is Dict {
+                _renderTokens(toks, start, end, item as Dict, out)
+            } else {
+                // 标量元素：塞进 {".": item}，让 {{.}} 取得到
+                Dict[string, any] c = {}
+                c["."] = item
+                _renderTokens(toks, start, end, c, out)
+            }
+        }
+    } else if v is Dict {
+        _renderTokens(toks, start, end, v as Dict, out)
+    } else {
+        // truthy 标量：用原上下文渲染一次
+        _renderTokens(toks, start, end, ctx, out)
+    }
+}
+
+// ==================== 公开 API ====================
+
+export func render(string tpl, Dict[string, any] data): string {
+    Array[Token] toks = tokenize(tpl)
+    Array[string] out = []
+    _renderTokens(toks, 0, toks.len() - 1, data, out)
+    return out.join("")
+}
+
+export func escape(string s): string { return _escape(s) }

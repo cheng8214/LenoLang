@@ -1,0 +1,100 @@
+// LenoTemplate 自测：变量/转义/点路径/区块/注释
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoTemplate\test\test_template.leno
+import "Template" as tpl
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqStr(string got, string want, string tag) {
+    if got != want { fail(tag + "：得到 [" + got + "] 期望 [" + want + "]") }
+}
+
+main() {
+    Dict[string, any] d = {}
+
+    // ==================== ① 变量 + HTML 转义 ====================
+    d["name"] = "A&B<C>"
+    eqStr(tpl.render("hi {{name}}", d), "hi A&amp;B&lt;C&gt;", "变量替换 + 转义")
+
+    // 缺失 → 空串
+    eqStr(tpl.render("[{{missing}}]", d), "[]", "缺失变量为空")
+
+    // ==================== ② raw（不转义）====================
+    eqStr(tpl.render("{{{name}}}", d), "A&B<C>", "{{{ }}} 不转义")
+    eqStr(tpl.render("{{& name}}", d), "A&B<C>", "{{& }} 不转义")
+
+    // ==================== ③ 点路径 ====================
+    Dict[string, any] user = {}
+    user["name"] = "张三"
+    user["age"] = 30
+    d["user"] = user
+    eqStr(tpl.render("{{user.name}} {{user.age}}", d), "张三 30", "点路径")
+
+    // ==================== ④ section：数组遍历（Dict 元素）====================
+    Dict[string, any] i1 = {}
+    i1["t"] = "甲"
+    Dict[string, any] i2 = {}
+    i2["t"] = "乙"
+    Array[any] items = []
+    items.add(i1)
+    items.add(i2)
+    d["items"] = items
+    eqStr(tpl.render("{{#items}}[{{t}}]{{/items}}", d), "[甲][乙]", "section 遍历 Dict 元素")
+
+    // ==================== ⑤ section：数组遍历（标量元素 + {{.}}）====================
+    Array[any] nums = []
+    nums.add(10)
+    nums.add(20)
+    nums.add(30)
+    d["nums"] = nums
+    eqStr(tpl.render("{{#nums}}{{.}},{{/nums}}", d), "10,20,30,", "标量遍历 + 当前值")
+
+    // ==================== ⑥ section：truthy / falsy ====================
+    d["flag"] = 1
+    eqStr(tpl.render("{{#flag}}Y{{/flag}}", d), "Y", "truthy 标量渲染一次")
+
+    d["zero"] = 0
+    eqStr(tpl.render("{{#zero}}Y{{/zero}}", d), "Y", "数字 0 是 truthy")
+
+    d["emptyList"] = []
+    eqStr(tpl.render("{{#emptyList}}X{{/emptyList}}", d), "", "空数组跳过")
+
+    d["emptyStr"] = ""
+    eqStr(tpl.render("{{#emptyStr}}X{{/emptyStr}}", d), "", "空串跳过")
+
+    d["nil"] = null
+    eqStr(tpl.render("{{#nil}}X{{/nil}}", d), "", "null 跳过")
+
+    // ==================== ⑦ inverted ====================
+    eqStr(tpl.render("{{^emptyList}}Z{{/emptyList}}", d), "Z", "inverted 空数组渲染")
+    eqStr(tpl.render("{{^flag}}Z{{/flag}}", d), "", "inverted truthy 跳过")
+
+    // ==================== ⑧ 注释 / 嵌套 ====================
+    eqStr(tpl.render("a{{! 这是一段注释 }}b", d), "ab", "注释不输出")
+
+    // 嵌套 section（外层数组，内层再套数组）
+    Dict[string, any] g1 = {}
+    g1["name"] = "组一"
+    Array[any] g1items = []
+    g1items.add(i1)
+    g1items.add(i2)
+    g1["kids"] = g1items
+    Array[any] groups = []
+    groups.add(g1)
+    d["groups"] = groups
+    eqStr(tpl.render("{{#groups}}{{name}}:{{#kids}}{{t}};{{/kids}}{{/groups}}", d),
+        "组一:甲;乙;", "嵌套 section")
+
+    // ==================== ⑨ tokenize 独立可用 ====================
+    var toks = tpl.tokenize("a{{x}}b{{{y}}}c")
+    eqStr(toks[0].kind, "text", "token[0] 是 text")
+    eqStr(toks[1].kind, "var", "token[1] 是 var")
+    eqStr(toks[2].kind, "text", "token[2] 是 text")
+    eqStr(toks[3].kind, "raw", "token[3] 是 raw")
+
+    print("test_template passed（9 组 / 变量·转义·点路径·区块·嵌套）")
+}

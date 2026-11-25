@@ -1,0 +1,281 @@
+// image_png.leno —— 纯 Leno 的 PNG 编解码（不依赖 SDL3_image）
+//
+// 为什么能纯 Leno：PNG 的 IDAT 就是 zlib 流（LenoCompress 有 inflateZlib / zlib），
+// chunk 校验和是 CRC32（LenoCompress 有 crc32）。剩下的就是按 PNG 规范拼块 + 反滤波。
+//
+// 支持范围（MVP）：
+//   · 解码：颜色类型 0(灰度) / 2(RGB) / 4(灰度+alpha) / 6(RGBA)，位深 8，**非隔行**；
+//     调色板(3)、位深 16、Adam7 隔行 ⇒ 报错（不是静默给错图）。
+//   · 编码：恒输出 8 位 RGBA（颜色类型 6），每行 filter=0（None），无隔行。
+//   · filter 反解支持全部 5 种（None/Sub/Up/Average/Paeth），按 PNG 规范 mod 256。
+//
+// 口径：解码产出的 Image 与其它子模块一致 —— 紧凑 BGRA（与 SDL3 ARGB8888 同内存序）。
+
+import strings
+import files
+import "image_core.leno" as core
+import "Result" as res
+import "Compress" as z
+use core.Image
+use res.Result
+
+// ==================== 字节工具 ====================
+
+func _be32(Array[int] b, int off): int {
+    return (b[off] << 24) | (b[off + 1] << 16) | (b[off + 2] << 8) | b[off + 3]
+}
+
+func _be32str(int v): string {
+    Array[int] a = []
+    a.add(_uint8(v >> 24))
+    a.add(_uint8(v >> 16))
+    a.add(_uint8(v >> 8))
+    a.add(_uint8(v & 0xFF))
+    return strings.from_bytes(a)
+}
+
+func _blank(int n): Array[int] {
+    Array[int] a = []
+    for 0 : n - 1 to i { a.add(0) }
+    return a
+}
+
+// 颜色类型 → 每像素通道数（位深 8 时）
+func _channels(int colorType): int {
+    if colorType == 0 { return 1 }   // 灰度
+    if colorType == 2 { return 3 }   // RGB
+    if colorType == 4 { return 2 }   // 灰度+alpha
+    if colorType == 6 { return 4 }   // RGBA
+    return 0
+}
+
+// ==================== 滤波反解 ====================
+
+func _paeth(int a, int b, int c): int {
+    int p = a + b - c
+    int pa = p - a
+    if pa < 0 { pa = -pa }
+    int pb = p - b
+    if pb < 0 { pb = -pb }
+    int pc = p - c
+    if pc < 0 { pc = -pc }
+    if pa <= pb and pa <= pc { return a }
+    if pb <= pc { return b }
+    return c
+}
+
+// 单个字节反解（x = 滤波后的原始字节）
+func _unfilter(int filter, int x, int left, int up, int upLeft): int {
+    if filter == 0 { return x }
+    if filter == 1 { return (x + left) & 0xFF }
+    if filter == 2 { return (x + up) & 0xFF }
+    if filter == 3 { return (x + ((left + up) / 2)) & 0xFF }
+    return (x + _paeth(left, up, upLeft)) & 0xFF
+}
+
+// ==================== 解码 ====================
+
+export func decodePNG(string data): Result[Image] {
+    Array[int] b = strings.to_bytes(data)
+    int n = b.len()
+    // 8 字节签名
+    if n < 8 {
+        return res.err[Image](res.ErrCode.PARSE, "不是 PNG：文件太短")
+    }
+    int sig0 = _be32(b, 0)
+    int sig1 = _be32(b, 4)
+    if sig0 != 0x89504E47 or sig1 != 0x0D0A1A0A {
+        return res.err[Image](res.ErrCode.PARSE, "不是 PNG：签名不对")
+    }
+
+    int width = 0
+    int height = 0
+    int bitDepth = 0
+    int colorType = 0
+    int interlace = 0
+    bool haveIHDR = false
+    Array[int] idat = []
+
+    int pos = 8
+    while pos + 8 <= n {
+        int len = _be32(b, pos)
+        string ctype = strings.from_bytes([b[pos + 4], b[pos + 5], b[pos + 6], b[pos + 7]])
+        int dataStart = pos + 8
+        if len < 0 or dataStart + len + 4 > n {
+            return res.err[Image](res.ErrCode.PARSE, "chunk " + ctype + " 越界")
+        }
+        if ctype == "IHDR" {
+            if len != 13 {
+                return res.err[Image](res.ErrCode.PARSE, "IHDR 长度不是 13")
+            }
+            width = _be32(b, dataStart)
+            height = _be32(b, dataStart + 4)
+            bitDepth = b[dataStart + 8]
+            colorType = b[dataStart + 9]
+            interlace = b[dataStart + 12]
+            haveIHDR = true
+        } else if ctype == "IDAT" {
+            for dataStart : dataStart + len - 1 to i { idat.add(b[i]) }
+        } else if ctype == "IEND" {
+            break
+        }
+        // PLTE / tRNS / gAMA 等辅助 chunk 直接跳过
+        pos = dataStart + len + 4
+    }
+
+    if not haveIHDR { return res.err[Image](res.ErrCode.PARSE, "缺 IHDR") }
+    if bitDepth != 8 {
+        return res.err[Image](res.ErrCode.PARSE, "位深 " + _str(bitDepth) + " 不支持（只支持 8）")
+    }
+    if interlace != 0 {
+        return res.err[Image](res.ErrCode.PARSE, "隔行（Adam7）暂不支持")
+    }
+    int bpp = _channels(colorType)
+    if bpp == 0 {
+        return res.err[Image](res.ErrCode.PARSE, "颜色类型 " + _str(colorType) + " 不支持（调色板/其它）")
+    }
+    if width < 1 or height < 1 {
+        return res.err[Image](res.ErrCode.PARSE, "尺寸非法 " + _str(width) + "x" + _str(height))
+    }
+    if idat.len() == 0 {
+        return res.err[Image](res.ErrCode.PARSE, "缺 IDAT（无像素数据）")
+    }
+
+    // IDAT 是 zlib 流
+    var inf = z.inflateZlib(strings.from_bytes(idat))
+    if inf.isErr() {
+        return res.err[Image](res.ErrCode.PARSE, "IDAT 解压失败：" + inf.msg)
+    }
+    Array[int] raw = strings.to_bytes(inf.val.data)
+
+    int rowBytes = width * bpp
+    if raw.len() != height * (rowBytes + 1) {
+        return res.err[Image](res.ErrCode.PARSE,
+            "解压后长度 " + _str(raw.len()) + " 与 " + _str(height) + "x(" + _str(rowBytes) + "+1) 不符")
+    }
+
+    // 逐行反滤波 → 纯像素字节（PNG 通道序）
+    Array[int] plain = _blank(height * rowBytes)
+    Array[int] prev = _blank(rowBytes)
+    for 0 : height - 1 to y {
+        int rowBase = y * (rowBytes + 1)
+        int filter = raw[rowBase]
+        if filter < 0 or filter > 4 {
+            return res.err[Image](res.ErrCode.PARSE, "第 " + _str(y) + " 行 filter 非法：" + _str(filter))
+        }
+        Array[int] cur = _blank(rowBytes)
+        for 0 : rowBytes - 1 to i {
+            int x = raw[rowBase + 1 + i]
+            int left = if i >= bpp then cur[i - bpp] else 0
+            int up = prev[i]
+            int upLeft = if i >= bpp then prev[i - bpp] else 0
+            int recon = _unfilter(filter, x, left, up, upLeft)
+            cur[i] = recon
+            plain[y * rowBytes + i] = recon
+        }
+        prev = cur
+    }
+
+    // 通道序 → BGRA（Image 内存序）
+    Array[int] px = _blank(width * height * 4)
+    for 0 : height - 1 to y {
+        for 0 : width - 1 to x {
+            int si = y * rowBytes + x * bpp
+            int di = (y * width + x) * 4
+            if colorType == 0 {
+                int g = plain[si]
+                px[di] = g
+                px[di + 1] = g
+                px[di + 2] = g
+                px[di + 3] = 255
+            } else if colorType == 2 {
+                px[di] = plain[si + 2]
+                px[di + 1] = plain[si + 1]
+                px[di + 2] = plain[si]
+                px[di + 3] = 255
+            } else if colorType == 4 {
+                int g = plain[si]
+                px[di] = g
+                px[di + 1] = g
+                px[di + 2] = g
+                px[di + 3] = plain[si + 1]
+            } else {
+                px[di] = plain[si + 2]
+                px[di + 1] = plain[si + 1]
+                px[di + 2] = plain[si]
+                px[di + 3] = plain[si + 3]
+            }
+        }
+    }
+    return res.ok(core.fromPixels(width, height, px))
+}
+
+// ==================== 编码 ====================
+
+// 拼一个 chunk：len(4) + type(4) + data + crc32(type+data)
+func _chunk(string ctype, string data): string {
+    int crc = z.crc32(ctype + data)
+    return _be32str(strings.byte_len(data)) + ctype + data + _be32str(crc)
+}
+
+export func encodePNG(Image img): Result[string] {
+    if img.w < 1 or img.h < 1 {
+        return res.err[string](res.ErrCode.INVALID_ARG, "空图不能编码")
+    }
+    // 扫描线：每行 filter=0(None) + RGBA
+    Array[int] scan = []
+    for 0 : img.h - 1 to y {
+        scan.add(0)
+        for 0 : img.w - 1 to x {
+            int di = (y * img.w + x) * 4
+            scan.add(img.px[di + 2])   // R（px 是 BGRA，+2 是 R）
+            scan.add(img.px[di + 1])   // G
+            scan.add(img.px[di])       // B
+            scan.add(img.px[di + 3])   // A
+        }
+    }
+    string idat = z.zlib(strings.from_bytes(scan))
+
+    // IHDR（13 字节）
+    Array[int] ihdr = []
+    _addBe32(ihdr, img.w)
+    _addBe32(ihdr, img.h)
+    ihdr.add(8)   // 位深
+    ihdr.add(6)   // 颜色类型 6 = RGBA
+    ihdr.add(0)   // 压缩
+    ihdr.add(0)   // 滤波
+    ihdr.add(0)   // 非隔行
+
+    string sig = strings.from_bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+    string out = sig
+        + _chunk("IHDR", strings.from_bytes(ihdr))
+        + _chunk("IDAT", idat)
+        + _chunk("IEND", "")
+    return res.ok(out)
+}
+
+func _addBe32(Array[int] a, int v) {
+    a.add(_uint8(v >> 24))
+    a.add(_uint8(v >> 16))
+    a.add(_uint8(v >> 8))
+    a.add(_uint8(v & 0xFF))
+}
+
+// ==================== 文件版 ====================
+
+export func decodePNGFile(string path): Result[Image] {
+    var f = files.open(path, "rb")
+    if f == null {
+        return res.err[Image](res.ErrCode.IO, "打不开 " + path)
+    }
+    string data = f.read()
+    f.close()
+    return decodePNG(data)
+}
+
+export func encodePNGFile(Image img, string path): Result[bool] {
+    var r = encodePNG(img)
+    if r.isErr() { return res.err[bool](r.code, r.msg) }
+    files.write(path, r.val)
+    return res.ok(true)
+}

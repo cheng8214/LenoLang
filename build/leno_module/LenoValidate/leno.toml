@@ -1,0 +1,11 @@
+[package]
+name = "LenoValidate"
+version = "0.1.0"
+description = "声明式数据校验：必填/类型/范围/长度/枚举/正则（纯 Leno）"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库

@@ -1,0 +1,164 @@
+// LenoImage 自测：构造/读写、缩放、几何、PNG 编解码往返
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoImage\test\test_image.leno
+//   或 build\leno.exe build\leno_module\run_all_tests.leno --only LenoImage
+import "Image" as img
+use img.Image
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func eqBool(bool got, bool want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+// 比较两个 Image 的尺寸与全部像素（逐字节）
+func eqImage(Image a, Image b, string tag) {
+    if a.w != b.w or a.h != b.h {
+        fail(tag + "：尺寸 " + _str(a.w) + "x" + _str(a.h) + " != " + _str(b.w) + "x" + _str(b.h))
+    }
+    for 0 : a.h - 1 to y {
+        for 0 : a.w - 1 to x {
+            var ca = a.get(x, y)
+            var cb = b.get(x, y)
+            for 0 : 3 to k {
+                if ca[k] != cb[k] {
+                    fail(tag + "：(" + _str(x) + "," + _str(y) + ") 通道 " + _str(k)
+                          + " 得到 " + _str(ca[k]) + " 期望 " + _str(cb[k]))
+                }
+            }
+        }
+    }
+}
+
+main() {
+    // ==================== ① 构造 + 单点读写（RGBA 逻辑序）====================
+    Image t = img.newImage(2, 2)
+    eqInt(t.w, 2, "newImage 宽")
+    eqInt(t.h, 2, "newImage 高")
+    eqInt(t.px.len(), 16, "px 长度 = w*h*4")
+    // 默认全透明黑（BGRA 全 0）
+    eqInt(t.getA(0, 0), 0, "默认 alpha = 0")
+
+    t.set(0, 0, 255, 0, 0, 255)     // 红，不透明
+    var c = t.get(0, 0)
+    eqInt(c[0], 255, "get.r")
+    eqInt(c[1], 0, "get.g")
+    eqInt(c[2], 0, "get.b")
+    eqInt(c[3], 255, "get.a")
+    // 内部 BGRA：B=0, G=0, R=255, A=255
+    eqInt(t.px[0], 0, "内部 B")
+    eqInt(t.px[1], 0, "内部 G")
+    eqInt(t.px[2], 255, "内部 R")
+    eqInt(t.px[3], 255, "内部 A")
+
+    t.set(1, 0, 0, 255, 0, 255)     // 绿
+    t.set(0, 1, 0, 0, 255, 255)     // 蓝
+    t.set(1, 1, 255, 255, 255, 255) // 白
+
+    // 越界抛错
+    bool threw = false
+    try { t.get(5, 0) } catch e { threw = true }
+    eqBool(threw, true, "越界 get 抛错")
+
+    // ==================== ② fill / fillRect ====================
+    Image f = img.newImage(4, 4)
+    f.fill(10, 20, 30, 255)
+    var fc = f.get(3, 3)
+    eqInt(fc[0], 10, "fill r")
+    eqInt(fc[1], 20, "fill g")
+    eqInt(fc[2], 30, "fill b")
+    eqInt(fc[3], 255, "fill a")
+
+    f.fillRect(1, 1, 2, 2, 200, 0, 0, 255)
+    eqInt(f.get(0, 0)[0], 10, "fillRect 外保持原色")
+    eqInt(f.get(1, 1)[0], 200, "fillRect 内被覆盖")
+
+    // ==================== ③ 缩放：最近邻 2x2 → 4x4 ====================
+    Image nn = img.resize(t, 4, 4, img.MODE_NEAREST)
+    eqInt(nn.w, 4, "nearest 宽")
+    eqInt(nn.h, 4, "nearest 高")
+    // 每个源像素 2x2 块：源 (0,0) 红 → 目标 (0,0)(1,0)(0,1)(1,1) 都红
+    eqInt(nn.get(1, 1)[0], 255, "nearest (1,1) 仍是红")
+    eqInt(nn.get(1, 1)[1], 0, "nearest (1,1) g=0")
+    eqInt(nn.get(3, 3)[0], 255, "nearest (3,3) 是白 r")
+    eqInt(nn.get(3, 3)[1], 255, "nearest (3,3) 是白 g")
+
+    // ==================== ④ 缩放：box 缩小（纯色不变色）====================
+    Image solid = img.newImage(4, 4)
+    solid.fill(7, 8, 9, 255)
+    Image small = img.resize(solid, 2, 2, img.MODE_BOX)
+    eqInt(small.get(0, 0)[0], 7, "box 缩小 r 不变")
+    eqInt(small.get(1, 1)[2], 9, "box 缩小 b 不变")
+
+    // resizeAuto：缩小自动走 box
+    Image auto = img.resizeAuto(solid, 1, 1, false)
+    eqInt(auto.w, 1, "resizeAuto 宽")
+    eqInt(auto.get(0, 0)[0], 7, "resizeAuto 缩小颜色保持")
+
+    // 非法采样方式抛错
+    bool threwMode = false
+    try { img.resize(solid, 2, 2, 99) } catch e { threwMode = true }
+    eqBool(threwMode, true, "未知采样方式抛错")
+
+    // ==================== ⑤ 几何：crop / flip / rotate ====================
+    // t 是 2x2：红 绿 / 蓝 白
+    Image cropImg = img.crop(t, 1, 0, 1, 1)
+    eqInt(cropImg.w, 1, "crop 宽")
+    eqInt(cropImg.h, 1, "crop 高")
+    eqInt(cropImg.get(0, 0)[1], 255, "crop 取到绿")
+
+    Image fh = img.flipH(t)
+    eqInt(fh.get(0, 0)[1], 255, "flipH：左上变绿")
+
+    Image fv = img.flipV(t)
+    eqInt(fv.get(0, 0)[2], 255, "flipV：左上变蓝")
+
+    Image r90 = img.rotate90(t)
+    eqInt(r90.w, 2, "rotate90 宽不变（2x2）")
+    // 顺时针 90：红(0,0) → 右上(1,0)；蓝(0,1) → 左上(0,0)
+    eqInt(r90.get(0, 0)[2], 255, "rotate90 左上变蓝")
+
+    // 非正方形：2x3 → rotate90 成 3x2
+    Image rect = img.newImage(2, 3)
+    rect.fill(0, 0, 0, 255)
+    rect.set(1, 2, 100, 0, 0, 255)
+    Image rr = img.rotate90(rect)
+    eqInt(rr.w, 3, "rotate90 非正方：宽 = 原高")
+    eqInt(rr.h, 2, "rotate90 非正方：高 = 原宽")
+    // 源右下角 (1,2) 顺时针转到目标左下角 (0,1)
+    eqInt(rr.get(0, 1)[0], 100, "rotate90 角点搬对")
+
+    // ==================== ⑥ PNG 往返（encode → decode 逐像素一致）====================
+    Image pat = img.newImage(3, 2)
+    pat.fill(12, 34, 56, 255)
+    pat.set(0, 0, 255, 0, 0, 255)       // 红
+    pat.set(1, 0, 0, 255, 0, 128)       // 半透明绿
+    pat.set(2, 0, 0, 0, 255, 255)       // 蓝
+    pat.set(0, 1, 255, 255, 255, 0)     // 全透明白
+    pat.set(1, 1, 1, 2, 3, 255)         // 近黑
+    pat.set(2, 1, 200, 150, 100, 254)   // 杂色
+
+    var enc = img.encodePNG(pat)
+    eqBool(enc.isOk(), true, "encodePNG 成功")
+    // PNG 签名
+    eqInt(enc.val.byte(0), 0x89, "PNG 签名 0")
+    eqInt(enc.val.byte(1), 0x50, "PNG 签名 1")
+
+    var dec = img.decodePNG(enc.val)
+    if dec.isErr() { fail("decodePNG 失败：" + dec.errText()) }
+    eqImage(dec.val, pat, "PNG 往返逐像素一致")
+
+    // 坏输入
+    eqBool(img.decodePNG("not a png").isErr(), true, "坏输入返回失败")
+    eqBool(img.decodePNG("").isErr(), true, "空输入返回失败")
+
+    print("test_image passed（6 组 / 构造·读写·缩放·几何·PNG 往返）")
+}

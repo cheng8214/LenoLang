@@ -79,6 +79,7 @@ Results: 12 passed, 0 failed, 1 skipped (total 13)
 | LenoGlob | `"Glob"` | 通配符匹配与查找 | ✓ |
 | LenoHack | `"GameHelper"` | 进程操作：内存读写、模拟输入、进程附加、内存扫描 | — |
 | LenoHTTP | `"HTTP"` | HTTP/1.1 服务端子集（含 SSE、按路由 maxBody） | ✓ |
+| LenoImage | `"Image"` | 像素读写 + 缩放 + 裁剪/翻转/旋转 + PNG 编解码（纯 Leno，不依赖 SDL） | ✓ |
 | LenoLog | `"Log"` | 日志（等级 / 多目的地 / raw） | ✓ |
 | LenoMusic | `"Music"` | 音频（miniaudio 流式播放、解码、频谱） | — |
 | LenoQR | `"QR"` | 二维码生成（纯 Leno）+ 识别（quirc） | ✓ |
@@ -87,7 +88,9 @@ Results: 12 passed, 0 failed, 1 skipped (total 13)
 | LenoSqlite | `"sqlite3"` | SQLite3 绑定 | — |
 | LenoStats | `"Stats"` | 统计 + 金额整数分 | ✓ |
 | LenoSys | `"Sys"` | 跨平台系统：进程 / 磁盘 / 回收站 / 开机项 / 已装软件 | ✓ |
+| LenoTemplate | `"Template"` | Mustache 风格文本模板（变量/循环/条件） | ✓ |
 | LenoUUID | `"UUID"` | UUID v4 / v7 / 短 ID | ✓ |
+| LenoValidate | `"Validate"` | 声明式数据校验（必填/类型/范围/枚举/正则） | ✓ |
 | LenoWeb | `"WebNet"` / `"WebHtml"` / `"WebCrawl"` / `"Web"` | HTTP / HTML / 爬虫 / **全部**（4 个入口，见下） | ✓ |
 | LenoWin32 | `"Win32"` | 桌面截屏、全局热键、剪贴板图片 | ✓ |
 | LenoXLSX | `"XLSX"` | Excel 读写（zip + XML） | ✓ |

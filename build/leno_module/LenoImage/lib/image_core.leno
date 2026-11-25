@@ -1,0 +1,117 @@
+// image_core.leno —— Image 本体：像素缓冲 + 单点读写 + 全图填充
+//
+// 存储口径（与 tools/lib/image_ops.leno、SDL3 的 PIXELFORMAT_ARGB8888 完全一致）：
+//   · `px` 是**紧凑**字节数组，长度恒为 `w*h*4`（pitch == w*4，不做行对齐）
+//   · 内存字节序是 **B,G,R,A**（x86 上 ARGB8888 的存储序）—— 这是为了和 SDL3 surface、
+//     以及"读纹理 readPixelsAt 的结果"直接互操作，不需要来回转。
+//   · 对外读写用 **R,G,B,A 逻辑序**（`get` 返回 [r,g,b,a]、`set` 收 r,g,b,a），
+//     内部下标换算 B/G/R 位置。这样用户按直觉写 RGBA，内部仍能零拷贝接 SDL。
+//
+// 为什么用 Array[int] 而不是 Ptr / string：
+//   · 无指针生命周期、可安全跨线程/序列化（string 不可变做不了原地写）；
+//   · 批量算法（缩放/滤波）直接下标访问，比 ffi.read_byte 少一层 FFI 开销。
+
+// ==================== 构造 ====================
+
+func _blankPixels(int n): Array[int] {
+    Array[int] a = []
+    for 0 : n - 1 to i { a.add(0) }
+    return a
+}
+
+export func newImage(int w, int h): Image {
+    Image img = new Image()
+    img.w = w
+    img.h = h
+    img.px = _blankPixels(w * h * 4)
+    return img
+}
+
+// 从现成字节缓冲构造（**校验长度**：w*h*4 必须对得上，对不上直接抛错）
+export func fromPixels(int w, int h, Array[int] px): Image {
+    if px.len() != w * h * 4 {
+        throw "Image.fromPixels: 像素长度 " + _str(px.len())
+              + " 与 " + _str(w) + "x" + _str(h) + "（期望 " + _str(w * h * 4) + "）不符"
+    }
+    Image img = new Image()
+    img.w = w
+    img.h = h
+    img.px = px
+    return img
+}
+
+// ==================== Image ====================
+
+export struct Image {
+    int w = 0
+    int h = 0
+    Array[int] px = []        // BGRA 紧凑字节，len == w*h*4
+
+    func len(): int { return px.len() }
+
+    // 单点读：返回 [r,g,b,a]（逻辑序）
+    func get(int x, int y): Array[int] {
+        _checkXY(x, y)
+        int o = (y * w + x) * 4
+        return [px[o + 2], px[o + 1], px[o], px[o + 3]]
+    }
+
+    // 单点写（逻辑序 r,g,b,a）
+    func set(int x, int y, int r, int g, int b, int a) {
+        _checkXY(x, y)
+        int o = (y * w + x) * 4
+        px[o] = b
+        px[o + 1] = g
+        px[o + 2] = r
+        px[o + 3] = a
+    }
+
+    // 单通道读（a 常用于"拿 alpha 做命中检测"）
+    func getA(int x, int y): int {
+        _checkXY(x, y)
+        return px[(y * w + x) * 4 + 3]
+    }
+
+    func setA(int x, int y, int a) {
+        _checkXY(x, y)
+        px[(y * w + x) * 4 + 3] = a
+    }
+
+    // 全图填充（不透明纯色最常用）
+    func fill(int r, int g, int b, int a) {
+        int n = px.len()
+        int o = 0
+        while o < n {
+            px[o] = b
+            px[o + 1] = g
+            px[o + 2] = r
+            px[o + 3] = a
+            o = o + 4
+        }
+    }
+
+    // 矩形填充（闭区间；越界自动钳到图内，不抛错 —— 填一部分是常见需求）
+    func fillRect(int x0, int y0, int x1, int y1, int r, int g, int b, int a) {
+        int ax0 = _clampI(x0, 0, w - 1)
+        int ax1 = _clampI(x1, 0, w - 1)
+        int ay0 = _clampI(y0, 0, h - 1)
+        int ay1 = _clampI(y1, 0, h - 1)
+        for ay0 : ay1 to y {
+            for ax0 : ax1 to x {
+                set(x, y, r, g, b, a)
+            }
+        }
+    }
+
+    func _checkXY(int x, int y) {
+        if x < 0 or x >= w or y < 0 or y >= h {
+            throw "Image 越界: (" + _str(x) + "," + _str(y) + ") 不在 " + _str(w) + "x" + _str(h) + " 内"
+        }
+    }
+}
+
+func _clampI(int v, int lo, int hi): int {
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}

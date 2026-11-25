@@ -1,0 +1,148 @@
+// LenoValidate 自测：必填/类型/范围/长度/枚举/正则/自定义
+//
+// 跑法（仓库根目录）：
+//   build\leno.exe build\leno_module\LenoValidate\test\test_validate.leno
+import "Validate" as v
+use v.(Rule, Schema)
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+func eqInt(int got, int want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+func eqBool(bool got, bool want, string tag) {
+    if got != want { fail(tag + "：得到 " + _str(got) + " 期望 " + _str(want)) }
+}
+
+// 错误列表里是否包含"字段名: "开头的错误
+func hasField(Array[string] errs, string field): bool {
+    for errs to e {
+        if e.find(field + ":") == 0 { return true }
+    }
+    return false
+}
+
+main() {
+    // ==================== ① required ====================
+    Schema s = new Schema()
+    s.fields["name"] = new Rule(required = true)
+
+    Dict[string, any] d = {}
+    var e1 = v.validate(d, s)
+    eqBool(hasField(e1, "name"), true, "缺失必填字段报错")
+
+    d["name"] = null
+    var e2 = v.validate(d, s)
+    eqBool(hasField(e2, "name"), true, "显式 null 也算缺")
+
+    d["name"] = "张三"
+    var e3 = v.validate(d, s)
+    eqInt(e3.len(), 0, "给了值就通过")
+
+    // ==================== ② 类型 ====================
+    Schema s2 = new Schema()
+    s2.fields["age"] = new Rule(typ = "int")
+    Dict[string, any] d2 = {}
+    d2["age"] = "30"
+    eqBool(hasField(v.validate(d2, s2), "age"), true, "字符串不是 int")
+
+    d2["age"] = 30
+    eqInt(v.validate(d2, s2).len(), 0, "int 通过类型检查")
+
+    // number 宽松类型：int/float 都收
+    Schema s2b = new Schema()
+    s2b.fields["x"] = new Rule(typ = "number")
+    Dict[string, any] d2b = {}
+    d2b["x"] = 3.5
+    eqInt(v.validate(d2b, s2b).len(), 0, "float 过 number")
+
+    // ==================== ③ 数值范围 ====================
+    Schema s3 = new Schema()
+    s3.fields["age"] = new Rule(minNum = 0, maxNum = 150)
+    Dict[string, any] d3 = {}
+    d3["age"] = -5
+    eqBool(hasField(v.validate(d3, s3), "age"), true, "小于最小值")
+    d3["age"] = 200
+    eqBool(hasField(v.validate(d3, s3), "age"), true, "大于最大值")
+    d3["age"] = 42
+    eqInt(v.validate(d3, s3).len(), 0, "范围内通过")
+
+    // ==================== ④ 长度 ====================
+    Schema s4 = new Schema()
+    s4.fields["name"] = new Rule(minLen = 2, maxLen = 4)
+    Dict[string, any] d4 = {}
+    d4["name"] = "a"
+    eqBool(hasField(v.validate(d4, s4), "name"), true, "长度不足")
+    d4["name"] = "abcde"
+    eqBool(hasField(v.validate(d4, s4), "name"), true, "长度超限")
+    d4["name"] = "abc"
+    eqInt(v.validate(d4, s4).len(), 0, "长度通过")
+
+    // 数组长度
+    Schema s4b = new Schema()
+    s4b.fields["tags"] = new Rule(minLen = 1)
+    Dict[string, any] d4b = {}
+    Array[any] tags = []
+    d4b["tags"] = tags
+    eqBool(hasField(v.validate(d4b, s4b), "tags"), true, "空数组长度不足")
+    tags.add("x")
+    eqInt(v.validate(d4b, s4b).len(), 0, "数组长度通过")
+
+    // ==================== ⑤ 枚举 ====================
+    Schema s5 = new Schema()
+    s5.fields["role"] = new Rule(oneOf = ["admin", "user"])
+    Dict[string, any] d5 = {}
+    d5["role"] = "guest"
+    eqBool(hasField(v.validate(d5, s5), "role"), true, "枚举外报错")
+    d5["role"] = "admin"
+    eqInt(v.validate(d5, s5).len(), 0, "枚举内通过")
+
+    // ==================== ⑥ 正则 ====================
+    Schema s6 = new Schema()
+    s6.fields["email"] = new Rule(pattern = "^[^@]+@[^@]+$")
+    Dict[string, any] d6 = {}
+    d6["email"] = "not-an-email"
+    eqBool(hasField(v.validate(d6, s6), "email"), true, "正则不匹配")
+    d6["email"] = "a@b.com"
+    eqInt(v.validate(d6, s6).len(), 0, "正则匹配通过")
+
+    // ==================== ⑦ 自定义 ====================
+    Schema s7 = new Schema()
+    Rule r7 = new Rule()
+    r7.check = func(any val): string? {
+        if not (val is string) { return "不是字符串" }
+        string s = val as string
+        if s != "ok" { return "必须等于 ok" }
+        return null
+    }
+    s7.fields["token"] = r7
+    Dict[string, any] d7 = {}
+    d7["token"] = "bad"
+    eqBool(hasField(v.validate(d7, s7), "token"), true, "自定义校验拒绝")
+    d7["token"] = "ok"
+    eqInt(v.validate(d7, s7).len(), 0, "自定义校验通过")
+
+    // ==================== ⑧ 多字段一次报多个错误 ====================
+    Schema s8 = new Schema()
+    s8.fields["a"] = new Rule(required = true)
+    s8.fields["b"] = new Rule(required = true, typ = "int")
+    Dict[string, any] d8 = {}
+    var e8 = v.validate(d8, s8)
+    eqInt(e8.len(), 2, "一次报出两个错误")
+    eqBool(hasField(e8, "a"), true, "错误含 a")
+    eqBool(hasField(e8, "b"), true, "错误含 b")
+
+    // ==================== ⑨ 未声明字段不报错 ====================
+    Schema s9 = new Schema()
+    s9.fields["a"] = new Rule(required = true)
+    Dict[string, any] d9 = {}
+    d9["a"] = 1
+    d9["extra"] = "随便"
+    eqInt(v.validate(d9, s9).len(), 0, "多余字段容忍")
+
+    print("test_validate passed（9 组 / 必填·类型·范围·长度·枚举·正则·自定义）")
+}

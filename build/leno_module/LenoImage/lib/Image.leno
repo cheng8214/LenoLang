@@ -1,0 +1,76 @@
+// Image.leno —— LenoImage 门面（纯 Leno，零原生依赖）
+//
+// 一句话：把"读图 → 处理 → 写图"做成一条不依赖 SDL3 的链路。
+//   之前这三件事散在 tools/（缩放采样在 image_ops.leno）或绑在 SDL3（PNG 编解码），
+//   无头/服务端/跨线程场景想处理一张图就得拉整个 SDL3。这里统一收进一个模块。
+//
+// 用法：
+//   import "Image" as img
+//   use img.Image
+//
+//   // 构造 + 单点读写（对外 RGBA 序；内部 BGRA，与 SDL3 surface 同序）
+//   Image t = img.newImage(4, 4)
+//   t.set(0, 0, 255, 0, 0, 255)          // 红
+//   t.fill(0, 255, 0, 255)               // 全绿
+//
+//   // 缩放（缩小走 box、放大走 bilinear、像素画走 nearest）
+//   Image s = img.scaleToLongEdge(t, 256, false)
+//
+//   // 几何
+//   Image c = img.crop(s, 0, 0, 128, 128)
+//   Image r = img.rotate90(c)
+//
+//   // PNG 编解码（纯 Leno，不依赖 SDL）
+//   var p = img.encodePNG(t)             // Result[string]：PNG 字节
+//   if p.isOk() { files.write("out.png", p.val) }
+//   var d = img.decodePNGFile("in.png")  // Result[Image]
+//
+// 为什么 return 类型里要写全 Image：本模块所有函数的入参/返回值都是 `Image`，
+//   调用方 `use img.Image` 之后就能直接用 `Image` 当类型名。
+
+import "image_core.leno" as core
+import "image_scale.leno" as scale
+import "image_geom.leno" as geom
+import "image_png.leno" as png
+import "Result" as res
+use core.Image
+use res.Result
+
+// ==================== 核心：类型 + 构造 ====================
+
+export func newImage(int w, int h): Image { return core.newImage(w, h) }
+export func fromPixels(int w, int h, Array[int] px): Image { return core.fromPixels(w, h, px) }
+
+// ==================== 缩放 ====================
+
+export const int MODE_BOX = scale.MODE_BOX
+export const int MODE_BILINEAR = scale.MODE_BILINEAR
+export const int MODE_NEAREST = scale.MODE_NEAREST
+
+export func resize(Image src, int dw, int dh, int mode): Image {
+    return scale.resize(src, dw, dh, mode)
+}
+export func resizeAuto(Image src, int dw, int dh, bool pxArt): Image {
+    return scale.resizeAuto(src, dw, dh, pxArt)
+}
+export func scaleToLongEdge(Image src, int longEdge, bool pxArt): Image {
+    return scale.scaleToLongEdge(src, longEdge, pxArt)
+}
+
+// ==================== 几何 ====================
+
+export func crop(Image src, int x, int y, int w, int h): Image {
+    return geom.crop(src, x, y, w, h)
+}
+export func flipH(Image src): Image { return geom.flipH(src) }
+export func flipV(Image src): Image { return geom.flipV(src) }
+export func rotate90(Image src): Image { return geom.rotate90(src) }
+export func rotate180(Image src): Image { return geom.rotate180(src) }
+export func rotate270(Image src): Image { return geom.rotate270(src) }
+
+// ==================== PNG 编解码 ====================
+
+export func decodePNG(string data): Result[Image] { return png.decodePNG(data) }
+export func encodePNG(Image img): Result[string] { return png.encodePNG(img) }
+export func decodePNGFile(string path): Result[Image] { return png.decodePNGFile(path) }
+export func encodePNGFile(Image img, string path): Result[bool] { return png.encodePNGFile(img, path) }

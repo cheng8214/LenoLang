@@ -1,0 +1,213 @@
+// image_scale.leno —— 缩放采样（nearest / box / bilinear）
+//
+// 算法从 tools/lib/image_ops.leno **移植**（逐字节兼容原实现，只把 Ptr[u8] 容器换成 Array[int]）：
+//   · 像素格式 ARGB8888，内存序 B,G,R,A
+//   · 缩放按 **alpha 预乘**做加权平均：直接平均非预乘 RGBA 会让透明边缘发黑
+//   · 缩小用 box（按覆盖面积加权）、放大用双线性（像素中心对齐）、像素画用最近邻
+//
+// 为什么保留 tools/lib/image_ops.leno 那份 Ptr 版：它是给 SDL3 surface（pitch 可能 > w*4）
+// 的零拷贝互操作用；本模块是**纯内存** Image（紧凑 pitch=w*4），不依赖 SDL、不碰指针。
+
+import "image_core.leno" as core
+use core.Image
+
+// ==================== 采样方式 ====================
+
+export const int MODE_BOX = 0
+export const int MODE_BILINEAR = 1
+export const int MODE_NEAREST = 2
+
+// ==================== 像素工具 ====================
+
+func _clamp255(float v): int {
+    int n = _int(v + 0.5)
+    if n < 0 { return 0 }
+    if n > 255 { return 255 }
+    return n
+}
+
+func _overlap(float a0, float a1, float b0, float b1): float {
+    float lo = if a0 > b0 then a0 else b0
+    float hi = if a1 < b1 then a1 else b1
+    float d = hi - lo
+    if d < 0.0 { return 0.0 }
+    return d
+}
+
+func _blank(int n): Array[int] {
+    Array[int] a = []
+    for 0 : n - 1 to i { a.add(0) }
+    return a
+}
+
+func _putPx(Array[int] dst, int off, float r, float g, float b, int a) {
+    dst[off] = _clamp255(b)
+    dst[off + 1] = _clamp255(g)
+    dst[off + 2] = _clamp255(r)
+    dst[off + 3] = a
+}
+
+// ==================== 三种采样 ====================
+
+// 最近邻（精确、最快；像素画 / 硬边图标）
+func _resizeNearest(Image src, int dw, int dh, Array[int] dst) {
+    int sw = src.w
+    int sh = src.h
+    Array[int] s = src.px
+    for 0 : dh - 1 to y {
+        int sy = _int(_float(y) * _float(sh) / _float(dh))
+        if sy > sh - 1 { sy = sh - 1 }
+        for 0 : dw - 1 to x {
+            int sx = _int(_float(x) * _float(sw) / _float(dw))
+            if sx > sw - 1 { sx = sw - 1 }
+            int so = (sy * sw + sx) * 4
+            int doff = (y * dw + x) * 4
+            dst[doff] = s[so]
+            dst[doff + 1] = s[so + 1]
+            dst[doff + 2] = s[so + 2]
+            dst[doff + 3] = s[so + 3]
+        }
+    }
+}
+
+// 缩小：box 滤波（目标像素覆盖的源像素按面积加权平均 —— 32→16 就是 2×2 平均）
+func _resizeBox(Image src, int dw, int dh, Array[int] dst) {
+    int sw = src.w
+    int sh = src.h
+    Array[int] s = src.px
+    float sx = _float(sw) / _float(dw)
+    float sy = _float(sh) / _float(dh)
+    for 0 : dh - 1 to y {
+        float y0 = _float(y) * sy
+        float y1 = y0 + sy
+        int iy0 = _int(y0)
+        int iy1 = _int(y1)
+        if iy1 > sh - 1 { iy1 = sh - 1 }
+        for 0 : dw - 1 to x {
+            float x0 = _float(x) * sx
+            float x1 = x0 + sx
+            int ix0 = _int(x0)
+            int ix1 = _int(x1)
+            if ix1 > sw - 1 { ix1 = sw - 1 }
+            float sr = 0.0
+            float sg = 0.0
+            float sb = 0.0
+            float sa = 0.0
+            float ws = 0.0
+            for iy0 : iy1 to ty {
+                float wy = _overlap(y0, y1, _float(ty), _float(ty + 1))
+                if wy <= 0.0 { continue }
+                for ix0 : ix1 to tx {
+                    float wx = _overlap(x0, x1, _float(tx), _float(tx + 1))
+                    if wx <= 0.0 { continue }
+                    float w = wx * wy
+                    int so = (ty * sw + tx) * 4
+                    // alpha 预乘：颜色 × a 累加、a 单独累加 ⇒ 不会被"透明黑"拉暗
+                    float a = _float(s[so + 3]) / 255.0
+                    sb = sb + _float(s[so]) * a * w
+                    sg = sg + _float(s[so + 1]) * a * w
+                    sr = sr + _float(s[so + 2]) * a * w
+                    sa = sa + a * w
+                    ws = ws + w
+                }
+            }
+            int doff = (y * dw + x) * 4
+            if ws <= 0.0 or sa <= 0.0 { _putPx(dst, doff, 0.0, 0.0, 0.0, 0); continue }
+            // 反预乘回去：颜色 = Σ(c·a·w) / Σ(a·w)
+            _putPx(dst, doff, sr / sa, sg / sa, sb / sa, _clamp255(sa / ws * 255.0))
+        }
+    }
+}
+
+// 放大：双线性（按像素中心对齐；同样预乘 alpha）
+func _resizeBilinear(Image src, int dw, int dh, Array[int] dst) {
+    int sw = src.w
+    int sh = src.h
+    Array[int] s = src.px
+    float sx = _float(sw) / _float(dw)
+    float sy = _float(sh) / _float(dh)
+    for 0 : dh - 1 to y {
+        float fy = (_float(y) + 0.5) * sy - 0.5
+        int y0 = _int(fy)
+        float ty = fy - _float(y0)
+        if y0 < 0 { y0 = 0; ty = 0.0 }
+        int y1 = y0 + 1
+        if y1 > sh - 1 { y1 = sh - 1 }
+        for 0 : dw - 1 to x {
+            float fx = (_float(x) + 0.5) * sx - 0.5
+            int x0 = _int(fx)
+            float tx = fx - _float(x0)
+            if x0 < 0 { x0 = 0; tx = 0.0 }
+            int x1 = x0 + 1
+            if x1 > sw - 1 { x1 = sw - 1 }
+            float sr = 0.0
+            float sg = 0.0
+            float sb = 0.0
+            float sa = 0.0
+            float ws = 0.0
+            for 0 : 1 to k {
+                int yy = if k == 0 then y0 else y1
+                float wy = if k == 0 then (1.0 - ty) else ty
+                for 0 : 1 to m {
+                    int xx = if m == 0 then x0 else x1
+                    float wx = if m == 0 then (1.0 - tx) else tx
+                    float w = wx * wy
+                    if w <= 0.0 { continue }
+                    int so = (yy * sw + xx) * 4
+                    float a = _float(s[so + 3]) / 255.0
+                    sb = sb + _float(s[so]) * a * w
+                    sg = sg + _float(s[so + 1]) * a * w
+                    sr = sr + _float(s[so + 2]) * a * w
+                    sa = sa + a * w
+                    ws = ws + w
+                }
+            }
+            int doff = (y * dw + x) * 4
+            if ws <= 0.0 or sa <= 0.0 { _putPx(dst, doff, 0.0, 0.0, 0.0, 0); continue }
+            _putPx(dst, doff, sr / sa, sg / sa, sb / sa, _clamp255(sa / ws * 255.0))
+        }
+    }
+}
+
+// ==================== 统一入口 ====================
+
+// 按 mode 缩放，返回新 Image；mode 不认识 ⇒ 抛错（不静默给坏图）
+export func resize(Image src, int dw, int dh, int mode): Image {
+    if dw < 1 or dh < 1 {
+        throw "Image.resize: 目标尺寸必须 >= 1（收到 " + _str(dw) + "x" + _str(dh) + "）"
+    }
+    Array[int] dst = _blank(dw * dh * 4)
+    if mode == MODE_NEAREST {
+        _resizeNearest(src, dw, dh, dst)
+    } else if mode == MODE_BOX {
+        _resizeBox(src, dw, dh, dst)
+    } else if mode == MODE_BILINEAR {
+        _resizeBilinear(src, dw, dh, dst)
+    } else {
+        throw "Image.resize: 未知采样方式 " + _str(mode)
+    }
+    return core.fromPixels(dw, dh, dst)
+}
+
+// 按"缩小/放大"自动选：缩小 → box、放大 → bilinear；pxArt 时一律最近邻
+export func resizeAuto(Image src, int dw, int dh, bool pxArt): Image {
+    int mode = MODE_BILINEAR
+    if pxArt {
+        mode = MODE_NEAREST
+    } else if dw < src.w or dh < src.h {
+        mode = MODE_BOX
+    }
+    return resize(src, dw, dh, mode)
+}
+
+// 长边等比缩到 longEdge（短边按比例四舍五入，最小 1）
+export func scaleToLongEdge(Image src, int longEdge, bool pxArt): Image {
+    if longEdge < 1 { throw "Image.scaleToLongEdge: 长边必须 >= 1" }
+    int longSide = if src.w > src.h then src.w else src.h
+    float k = _float(longEdge) / _float(longSide)
+    int dw = _int(_float(src.w) * k + 0.5)
+    int dh = _int(_float(src.h) * k + 0.5)
+    if dw < 1 { dw = 1 }
+    if dh < 1 { dh = 1 }
+    return resizeAuto(src, dw, dh, pxArt)
+}

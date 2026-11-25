@@ -1,0 +1,192 @@
+// Validate.leno —— 声明式数据校验（纯 Leno）
+//
+// 为什么要有：Result 解决了"错误怎么表达"，Config 解决了"配置怎么读"，但"读进来的
+//   JSON / 表单 / 环境变量怎么验字段"还是手写一堆 if（必填、类型、范围、长度、枚举、正则）。
+//   这里给一套声明式规则，一次校验整个 Dict、把所有错误一次报出来。
+//
+// 用法：
+//   import "Validate" as v
+//   use v.(Rule, Schema)
+//
+//   Schema s = new Schema()
+//   s.fields["name"] = new Rule(required = true, minLen = 1, maxLen = 20)
+//   s.fields["age"]  = new Rule(required = true, typ = "int", minNum = 0, maxNum = 150)
+//   s.fields["role"] = new Rule(oneOf = ["admin", "user"])
+//   s.fields["email"] = new Rule(pattern = "^[^@]+@[^@]+$")
+//
+//   Array[string] errs = v.validate(data, s)
+//   if errs.len() == 0 { /* 通过 */ } else { /* 逐条打印 errs */ }
+//
+// 规则（字段缺省 = 不检查该约束）：
+//   required  缺失/显式 null ⇒ 必填错误
+//   typ       "string"/"int"/"float"/"number"/"bool"/"array"/"dict"/"any"
+//   minNum/maxNum  数值范围（int/float 都认）
+//   minLen/maxLen  长度：string 按字符、Array/Dict 按元素数
+//   oneOf     字符串枚举（值转字符串比较）
+//   pattern   正则（regexs.match，从头部锚定；要全串匹配请自己写 ^…$）
+//   check     自定义：func(any): string?，返回 null = 通过、否则错误消息
+
+import strings
+import regexs
+
+// ==================== 规则 ====================
+
+export struct Rule {
+    bool required = false
+    string typ = ""            // "" = 不检查类型
+    float? minNum = null       // null = 不检查
+    float? maxNum = null
+    int minLen = -1            // -1 = 不检查
+    int maxLen = -1
+    Array[string] oneOf = []   // [] = 不检查枚举
+    string pattern = ""        // "" = 不检查正则
+    func(any): string? check = null
+}
+
+export struct Schema {
+    Dict[string, Rule] fields = {}
+}
+
+// ==================== 类型工具 ====================
+
+func _typeName(any v): string {
+    if v == null { return "null" }
+    if v is bool { return "bool" }
+    if v is int { return "int" }
+    if v is float { return "float" }
+    if v is string { return "string" }
+    if v is Dict { return "dict" }
+    if v is Array { return "array" }
+    return "object"
+}
+
+func _typeOk(string typ, any v): bool {
+    if typ == "string" { return v is string }
+    if typ == "int" { return v is int }
+    if typ == "float" { return v is float }
+    if typ == "number" {
+        if v is int { return true }
+        if v is float { return true }
+        return false
+    }
+    if typ == "bool" { return v is bool }
+    if typ == "array" { return v is Array }
+    if typ == "dict" { return v is Dict }
+    if typ == "any" { return true }
+    return false
+}
+
+func _asFloat(any v): float {
+    if v is int { return _float(v as int) }
+    return v as float
+}
+
+// string → 字符数、Array/Dict → 元素数，其它 → -1（不适用）
+func _valLen(any v): int {
+    if v is string { return (v as string).len() }
+    if v is Array { Array a = v as Array; return a.len() }
+    if v is Dict { Dict d = v as Dict; return d.len() }
+    return -1
+}
+
+func _strVal(any v): string {
+    if v == null { return "" }
+    if v is string { return v as string }
+    if v is bool { bool b = v as bool; return if b then "true" else "false" }
+    if v is int { return _str(v as int) }
+    if v is float { return _str(v as float) }
+    return _str(v)
+}
+
+func _inList(any v, Array[string] list): bool {
+    string s = _strVal(v)
+    for list to item { if item == s { return true } }
+    return false
+}
+
+// ==================== 校验 ====================
+
+func _checkField(string field, any val, bool has, Rule r, Array[string] errs) {
+    if r.required and (not has or val == null) {
+        errs.add(field + ": 必填")
+        return
+    }
+    if not has or val == null { return }
+
+    // 类型
+    if r.typ != "" and r.typ != "any" {
+        if not _typeOk(r.typ, val) {
+            errs.add(field + ": 期望 " + r.typ + "，实际 " + _typeName(val))
+            return
+        }
+    }
+    // 数值范围
+    if r.minNum != null or r.maxNum != null {
+        if _typeOk("number", val) {
+            float f = _asFloat(val)
+            float mn = r.minNum ?? 0.0
+            float mx = r.maxNum ?? 0.0
+            if r.minNum != null and f < mn {
+                errs.add(field + ": 小于最小值 " + _str(mn))
+            }
+            if r.maxNum != null and f > mx {
+                errs.add(field + ": 大于最大值 " + _str(mx))
+            }
+        }
+    }
+    // 长度
+    if r.minLen >= 0 or r.maxLen >= 0 {
+        int len = _valLen(val)
+        if len >= 0 {
+            if r.minLen >= 0 and len < r.minLen {
+                errs.add(field + ": 长度小于 " + _str(r.minLen))
+            }
+            if r.maxLen >= 0 and len > r.maxLen {
+                errs.add(field + ": 长度大于 " + _str(r.maxLen))
+            }
+        }
+    }
+    // 枚举
+    if r.oneOf.len() > 0 {
+        if not _inList(val, r.oneOf) {
+            errs.add(field + ": 不在允许值内（" + r.oneOf.join(", ") + "）")
+        }
+    }
+    // 正则
+    if r.pattern != "" {
+        if not (val is string) {
+            errs.add(field + ": 不是字符串，无法正则匹配")
+        } else if not regexs.match(val as string, r.pattern) {
+            errs.add(field + ": 不匹配 " + r.pattern)
+        }
+    }
+    // 自定义
+    if r.check != null {
+        var msg = r.check(val)
+        if msg != null { errs.add(field + ": " + msg) }
+    }
+}
+
+// 校验整个 Dict，返回错误列表（空 = 全部通过）。只检查 schema 里声明的字段，
+// 未声明的字段不报错（容忍多余字段）。
+export func validate(Dict[string, any] data, Schema schema): Array[string] {
+    Array[string] errs = []
+    var keys = schema.fields.keys()
+    for keys to field {
+        Rule r = schema.fields[field]
+        bool has = data.has(field)
+        var val = data.get(field, null)
+        _checkField(field, val, has, r, errs)
+    }
+    return errs
+}
+
+// 校验单值（不涉及必填）：给"只验一个字段"的调用点，返回错误列表（空 = 通过）
+export func checkValue(any val, Rule r): Array[string] {
+    Array[string] errs = []
+    _checkField("value", val, true, r, errs)
+    return errs
+}
+
+// 便捷：错误列表是否为空
+export func ok(Array[string] errs): bool { return errs.len() == 0 }

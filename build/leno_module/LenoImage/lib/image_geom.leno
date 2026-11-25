@@ -1,0 +1,94 @@
+// image_geom.leno —— 几何操作：裁剪 / 翻转 / 旋转
+//
+// 都是**逐像素搬移**，不涉及采样（旋转 90/180/270 是像素完美，不发虚）。
+// 全部返回**新 Image**（不改入参），与缩放一致。
+
+import "image_core.leno" as core
+use core.Image
+
+func _blank(int n): Array[int] {
+    Array[int] a = []
+    for 0 : n - 1 to i { a.add(0) }
+    return a
+}
+
+// 复制一个像素（4 字节，含 alpha）
+func _copyPx(Image dst, int dx, int dy, Image src, int sx, int sy) {
+    int doff = (dy * dst.w + dx) * 4
+    int soff = (sy * src.w + sx) * 4
+    dst.px[doff] = src.px[soff]
+    dst.px[doff + 1] = src.px[soff + 1]
+    dst.px[doff + 2] = src.px[soff + 2]
+    dst.px[doff + 3] = src.px[soff + 3]
+}
+
+// 裁剪：取 (x, y) 起、宽 w 高 h 的区域。越界抛错（不静默截断）
+export func crop(Image src, int x, int y, int w, int h): Image {
+    if w < 1 or h < 1 { throw "Image.crop: 宽高必须 >= 1（收到 " + _str(w) + "x" + _str(h) + "）" }
+    if x < 0 or y < 0 or x + w > src.w or y + h > src.h {
+        throw "Image.crop: 区域 (" + _str(x) + "," + _str(y) + ") " + _str(w) + "x" + _str(h)
+              + " 超出 " + _str(src.w) + "x" + _str(src.h)
+    }
+    Image dst = core.newImage(w, h)
+    for 0 : h - 1 to dy {
+        for 0 : w - 1 to dx {
+            _copyPx(dst, dx, dy, src, x + dx, y + dy)
+        }
+    }
+    return dst
+}
+
+// 水平翻转（左右镜像）
+export func flipH(Image src): Image {
+    Image dst = core.newImage(src.w, src.h)
+    for 0 : src.h - 1 to y {
+        for 0 : src.w - 1 to x {
+            _copyPx(dst, x, y, src, src.w - 1 - x, y)
+        }
+    }
+    return dst
+}
+
+// 垂直翻转（上下镜像）
+export func flipV(Image src): Image {
+    Image dst = core.newImage(src.w, src.h)
+    for 0 : src.h - 1 to y {
+        for 0 : src.w - 1 to x {
+            _copyPx(dst, x, y, src, x, src.h - 1 - y)
+        }
+    }
+    return dst
+}
+
+// 顺时针 90°（宽高互换）
+export func rotate90(Image src): Image {
+    Image dst = core.newImage(src.h, src.w)
+    for 0 : src.h - 1 to y {
+        for 0 : src.w - 1 to x {
+            _copyPx(dst, src.h - 1 - y, x, src, x, y)
+        }
+    }
+    return dst
+}
+
+// 180°
+export func rotate180(Image src): Image {
+    Image dst = core.newImage(src.w, src.h)
+    for 0 : src.h - 1 to y {
+        for 0 : src.w - 1 to x {
+            _copyPx(dst, x, y, src, src.w - 1 - x, src.h - 1 - y)
+        }
+    }
+    return dst
+}
+
+// 逆时针 90°（= 顺时针 270°）
+export func rotate270(Image src): Image {
+    Image dst = core.newImage(src.h, src.w)
+    for 0 : src.h - 1 to y {
+        for 0 : src.w - 1 to x {
+            _copyPx(dst, y, src.w - 1 - x, src, x, y)
+        }
+    }
+    return dst
+}
