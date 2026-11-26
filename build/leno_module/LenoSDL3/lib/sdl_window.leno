@@ -2496,8 +2496,9 @@ export struct Window {
             // ★ 2026-11-18：这两块 128B 缓冲改成**只分配一次**（模块级，见 `_evBufA/_evBufB`）。
             //   原来每次循环迭代 malloc×2 + free×2 —— 实测循环体固定开销约 0.36ms/次，
             //   而播放动画时每秒会醒 1500+ 次（见下面的节流/窗口级限速），白烧半个核 ✗
-            if _evBufA == null { _evBufA = ffi.malloc(128) }
-            if _evBufB == null { _evBufB = ffi.malloc(128) }
+            // ★ 2026-11-26：128 换成 SDL_Event.size()（与 sdl_event 的 init/saveRaw 同一事实来源）
+            if _evBufA == null { _evBufA = ffi.malloc(SDL_Event.size()) }
+            if _evBufB == null { _evBufB = ffi.malloc(SDL_Event.size()) }
             Ptr[u8] _motionBuf = _evBufA
             Ptr[u8] _deferredBuf = _evBufB
             bool _hasDeferred = false
