@@ -276,6 +276,24 @@
                         Ast* other = (lt && lt->kind == TYPE_STRUCT) ? la : ra;
                         if (sem_expr_maybe_null(s, other, 0)) struct_vs_null = 0;
                     }
+                    // ★ 2026-11-26：`Atomic` 与其它类型直接比较 —— 运行期比的是
+                    //   "是不是同一个对象"，恒 false 且**不报错**（实测 `a == 0` ⇒ false）。
+                    //   典型的静默错值 ⇒ 编译期就拦，并给出正确写法。
+                    //   `== null` / `!= null` 除外（判空是有意义的）。
+                    int atom_vs_other =
+                        (lt && lt->kind == TYPE_ATOMIC && rt && rt->kind != TYPE_ATOMIC &&
+                         rt->kind != TYPE_ANY && rt->kind != TYPE_NULL && !(ra && ra->kind == AST_NULL)) ||
+                        (rt && rt->kind == TYPE_ATOMIC && lt && lt->kind != TYPE_ATOMIC &&
+                         lt->kind != TYPE_ANY && lt->kind != TYPE_NULL && !(la && la->kind == AST_NULL));
+                    if (atom_vs_other) {
+                        char obuf[128];
+                        snprintf(obuf, sizeof(obuf), "%s",
+                                 type_to_string((lt && lt->kind == TYPE_ATOMIC) ? rt : lt));
+                        error_add_at_fmt(ERR_TYPE_MISMATCH, ast->line, ast->column,
+                            "Atomic 不能和 '%s' 直接比较（运行期比的是\"是不是同一个对象\"，"
+                            "结果恒为 %s 且不报错）—— 要比值请写 `a.load()`",
+                            obuf, (op == TOK_EQEQ) ? "false" : "true");
+                    }
                     if (struct_vs_null) {
                         // ★ 2026-11-18（F2·L4）：**升为错误**（此前是 WARN_STRUCT_EQ_NULL 警告）。
                         //   为什么现在才敢升：L3 之后"非可空类型"真的非空了（`T x = null` 编不过），

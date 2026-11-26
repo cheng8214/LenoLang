@@ -1,0 +1,155 @@
+// test_atomic_stress.leno —— Atomic 压测：跨模块 / 别名 / 线程 / CAS / GC / 人类乱写
+import threads
+import "helpers/atomic_mod.leno" as am
+import files
+
+func addMany(Atomic a, int n) {
+    for 0 : n - 1 to i { a.add(1) }
+}
+
+func subMany(Atomic a, int n) {
+    for 0 : n - 1 to i { a.sub(1) }
+}
+
+// CAS 自旋：不用 add，自己实现"加 1"（验证 cas 的语义足够做同步原语）
+func casIncMany(Atomic a, int n) {
+    for 0 : n - 1 to i {
+        bool done = false
+        while not done {
+            int old = a.load()
+            done = a.cas(old, old + 1)
+        }
+    }
+}
+
+func checkBad(string name, string src, string mustHave) {
+    files.write("__atomic_bad.leno", src)
+    var r = _exec(_executable() + " --check \"__atomic_bad.leno\"", 30000)
+    files.delete("__atomic_bad.leno")
+    if (r.code as int) == 0 {
+        fail("[" + name + "] 本应编译失败，却过了")
+    }
+    string out = r.output as string
+    if not out.has(mustHave) {
+        fail("[" + name + "] 报错里没有「" + mustHave + "」；实际：\n" + out)
+    }
+}
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+main() {
+    // ==================== ① 跨模块 ====================
+    Atomic c1 = am.makeCounter(10)
+    assert_eq(c1.load(), 10, "① 跨模块返回的 Atomic")
+    am.bump(c1, 5)
+    assert_eq(c1.load(), 15, "① 跨模块函数改它，调用方看得到（同一份）")
+    am.doubleIt(c1)
+    assert_eq(c1.load(), 30, "① 跨模块读写同一份")
+
+    var t = am.makeTally("t1", 0)
+    t.record(7)
+    assert_eq(t.value(), 7, "① struct 里的 Atomic 字段跨模块可用")
+
+    // ==================== ② 别名：多个名字指向同一份 ====================
+    Atomic a = threads.atomic(0)
+    Atomic b = a                      // 别名 1
+    b.add(1)
+    assert_eq(a.load(), 1, "② 别名写，原名可见")
+
+    var holder = am.makeTally("h", 0)
+    holder.hits = a                   // 别名 2（存进 struct 字段）
+    holder.hits.add(1)
+    assert_eq(a.load(), 2, "② struct 字段别名写，原名可见")
+
+    Array[Atomic] arr = [a, b]        // 别名 3（存进数组）
+    arr[0].add(1)
+    arr[1].add(1)
+    assert_eq(a.load(), 4, "② 数组里两个别名各加一次")
+
+    // 两个线程各持一个别名，同时加
+    Array[Thread] ts = []
+    ts.add(threads.start(addMany, a, 1000))
+    ts.add(threads.start(addMany, b, 1000))
+    threads.join_all(ts)
+    assert_eq(a.load(), 2004, "② 两个线程通过不同别名加同一份")
+
+    // ==================== ③ 并发：加/减/CAS 自旋 ====================
+    Atomic net = threads.atomic(0)
+    Array[Thread] ts2 = []
+    for 0 : 3 to i {
+        ts2.add(threads.start(addMany, net, 2000))
+        ts2.add(threads.start(subMany, net, 2000))
+    }
+    threads.join_all(ts2)
+    assert_eq(net.load(), 0, "③ 4 加 4 减各 2000 ⇒ 净 0")
+
+    Atomic spin = threads.atomic(0)
+    Array[Thread] ts3 = []
+    for 0 : 5 to i { ts3.add(threads.start(casIncMany, spin, 2000)) }
+    threads.join_all(ts3)
+    assert_eq(spin.load(), 12000, "③ 6 线程 × 2000 次 CAS 自旋 = 12000（cas 可用作同步原语）")
+
+    // ==================== ④ 边界值 ====================
+    Atomic big = threads.atomic(1099511627776)      // 2^40
+    big.add(1)
+    assert_eq(big.load(), 1099511627777, "④ 大于 2^32 的值精确")
+    Atomic neg = threads.atomic(-100)
+    neg.add(30)
+    assert_eq(neg.load(), -70, "④ 负数")
+    assert_eq(neg.swap(-1), -70, "④ swap 返回旧值")
+    assert_eq(neg.load(), -1, "④ swap 之后")
+
+    // ==================== ⑤ GC：Atomic 不是 GC 对象，不该被回收 ====================
+    Array[Atomic] keep = []
+    for 0 : 999 to i {
+        var x = threads.atomic(i)
+        if i == 0 or i == 999 { keep.add(x) }
+    }
+    _gc()                                   // 主动回收一轮
+    assert_eq(keep[0].load(), 0, "⑤ GC 后第 1 个 Atomic 还在")
+    assert_eq(keep[1].load(), 999, "⑤ GC 后第 1000 个 Atomic 还在")
+    keep[1].add(1)
+    assert_eq(keep[1].load(), 1000, "⑤ GC 后仍可写")
+
+    // ==================== ⑥ 人类乱写：编译期必须报错 ====================
+    checkBad("初值类型", "import threads\nmain() { var a = threads.atomic(\"x\") }\n", "atomic")
+    checkBad("少参数", "import threads\nmain() { var a = threads.atomic() }\n", "参数")
+    checkBad("add 传串", "import threads\nmain() { var a = threads.atomic(0)\n  a.add(\"x\") }\n", "int")
+    checkBad("add 缺参", "import threads\nmain() { var a = threads.atomic(0)\n  a.add() }\n", "参数")
+    checkBad("cas 缺参", "import threads\nmain() { var a = threads.atomic(0)\n  a.cas(1) }\n", "参数")
+    checkBad("当数字用", "import threads\nmain() { var a = threads.atomic(0)\n  print(_str(a + 1)) }\n", "不能相加")
+    checkBad("方法名写错", "import threads\nmain() { var a = threads.atomic(0)\n  a.nope() }\n", "Atomic")
+    // 与数字直接比较：运行期会比"是不是同一个对象"（恒 false 且不报错）⇒ 编译期拦
+    checkBad("直接比较", "import threads\nmain() { var a = threads.atomic(0)\n  if a == 0 { print(\"x\") } }\n", "Atomic 不能和")
+
+    // ==================== ⑦ 人类乱写：运行期必须报错 ====================
+    int caught = 0
+    try {
+        threads.atomic_add(null, 1)
+    } catch e {
+        caught = 1
+        assert_true(_str(e).has("Atomic"), "⑦ 传 null 要点名 Atomic；实际：" + _str(e))
+    }
+    assert_eq(caught, 1, "⑦ 传 null 必须报错")
+
+    caught = 0
+    try {
+        Atomic? maybe = null
+        maybe?.add(1)          // 空安全：不该报错
+        caught = -1
+    } catch e2 {
+        caught = 1
+    }
+    assert_eq(caught, -1, "⑦ 空安全调用不该报错")
+
+    // ==================== ⑧ 打印：`_str(Atomic)` 要带值，不能是 "[object]" ====================
+    Atomic show = threads.atomic(42)
+    string s = _str(show)
+    assert_true(s.has("Atomic"), "⑧ _str 要含类型名；实际：" + s)
+    assert_true(s.has("42"), "⑧ _str 要含当前值；实际：" + s)
+
+    print("test_atomic_stress passed（跨模块/别名/并发/CAS/GC/乱写/_str 全部覆盖）")
+}

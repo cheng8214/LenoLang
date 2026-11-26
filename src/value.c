@@ -412,6 +412,13 @@ static char* value_to_string_impl(Value v) {
                 
                 result[pos++] = '}';
                 result[pos] = '\0';
+            } else if (val_as_obj(v)->type == OBJ_ATOMIC) {
+                // ★ 2026-11-26：`_str(atomic)` 之前是 "[object]"，调试时等于没说话。
+                //   直接带出当前值（读一次是原子的，不会撕裂）。
+                ObjAtomic* at = (ObjAtomic*)val_as_obj(v);
+                char buf[48];
+                snprintf(buf, sizeof(buf), "<Atomic %lld>", (long long)at->value);
+                result = strdup(buf);
             } else if (val_as_obj(v)->type == OBJ_FFI_POINTER) {
                 ObjFFIPointer* ptr = (ObjFFIPointer*)val_as_obj(v);
                 char buf[64];
