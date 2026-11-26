@@ -480,10 +480,13 @@ export func decode(string raw): Dict {
     var off = 0
     int n = wb.len()
     while off + 4 <= n {
-        int rl = _u16(wb, off + 2)
+        // 热点内联：这里每条记录读 2 个 u16，1500+ 条 ⇒ 3000+ 次调用。
+        // off + 4 <= n 已经保证 off..off+3 都合法，不需要 _u16 的边界判断。
+        int rid = wb[off] | (wb[off + 1] << 8)
+        int rl = wb[off + 2] | (wb[off + 3] << 8)
         if off + 4 + rl > n { break }
         rOff.add(off)
-        rId.add(_u16(wb, off))
+        rId.add(rid)
         rLen.add(rl)
         off = off + 4 + rl
     }
@@ -534,41 +537,51 @@ export func decode(string raw): Dict {
         if cur >= 0 {
             int bt = o + 4
             int rid = rId[i]
-            if rid == 0x00FD {                            // LABELSST
-                int r = _u16(wb, bt)
-                int c = _u16(wb, bt + 2)
-                int k = _u32(wb, bt + 6)
+            int rl = rLen[i]
+            // ⚠ 下面全部**手工内联** _u16/_u32（每处省一次函数调用 + 两次越界判断）：
+            //    612 个单元格 × 3~4 次读取。代价是不再逐字段"越界宽容返回 0"，
+            //    改用 rl 判据先挡掉截断记录 —— 这些记录的长度在格式里是固定的，
+            //    长度不对就是坏文件，跳过它比写一个"第 0 行 0 列的幽灵单元格"更合理。
+            if rid == 0x00FD and rl >= 10 {                          // LABELSST
+                int r = wb[bt] | (wb[bt + 1] << 8)
+                int c = wb[bt + 2] | (wb[bt + 3] << 8)
+                int k = wb[bt + 6] | (wb[bt + 7] << 8) | (wb[bt + 8] << 16) | (wb[bt + 9] << 24)
                 var v = ""
                 if k >= 0 and k < sst.len() { v = sst[k] }
                 _putCell(rows, r, c, v)
-            } else if rid == 0x027E {                      // RK
-                int r = _u16(wb, bt)
-                int c = _u16(wb, bt + 2)
-                _putCell(rows, r, c, _numText(_rkFloat(_u32(wb, bt + 6))))
-            } else if rid == 0x00BD {                      // MULRK
-                int r = _u16(wb, bt)
-                int c0 = _u16(wb, bt + 2)
-                int cnt = (rLen[i] - 6) / 6
+            } else if rid == 0x027E and rl >= 10 {                   // RK
+                int r = wb[bt] | (wb[bt + 1] << 8)
+                int c = wb[bt + 2] | (wb[bt + 3] << 8)
+                int rk = wb[bt + 6] | (wb[bt + 7] << 8) | (wb[bt + 8] << 16) | (wb[bt + 9] << 24)
+                _putCell(rows, r, c, _numText(_rkFloat(rk)))
+            } else if rid == 0x00BD and rl >= 6 {                    // MULRK
+                int r = wb[bt] | (wb[bt + 1] << 8)
+                int c0 = wb[bt + 2] | (wb[bt + 3] << 8)
+                int cnt = (rl - 6) / 6
                 for 0:cnt-1 to q {
-                    _putCell(rows, r, c0 + q, _numText(_rkFloat(_u32(wb, bt + 6 + q * 6))))
+                    int p2 = bt + 6 + q * 6
+                    int rk = wb[p2] | (wb[p2 + 1] << 8) | (wb[p2 + 2] << 16) | (wb[p2 + 3] << 24)
+                    _putCell(rows, r, c0 + q, _numText(_rkFloat(rk)))
                 }
-            } else if rid == 0x0203 {                      // NUMBER
-                int r = _u16(wb, bt)
-                int c = _u16(wb, bt + 2)
-                _putCell(rows, r, c, _numText(_dbl(_u32(wb, bt + 6), _u32(wb, bt + 10))))
-            } else if rid == 0x0204 or rid == 0x00D6 {      // LABEL / RSTRING
-                int r = _u16(wb, bt)
-                int c = _u16(wb, bt + 2)
-                int cch = _u16(wb, bt + 6)
-                int fl = _u8(wb, bt + 8)
+            } else if rid == 0x0203 and rl >= 14 {                   // NUMBER
+                int r = wb[bt] | (wb[bt + 1] << 8)
+                int c = wb[bt + 2] | (wb[bt + 3] << 8)
+                int hi = wb[bt + 6] | (wb[bt + 7] << 8) | (wb[bt + 8] << 16) | (wb[bt + 9] << 24)
+                int lo = wb[bt + 10] | (wb[bt + 11] << 8) | (wb[bt + 12] << 16) | (wb[bt + 13] << 24)
+                _putCell(rows, r, c, _numText(_dbl(hi, lo)))
+            } else if (rid == 0x0204 or rid == 0x00D6) and rl >= 9 { // LABEL / RSTRING
+                int r = wb[bt] | (wb[bt + 1] << 8)
+                int c = wb[bt + 2] | (wb[bt + 3] << 8)
+                int cch = wb[bt + 6] | (wb[bt + 7] << 8)
+                int fl = wb[bt + 8]
                 var v = ""
                 if (fl & 1) != 0 { v = _utf16(wb, bt + 9, cch * 2) } else { v = _latin1(wb, bt + 9, cch) }
                 _putCell(rows, r, c, v)
-            } else if rid == 0x0205 {                      // BOOLERR
-                int r = _u16(wb, bt)
-                int c = _u16(wb, bt + 2)
-                int bv = _u8(wb, bt + 6)
-                int isErr = _u8(wb, bt + 7)
+            } else if rid == 0x0205 and rl >= 8 {                    // BOOLERR
+                int r = wb[bt] | (wb[bt + 1] << 8)
+                int c = wb[bt + 2] | (wb[bt + 3] << 8)
+                int bv = wb[bt + 6]
+                int isErr = wb[bt + 7]
                 if isErr != 0 {
                     _putCell(rows, r, c, "#ERR")
                 } else {

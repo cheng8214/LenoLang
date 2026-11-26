@@ -100,11 +100,14 @@ BIFF，不依赖 xlrd/openpyxl），所以不是"同源自我确认"。
 
 | 阶段 | Leno（本模块） | Python 参考实现 |
 |---|---|---|
-| 读文件 `files.read` | 235 µs | 95 µs（`open().read()`） |
-| `to_bytes()` 44 KB | 170 µs | —（bytes 本身就是 C 数组） |
+| 读文件 `files.read` | 240 µs | 95 µs（`open().read()`） |
+| `to_bytes()` 44 KB | 190 µs | —（bytes 本身就是 C 数组） |
 | OLE2 取 Workbook 流 | 378 µs | 117 µs |
-| BIFF8 记录解析 | 3500 µs | ~2950 µs |
-| **完整读取** | **3880 µs** | **3068 µs** |
+| BIFF8 记录解析 | 2850 µs | ~2950 µs |
+| **完整读取** | **3200 µs** | **3068 µs** |
+
+> BIFF8 段已经**比 Python 快**（2850 vs 2950 µs）。整体剩下的 130 µs 差距全在
+> `files.read`（240 vs 95）和 `to_bytes`（190 µs，Python 不转这一步）。
 
 同一份数据（44 KB / 3 sheet / 612 非空格 / 142 个共享字符串）读成
 `Array[Array[string]]`。参照：同内容的 `.xlsx` 读一次约 **44 ms**（要 inflate + 扫 XML），
@@ -132,6 +135,11 @@ SST 解码同样换过写法（10 字中文串）：
 | `parts.add(strings.from_codepoint(u))` + `join` | 9 µs |
 | 手写 UTF-8 编码到 `Array[int]` + `strings.from_bytes`（现用） | **2 µs** |
 
+最后一个大头是**字段解码的函数调用开销**：记录表 3000+ 次 + 单元格 1800+ 次 `_u16/_u32`。
+把它们在热点循环里**手工内联**（`wb[o] | (wb[o+1] << 8)`，并加 `rl >= N` 判据替代逐字段
+越界检查）后：BIFF8 段 3500 → **2850 µs**，整体 3880 → **3200 µs**，而 `_u16/_u32` 仍保留给
+非热点路径（BOUNDSHEET、FAT、SST 头）。
+
 **顺带改了一条编译器侧**（`src/object/object_string.c` 的 `str_new`）：
 长串（> `INTERN_MAX_SHORT_LEN` = 40）进不了内化表，原来却仍调 `intern_find` 白算一遍
 整串 hash 才能确定"查不到"。改成先按长度判据过滤再查表（与 `str_concat` 的既有写法一致，
@@ -146,9 +154,10 @@ SST 解码同样换过写法（10 字中文串）：
 （`assert\run_tests.leno` 670 条全过。）这同时抬高了所有二进制读盘路径
 （zip / 打包 exe / 图片）。
 
-BIFF8 解析段 3.5 ms vs Python 3.0 ms —— **只慢 18%**：两边都是"逐记录 + 逐字符"，
-Leno 的字节码解释在这里和 CPython 同量级。剩余差距 = `to_bytes` 那次 44 KB 转换
-（Python 不需要）+ 文件读取 + OLE2 的字符串构造。
+BIFF8 解析段 2.85 ms vs Python 2.95 ms —— **已经持平甚至反超**。也就是说"逐记录 + 逐字符"
+这套控制流在 Leno 的字节码解释下和 CPython 同量级，两边真正的差别只在原语粒度上，
+而这一层已经被上面的手工内联补回来了。整体剩下的 4% 差距是 I/O（`files.read` 240 vs 95 µs）
+与 `to_bytes`（190 µs，Python 不需要这一步）。
 
 > **还能往哪优化**（2026-11-26 评估，未做）：
 > `str_new` 对二进制数据仍要做 `utf8_char_len` + `hash_string` 两遍全扫。惰性化可再省
