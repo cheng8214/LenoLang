@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#if !defined(_WIN32)
+#include <unistd.h>      // sysconf(_SC_NPROCESSORS_ONLN)：池默认大小 = CPU 核数
+#endif
 
 // ==================== spawn 耗时探针（LENO_THREAD_DEBUG=1 时打印）====================
 // 用途：`threads.start` 单个约 190us，需要知道钱花在哪一段（VM/GC 初始化 / 模块注册 /
@@ -1705,7 +1708,25 @@ Value channel_try_receive(ObjChannel* channel) {
 // ============================================================================
 
 #define POOL_MAX_WORKERS 64
-#define POOL_DEFAULT_WORKERS 4
+// 默认 worker 数 = **CPU 核数**（2026-11-26 第二轮）：
+//   原来写死 4，在 16 核机器上 `map` 只用 1/4 的机器 —— 静默的性能损失。
+//   探测失败（或返回 0）时退回 4。
+#define POOL_FALLBACK_WORKERS 4
+
+static int pool_detect_cores(void) {
+#if defined(_WIN32)
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    int n = (int)si.dwNumberOfProcessors;
+#elif defined(__unix__) || defined(__APPLE__)
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+#else
+    int n = 0;
+#endif
+    if (n <= 0) n = POOL_FALLBACK_WORKERS;
+    if (n > POOL_MAX_WORKERS) n = POOL_MAX_WORKERS;
+    return n;
+}
 
 typedef struct PoolItem {
     ObjThread* task;        // 结果/状态容器（分配在调用方堆）
@@ -1718,6 +1739,18 @@ static THREAD_LOCAL int tls_in_pool_worker = 0;
 
 static PlatformMutex   g_pool_mu;
 static PlatformCondVar g_pool_cv_work;    // worker 等任务
+// ★★ 2026-11-26（gdb 抓到的真崩溃）：worker **初始化完成**的屏障。
+//   没有它：`pool_ensure_started()` 建完 16 条线程就返回，而 worker 还在
+//   `thread_vm_init` 里干活；主线程可能已经把测试跑完并进入**收尾**
+//   （`struct_def_free_all` 把结构体定义释放掉）⇒ worker 随后调用
+//   `struct_def_import_from_thread(g_pool_snap.struct_defs…)` 读到 **0xFEEEFEEE**
+//   （CRT 释放填充）⇒ 0xC0000005。gdb 栈：sd_hash_first ← struct_def_register
+//   ← struct_def_import_from_thread ← thread_vm_init ← pool_worker_main。
+//   同一个窗口还会让 worker 去克隆 `g_pool_snap.globals`（指向主线程堆的 Value），
+//   而主线程可能已经 GC 过一轮 —— 同一个病。
+//   ⇒ 初始化期间主线程**必须阻塞**：等全部 worker 报"init 完成"再返回。
+static PlatformCondVar g_pool_cv_ready;
+static int g_pool_ready_count = 0;
 static PoolItem* g_pool_head = NULL;
 static PoolItem* g_pool_tail = NULL;
 static int g_pool_busy = 0;               // 正在跑（含等 reap）的任务数
@@ -1802,6 +1835,12 @@ static void* pool_worker_main(void* arg) {
     if (gf) free(gf);
     if (sd) free(sd);
 
+    // 报到：本 worker 的 VM 初始化完成（见 g_pool_cv_ready 的说明）
+    platform_mutex_lock(&g_pool_mu);
+    g_pool_ready_count++;
+    platform_cond_broadcast(&g_pool_cv_ready);
+    platform_mutex_unlock(&g_pool_mu);
+
     for (;;) {
         platform_mutex_lock(&g_pool_mu);
         while (!g_pool_head) {
@@ -1839,12 +1878,23 @@ static void pool_ensure_started(void) {
     platform_cond_init(&g_pool_cv_work);
     pool_capture_snapshot();
 
-    if (g_pool_wanted <= 0) g_pool_wanted = POOL_DEFAULT_WORKERS;
+    if (g_pool_wanted <= 0) g_pool_wanted = pool_detect_cores();
     if (g_pool_wanted > POOL_MAX_WORKERS) g_pool_wanted = POOL_MAX_WORKERS;
+    platform_cond_init(&g_pool_cv_ready);
     for (int i = 0; i < g_pool_wanted; i++) {
         PlatformThread th;
         if (platform_thread_create(&th, pool_worker_main, NULL) != 0) break;
         g_pool_workers++;
+    }
+    // ★★ 等**全部 worker 初始化完成**再返回：否则主线程可能跑完程序进入收尾
+    //   （释放 struct 定义 / GC 主线程堆），而 worker 还在 thread_vm_init 里读那些指针
+    //   ⇒ 0xC0000005（gdb 实测复现，见 g_pool_cv_ready 的注释）。
+    if (g_pool_workers > 0) {
+        platform_mutex_lock(&g_pool_mu);
+        while (g_pool_ready_count < g_pool_workers) {
+            platform_cond_wait(&g_pool_cv_ready, &g_pool_mu);
+        }
+        platform_mutex_unlock(&g_pool_mu);
     }
     if (g_pool_workers == 0) g_pool_wanted = 0;   // 一条都起不来 ⇒ 调用方回退
 }
@@ -1866,6 +1916,7 @@ int pool_ready(void) {
 
 // 建一个"池任务"：结果容器分配在**调用方堆**（GC 可见），参数深克隆进去等 worker 取
 ObjThread* thread_new_pool_task(ObjClosure* closure, Value* call_args, int call_arg_count) {
+    (void)closure;   // 闭包在 pool_submit() 里随任务入队，这里只用它占住签名（与 thread_new_with_args 同形）
     ObjThread* t = (ObjThread*)gc_alloc(sizeof(ObjThread), OBJ_THREAD);
     if (!t) return NULL;
     t->state = THREAD_RUNNING;
@@ -1946,14 +1997,14 @@ int pool_submit(ObjThread* task, ObjClosure* closure) {
     return 1;
 }
 
-int pool_size(void) { return g_pool_wanted > 0 ? g_pool_wanted : POOL_DEFAULT_WORKERS; }
+int pool_size(void) { return g_pool_wanted > 0 ? g_pool_wanted : pool_detect_cores(); }
 
-void pool_set_size(int n) {
-    if (n < 1) n = 1;
-    if (n > POOL_MAX_WORKERS) n = POOL_MAX_WORKERS;
-    if (g_pool_inited) {          // 已启动：worker 已经建好了，不动态增删（避免退出顺序复杂化）
-        g_pool_wanted = g_pool_workers;
-        return;
-    }
+// 返回：1 = 生效；0 = 池已启动（不能再改）；-1 = 超出 1..POOL_MAX_WORKERS
+//   ★ 2026-11-26：此前这两种情况都**静默忽略**（越界被悄悄夹到范围内、已启动就当一个没发生），
+//     属于"不能有静默错误"要禁的那一类 —— 调用方以为调了，实际没生效。
+int pool_set_size(int n) {
+    if (n < 1 || n > POOL_MAX_WORKERS) return -1;
+    if (g_pool_inited) return 0;
     g_pool_wanted = n;
+    return 1;
 }

@@ -10,7 +10,7 @@ extern ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, in
 extern ObjThread* thread_new_pool_task(ObjClosure* closure, Value* call_args, int call_arg_count);
 extern int pool_submit(ObjThread* task, ObjClosure* closure);
 extern int pool_size(void);
-extern void pool_set_size(int n);
+extern int pool_set_size(int n);   // 1=生效 / 0=池已启动 / -1=越界（都不静默）
 extern int pool_worker_count(void);
 extern int pool_ready(void);
 extern Value thread_join(ObjThread* thread);
@@ -373,7 +373,18 @@ static Value threads_set_pool_size(int argc, Value* args) {
         native_throw_error("threads.set_pool_size(n) 需要一个整数（1~64）");
         return val_null();
     }
-    pool_set_size((int)val_as_num(args[0]));
+    int n = (int)val_as_num(args[0]);
+    int rc = pool_set_size(n);
+    if (rc == -1) {
+        native_throw_error("threads.set_pool_size(n)：n 必须在 1~64 之间");
+        return val_null();
+    }
+    if (rc == 0) {
+        // ★ 2026-11-26：此前是**静默忽略**（调用方以为改了，其实没改）
+        native_throw_error("threads.set_pool_size(n)：线程池已经启动，大小不能再改 —— "
+                           "请在**第一次** parallel_for / map 之前调用（可用 pool_size() 查当前值）");
+        return val_null();
+    }
     return val_null();
 }
 

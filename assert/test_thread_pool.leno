@@ -17,10 +17,17 @@ func inc(Atomic a, int i) { threads.atomic_add(a, 1) }
 
 main() {
     // ---------- ① 池参数 ----------
+    //   默认 = CPU 核数（探测失败才退回 4）；越界/已启动后再改**必须报错**，不许静默忽略。
     int base = threads.pool_size()
     assert_true(base >= 1 and base <= 64, "① pool_size 应在 1..64；实际 " + _str(base))
+
+    int badArg = 0
+    try { threads.set_pool_size(0) } catch e0 { badArg = badArg + 1 }
+    try { threads.set_pool_size(999) } catch e1 { badArg = badArg + 1 }
+    assert_eq(badArg, 2, "① 越界的池大小必须报错（0 / 999）")
+
     threads.set_pool_size(3)
-    assert_eq(threads.pool_size(), 3, "① set_pool_size(3) 生效")
+    assert_eq(threads.pool_size(), 3, "① set_pool_size(3) 在启动前生效")
 
     // ---------- ② map 顺序 + 内容 ----------
     Array[int] xs = []
@@ -32,6 +39,11 @@ main() {
         if _int(ys[i]) != i * i { bad = bad + 1 }
     }
     assert_eq(bad, 0, "② map 结果必须按输入顺序、内容正确（错误数应为 0）")
+
+    // ②b 池已启动 ⇒ 再改大小必须**报错**（此前是静默忽略，调用方以为改了）
+    int late = 0
+    try { threads.set_pool_size(8) } catch e2 { late = 1 }
+    assert_eq(late, 1, "②b 池启动后再改大小必须报错，不能静默忽略")
 
     // ---------- ③ parallel_for 不多不少 ----------
     Atomic seen = threads.atomic(0)
@@ -96,7 +108,7 @@ main() {
     //   池只有 N 个 worker，若 N 个外层任务各自在里面等内层任务、而内层任务排在队列里
     //   没人跑 ⇒ 死锁（实测 set_pool_size(2) + 嵌套 map 时 8 秒不返回）。
     //   修法：worker 线程带 THREAD_LOCAL 标记，嵌套批次回退到"独立线程"老路径。
-    threads.set_pool_size(2)
+    //   （池已启动，不能再改大小；这里只验证嵌套本身）
     Array[int] outerIn = []
     for 0 : 3 to i { outerIn.add(i) }
     var nested = threads.map(outerIn, func(int x, int i): int {
