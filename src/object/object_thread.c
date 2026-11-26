@@ -203,8 +203,12 @@ static void channel_clone_reject(int type_tag) {
         native_throw_error(msg);
         return;
     }
-    char msg[192];
-    snprintf(msg, sizeof(msg), "不能跨线程传递此类型 —— %s", support);
+    // ★ 2026-11-26：**没有上下文时也要报出是什么类型**。
+    //   原先这条分支把 kindbuf 整个丢了 ⇒ 直接 `threads.start(f, ptr)` 只说
+    //   "不能跨线程传递此类型 —— 跨线程只支持…"，看不出是 Ptr（实测）：
+    //   而藏在 struct 字段里那条反而点名（"来自 Holder.p，Ptr（原生指针）"）—— 不一致。
+    char msg[320];
+    snprintf(msg, sizeof(msg), "不能跨线程传递此类型（%s）—— %s", kindbuf, support);
     native_throw_error(msg);
 }
 
