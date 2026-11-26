@@ -1,0 +1,105 @@
+// dev_xls_bench.leno -- 测 .xls 读取速度：整体 / OLE2 层 / 同规模 xlsx 对照
+//   用法：build\leno.exe build\leno_module\LenoXLSX\test\dev_xls_bench.leno
+import files
+import times
+import maths
+import strings
+import "XLSX" as xlsx
+import "xls_read.leno" as xr
+use xr.Ole
+
+func sortedCopy(Array[int] us): Array[int] {
+    Array[int] a = us.copy()
+    a.sort(func(int x, int y) {
+        if x < y { return -1 }
+        if x > y { return 1 }
+        return 0
+    })
+    return a
+}
+
+func medianOf(Array[int] us): int {
+    Array[int] a = sortedCopy(us)
+    return a[a.len() / 2]
+}
+
+func stat(string name, Array[int] us): string {
+    Array[int] a = sortedCopy(us)
+    int n = a.len()
+    var sum = 0
+    for a to v { sum = sum + v }
+    float avg = 1.0 * sum / (1.0 * n)
+    return strings.pad_end(name, 22) + " median=" + _str(a[n / 2]) + "us  min=" + _str(a[0]) +
+        "us  avg=" + _str(maths.roundi(avg)) + "us"
+}
+
+main() {
+    string path = "D:\\CLeno\\1月份.xls"
+    var warm = xlsx.read(path)
+    if not (warm["ok"] as bool) {
+        print("读取失败：" + (warm["err"] as string))
+        return
+    }
+    var raw = files.read(path)
+    int n = 100
+
+    // ① 只读文件（与 Python 的 open().read() 对等）
+    Array[int] t1 = []
+    for 0:n-1 to i {
+        int s = _int(times.us())
+        var _x = files.read(path)
+        t1.add(_int(times.us()) - s)
+    }
+
+    // ①b 再把字节串转成 Array[int]（BIFF 解析需要按下标访问）
+    Array[int] t1b = []
+    for 0:n-1 to i {
+        int s = _int(times.us())
+        var _x = raw.to_bytes()
+        t1b.add(_int(times.us()) - s)
+    }
+
+    // ② OLE2 打开 + 取 Workbook 流（不含 BIFF 解析）
+    Array[int] t2 = []
+    for 0:n-1 to i {
+        int s = _int(times.us())
+        var ole = new Ole()
+        ole.open(raw)
+        var _wb = ole.stream("Workbook")
+        t2.add(_int(times.us()) - s)
+    }
+
+    // ③ 完整读取（OLE2 + BIFF8 + 单元格）
+    Array[int] t3 = []
+    for 0:n-1 to i {
+        int s = _int(times.us())
+        var _r = xr.load(path)
+        t3.add(_int(times.us()) - s)
+    }
+
+    // ④ 同内容 xlsx 对照（273 行 × 8 列，全是文本单元格）
+    Array[Dict] ss = warm["sheets"] as Array[Dict]
+    Array[Array[string]] rows = ss[0]["rows"] as Array[Array[string]]
+    var wb2 = xlsx.blank()
+    xlsx.addSheet(wb2, "Sheet1", rows)
+    string tmp = "D:\\CLeno\\Leno\\build\\leno_module\\LenoXLSX\\test\\.tmp_bench.xlsx"
+    xlsx.save(tmp, wb2)
+    var _warm2 = xlsx.read(tmp)
+    Array[int] t4 = []
+    for 0:n-1 to i {
+        int s = _int(times.us())
+        var _r2 = xlsx.read(tmp)
+        t4.add(_int(times.us()) - s)
+    }
+
+    print("文件：" + path + "（" + _str(raw.byte_len()) + " 字节，3 sheet / 612 个非空格 / 142 个共享字符串）")
+    print("")
+    print(stat("读文件 files.read", t1))
+    print(stat("to_bytes 44KB", t1b))
+    print(stat("OLE2 打开+取流", t2))
+    print(stat("xls 完整读取", t3))
+    print(stat("xlsx 同内容对照", t4))
+    print("")
+    print("BIFF8 解析部分 ≈ " + _str(medianOf(t3) - medianOf(t2)) + "us（完整读取中位数 - OLE2 层中位数）")
+    print("xlsx 体积：" + _str(files.size(tmp)) + " 字节")
+}
