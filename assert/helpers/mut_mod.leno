@@ -1,0 +1,38 @@
+// mut_mod.leno —— `mut` 跨模块夹具（2026-11-26）
+// 钉三件事：
+//   ① `mut` 标志随 .lenosymc v45 导出 ⇒ 调用方模块也能拿到；
+//   ② 泛型 struct 的 mut 方法同样导出；
+//   ③ 非 mut 方法不会被误标（`size` / `peek` 不该报警告）。
+import "Containers" as ct
+
+export struct Bag impl Iterable {
+    Array[int] items = []
+
+    mut func add(int v) { items.add(v) }
+    mut func drop() { if items.len() > 0 { items.pop() } }
+
+    func size(): int { return items.len() }
+    func peek(): int { if items.len() == 0 { return 0 }; return items[0] }
+
+    func each(): Array[int] { return items }
+}
+
+export struct GenBox[T] impl Iterable {
+    Array[T] items = []
+
+    mut func put(T v) { items.add(v) }
+    mut func take(): T? {
+        if items.len() == 0 { return null }
+        return items.pop()
+    }
+    func size(): int { return items.len() }
+
+    func each(): Array[T] { return items }
+}
+
+export func makeBag(): Bag {
+    var b = new Bag()
+    b.add(1)
+    b.add(2)
+    return b
+}

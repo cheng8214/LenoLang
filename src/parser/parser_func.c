@@ -2921,6 +2921,13 @@ Ast* parse_struct_stmt(Parser* p) {
             // ★ pri 只作用于**本条声明语句** ✓：`pri int a, b` 里 a、b 都私有 ✓（逗号共享 ✓）；
             //   但 `pri int a; int b` 的 b 是**公有** ✗（`;` 起新语句 ✓ ⇒ member_private 会在
             //   下一轮循环被重置为 0 ✓）—— 别当成"继续上一条" ✗
+            // ★ 2026-11-26：`mut` 只对方法有意义 —— 写在字段上此前被**静默忽略**
+            //   （`mut int x = 0` 编译通过，等于没写），现在直接报错。
+            if (member_mut) {
+                error_add_at_fmt(ERR_SYNTAX, member_line, 1,
+                    "`mut` 只能标在**方法**上（`mut func push(…)`）—— 字段写 `mut` 没有意义，"
+                    "已忽略；若想表达\"这个字段会被改\"，请把它标在改它的那个方法上 ✗");
+            }
             field_private[field_count] = member_private;
 
             // 解析可选的默认值: 类型 名 = 默认值
