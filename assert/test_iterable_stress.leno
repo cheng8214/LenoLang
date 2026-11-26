@@ -206,17 +206,33 @@ main() {
         "import \"Containers\" as ct\nstruct S impl Iterable {\n    func each(): int { return 7 }\n}\n",
         "返回类型与 face 'Iterable' 不匹配")
 
-    // ④-7b 遍历中修改容器：**当前不报**（有意的取舍，见下）——
-    //   要报就得让编译器背一张 LenoContainers 的方法名表（名字特判），已否决。
-    //   这里钉住的是"确实不报"，防止有人日后偷偷把词表加回来还以为在修 bug。
-    //   ⚠ 真要覆盖，正确做法是方法上 `@mutates` 声明 + 随符号表导出（尚未做）。
-    files.write("__it_mutate_silent.leno",
+    // ④-7b 遍历中修改容器 ⇒ **警告**（靠 `mut` 声明，跨模块也生效）
+    //   这条曾经不报（当时只能靠编译器背 LenoContainers 的方法名表，已否决）；
+    //   现在容器方法标了 `mut`（声明式），判据来自声明 + 符号表导出（.lenosymc v45）。
+    files.write("__it_mutate_warn.leno",
         "import \"Containers\" as ct\nmain() {\n    var s = new ct.Stack[int]()\n    s.push(1)\n    for s to v { s.pop() }\n}\n")
-    var mr = _exec(_executable() + " --check \"__it_mutate_silent.leno\"", 30000)
-    files.delete("__it_mutate_silent.leno")
+    var mr = _exec(_executable() + " --check \"__it_mutate_warn.leno\"", 30000)
+    files.delete("__it_mutate_warn.leno")
     var mrOut = mr.output as string
-    assert_true(not mrOut.has("遍历中修改容器"),
-                "④-7b 容器遍历中改容器目前**不该**报（靠 README 契约，不靠词表）")
+    assert_true(mrOut.has("遍历中修改容器"), "④-7b 容器遍历中 pop 必须给 WARN_ITER_MUTATE（mut 跨模块）")
+
+    // ④-7c 同一文件里的自定义 struct：mut 方法报、非 mut 方法不报
+    files.write("__it_mut_own.leno",
+        "struct S {\n    Array[int] d = []\n    mut func grow(int v) { d.add(v) }\n" +
+        "    func size(): int { return d.len() }\n}\n" +
+        "main() {\n    var s = new S()\n    for s to v { s.size() }\n}\n")
+    var mr2 = _exec(_executable() + " --check \"__it_mut_own.leno\"", 30000)
+    files.delete("__it_mut_own.leno")
+    var mrOut2 = mr2.output as string
+    assert_true(not mrOut2.has("遍历中修改容器"), "④-7c 只调非 mut 方法不该报警告")
+
+    files.write("__it_mut_own2.leno",
+        "struct S {\n    Array[int] d = []\n    mut func grow(int v) { d.add(v) }\n}\n" +
+        "main() {\n    var s = new S()\n    for s to v { s.grow(1) }\n}\n")
+    var mr3 = _exec(_executable() + " --check \"__it_mut_own2.leno\"", 30000)
+    files.delete("__it_mut_own2.leno")
+    var mrOut3 = mr3.output as string
+    assert_true(mrOut3.has("遍历中修改容器"), "④-7c 自定义 struct 的 mut 方法必须报警告")
 
     // ④-8 face 类型的变量直接遍历 ⇒ **警告**（不是错误）：VM 一次都不进，必须说出来
     files.write("__it_warn_face.leno",

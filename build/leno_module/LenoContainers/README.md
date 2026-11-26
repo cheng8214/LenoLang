@@ -180,9 +180,17 @@ var kit = lru.keys_iter()                 // 缓存：遍历 key
 - `to_array()` / `keys()` 显式写时都是快照；游标 `iter()` 是实时视图。
 
 **不要在遍历中修改容器**（实测：视图路径下 `for st to v { st.push(x) }` 从 5 项跑到 20 项、
-理论上停不下来；`pop` 会跳过元素）。编译器**不会**给这种写法报警告 ——
-`WARN_ITER_MUTATE` 只覆盖 Array/Dict（语言内置类型）；给容器列方法名等于让编译器认识
-本模块的 API，已否决。要边遍历边改：先把待处理元素收进临时数组，循环后再统一改。
+理论上停不下来；`pop` 会跳过元素）。
+
+本模块的结构性方法都标了 **`mut`**（`mut func push(T v) { … }`），所以这种写法现在会得到
+编译期警告（跨模块也生效 —— 标志随符号表导出）：
+
+```
+warning: [遍历中修改容器] for 循环体里对正在遍历的容器 'st' 做了**结构性修改**（push）…
+```
+
+自己写的类型想获得同样的保护，就标 `mut func grow(...)`。要边遍历边改：
+先把待处理元素收进临时数组，循环后再统一改。
 
 ## API
 
@@ -436,6 +444,10 @@ build\leno.exe build\leno_module\LenoContainers\bench\bench_containers.leno
 
 ## 变更记录
 
+- **0.8.2**（2026-11-26）：所有结构性方法标上 **`mut`**（`mut func push/pop/put/…`）——
+  于是 `for st to v { st.push(x) }` 会得到编译期 `WARN_ITER_MUTATE`，**跨模块也生效**
+  （标志随 `.lenosymc` v45 导出）。之前这个警告要么漏报、要么得靠编译器背本模块的方法名表
+  （后者已否决）。语义不变，只是多了声明。
 - **0.8.1**（2026-11-26）：`Iterable` 定为**语言保留的 face 名**，判定从"看形状"改成
   "看 impl 列表"。修掉一个真隐患：旧规则会把任何「单 face＋单方法＋返回 Array」的类型
   误判成可迭代（实测 `face Snapshot { func bytes(): Array }` ⇒ `for b to k` 遍历 bytes

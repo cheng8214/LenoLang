@@ -189,6 +189,31 @@
                                         }
                                     }
 
+                                    // ★ 2026-11-26（v45）：跨模块的 `mut` 方法名 ——
+                                    //   `for st to v { st.push(x) }` 的 WARN_ITER_MUTATE 靠它判定
+                                    //   "push 会改结构"。方法标志来自符号表（调用方看不到 AST）。
+                                    if (struct_sym->method_count > 0 && struct_sym->methods) {
+                                        int mcnt = 0;
+                                        for (int mi = 0; mi < struct_sym->method_count; mi++) {
+                                            if (struct_sym->methods[mi].is_mut) mcnt++;
+                                        }
+
+                                        if (mcnt > 0) {
+                                            sdef->mut_names = (char**)malloc(sizeof(char*) * mcnt);
+                                            int kk = 0;
+                                            for (int mi = 0; mi < struct_sym->method_count; mi++) {
+                                                if (struct_sym->methods[mi].is_mut &&
+                                                    struct_sym->methods[mi].name) {
+                                                    const char* mnm = struct_sym->methods[mi].name;
+                                                    const char* sep2 = strstr(mnm, "::");
+                                                    if (sep2) mnm = sep2 + 2;
+                                                    sdef->mut_names[kk++] = strdup(mnm);
+                                                }
+                                            }
+                                            sdef->mut_count = kk;
+                                        }
+                                    }
+
                                     // 设置关联常量（从模块符号表复制名称和解析值）
                                     if (struct_sym->const_count > 0) {
                                         sdef->const_count = struct_sym->const_count;

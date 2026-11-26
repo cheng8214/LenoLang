@@ -35,10 +35,11 @@
 //    两种都合法，但**调用方不能假设是哪一种**。
 // ③ **不得在遍历中修改容器**：视图情况下新增会让循环"边加边遍历"（实测 5 项能跑到 20 次，
 //    理论上停不下来），删除会跳过元素。
-//    ⚠ 编译器**不会**为这种写法报警告（`WARN_ITER_MUTATE` 只认 Array/Dict —— 那是语言内置类型，
-//      给它们列方法名不算特判；给容器列方法名就等于让编译器认识 LenoContainers 的 API，已否决）。
-//      真要边遍历边改：先把要处理的元素收集到临时数组，循环后再统一改；
-//      或者用游标 `iter()` 显式表达"我在实时遍历"。
+//    本模块的结构性方法都标了 **`mut`**（`mut func push(T v) { … }`）⇒ 编译期会给
+//    `for st to v { st.push(x) }` 报 `WARN_ITER_MUTATE`，**跨模块也生效**
+//    （标志随 .lenosymc 导出，不是靠编译器认模块 API）。
+//    真要边遍历边改：先把要处理的元素收集到临时数组，循环后再统一改；
+//    或者用游标 `iter()` 显式表达"我在实时遍历"。
 // （旧版曾在 C 里内置同名 face 并 `strdup("each")`，那是把写死换了个地方放，已弃用。）
 export face Iterable {
     func each(): Array
@@ -98,7 +99,7 @@ export struct DequeIter[T] {
 export struct Stack[T] impl Iterable {
     Array[T] items = []
 
-    func push(T v) {
+    mut func push(T v) {
         items.add(v)
     }
 
@@ -108,7 +109,7 @@ export struct Stack[T] impl Iterable {
     }
 
     // 空栈 ⇒ 抛错（不返回 null）
-    func pop(): T {
+    mut func pop(): T {
         if items.len() == 0 { throw "Containers.Stack.pop: 空栈" }
         return items.pop()
     }
@@ -131,7 +132,7 @@ export struct Stack[T] impl Iterable {
 
     // face Iterable 的契约方法：`for st to v` 走这条（栈底 → 栈顶，零复制）
     func each(): Array[T] { return items }
-    func clear() { items.clear() }
+    mut func clear() { items.clear() }
 
     // 快照（栈底 → 栈顶），**非破坏性**：返回值是副本，改它不影响栈
     func to_array(): Array[T] { return items.copy() }
@@ -153,7 +154,7 @@ export struct Queue[T] impl Iterable {
     Array[T] items = []
     int head = 0
 
-    func push(T v) {
+    mut func push(T v) {
         items.add(v)
     }
 
@@ -161,7 +162,7 @@ export struct Queue[T] impl Iterable {
         for vs to v { items.add(v) }
     }
 
-    func pop(): T {
+    mut func pop(): T {
         // len 只取一次：items.len() 在这里是方法调用，原来空判断和压缩判断各调一次。
         // A/B 实测（bench，N=2M 三轮交替）100 → 94 ns/op，约 -6%
         int n = items.len()
@@ -225,14 +226,14 @@ export struct Queue[T] impl Iterable {
 
     // 摘掉第 i 个（0 = 队首）。⚠ O(n)：要搬后面的元素 —— 给"按条件取走一条"的队列用，
     //   别放进热循环（纯 FIFO 出队请继续用 pop()）。
-    func remove_at(int i): T {
+    mut func remove_at(int i): T {
         int n = items.len() - head
         if i < 0 or i >= n {
             throw "Containers.Queue.remove_at: 下标越界（" + _str(i) + " / " + _str(n) + "）"
         }
         return items.remove(head + i)
     }
-    func clear() {
+    mut func clear() {
         items.clear()
         head = 0
     }
@@ -266,7 +267,7 @@ export struct PriorityQueue[T] impl Iterable {
     //   实测（N=500k 随机优先级）：抽成方法时 pop 7 421 ns/op，内联后见 bench 的当前读数
     //   （每次比较里已含一次 `cmp` 函数调用 ~55 ns，那是必须付的）。
 
-    func push(T v) {
+    mut func push(T v) {
         heap.add(v)
         seqs.add(next_seq)
         next_seq = next_seq + 1
@@ -287,7 +288,7 @@ export struct PriorityQueue[T] impl Iterable {
         }
     }
 
-    func pop(): T {
+    mut func pop(): T {
         int n = heap.len()
         if n == 0 { throw "Containers.PriorityQueue.pop: 空堆" }
         T top = heap[0]
@@ -343,7 +344,7 @@ export struct PriorityQueue[T] impl Iterable {
 
     // face Iterable 的契约方法：堆序（只保证父优于子；要出队序用 drain_sorted）
     func each(): Array[T] { return heap }
-    func clear() {
+    mut func clear() {
         heap.clear()
         seqs.clear()
         next_seq = 0
@@ -355,7 +356,7 @@ export struct PriorityQueue[T] impl Iterable {
 
     // 依次弹出全部元素 ⇒ 真实的出队顺序（用完堆为空）。
     // 给"要按优先级持久化 / 打印整队"的场景（LenoWeb 存断点就是先把堆倒空再压回去）。
-    func drain_sorted(): Array[T] {
+    mut func drain_sorted(): Array[T] {
         Array[T] out = []
         while heap.len() > 0 { out.add(pop()) }
         return out
@@ -393,8 +394,8 @@ export struct Deque[T] impl Iterable {
     // face Iterable：队首 → 队尾（快照：元素分 f/b 两段）
     func each(): Array[T] { return to_array() }
 
-    func push_back(T v) { b.add(v); n = n + 1 }
-    func push_front(T v) { f.add(v); n = n + 1 }
+    mut func push_back(T v) { b.add(v); n = n + 1 }
+    mut func push_front(T v) { f.add(v); n = n + 1 }
 
     // 一次灌多个（顺序 = 数组顺序）：push_back_all 把 [a,b] 追加到尾部；
     // push_front_all 把 [a,b] 依次从头部压入 ⇒ 逻辑顺序变成 b,a,…
@@ -410,7 +411,7 @@ export struct Deque[T] impl Iterable {
         return out
     }
 
-    func pop_front(): T {
+    mut func pop_front(): T {
         int fn = f.len()
         if fn > 0 { n = n - 1; return f.pop() }
         int bn = b.len()
@@ -428,7 +429,7 @@ export struct Deque[T] impl Iterable {
         return v
     }
 
-    func pop_back(): T {
+    mut func pop_back(): T {
         int bn = b.len()
         if bn > bh {
             T v = b.pop()
@@ -482,7 +483,7 @@ export struct Deque[T] impl Iterable {
     }
 
     // ⚠ O(n)：要搬后面所有元素。给"按条件摘一个"的队列用（如 CDP 事件），别放进热循环。
-    func remove_at(int i): T {
+    mut func remove_at(int i): T {
         if i < 0 or i >= n {
             throw "Containers.Deque.remove_at: 下标越界（" + _str(i) + " / " + _str(n) + "）"
         }
@@ -506,7 +507,7 @@ export struct Deque[T] impl Iterable {
         return out
     }
 
-    func clear() {
+    mut func clear() {
         f.clear()
         b.clear()
         bh = 0
@@ -559,7 +560,7 @@ export struct LRU[V] impl Iterable {
         return out
     }
 
-    func put(string k, V v): string? {
+    mut func put(string k, V v): string? {
         if not map.has(k) {
             order.add(k)
         } else {
@@ -597,7 +598,7 @@ export struct LRU[V] impl Iterable {
 
     func has(string k): bool { return map.has(k) }
 
-    func remove(string k) {
+    mut func remove(string k) {
         if not map.has(k) { return }
         int i = order.index_of(k)
         if i >= 0 { order.remove(i) }
@@ -620,14 +621,14 @@ export struct LRU[V] impl Iterable {
     func each(): Array[string] { return order }
 
     // 调小容量会立刻淘汰到新上限（调大不会补数据），返回被淘汰的 key（最久 → 较新）
-    func set_capacity(int n): Array[string] {
+    mut func set_capacity(int n): Array[string] {
         if n < 1 { throw "Containers.LRU.set_capacity: 容量必须 >= 1（收到 " + _str(n) + "）" }
         cap = n
         return _trim()
     }
 
     // 清空；挂了 on_evict 就逐条通知（整表释放资源用）
-    func clear() {
+    mut func clear() {
         if on_evict != null {
             Array[string] ks = order.copy()
             for ks to k { on_evict(k, map[k]) }
@@ -695,7 +696,7 @@ export struct ClockLRU[V] impl Iterable {
     }
 
     // 返回被淘汰的 key（null = 没淘汰）：缓存里装 Ptr/文件句柄时靠它当场释放
-    func put(string k, V v): string? {
+    mut func put(string k, V v): string? {
         if map.has(k) {
             map[k] = v
             ref[slot[k]] = 1
@@ -730,7 +731,7 @@ export struct ClockLRU[V] impl Iterable {
     func each(): Array[string] { return keys() }
     func capacity(): int { return cap }
 
-    func remove(string k) {
+    mut func remove(string k) {
         if not map.has(k) { return }
         int i = slot[k]
         ring[i] = ""                      // 键本身在 slot/map 里删掉，环上留死槽
@@ -742,7 +743,7 @@ export struct ClockLRU[V] impl Iterable {
     // ⚠ 只支持**调大**。环是定长数组，缩容要把还活着的项重排进更小的环
     //   —— 那和"定长环换 O(1)"是两套结构，收益远小于复杂度。
     //   真要缩小就 clear() 重来，或者用 LRU。返回空数组（保持与 LRU.set_capacity 同形）。
-    func set_capacity(int n): Array[string] {
+    mut func set_capacity(int n): Array[string] {
         if n < 1 { throw "Containers.ClockLRU.set_capacity: 容量必须 >= 1（收到 " + _str(n) + "）" }
         if n < cap {
             throw "Containers.ClockLRU.set_capacity: 不支持缩容（当前 " + _str(cap) + " → " + _str(n) + "）；定长环只能调大，需要缩小请 clear() 后重建"
@@ -761,7 +762,7 @@ export struct ClockLRU[V] impl Iterable {
     }
 
     // 清空；挂了 on_evict 就逐条通知（整表释放资源用）
-    func clear() {
+    mut func clear() {
         if on_evict != null {
             for 0 : ring.len() - 1 to i {
                 if ref[i] >= 0 { on_evict(ring[i], map[ring[i]]) }
@@ -854,7 +855,7 @@ export struct LRUO1[V] impl Iterable {
     func capacity(): int { return cap }
     func has(string k): bool { return map.has(k) }
 
-    func put(string k, V v): string? {
+    mut func put(string k, V v): string? {
         if map.has(k) {
             map[k] = v
             int i = slot[k]
@@ -889,7 +890,7 @@ export struct LRUO1[V] impl Iterable {
         return map[k]
     }
 
-    func remove(string k) {
+    mut func remove(string k) {
         if not map.has(k) { return }
         int i = slot[k]
         _unlink(i)
@@ -911,7 +912,7 @@ export struct LRUO1[V] impl Iterable {
     }
 
     // 调小容量立即淘汰到新上限（返回被淘汰的 key，与 LRU 同口径）
-    func set_capacity(int n): Array[string] {
+    mut func set_capacity(int n): Array[string] {
         if n < 1 { throw "Containers.LRUO1.set_capacity: 容量必须 >= 1（收到 " + _str(n) + "）" }
         cap = n
         Array[string] out = []
@@ -922,7 +923,7 @@ export struct LRUO1[V] impl Iterable {
         return out
     }
 
-    func clear() {
+    mut func clear() {
         if on_evict != null {
             int i = head
             while i >= 0 {

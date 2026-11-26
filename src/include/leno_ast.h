@@ -280,6 +280,11 @@ struct Ast {
             // pri 方法私有（默认全公有 ✓）：1 = 只有该 struct 自己的方法能调用 ✓
             //   仅编译期检查 ✓；未显式 pri 的一律 0 ⇒ 对既有代码零影响 ✓
             int is_private;
+            // mut 方法：声明"会改结构"（增/删/清/排序）。2026-11-26
+            //   仅 struct 方法用（`mut func push(T v) { … }`，可写 `mut pri func`）。
+            //   消费点只有一处：`for 容器 to x { 容器.方法() }` 的 WARN_ITER_MUTATE ——
+            //   它据此判断"这是结构性修改"，而不是靠编译器背一张方法名表。
+            int is_mut;
             // 泛型类型参数
             char** type_params;        // 类型参数名数组（如 ["T", "U"]）
             char** type_param_constraints; // 类型参数约束 face 名（如 ["Comparable", NULL]）

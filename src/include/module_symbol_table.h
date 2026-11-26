@@ -96,6 +96,10 @@ typedef struct {
     int is_async;               // 是否 `async func` 方法（C2，同 ModuleFuncSymbol.is_async）
     // `pri` 成员私有（同 ModuleStructField.is_private 的理由：跨模块只能靠符号表判 ✓）
     int is_private;
+    // ★ 2026-11-26（LENOSYMC v45）：`mut` 方法（会改结构）。
+    //   为什么必须进符号表：`for st to v { st.push(x) }` 的 WARN_ITER_MUTATE 要判断
+    //   "push 是不是结构性修改"，而调用方模块看不到 Containers 的方法 AST ⇒ 只能靠导出。
+    int is_mut;
 } ModuleStructMethod;
 
 // 跨模块 `extend` 的登记项（2026-11-02，见 LenoDocsSrc/site/struct_extend_设计草案.html 第 12 节）

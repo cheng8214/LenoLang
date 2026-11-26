@@ -2520,14 +2520,27 @@ Ast* parse_struct_stmt(Parser* p) {
         //       （这条最早被我写错过注释 ✗，所以特意记在这里 ✓）
         //   不支持 pri const 的**强制**（语法接受、标志已记 ✓，但检查尚未接 ✗，见下）
         int member_private = 0;
-        if (p->lex.current.type == TOK_PRI) {
-            member_private = 1;
-            lexer_next(&p->lex);
-            // `pri` 可修饰：字段 ✓ / func ✓ / async func ✓ / **const（关联常量）** ✓
-            //   ⚠ 目前 const 这一支只做到"语法接受 + 记录标志"，**强制尚未接** ✗
-            //     （跨模块访问关联常量走的是另一条路 ⇒ 没有现成的检查点 ✗）
-            //     写在这里免得被误当成"已支持" ✗
+        int member_mut = 0;
+        // ★ 2026-11-26：成员修饰符可以叠（`mut pri func` / `pri mut func` 等价）。
+        //   `mut` 只对方法有意义（字段上写会被下面的方法分支忽略并在语义期报"未使用"），
+        //   与 `pri` 同槽位 ⇒ 不引入新的语法位置。
+        for (;;) {
+            if (p->lex.current.type == TOK_MUT && !member_mut) {
+                member_mut = 1;
+                lexer_next(&p->lex);
+                continue;
+            }
+            if (p->lex.current.type == TOK_PRI && !member_private) {
+                member_private = 1;
+                lexer_next(&p->lex);
+                continue;
+            }
+            break;
         }
+        // `pri` 可修饰：字段 ✓ / func ✓ / async func ✓ / **const（关联常量）** ✓
+        //   ⚠ 目前 const 这一支只做到"语法接受 + 记录标志"，**强制尚未接** ✗
+        //     （跨模块访问关联常量走的是另一条路 ⇒ 没有现成的检查点 ✗）
+        //     写在这里免得被误当成"已支持" ✗
 
         // 检查是否是关联常量声明（const NAME = value 或 const TYPE NAME = value）
         if (p->lex.current.type == TOK_CONST) {
@@ -2746,6 +2759,7 @@ Ast* parse_struct_stmt(Parser* p) {
                 func_ast->u.func.is_ctor = is_ctor;
                 func_ast->u.func.is_dtor = is_dtor;
                 func_ast->u.func.is_private = member_private;   // ★ pri 方法 ✓（默认 0 = 公有 ✓）
+                func_ast->u.func.is_mut = member_mut;           // ★ mut 方法（会改结构，2026-11-26）
                 // 构造/析构函数不能有显式参数
                 if ((is_ctor || is_dtor) && func_ast->u.func.pcnt > 0) {
                     error_add_at_fmt(ERR_SYNTAX, func_line, p->lex.current.column,

@@ -663,6 +663,13 @@
             if (ast->u.for_.end) visit(s, ast->u.for_.end);
             if (ast->u.for_.step) visit(s, ast->u.for_.step);
 
+            // 被遍历对象的两样信息：变量名（`st`）+ struct 名（`ct.Stack`）。
+            //   Iterable 改写会把 `for st to v` 变成 `for st.each() to v`，之后 `end` 就不是
+            //   AST_VAR 了 ⇒ 下面 WARN_ITER_MUTATE 的"接收者识别"和"接收者类型"都要靠这里先记。
+            const char* _iter_src_name = NULL;
+            char _iter_struct_buf[192];
+            _iter_struct_buf[0] = '\0';
+
             // ★ 2026-11-25（撤销当天早些时候的"容器自动改写"）：
             //   曾经这里把 `for c to v` 按**方法名**改写成 `c.to_array()` / `c.keys()` / `c.raw()`，
             //   让容器"直接可遍历"。删掉的理由 —— **编译器不该猜方法名**：
@@ -693,6 +700,13 @@
             //     方法名也不是 C 里的常量 —— 从 face 声明里读（`methods[0].name`）。
             if (ast->u.for_.end && !ast->u.for_.start) {
                 TypeInfo* et = infer_expr_type(s, ast->u.for_.end);
+                // 记下"谁被遍历"（变量名 + struct 名），供 WARN_ITER_MUTATE 用
+                if (ast->u.for_.end->kind == AST_VAR && ast->u.for_.end->u.var.name) {
+                    _iter_src_name = ast->u.for_.end->u.var.name;
+                }
+                if (et && et->kind == TYPE_STRUCT && et->struct_name) {
+                    snprintf(_iter_struct_buf, sizeof(_iter_struct_buf), "%s", et->struct_name);
+                }
                 if (et && !et->nullable && et->kind == TYPE_STRUCT && et->struct_name) {
                     ObjStructDef* sdef = struct_def_find(et->struct_name);
                     ObjFaceDef* fdef = face_def_find("Iterable");   // ← 语言保留名，仅此一处
@@ -900,16 +914,19 @@
                 //   ⚠ 必须在 **visit(body) 之前**扫：语义阶段会把 `arr.add(…)` 这种
                 //     "变量当模块名"的 MODULE_CALL **就地改写成 AST_CALL**（见 visit_module.inc），
                 //     改完再扫就认不出接收者了（第一版就是在后面扫、结果一条都没报 ✗）。
-                //   接收者只能从 `end` 本身拿（`end` 是 AST_VAR）。
-                //   ⚠ 走 `impl Iterable` 的容器（`for st to v` 被改写成 `for st.each() to v`）
-                //     在这里**识别不到** ⇒ 容器遍历中改容器不报。这是有意的取舍：
-                //     要报就得让编译器背一张 LenoContainers 的方法名表（见
-                //     semantic_type_utils.c 里 iter_mut_is_structural 的说明），
-                //     那属于名字特判。正确做法是方法上的 `@mutates` 声明（尚未做）。
-                if (ast->u.for_.start == NULL && ast->u.for_.end &&
-                    ast->u.for_.end->kind == AST_VAR && ast->u.for_.end->u.var.name) {
-                    semantic_check_iter_mutation(ast->u.for_.end->u.var.name,
-                                                 ast->u.for_.body, _iter_is_dict);
+                //   接收者名字用改写前记下的 `_iter_src_name`（否则容器那条永远认不到）；
+                //   struct 名一并传进去 —— struct 的"会改结构"方法靠 `mut` 声明判定，
+                //   内置 Array/Dict 仍走名字表（它们的 API 由语言规定）。
+                if (ast->u.for_.start == NULL) {
+                    const char* _scan_name = _iter_src_name;
+                    if (!_scan_name && ast->u.for_.end &&
+                        ast->u.for_.end->kind == AST_VAR && ast->u.for_.end->u.var.name) {
+                        _scan_name = ast->u.for_.end->u.var.name;
+                    }
+                    if (_scan_name) {
+                        semantic_check_iter_mutation(_scan_name, ast->u.for_.body, _iter_is_dict,
+                                                     _iter_struct_buf[0] ? _iter_struct_buf : NULL);
+                    }
                 }
 
                 if (ast->u.for_.body->kind == AST_BLOCK) {

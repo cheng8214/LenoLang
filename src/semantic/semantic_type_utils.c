@@ -183,6 +183,29 @@ void semantic_register_struct_from_module(Semantic* s, const ModuleStructSymbol*
                     sdef->impl_names[i] = strdup(ssym->impl_names[i]);
                 }
             }
+            // ★ 2026-11-26（v45）：跨模块的 `mut` 方法名（WARN_ITER_MUTATE 判据）。
+            //   ⚠ 这一步**必须**在这里做：导入模块的 struct_def 是本函数建的
+            //   （`visit_module.inc` 那条只在特定路径上跑，实测容器走的是本路径 ⇒
+            //    漏了这里就是"同名跨模块永远不报警告"）。
+            if (ssym->method_count > 0 && ssym->methods) {
+                int mcnt = 0;
+                for (int mi = 0; mi < ssym->method_count; mi++) {
+                    if (ssym->methods[mi].is_mut) mcnt++;
+                }
+
+                if (mcnt > 0) {
+                    sdef->mut_names = (char**)malloc(sizeof(char*) * mcnt);
+                    int kk = 0;
+                    for (int mi = 0; mi < ssym->method_count; mi++) {
+                        if (!ssym->methods[mi].is_mut || !ssym->methods[mi].name) continue;
+                        const char* mnm = ssym->methods[mi].name;
+                        const char* sep2 = strstr(mnm, "::");
+                        if (sep2) mnm = sep2 + 2;
+                        sdef->mut_names[kk++] = strdup(mnm);
+                    }
+                    sdef->mut_count = kk;
+                }
+            }
             struct_def_register(sdef);
         }
     }
@@ -2095,12 +2118,54 @@ void semantic_check_struct_type_arg_constraint(const char* struct_name, const ch
 //     ② 用户结构体里一个无关的 `put()` 会被误报。
 //   容器遍历中改容器**目前不报**（宁缺勿误）；要覆盖它，正确做法是让"这是结构性修改"
 //   成为**声明**（方法上的 `@mutates` 注解 + 随符号表导出），而不是编译器背一张模块词表。
+// 从 struct 定义 AST 收集 `mut` 方法名到 ObjStructDef（WARN_ITER_MUTATE 判据）。
+//   为什么要有这个"到处都要调"的辅助：语义期建 early_def 的地方有 5 处以上
+//   （visit_block 预扫描、semantic.c 的模块级几条、visit_type_def 的主阶段），
+//   每处都手写一遍收集逻辑 ⇒ 必然漏（实测第一版就漏了模块级，导致同文件 struct 也不生效）。
+//   幂等：已经填过就跳过。
+void semantic_fill_struct_mut_names(ObjStructDef* def, Ast* struct_ast) {
+    if (!def || !struct_ast || struct_ast->kind != AST_STRUCT_DEF) return;
+    if (def->mut_count > 0) return;
+    int mc = 0;
+    for (int j = 0; j < struct_ast->u.struct_def.method_count; j++) {
+        if (struct_ast->u.struct_def.methods[j] &&
+            struct_ast->u.struct_def.methods[j]->u.func.is_mut) {
+            mc++;
+        }
+    }
+    if (mc <= 0) return;
+    def->mut_names = (char**)malloc(sizeof(char*) * mc);
+    if (!def->mut_names) return;
+    int k = 0;
+    for (int j = 0; j < struct_ast->u.struct_def.method_count; j++) {
+        Ast* fn = struct_ast->u.struct_def.methods[j];
+        if (fn && fn->u.func.is_mut && fn->u.func.name) {
+            def->mut_names[k++] = strdup(fn->u.func.name);
+        }
+    }
+    def->mut_count = k;
+}
+
+// 当前正在检查的**接收者 struct 名**（NULL = 内置类型/未知）。
+//   语义期是单线程顺序执行的，用这个静态上下文避免给扫描函数逐个加参数（递归点有 20 多个）。
+static const char* g_iter_mut_struct = NULL;
+
 static int iter_mut_is_structural(const char* name) {
     static const char* const kNames[] = {
         "add", "insert", "remove", "clear", "pop", "sort", "set", "setdefault"
     };
     for (size_t i = 0; i < sizeof(kNames) / sizeof(kNames[0]); i++) {
         if (strcmp(name, kNames[i]) == 0) return 1;
+    }
+    // ★ 2026-11-26：struct 的"会改结构"方法由**声明**决定（`mut func push(...)`），
+    //   不再靠编译器背各模块的方法名表。名字来自 AST/符号表，不来自猜测。
+    if (g_iter_mut_struct && g_iter_mut_struct[0]) {
+        ObjStructDef* sd = struct_def_find(g_iter_mut_struct);
+        if (sd) {
+            for (int i = 0; i < sd->mut_count; i++) {
+                if (sd->mut_names && sd->mut_names[i] && strcmp(sd->mut_names[i], name) == 0) return 1;
+            }
+        }
     }
     return 0;
 }
@@ -2264,9 +2329,13 @@ static void iter_mut_scan_stmt(Ast* st, const char* cname, int is_dict) {
 
 // 对外入口：容器遍历（`for 容器 to x`）时检查循环体里有没有对**同一个变量**的结构性修改。
 //   is_dict = 1 时把"索引赋值"也当作结构性修改（字典加键）；数组的 `arr[i]=v` 不报。
-void semantic_check_iter_mutation(const char* container_name, Ast* body, int is_dict) {
+void semantic_check_iter_mutation(const char* container_name, Ast* body, int is_dict,
+                                  const char* struct_name) {
     if (!container_name || !body) return;
+    const char* saved = g_iter_mut_struct;
+    g_iter_mut_struct = (struct_name && struct_name[0]) ? struct_name : NULL;
     iter_mut_scan_stmt(body, container_name, is_dict);
+    g_iter_mut_struct = saved;
 }
 
 // ============================================================================

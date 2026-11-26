@@ -2275,6 +2275,12 @@ static void free_object_resources_ex(Object* obj, int remove_intern) {
                 }
                 free(def->impl_names);
             }
+            if (def->mut_names) {           // v45：`mut` 方法名（语义期填的）
+                for (int i = 0; i < def->mut_count; i++) {
+                    free(def->mut_names[i]);
+                }
+                free(def->mut_names);
+            }
             if (def->type_param_names) {
                 for (int i = 0; i < def->type_param_count; i++) {
                     free(def->type_param_names[i]);

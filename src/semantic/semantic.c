@@ -786,6 +786,7 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                         for (int j = 0; j < stmt->u.struct_def.method_count; j++) {
                             early_def->methods[j].name = strdup(stmt->u.struct_def.methods[j]->u.func.name);
                         }
+                        semantic_fill_struct_mut_names(early_def, stmt);   // mut 方法名（WARN_ITER_MUTATE）
                         struct_def_register(early_def);
                     }
                 }
@@ -890,6 +891,7 @@ void semantic_analyze(Semantic* s, Ast* ast) {
                             for (int j = 0; j < decl->u.struct_def.method_count; j++) {
                                 early_def->methods[j].name = strdup(decl->u.struct_def.methods[j]->u.func.name);
                             }
+                            semantic_fill_struct_mut_names(early_def, decl);   // mut 方法名（WARN_ITER_MUTATE）
                             struct_def_register(early_def);
                         }
                     }
@@ -1203,6 +1205,7 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                         for (int j = 0; j < stmt->u.struct_def.method_count; j++) {
                             early_def->methods[j].name = strdup(stmt->u.struct_def.methods[j]->u.func.name);
                         }
+                        semantic_fill_struct_mut_names(early_def, stmt);   // mut 方法名（WARN_ITER_MUTATE）
                         struct_def_register(early_def);
                     }
                 }
@@ -1292,6 +1295,7 @@ void semantic_analyze_module(Semantic* s, Ast* ast) {
                             for (int j = 0; j < decl->u.struct_def.method_count; j++) {
                                 early_def->methods[j].name = strdup(decl->u.struct_def.methods[j]->u.func.name);
                             }
+                            semantic_fill_struct_mut_names(early_def, decl);   // mut 方法名（WARN_ITER_MUTATE）
                             struct_def_register(early_def);
                         }
                     }

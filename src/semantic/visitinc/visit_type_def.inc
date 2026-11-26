@@ -1213,6 +1213,7 @@
                                 early_def->dtor_index = i;
                             }
                         }
+                        semantic_fill_struct_mut_names(early_def, ast);   // mut 方法名（WARN_ITER_MUTATE）
                         struct_def_register(early_def);
                     }
                 }

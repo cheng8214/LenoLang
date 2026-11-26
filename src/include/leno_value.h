@@ -775,6 +775,12 @@ typedef struct {
     StructMethodInfo* methods;     // 方法信息数组
     int method_count;              // 方法数量
     char** impl_names;             // impl 声明的 face 名称数组
+    // ★ 2026-11-26：标了 `mut` 的方法名（"会改结构"：增/删/清/排序）。
+    //   唯一消费点：语义期 `for 容器 to x { 容器.方法() }` 的 WARN_ITER_MUTATE ——
+    //   靠这个**声明**判断"是结构性修改"，而不是让编译器背各模块的方法名表。
+    //   由语义期从 AST（本模块）或符号表（跨模块）填；运行期 OP_STRUCT_DEF 不填（用不到）。
+    char** mut_names;
+    int mut_count;
     int impl_count;                // impl 声明数量
     int type_param_count;          // 泛型类型参数数量（如 Box[T] 的 type_param_count=1）
     char** type_param_names;       // 泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
