@@ -120,5 +120,13 @@ main() {
     assert_eq(_int(nested[0]), 1, "⑦ 嵌套 map 结果正确（0²+1²=1）")
     assert_eq(_int(nested[3]), 3 * 3 + 4 * 4, "⑦ 嵌套 map 末项正确（9+16=25）")
 
-    print("test_thread_pool passed（顺序正确 + 300 任务不多不少 + 30 批不泄漏 + 中途失败不打死池 + 嵌套不死锁 + 1 万元素 " + _str(ms) + " ms）")
+    // ---------- ⑧ 池跨过一次显式 GC 仍然可用 ----------
+    //   池 worker 的 VM 持有指向主线程堆的只读对象（结构体定义 / 函数对象），
+    //   而任务对象在调用方堆。显式 `_gc()` 会扫/清调用方堆 —— 之后池必须照常工作。
+    _gc()
+    var afterGc = threads.map(outerIn, sq)
+    assert_eq(afterGc.len(), 4, "⑧ 显式 GC 之后池仍可用")
+    assert_eq(_int(afterGc[3]), 9, "⑧ GC 之后结果仍正确")
+
+    print("test_thread_pool passed（顺序正确 + 300 任务不多不少 + 30 批不泄漏 + 中途失败不打死池 + 嵌套不死锁 + GC 后可用 + 1 万元素 " + _str(ms) + " ms）")
 }

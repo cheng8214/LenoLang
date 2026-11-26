@@ -2873,6 +2873,12 @@ void gc_collect(void) {
 
 // 释放所有 GC 对象和 VM 资源（程序退出时调用）
 void gc_free_all(void) {
+    // ★★ 2026-11-26（线程池收尾）：**先把池 worker 叫停并 join**，再动任何堆。
+    //   顺序理由见 pool_shutdown 的注释：worker 的 VM 里有指向主线程堆的只读对象，
+    //   人没走就先拆房子就是"偶发野指针"。
+    extern void pool_shutdown(void);
+    pool_shutdown();
+
     // 等待所有活动线程完成
     if (gc.vm && gc.vm->active_threads) {
         for (int i = 0; i < gc.vm->active_thread_count; i++) {
@@ -2883,7 +2889,8 @@ void gc_free_all(void) {
                     platform_cond_wait(&thread->done_cond, &thread->mutex);
                 }
                 platform_mutex_unlock(&thread->mutex);
-                platform_thread_join(thread->os_thread, NULL);
+                // ★ 池任务没有自己的 OS 线程（os_thread 是空的）⇒ 不能 join
+                if (!thread->is_pool_task) platform_thread_join(thread->os_thread, NULL);
             }
         }
         free(gc.vm->active_threads);

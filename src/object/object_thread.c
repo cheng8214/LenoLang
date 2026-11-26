@@ -1757,6 +1757,8 @@ static int g_pool_busy = 0;               // 正在跑（含等 reap）的任务
 static int g_pool_workers = 0;            // 已启动的 worker 数
 static int g_pool_wanted = 0;             // 期望的 worker 数
 static int g_pool_inited = 0;
+static int g_pool_stop = 0;                  // 收尾信号（见 pool_shutdown）
+static PlatformThread g_pool_threads[POOL_MAX_WORKERS];  // 收尾要 join 它们
 
 typedef struct PoolSnapshot {
     Value* globals; int global_count; int global_capacity;
@@ -1843,8 +1845,12 @@ static void* pool_worker_main(void* arg) {
 
     for (;;) {
         platform_mutex_lock(&g_pool_mu);
-        while (!g_pool_head) {
+        while (!g_pool_head && !g_pool_stop) {
             platform_cond_wait(&g_pool_cv_work, &g_pool_mu);
+        }
+        if (!g_pool_head && g_pool_stop) {          // 收尾：没有待办就走人
+            platform_mutex_unlock(&g_pool_mu);
+            break;
         }
         PoolItem* it = g_pool_head;
         g_pool_head = it->next;
@@ -1884,6 +1890,7 @@ static void pool_ensure_started(void) {
     for (int i = 0; i < g_pool_wanted; i++) {
         PlatformThread th;
         if (platform_thread_create(&th, pool_worker_main, NULL) != 0) break;
+        g_pool_threads[g_pool_workers] = th;
         g_pool_workers++;
     }
     // ★★ 等**全部 worker 初始化完成**再返回：否则主线程可能跑完程序进入收尾
@@ -2007,4 +2014,36 @@ int pool_set_size(int n) {
     if (g_pool_inited) return 0;
     g_pool_wanted = n;
     return 1;
+}
+
+// ★★ 2026-11-26（收尾）：**主动**叫停并 join 全部 worker。
+//   为什么必须做（而不是让它们随进程被杀）：worker 的 VM 持有指向**主线程堆**的指针
+//   （`ObjStructDef` / `ObjFunction` 都是共享只读对象）。进程退出时主线程会
+//   `gc_free_all()` 把这些堆释放掉 —— 只要还有人活着，就存在"它下一秒碰一下"的可能。
+//   先 join 再释放，顺序就变成确定的：人走了 → 才拆房子。
+//   （上一版加的是"初始化完成屏障"，解决的是**起跑**；这条解决**收尾**。两头都封住，
+//     中间那段主线程本来就是阻塞等 reap 的，所以整条生命周期没有窗口。）
+//
+//   ⚠ worker 自己不能 join 自己（嵌套场景不会走到这里，但仍然挡一道）。
+//   ⚠ 幂等：`gc_free_all()` 在 main.c / vm_main.c 有多处调用，重复进来直接返回。
+void pool_shutdown(void) {
+    if (!g_pool_inited || g_pool_workers == 0) return;
+    if (tls_in_pool_worker) return;
+
+    int n = g_pool_workers;
+    platform_mutex_lock(&g_pool_mu);
+    g_pool_stop = 1;
+    platform_cond_broadcast(&g_pool_cv_work);
+    platform_mutex_unlock(&g_pool_mu);
+
+    for (int i = 0; i < n; i++) {
+        if (g_pool_threads[i]) {
+            platform_thread_join(g_pool_threads[i], NULL);
+            g_pool_threads[i] = NULL;
+        }
+    }
+    g_pool_workers = 0;
+    g_pool_ready_count = 0;
+    g_pool_inited = 0;
+    g_pool_stop = 0;      // 允许后续（极少数）重新懒启动
 }
