@@ -697,26 +697,19 @@ static void thread_exec_task(VM* vm, ObjThread* thread_obj, ObjClosure* closure,
     platform_mutex_unlock(&thread_obj->mutex);
 }
 
-static void* thread_entry_point(void* arg) {
-    ThreadStartArgs* args = (ThreadStartArgs*)arg;
-    ObjThread* thread_obj = args->thread_obj;
-    ObjClosure* closure = args->closure;
-
-    Value* saved_globals = args->globals;
-    int saved_global_count = args->global_count;
-    int saved_global_capacity = args->global_capacity;
-    Value* saved_global_funcs = args->global_funcs;
-    int saved_global_func_count = args->global_func_count;
-    int saved_global_func_capacity = args->global_func_capacity;
-    Value* thread_initial_args = args->initial_args;
-    int thread_initial_arg_count = args->initial_arg_count;
-    ObjStructDef** saved_struct_defs = args->struct_defs;
-    int saved_struct_def_count = args->struct_def_count;
-    free(args);
-
-    // 创建子线程自己的 VM（独立的局部变量，不共享主程序数据）
-    VM child_vm;
-    memset(&child_vm, 0, sizeof(VM));
+// ★ 2026-11-26（线程池重构 · 第 1b 步：纯搬运）：子线程 VM 的**创建与初始化**单独成函数。
+//   为什么：线程池要让一个 worker **只初始化一次 VM**，然后连续跑多个任务；
+//   	hread_entry_point 原来把这段内联在入口里 ⇒ 每个 threads.start 都要重做一遍
+//   （实测 203 us/线程，绝大多数花在这里）。拆出来后：
+//       worker 循环 = thread_vm_init() 一次 + thread_exec_task() 多次 + 收尾一次
+//   ⚠ 本步仍然**行为零变化**：threads.start 还是 init → exec → fini 各一次，只是搬进了函数。
+//   搬动时只改一处：栈上 child_vm → 参数 VM* vm（child_vm.x→m->x、&child_vm→m）。
+static void thread_vm_init(VM* vm,
+                           Value* saved_globals, int saved_global_count, int saved_global_capacity,
+                           Value* saved_global_funcs, int saved_global_func_count,
+                           int saved_global_func_capacity,
+                           ObjStructDef** saved_struct_defs, int saved_struct_def_count) {
+    memset(vm, 0, sizeof(VM));
 
     // ★ 2026-11-15：线程序号（主线程 VM 恒为 0，这里从 1 开始）。
     //   分配对象时抄进 Object.owner_thread ⇒ module.c 的 module_set_var 据此发现
@@ -725,9 +718,9 @@ static void* thread_entry_point(void* arg) {
     {
         static volatile long g_child_thread_serial = 0;
 #ifdef _MSC_VER
-        child_vm.thread_serial = (uint8_t)_InterlockedIncrement(&g_child_thread_serial);
+        vm->thread_serial = (uint8_t)_InterlockedIncrement(&g_child_thread_serial);
 #else
-        child_vm.thread_serial = (uint8_t)__sync_add_and_fetch(&g_child_thread_serial, 1);
+        vm->thread_serial = (uint8_t)__sync_add_and_fetch(&g_child_thread_serial, 1);
 #endif
     }
 
@@ -735,88 +728,88 @@ static void* thread_entry_point(void* arg) {
     uint64_t dt0 = dbg ? thr_dbg_now_us() : 0;
 
     // 初始化子线程 VM
-    child_vm.chunk = NULL;
-    child_vm.ip = NULL;
-    child_vm.sp = 0;
-    child_vm.stack_capacity = 256;
-    child_vm.stack = (Value*)malloc(child_vm.stack_capacity * sizeof(Value));
-    memset(child_vm.stack, 0, child_vm.stack_capacity * sizeof(Value));
+    vm->chunk = NULL;
+    vm->ip = NULL;
+    vm->sp = 0;
+    vm->stack_capacity = 256;
+    vm->stack = (Value*)malloc(vm->stack_capacity * sizeof(Value));
+    memset(vm->stack, 0, vm->stack_capacity * sizeof(Value));
     // FFI 参数区（2026-11-01）：每个 VM 一份，固定容量、永不 realloc
-    child_vm.ffi_args_sp = 0;
-    child_vm.ffi_args = (Value*)malloc(VM_FFI_ARGS_CAP * sizeof(Value));
-    if (child_vm.ffi_args) {
-        memset(child_vm.ffi_args, 0, VM_FFI_ARGS_CAP * sizeof(Value));
+    vm->ffi_args_sp = 0;
+    vm->ffi_args = (Value*)malloc(VM_FFI_ARGS_CAP * sizeof(Value));
+    if (vm->ffi_args) {
+        memset(vm->ffi_args, 0, VM_FFI_ARGS_CAP * sizeof(Value));
     }
 
-    child_vm.frame_cnt = 0;
-    child_vm.frame_capacity = 16;
-    child_vm.frames = (CallFrame*)malloc(child_vm.frame_capacity * sizeof(CallFrame));
-    memset(child_vm.frames, 0, child_vm.frame_capacity * sizeof(CallFrame));
+    vm->frame_cnt = 0;
+    vm->frame_capacity = 16;
+    vm->frames = (CallFrame*)malloc(vm->frame_capacity * sizeof(CallFrame));
+    memset(vm->frames, 0, vm->frame_capacity * sizeof(CallFrame));
 
-    child_vm.exception = val_null();
-    child_vm.has_exception = 0;
-    child_vm.catch_ip = NULL;
-    child_vm.catch_frame = -1;
-    child_vm.pending_exception = 0;
-    child_vm.exception_line = 0;
+    vm->exception = val_null();
+    vm->has_exception = 0;
+    vm->catch_ip = NULL;
+    vm->catch_frame = -1;
+    vm->pending_exception = 0;
+    vm->exception_line = 0;
 
     for (int i = 0; i < IC_CACHE_SIZE; i++) {
-        child_vm.ic_cache[i].valid = 0;
-        child_vm.ic_cache[i].receiver_type = 0;
-        child_vm.ic_cache[i].method = NULL;
+        vm->ic_cache[i].valid = 0;
+        vm->ic_cache[i].receiver_type = 0;
+        vm->ic_cache[i].method = NULL;
     }
     for (int i = 0; i < IC_NATIVE_CACHE_SIZE; i++) {
-        child_vm.ic_native_cache[i].valid = 0;
-        child_vm.ic_native_cache[i].fn = NULL;
+        vm->ic_native_cache[i].valid = 0;
+        vm->ic_native_cache[i].fn = NULL;
     }
     for (int i = 0; i < IC_MODULE_CACHE_SIZE; i++) {
-        child_vm.ic_module_cache[i].valid = 0;
-        child_vm.ic_module_cache[i].combined_hash = 0;
-        child_vm.ic_module_cache[i].meta = NULL;
+        vm->ic_module_cache[i].valid = 0;
+        vm->ic_module_cache[i].combined_hash = 0;
+        vm->ic_module_cache[i].meta = NULL;
     }
 
-    child_vm.global_scope = NULL;
-    child_vm.open_upvalues = NULL;
-    child_vm.current_module_frame = NULL;
-    child_vm.event_loop = NULL;
-    child_vm.current_coroutine = NULL;
-    child_vm.all_coroutines = NULL;
+    vm->global_scope = NULL;
+    vm->open_upvalues = NULL;
+    vm->current_module_frame = NULL;
+    vm->event_loop = NULL;
+    vm->current_coroutine = NULL;
+    vm->all_coroutines = NULL;
     // ★ 子线程的**线程局部存储**是**独立一份**（TH5）—— 每个子线程的 VM 是自己的结构体，
     //   这个槽天然隔离 ✓（`threads.local_get/set` 就是按这条实现"每线程一份"的 ✓）
-    child_vm.thread_local_store = val_null();
+    vm->thread_local_store = val_null();
 
     // 复制全局变量：这里**只分配槽位 + 填 null**，真正的克隆延后到 gc_init() 之后
     //   （TH8：数据对象要克隆进子线程堆，而 clone 要 gc_alloc ⇒ 必须等 GC 初始化）
     if (saved_globals && saved_global_count > 0) {
-        child_vm.globals = (Value*)malloc(saved_global_capacity * sizeof(Value));
-        if (child_vm.globals) {
-            for (int i = 0; i < saved_global_capacity; i++) child_vm.globals[i] = val_null();
-            child_vm.global_count = saved_global_count;
-            child_vm.global_capacity = saved_global_capacity;
+        vm->globals = (Value*)malloc(saved_global_capacity * sizeof(Value));
+        if (vm->globals) {
+            for (int i = 0; i < saved_global_capacity; i++) vm->globals[i] = val_null();
+            vm->global_count = saved_global_count;
+            vm->global_capacity = saved_global_capacity;
         }
     } else {
-        child_vm.global_capacity = 8;
-        child_vm.globals = (Value*)malloc(child_vm.global_capacity * sizeof(Value));
-        for (int i = 0; i < child_vm.global_capacity; i++) child_vm.globals[i] = val_null();
-        child_vm.global_count = 0;
+        vm->global_capacity = 8;
+        vm->globals = (Value*)malloc(vm->global_capacity * sizeof(Value));
+        for (int i = 0; i < vm->global_capacity; i++) vm->globals[i] = val_null();
+        vm->global_count = 0;
     }
 
     if (saved_global_funcs && saved_global_func_count > 0) {
-        child_vm.global_funcs = (Value*)malloc(saved_global_func_capacity * sizeof(Value));
-        if (child_vm.global_funcs) {
-            memcpy(child_vm.global_funcs, saved_global_funcs, saved_global_func_count * sizeof(Value));
-            child_vm.global_func_count = saved_global_func_count;
-            child_vm.global_func_capacity = saved_global_func_capacity;
+        vm->global_funcs = (Value*)malloc(saved_global_func_capacity * sizeof(Value));
+        if (vm->global_funcs) {
+            memcpy(vm->global_funcs, saved_global_funcs, saved_global_func_count * sizeof(Value));
+            vm->global_func_count = saved_global_func_count;
+            vm->global_func_capacity = saved_global_func_capacity;
         }
     } else {
-        child_vm.global_func_capacity = 8;
-        child_vm.global_funcs = (Value*)malloc(child_vm.global_func_capacity * sizeof(Value));
-        child_vm.global_func_count = 0;
+        vm->global_func_capacity = 8;
+        vm->global_funcs = (Value*)malloc(vm->global_func_capacity * sizeof(Value));
+        vm->global_func_count = 0;
     }
 
     // 初始化子线程的 GC（线程局部）
     gc_init();
-    gc.vm = &child_vm;
+    gc.vm = vm;
 
     // 初始化子线程的字符串表（线程局部）
     extern void intern_table_init(void);
@@ -872,16 +865,16 @@ static void* thread_entry_point(void* arg) {
     //   socket / file / ffi 句柄（克隆出来是假句柄）、channel / thread（引用语义）
     // ⚠ 位置有讲究：必须在 `gc_init()` 之后（clone 要 gc_alloc），且在上面的 struct 定义导入之后
     //   （全局 struct 实例重建时要靠它的 def 找回字段布局）。
-    if (saved_globals && child_vm.globals) {
+    if (saved_globals && vm->globals) {
         extern THREAD_LOCAL VM* current_exec_vm;
         VM* saved_exec_vm = current_exec_vm;
-        current_exec_vm = &child_vm;      // ★ clone 失败时报错要落到**子线程** VM，不能污染主 VM
+        current_exec_vm = vm;      // ★ clone 失败时报错要落到**子线程** VM，不能污染主 VM
         int saved_gc_enabled = gc_get_enabled();
         gc_set_enabled(0);                // saved_globals 是 malloc 数组、不在 GC 根集合里
-        for (int i = 0; i < child_vm.global_count; i++) {
+        for (int i = 0; i < vm->global_count; i++) {
             Value val = saved_globals[i];
             if (!val_is_obj(val)) {
-                child_vm.globals[i] = val;   // 标量：自带副本
+                vm->globals[i] = val;   // 标量：自带副本
                 continue;
             }
             switch (val_as_obj(val)->type) {
@@ -891,18 +884,18 @@ static void* thread_entry_point(void* arg) {
                 case OBJ_STRUCT:
                 case OBJ_CLOSURE: {
                     Value cloned = value_clone_for_channel(val);
-                    if (val_is_null(cloned) || child_vm.has_exception) {
+                    if (val_is_null(cloned) || vm->has_exception) {
                         // 含 Ptr / cstruct 的容器克隆不了 ⇒ 回退成共享（旧行为），
                         //   **不让一个全局变量把整条线程搞挂** ✗
-                        child_vm.exception = val_null();
-                        child_vm.has_exception = 0;
+                        vm->exception = val_null();
+                        vm->has_exception = 0;
                         cloned = val;
                     }
-                    child_vm.globals[i] = cloned;
+                    vm->globals[i] = cloned;
                     break;
                 }
                 default:
-                    child_vm.globals[i] = val;   // 只读元数据 / 资源句柄 / 引用语义对象
+                    vm->globals[i] = val;   // 只读元数据 / 资源句柄 / 引用语义对象
                     break;
             }
         }
@@ -921,6 +914,31 @@ static void* thread_entry_point(void* arg) {
                 (unsigned long long)(dt4 - dt0));
     }
 
+}
+
+static void* thread_entry_point(void* arg) {
+    ThreadStartArgs* args = (ThreadStartArgs*)arg;
+    ObjThread* thread_obj = args->thread_obj;
+    ObjClosure* closure = args->closure;
+
+    Value* saved_globals = args->globals;
+    int saved_global_count = args->global_count;
+    int saved_global_capacity = args->global_capacity;
+    Value* saved_global_funcs = args->global_funcs;
+    int saved_global_func_count = args->global_func_count;
+    int saved_global_func_capacity = args->global_func_capacity;
+    Value* thread_initial_args = args->initial_args;
+    int thread_initial_arg_count = args->initial_arg_count;
+    ObjStructDef** saved_struct_defs = args->struct_defs;
+    int saved_struct_def_count = args->struct_def_count;
+    free(args);
+
+    // 创建子线程自己的 VM（独立的局部变量，不共享主程序数据）
+    // 创建并初始化子线程自己的 VM（拆分说明见 thread_vm_init 上方）
+    VM child_vm;
+    thread_vm_init(&child_vm, saved_globals, saved_global_count, saved_global_capacity,
+                   saved_global_funcs, saved_global_func_count, saved_global_func_capacity,
+                   saved_struct_defs, saved_struct_def_count);
     // 执行体已搬到 thread_exec_task（见上方说明）
     thread_exec_task(&child_vm, thread_obj, closure, thread_initial_args, thread_initial_arg_count);
 
