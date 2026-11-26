@@ -980,6 +980,14 @@ typedef struct ObjThread {
     //   这里只在 result 是对象时钉住它（join 还要从堆里克隆 result ✓）；
     //   没人 join 时由 free_object_resources 的 unpin 兜底 ✓
     void* dead_heap;
+    // ★ 2026-11-26（线程池）：当作**池任务**用时的标记 + "结果已被取走"握手。
+    //   为什么要握手：任务结果分配在 worker 的堆上，而任务对象在调用方堆
+    //   ⇒ worker 的 GC **看不见**那个结果。若 worker 跑完立刻接下一条，
+    //   下一次 GC 就会把上一条还没被 reap 的结果回收（偶发读野指针）。
+    //   所以：worker 跑完 → 等 `reaped` → 才接下一条；reap 时置位并 signal。
+    int is_pool_task;
+    int reaped;
+    PlatformCondVar reap_cond;
 } ObjThread;
 
 // 原子整数（2026-11-26）—— 跨线程**共享**的可变状态

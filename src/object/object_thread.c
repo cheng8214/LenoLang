@@ -1054,9 +1054,12 @@ ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_
     thread->pending_args = NULL;
     thread->pending_arg_count = 0;
     thread->dead_heap = NULL;
+    thread->is_pool_task = 0;
+    thread->reaped = 0;
 
     platform_mutex_init(&thread->mutex);
     platform_cond_init(&thread->done_cond);
+    platform_cond_init(&thread->reap_cond);
 
     // ★ 深拷贝线程参数到主线程 GC 堆，并存入 thread->pending_args。
     // 这样主线程 GC 可以通过 gc_scan_children(OBJ_THREAD) 扫描到这些值，
@@ -1175,7 +1178,30 @@ static int thread_wait(ObjThread* thread, int timeout_ms) {
 
 // 收尾（必须在"线程已结束"后调用）：克隆 result 到本线程堆 → join OS 线程 → 释放子线程堆
 //   → 从 active_threads 摘除 → 线程出错则抛异常。重复调用是幂等的（joined / dead_heap 都有守卫）
+// ★ 2026-11-26（线程池）：`thread_reap` 的"不抛异常"版本。
+//   为什么必须要它：`map` / `parallel_for` 里如果第 3 个任务抛错、循环直接中断，
+//   剩下 4..N 个任务就**没人 reap** ⇒ worker 永远卡在"等 reap"上（池会越用越少，
+//   最终死锁）。所以批量接口必须**先把所有任务排空**（每个都 reap），再抛第一个错误。
+//   out 可为 NULL；err 里放错误消息（调用方拼成一次 throw）。
+static Value thread_reap_impl(ObjThread* thread, int throw_on_error, char* err, int err_cap);
+
+int thread_reap_quiet(ObjThread* thread, Value* out, char* err, int err_cap) {
+    if (out) *out = val_null();
+    if (!thread) return 0;
+    if (err && err_cap > 0) err[0] = '\0';
+    if (!thread_wait(thread, -1)) return 0;
+    Value v = thread_reap_impl(thread, 0, err, err_cap);
+    if (out) *out = v;
+    return (err && err_cap > 0 && err[0] != '\0') ? 1 : 0;
+}
+
 static Value thread_reap(ObjThread* thread) {
+    return thread_reap_impl(thread, 1, NULL, 0);
+}
+
+// 实体的实现：throw_on_error = 1 时与旧的 thread_reap 完全一致；
+//   0 时把错误消息写进 err 并返回 val_null（不设置 VM 异常）。
+static Value thread_reap_impl(ObjThread* thread, int throw_on_error, char* err, int err_cap) {
     platform_mutex_lock(&thread->mutex);
 
     // ★ 在 mutex 内克隆 result 到主线程 GC 堆。
@@ -1200,8 +1226,19 @@ static Value thread_reap(ObjThread* thread) {
     platform_mutex_unlock(&thread->mutex);
 
     if (!thread->joined) {
-        platform_thread_join(thread->os_thread, NULL);
+        // ★ 2026-11-26（线程池）：池任务没有自己的 OS 线程（由 worker 代跑）
+        //   ⇒ 不能 platform_thread_join（句柄是空的，行为未定义）。
+        if (!thread->is_pool_task) platform_thread_join(thread->os_thread, NULL);
         thread->joined = 1;
+    }
+
+    // ★ 2026-11-26（线程池）：结果已经克隆进调用方堆 ⇒ 通知 worker 可以接下一条了。
+    //   （在 mutex 内做，worker 那边也是在 mutex 上等这个条件）
+    {
+        platform_mutex_lock(&thread->mutex);
+        thread->reaped = 1;
+        platform_cond_signal(&thread->reap_cond);
+        platform_mutex_unlock(&thread->mutex);
     }
 
     // ★★ 2026-10-19：result 已经克隆到主线程堆（上面那段）⇒ 子线程那个堆可以放了 ✓
@@ -1229,10 +1266,19 @@ static Value thread_reap(ObjThread* thread) {
     }
 
     if (thread->state == THREAD_ERROR) {
-        char msg[256];
-        snprintf(msg, sizeof(msg), "线程内抛出异常：%s",
-                 thread->error_msg ? thread->error_msg : "（未记录消息）");
-        native_throw_error(msg);
+        // ★ 2026-11-26（线程池）：批量接口（map/parallel_for）用 throw_on_error=0 先排空
+        //   整批任务、把错误消息带出来，最后由调用方**统一抛一次** —— 否则第一个失败就
+        //   中断循环，剩下的任务没人 reap ⇒ worker 全部卡死在"等 reap"。
+        if (err && err_cap > 0) {
+            snprintf(err, (size_t)err_cap, "线程内抛出异常：%s",
+                     thread->error_msg ? thread->error_msg : "（未记录消息）");
+        }
+        if (throw_on_error) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "线程内抛出异常：%s",
+                     thread->error_msg ? thread->error_msg : "（未记录消息）");
+            native_throw_error(msg);
+        }
         return val_null();
     }
 
@@ -1638,3 +1684,241 @@ Value channel_try_receive(ObjChannel* channel) {
 }
 
 // 注意：Thread 和 Channel 的实例方法已移到 threads.c 模块中
+// ============================================================================
+// 线程池（2026-11-26，第 2 步）
+// ----------------------------------------------------------------------------
+// 为什么要有它：`threads.start` 每次都要跑一遍 `thread_vm_init`（建 VM / gc_init /
+//   注册 native 全局+模块 / 导入 struct 定义 / 克隆 globals），实测 **203~227 us/线程**。
+//   而 `threads.map(arr, f)` 是"每个元素一条线程" ⇒ 1 万元素 = 1 万条 OS 线程，
+//   光启动开销就 2 秒级。池子把这笔一次性成本摊给 N 个常驻 worker。
+//
+// 设计（三条，都是为了不埋病根）：
+//   ① **worker 持有自己的 VM**（`thread_vm_init` 只跑一次），任务用 `thread_exec_task` 跑；
+//   ② **跑完必须等 reap 再接下一条** —— 结果分配在 worker 堆上、任务对象在调用方堆，
+//      worker 的 GC **看不见**那个结果；不等就会把上一条还没取走的结果回收（偶发野指针）。
+//      握手字段：`ObjThread.is_pool_task / reaped / reap_cond`（见 `thread_reap`）；
+//   ③ worker 常驻不退出（进程结束时随进程消亡）⇒ 不必再抽一段 fini，
+//      也不会在退出阶段和 GC 收尾抢资源。
+//
+// 任务对象复用 `ObjThread`：它的 mutex / done_cond / result / pending_args 已经能被
+//   `gc_scan_children(OBJ_THREAD)` 扫描，等于白拿一套"结果容器 + GC 可见性"。
+// ============================================================================
+
+#define POOL_MAX_WORKERS 64
+#define POOL_DEFAULT_WORKERS 4
+
+typedef struct PoolItem {
+    ObjThread* task;        // 结果/状态容器（分配在调用方堆）
+    ObjClosure* closure;    // 任务闭包（分配在调用方堆；worker 里再克隆）
+    struct PoolItem* next;
+} PoolItem;
+
+static PlatformMutex   g_pool_mu;
+static PlatformCondVar g_pool_cv_work;    // worker 等任务
+static PoolItem* g_pool_head = NULL;
+static PoolItem* g_pool_tail = NULL;
+static int g_pool_busy = 0;               // 正在跑（含等 reap）的任务数
+static int g_pool_workers = 0;            // 已启动的 worker 数
+static int g_pool_wanted = 0;             // 期望的 worker 数
+static int g_pool_inited = 0;
+
+typedef struct PoolSnapshot {
+    Value* globals; int global_count; int global_capacity;
+    Value* global_funcs; int global_func_count; int global_func_capacity;
+    ObjStructDef** struct_defs; int struct_def_count;
+} PoolSnapshot;
+
+static PoolSnapshot g_pool_snap;
+
+// 抓"当前 VM 的快照"：与 `thread_new_with_args` 同口径（globals / 函数表 / struct 定义）
+static void pool_capture_snapshot(void) {
+    extern THREAD_LOCAL VM* current_exec_vm;
+    extern VM vm;
+    VM* tv = current_exec_vm ? current_exec_vm : &vm;
+    memset(&g_pool_snap, 0, sizeof(g_pool_snap));
+
+    if (tv->global_count > 0 && tv->globals && tv->global_capacity > 0) {
+        g_pool_snap.globals = (Value*)malloc((size_t)tv->global_capacity * sizeof(Value));
+        if (g_pool_snap.globals) {
+            memcpy(g_pool_snap.globals, tv->globals, (size_t)tv->global_count * sizeof(Value));
+            g_pool_snap.global_count = tv->global_count;
+            g_pool_snap.global_capacity = tv->global_capacity;
+        }
+    }
+    if (tv->global_func_count > 0 && tv->global_funcs && tv->global_func_capacity > 0) {
+        g_pool_snap.global_funcs = (Value*)malloc((size_t)tv->global_func_capacity * sizeof(Value));
+        if (g_pool_snap.global_funcs) {
+            memcpy(g_pool_snap.global_funcs, tv->global_funcs,
+                   (size_t)tv->global_func_count * sizeof(Value));
+            g_pool_snap.global_func_count = tv->global_func_count;
+            g_pool_snap.global_func_capacity = tv->global_func_capacity;
+        }
+    }
+    int dc = struct_def_get_count();
+    if (dc > 0) {
+        g_pool_snap.struct_defs = (ObjStructDef**)malloc((size_t)dc * sizeof(ObjStructDef*));
+        if (g_pool_snap.struct_defs) {
+            for (int i = 0; i < dc; i++) g_pool_snap.struct_defs[i] = struct_def_get(i);
+            g_pool_snap.struct_def_count = dc;
+        }
+    }
+}
+
+// worker 主循环
+static void* pool_worker_main(void* arg) {
+    (void)arg;
+
+    VM vm;
+    memset(&vm, 0, sizeof(VM));
+
+    // 每个 worker 拷一份快照（thread_vm_init 不持有这些数组的所有权，用完由这里释放）
+    Value* g = NULL;
+    if (g_pool_snap.globals && g_pool_snap.global_capacity > 0) {
+        g = (Value*)malloc((size_t)g_pool_snap.global_capacity * sizeof(Value));
+        if (g) memcpy(g, g_pool_snap.globals, (size_t)g_pool_snap.global_count * sizeof(Value));
+    }
+    Value* gf = NULL;
+    if (g_pool_snap.global_funcs && g_pool_snap.global_func_capacity > 0) {
+        gf = (Value*)malloc((size_t)g_pool_snap.global_func_capacity * sizeof(Value));
+        if (gf) memcpy(gf, g_pool_snap.global_funcs,
+                       (size_t)g_pool_snap.global_func_count * sizeof(Value));
+    }
+    ObjStructDef** sd = NULL;
+    if (g_pool_snap.struct_defs && g_pool_snap.struct_def_count > 0) {
+        sd = (ObjStructDef**)malloc((size_t)g_pool_snap.struct_def_count * sizeof(ObjStructDef*));
+        if (sd) memcpy(sd, g_pool_snap.struct_defs,
+                       (size_t)g_pool_snap.struct_def_count * sizeof(ObjStructDef*));
+    }
+
+    thread_vm_init(&vm, g, g_pool_snap.global_count, g_pool_snap.global_capacity,
+                   gf, g_pool_snap.global_func_count, g_pool_snap.global_func_capacity,
+                   sd, g_pool_snap.struct_def_count);
+
+    if (g) free(g);
+    if (gf) free(gf);
+    if (sd) free(sd);
+
+    for (;;) {
+        platform_mutex_lock(&g_pool_mu);
+        while (!g_pool_head) {
+            platform_cond_wait(&g_pool_cv_work, &g_pool_mu);
+        }
+        PoolItem* it = g_pool_head;
+        g_pool_head = it->next;
+        if (!g_pool_head) g_pool_tail = NULL;
+        g_pool_busy++;
+        platform_mutex_unlock(&g_pool_mu);
+
+        ObjThread* task = it->task;
+        ObjClosure* closure = it->closure;
+        free(it);
+
+        // 执行体与 threads.start 完全相同（克隆闭包/参数、协程、结果、最终 GC）
+        thread_exec_task(&vm, task, closure, NULL, 0);
+
+        // ★ 握手：等调用方 reap（已把结果克隆进它自己的堆）之后才接下一条
+        platform_mutex_lock(&task->mutex);
+        while (!task->reaped) platform_cond_wait(&task->reap_cond, &task->mutex);
+        platform_mutex_unlock(&task->mutex);
+
+        platform_mutex_lock(&g_pool_mu);
+        g_pool_busy--;
+        platform_mutex_unlock(&g_pool_mu);
+    }
+    return NULL;
+}
+
+static void pool_ensure_started(void) {
+    if (g_pool_inited) return;
+    g_pool_inited = 1;
+    platform_mutex_init(&g_pool_mu);
+    platform_cond_init(&g_pool_cv_work);
+    pool_capture_snapshot();
+
+    if (g_pool_wanted <= 0) g_pool_wanted = POOL_DEFAULT_WORKERS;
+    if (g_pool_wanted > POOL_MAX_WORKERS) g_pool_wanted = POOL_MAX_WORKERS;
+    for (int i = 0; i < g_pool_wanted; i++) {
+        PlatformThread th;
+        if (platform_thread_create(&th, pool_worker_main, NULL) != 0) break;
+        g_pool_workers++;
+    }
+    if (g_pool_workers == 0) g_pool_wanted = 0;   // 一条都起不来 ⇒ 调用方回退
+}
+
+int pool_worker_count(void) { return g_pool_workers; }
+
+// 池是否可用（会**懒启动**）：调用方拿它决定"走池"还是"回退到一任务一线程"
+int pool_ready(void) {
+    pool_ensure_started();
+    return g_pool_workers > 0;
+}
+
+// 建一个"池任务"：结果容器分配在**调用方堆**（GC 可见），参数深克隆进去等 worker 取
+ObjThread* thread_new_pool_task(ObjClosure* closure, Value* call_args, int call_arg_count) {
+    ObjThread* t = (ObjThread*)gc_alloc(sizeof(ObjThread), OBJ_THREAD);
+    if (!t) return NULL;
+    t->state = THREAD_RUNNING;
+    t->result = val_null();
+    t->error_msg = NULL;
+    t->has_result = 0;
+    t->joined = 0;
+    t->pending_args = NULL;
+    t->pending_arg_count = 0;
+    t->dead_heap = NULL;
+    t->is_pool_task = 1;
+    t->reaped = 0;
+    memset(&t->os_thread, 0, sizeof(t->os_thread));
+    platform_mutex_init(&t->mutex);
+    platform_cond_init(&t->done_cond);
+    platform_cond_init(&t->reap_cond);
+
+    if (call_args && call_arg_count > 0) {
+        platform_mutex_lock(&t->mutex);
+        t->pending_args = (Value*)malloc((size_t)call_arg_count * sizeof(Value));
+        if (t->pending_args) {
+            // 禁用同步 GC：value_clone_for_channel → gc_alloc 失败时会同步回收，
+            //   而回收会 lock thread->mutex（我们正持有）⇒ 自死锁（与 start 同款处理）
+            int saved_gc_enabled = gc_get_enabled();
+            gc_set_enabled(0);
+            for (int i = 0; i < call_arg_count; i++) {
+                t->pending_args[i] = value_clone_for_channel(call_args[i]);
+            }
+            gc_set_enabled(saved_gc_enabled);
+            t->pending_arg_count = call_arg_count;
+        }
+        platform_mutex_unlock(&t->mutex);
+    }
+    return t;
+}
+
+// 提交到池；返回 1 = 已入队，0 = 池起不来（调用方应回退到 threads.start）
+int pool_submit(ObjThread* task, ObjClosure* closure) {
+    if (!task || !closure) return 0;
+    pool_ensure_started();
+    if (g_pool_workers == 0) return 0;
+
+    PoolItem* it = (PoolItem*)malloc(sizeof(PoolItem));
+    if (!it) return 0;
+    it->task = task;
+    it->closure = closure;
+    it->next = NULL;
+
+    platform_mutex_lock(&g_pool_mu);
+    if (g_pool_tail) g_pool_tail->next = it; else g_pool_head = it;
+    g_pool_tail = it;
+    platform_cond_signal(&g_pool_cv_work);
+    platform_mutex_unlock(&g_pool_mu);
+    return 1;
+}
+
+int pool_size(void) { return g_pool_wanted > 0 ? g_pool_wanted : POOL_DEFAULT_WORKERS; }
+
+void pool_set_size(int n) {
+    if (n < 1) n = 1;
+    if (n > POOL_MAX_WORKERS) n = POOL_MAX_WORKERS;
+    if (g_pool_inited) {          // 已启动：worker 已经建好了，不动态增删（避免退出顺序复杂化）
+        g_pool_wanted = g_pool_workers;
+        return;
+    }
+    g_pool_wanted = n;
+}

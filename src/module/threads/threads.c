@@ -6,7 +6,16 @@
 #include <string.h>
 
 extern ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_arg_count);
+// ★ 2026-11-26（线程池）：池任务没有自己的 OS 线程，由常驻 worker 代跑（见 object_thread.c 末尾）
+extern ObjThread* thread_new_pool_task(ObjClosure* closure, Value* call_args, int call_arg_count);
+extern int pool_submit(ObjThread* task, ObjClosure* closure);
+extern int pool_size(void);
+extern void pool_set_size(int n);
+extern int pool_worker_count(void);
+extern int pool_ready(void);
 extern Value thread_join(ObjThread* thread);
+// 收结果但**不抛异常**（批量接口要在排空整批之后再统一抛第一个错误）
+extern int thread_reap_quiet(ObjThread* thread, Value* out, char* err, int err_cap);
 extern int thread_join_for(ObjThread* thread, int timeout_ms);   // TH9：带超时的等待
 extern ThreadState thread_get_state(ObjThread* thread);
 extern ObjChannel* channel_new(int capacity);
@@ -353,6 +362,21 @@ static Value threads_channel(int argc, Value* args) {
     return val_obj((Object*)channel);
 }
 
+// ★ 2026-11-26（线程池）：`threads.pool_size()` / `threads.set_pool_size(n)`
+static Value threads_pool_size(int argc, Value* args) {
+    (void)argc; (void)args;
+    return val_int(pool_size());
+}
+
+static Value threads_set_pool_size(int argc, Value* args) {
+    if (argc < 1 || !val_is_int(args[0])) {
+        native_throw_error("threads.set_pool_size(n) 需要一个整数（1~64）");
+        return val_null();
+    }
+    pool_set_size((int)val_as_num(args[0]));
+    return val_null();
+}
+
 static Value threads_sleep(int argc, Value* args) {
     if (argc < 1 || !val_is_int(args[0])) {
         native_throw_error("threads.sleep() 需要一个整数毫秒参数");
@@ -419,14 +443,32 @@ static Value threads_parallel_for(int argc, Value* args) {
     int started = 0;
     for (int i = 0; i < n; i++) {
         Value idx = val_int(i);
-        ObjThread* t = thread_new_with_args(closure, &idx, 1);
-        if (!t) break;                  // 起不来就停手，把已起来的等完
+        // ★ 2026-11-26（线程池）：优先走池（线程数 = 池大小，不再是 n）；
+        //   池起不来（比如系统资源不足）才回退到"一任务一线程"的老路径。
+        ObjThread* t = NULL;
+        if (pool_ready()) {
+            ObjThread* pt = thread_new_pool_task(closure, &idx, 1);
+            if (pt && pool_submit(pt, closure)) t = pt;
+        }
+        if (!t) t = thread_new_with_args(closure, &idx, 1);   // 池不可用 ⇒ 老路径
+        if (!t) break;                  // 起不来就停手，把已起的等完
         threads[started++] = t;
     }
+    // ★ 2026-11-26（线程池）：同 map —— 整批排空后再抛第一个错误（否则 worker 会卡住）
+    char first_err[256];
+    first_err[0] = '\0';
+    int failed = 0;
     for (int i = 0; i < started; i++) {
-        thread_join(threads[i]);
+        char e[256];
+        if (thread_reap_quiet(threads[i], NULL, e, (int)sizeof(e))) {
+            if (!failed) { failed = 1; snprintf(first_err, sizeof(first_err), "%s", e); }
+        }
     }
     free(threads);
+    if (failed) {
+        native_throw_error(first_err);
+        return val_null();
+    }
     return val_int(started);
 }
 
@@ -464,15 +506,36 @@ static Value threads_map(int argc, Value* args) {
         Value a[2];
         a[0] = arr->elements[i];
         a[1] = val_int(i);
-        ObjThread* t = thread_new_with_args(closure, a, 2);
+        // ★ 2026-11-26（线程池）：线程数 = 池大小（原来是元素数 ⇒ 1 万元素 1 万条线程）
+        ObjThread* t = NULL;
+        if (pool_ready()) {
+            ObjThread* pt = thread_new_pool_task(closure, a, 2);
+            if (pt && pool_submit(pt, closure)) t = pt;
+        }
+        if (!t) t = thread_new_with_args(closure, a, 2);      // 池不可用 ⇒ 老路径
         if (!t) break;
         threads[started++] = t;
     }
-    // 按输入顺序 join 并收集（`thread_join` 已把结果克隆到本线程堆 ✓）
+    // 按输入顺序收结果（reap 已把结果克隆到本线程堆 ✓）。
+    // ★ 2026-11-26（线程池）：**先把整批排空再抛错** —— 若中途 return/抛异常，
+    //   剩下没 reap 的任务会让 worker 永远卡在"等 reap"（池越用越少 → 死锁）。
+    char first_err[256];
+    first_err[0] = '\0';
+    int failed = 0;
     for (int i = 0; i < started; i++) {
-        arr_write(result, i, thread_join(threads[i]));
+        Value r;
+        char e[256];
+        if (thread_reap_quiet(threads[i], &r, e, (int)sizeof(e))) {
+            if (!failed) { failed = 1; snprintf(first_err, sizeof(first_err), "%s", e); }
+        } else if (!failed) {
+            arr_write(result, i, r);
+        }
     }
     free(threads);
+    if (failed) {
+        native_throw_error(first_err);
+        return val_null();
+    }
     return val_obj((Object*)result);
 }
 
@@ -726,6 +789,17 @@ void threads_init_module(void) {
 
     TypeKind channel_params[] = {TYPE_INT};
 native_register_module_method("threads", "channel", threads_channel, &NATIVE_T_CHANNEL, NATIVE_FIXED(channel_params));
+
+    // ★ 2026-11-26（线程池）：查看/设置 worker 数量。
+    //   池是**懒启动**的（第一次 parallel_for / map 时按当时的设置建 worker），
+    //   启动后再调 set_pool_size 只改"期望值"、不动态增删 worker（避免退出顺序复杂化）。
+    native_register_module_method("threads", "pool_size", threads_pool_size, &NATIVE_T_INT,
+                                  NATIVE_FIXED_NONE(0));
+    {
+        TypeKind pool_params[] = {TYPE_INT};
+        native_register_module_method("threads", "set_pool_size", threads_set_pool_size,
+                                      &NATIVE_T_NULL, NATIVE_FIXED(pool_params));
+    }
 
     // ★ 2026-11-26：跨线程共享的原子整数。
     //   形态是**模块函数**（不是实例方法）：`threads.atomic(0)` 造一个句柄（`any`），
