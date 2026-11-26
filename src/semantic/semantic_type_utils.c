@@ -2174,10 +2174,13 @@ static void iter_mut_scan_expr(Ast* e, const char* cname, int is_dict);
 static void iter_mut_scan_stmt(Ast* st, const char* cname, int is_dict);
 
 static void iter_mut_warn(Ast* at, const char* cname, const char* what) {
+    // 文案与 2026-11-26 的语义变更对齐（旧文案说"边加边遍历"，那是**旧**行为）：
+    //   现在循环边界在进入时确定 ⇒ 新增本轮看不到；删除会让后续取元素越界报错。
     warning_add_at_fmt(WARN_ITER_MUTATE, at->line, at->column,
         "for 循环体里对正在遍历的容器 '%s' 做了**结构性修改**（%s）—— "
-        "遍历按下标推进，删除会**跳过**下一个元素/键，新增会出现\"边加边遍历\"；"
-        "请先把要删的键/元素收集到临时数组，循环结束后再统一处理",
+        "循环边界在**进入时**已确定：新增的元素本轮**看不到**，删除会让后续取元素"
+        "**越界报错**（\"遍历中容器被改短了？\"）；"
+        "请先把要删/要加的收进临时数组，循环结束后再统一处理",
         cname, what);
 }
 

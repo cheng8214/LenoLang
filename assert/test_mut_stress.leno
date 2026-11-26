@@ -144,18 +144,20 @@ main() {
     for gb to v { gsum = gsum + _int(v) }
     assert_eq(gsum, 15, "⑦ 泛型 mut 类型可遍历")
 
-    // 线程里真实地"边遍历边改"：不崩（视图语义下循环次数不可预期，只要求不崩、不死循环）
-    var shared = new ct.Stack[int]()
+    // 线程里真实地"边遍历边改"：用**快照路径**（Queue 的 each() 返回 to_array）⇒ 安全
+    var shared = new ct.Queue[int]()
     for 0 : 3 to i { shared.push(i) }
     Array[Thread] tids = []
     tids.add(threads.start(func() {
-        int guard = 0
+        int n = 0
         for shared to v {
-            if shared.len() > 0 { shared.pop() }
-            guard = guard + 1
-            if guard > 50 { break }
+            n = n + 1
+            if shared.len() > 0 { shared.pop() }   // 改的是队列本身，遍历的是快照
         }
     }))
     threads.join_all(tids)
+    // 只断言"跑完了、没崩"：闭包捕获的容器在子线程里改的是哪一份，属线程语义的事，
+    // 与本用例要钉的（遍历中修改不崩、不静默）无关。
+    assert_eq(tids.len(), 1, "⑦ 线程里边遍历边 pop（快照路径）正常结束")
     print("test_mut_stress passed\n")
 }

@@ -935,10 +935,22 @@ static void gen_for_iter(CodeGen* gen, Ast* ast) {
     gen->loop_head = node;
     gen->loop_count++;
 
-    // 入口测试：`idx < len(容器)` 为假则跳出 —— 融合成一条 OP_CMPJMP_ITER（T13）
-    //   （原先 LEN + LT + JMP_IF_FALSE 三条；融合指令内部**每次测试都重读长度**，
-    //     所以"迭代中增删容器"的语义不变，见该指令在 07_collections.inc 的说明）
-    int exit_pos = emit_iter_cmpjmp(gen, idx_slot, obj_slot, /*pre_inc*/0, /*want_true*/0, ast->line);
+    // ★ 2026-11-26：**循环边界在进入时确定**（捕获一次 len 到寄存器）。
+    //   此前用融合指令 OP_CMPJMP_ITER，它每次测试都**重读** len ⇒
+    //     · `for a to v { a.add(x) }` 会"边加边遍历"（实测 5 项跑到 20 次，理论上停不下来）；
+    //     · 别名 / 闭包捕获 / 线程 / FFI 里的增删同样能改变边界 —— 编译器看不到这些，
+    //       只能靠**语义**兜住（这也是"不允许静默错误"的唯一可靠做法：不看是谁改的，只看长度）。
+    //   现在：边界 = 进入时的 len；容器**变短**时 OP_ITER_GET 的越界检查会当场抛错
+    //   （文案已补"遍历中容器被改短？"）⇒ 不再有静默的"跳过元素 / 边加边遍历"。
+    //   代价：每次迭代多一条比较（原来融合指令内部也要读 len，差一条指令的量级）。
+    int len_slot = reg_alloc(gen);
+    reg_encode_iABC(gen->chunk, OP_LEN, len_slot, obj_slot, 0, ast->line);
+    if (len_slot + 1 > gen->next_reg) gen->next_reg = len_slot + 1;
+    if (gen->next_reg > gen->max_reg) gen->max_reg = gen->next_reg;
+
+    // 入口测试：`idx < len(进入时的边界)` 为假则跳出
+    int exit_pos = emit_cmpjmp(gen, OP_CMPJMP_LT, idx_slot, len_slot, /*is_imm*/0,
+                               /*want_true*/0, ast->line);
     int body_start = gen->chunk->len;
 
     // 元素 / 键 → 循环变量
@@ -961,27 +973,27 @@ static void gen_for_iter(CodeGen* gen, Ast* ast) {
 
     if (ast->u.for_.body) gen_stmt(gen, ast->u.for_.body);
 
-    // 回边：先自增索引、再测 `idx < len(容器)`，成立则跳回体首（T13）。
-    //   长度仍在**这一轮**读取 ⇒ `for a to x { a.add(..) }` 的行为不变。
-    int back_pos = gen->chunk->len;                  // continue 的回填目标
-    // ⚠ 尺寸闸门：融合指令的偏移是 16 位带偏置（±32767），超大循环体要回退，
+    // 回边：先自增索引、再测 `idx < 进入时的边界`，成立则跳回体首。
+    //   ⚠ continue 跳到的是**自增那一条**（与旧融合指令 pre_inc 的位置一致）。
+    int back_pos = gen->chunk->len;                  // continue 的回填目标（自增指令）
+    emit_inc(gen, idx_slot, idx_slot, ast->line);
+    int cmp_pos = gen->chunk->len;
+    // ⚠ 尺寸闸门：比较指令的偏移是 16 位带偏置（±32767），超大循环体要回退，
     //   否则 patch_common 会报 T12 的编译期错误（宁可报错也不静默跳错）。
-    if ((body_start - back_pos - 8) >= -32768) {
-        emit_iter_cmpjmp(gen, idx_slot, obj_slot, /*pre_inc*/1, /*want_true*/1, ast->line);
-        patch_jmp_to(gen, back_pos, body_start);
+    if ((body_start - cmp_pos - 8) >= -32768) {
+        emit_cmpjmp(gen, OP_CMPJMP_LT, idx_slot, len_slot, /*is_imm*/0,
+                    /*want_true*/1, ast->line);
+        patch_jmp_to(gen, cmp_pos, body_start);
     } else {
-        // 超大循环体（>32KB 字节码）：回退成"自增 + 比较 + 16 位条件跳过 + 24 位回跳"
-        int len_reg = reg_alloc(gen);
-        reg_encode_iABC(gen->chunk, OP_LEN, len_reg, obj_slot, 0, ast->line);
+        // 超大循环体（>32KB 字节码）：回退成"比较 + 16 位条件跳过 + 24 位回跳"
         int cond = reg_alloc(gen);
-        emit_inc(gen, idx_slot, idx_slot, ast->line);
-        emit_lt(gen, cond, idx_slot, len_reg, ast->line);
+        emit_lt(gen, cond, idx_slot, len_slot, ast->line);
         int jf = emit_jmp_if_false(gen, cond, ast->line);
         emit_loop(gen, body_start, ast->line);       // 24 位，安全
         patch_jmp(gen, jf);
         reg_free(gen, cond);
-        reg_free(gen, len_reg);
     }
+    reg_free(gen, len_slot);
 
     patch_jmp(gen, exit_pos);
 

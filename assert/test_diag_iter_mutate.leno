@@ -28,7 +28,7 @@ main() {
     print(_str(a.len()))
 }
 ")
-    var out1 = ce.expect_warning(arrRm, "数组遍历中 remove => 警告",
+    var out1 = ce.expect_warning_check(arrRm, "数组遍历中 remove => 警告",
         "遍历中修改容器", 4)
     assert_true(strings.has(out1, "容器 'a'"), "警告要说是哪个容器；输出=" + out1)
 
@@ -42,7 +42,7 @@ main() {
     print(_str(d.len()))
 }
 ")
-    ce.expect_warning(dictRm, "字典遍历中 remove => 警告",
+    ce.expect_warning_check(dictRm, "字典遍历中 remove => 警告",
         "遍历中修改容器", 4)
 
     // ---- ③ 字典遍历中加键（实测会永不结束）----
@@ -56,7 +56,7 @@ main() {
     print(_str(d.len()))
 }
 ")
-    var out3 = ce.expect_warning(dictAdd, "字典遍历中加键 => 警告",
+    var out3 = ce.expect_warning_check(dictAdd, "字典遍历中加键 => 警告",
         "字典新增键", 4)
     assert_true(not strings.has(out3, "结构性修改（remove）"),
         "加键的文案要独立于删除；输出=" + out3)
@@ -73,7 +73,7 @@ main() {
     print(_str(a.len()))
 }
 ")
-    ce.expect_warning(modRm, "模块式 arrays.remove => 警告",
+    ce.expect_warning_check(modRm, "模块式 arrays.remove => 警告",
         "遍历中修改容器", 6)
 
     // ---- ⑤ 防误报：只改元素 / 只读 / 先收集后删 ----
