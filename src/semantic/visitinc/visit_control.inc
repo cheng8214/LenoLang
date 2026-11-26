@@ -900,6 +900,12 @@
                 //   ⚠ 必须在 **visit(body) 之前**扫：语义阶段会把 `arr.add(…)` 这种
                 //     "变量当模块名"的 MODULE_CALL **就地改写成 AST_CALL**（见 visit_module.inc），
                 //     改完再扫就认不出接收者了（第一版就是在后面扫、结果一条都没报 ✗）。
+                //   接收者只能从 `end` 本身拿（`end` 是 AST_VAR）。
+                //   ⚠ 走 `impl Iterable` 的容器（`for st to v` 被改写成 `for st.each() to v`）
+                //     在这里**识别不到** ⇒ 容器遍历中改容器不报。这是有意的取舍：
+                //     要报就得让编译器背一张 LenoContainers 的方法名表（见
+                //     semantic_type_utils.c 里 iter_mut_is_structural 的说明），
+                //     那属于名字特判。正确做法是方法上的 `@mutates` 声明（尚未做）。
                 if (ast->u.for_.start == NULL && ast->u.for_.end &&
                     ast->u.for_.end->kind == AST_VAR && ast->u.for_.end->u.var.name) {
                     semantic_check_iter_mutation(ast->u.for_.end->u.var.name,

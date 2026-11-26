@@ -26,6 +26,19 @@
 // 所以：想让自己的类型能被 `for` 遍历元素，就 `impl Iterable` 并实现 `each()`：
 //     export struct Stack[T] impl Iterable { func each(): Array[T] { return items } … }
 // 编译器里没有 "Iterable"、没有 "each" —— 这两个名字只存在于这份声明里。
+//
+// ── `each()` 的契约（三条，都别踩）────────────────────────────────────────────
+// ① **顺序**：按迭代顺序返回元素。`for c to v, i` 里的 `i` 就是这个数组的下标。
+// ② **视图 or 快照，由实现者决定**：
+//      元素连续（Stack / PriorityQueue / LRU 的 order）⇒ 直接返回内部数组（零分配、实时视图）；
+//      元素不连续（Queue 有 head 空洞、Deque 分 f/b 两段）⇒ 返回 `to_array()`（快照）。
+//    两种都合法，但**调用方不能假设是哪一种**。
+// ③ **不得在遍历中修改容器**：视图情况下新增会让循环"边加边遍历"（实测 5 项能跑到 20 次，
+//    理论上停不下来），删除会跳过元素。
+//    ⚠ 编译器**不会**为这种写法报警告（`WARN_ITER_MUTATE` 只认 Array/Dict —— 那是语言内置类型，
+//      给它们列方法名不算特判；给容器列方法名就等于让编译器认识 LenoContainers 的 API，已否决）。
+//      真要边遍历边改：先把要处理的元素收集到临时数组，循环后再统一改；
+//      或者用游标 `iter()` 显式表达"我在实时遍历"。
 // （旧版曾在 C 里内置同名 face 并 `strdup("each")`，那是把写死换了个地方放，已弃用。）
 export face Iterable {
     func each(): Array

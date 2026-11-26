@@ -2088,6 +2088,13 @@ void semantic_check_struct_type_arg_constraint(const char* struct_name, const ch
 //   · 只下探语句层（block / if / while / for / switch / try），**不进** lambda 与函数体
 //     （那里可能是"稍后再改"，报了就是噪音）。
 // ============================================================================
+// ⚠ 这张表里**只能放内置类型的方法名**（Array / Dict / string —— 它们是语言的一部分，
+//   名字由语言规范定义）。曾经往里加过 LenoContainers 的方法名（`push_back` / `put` /
+//   `drain_sorted` …）—— 那是让编译器认识**某个扩展模块的 API**，属名字特判，已撤掉：
+//     ① 模块改个方法名，警告就静默失效；
+//     ② 用户结构体里一个无关的 `put()` 会被误报。
+//   容器遍历中改容器**目前不报**（宁缺勿误）；要覆盖它，正确做法是让"这是结构性修改"
+//   成为**声明**（方法上的 `@mutates` 注解 + 随符号表导出），而不是编译器背一张模块词表。
 static int iter_mut_is_structural(const char* name) {
     static const char* const kNames[] = {
         "add", "insert", "remove", "clear", "pop", "sort", "set", "setdefault"

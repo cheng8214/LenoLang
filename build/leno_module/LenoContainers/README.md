@@ -179,6 +179,11 @@ var kit = lru.keys_iter()                 // 缓存：遍历 key
 - `each()`（Queue/Deque）= 内部不连续 ⇒ 它们返回 `to_array()` ⇒ **快照**；
 - `to_array()` / `keys()` 显式写时都是快照；游标 `iter()` 是实时视图。
 
+**不要在遍历中修改容器**（实测：视图路径下 `for st to v { st.push(x) }` 从 5 项跑到 20 项、
+理论上停不下来；`pop` 会跳过元素）。编译器**不会**给这种写法报警告 ——
+`WARN_ITER_MUTATE` 只覆盖 Array/Dict（语言内置类型）；给容器列方法名等于让编译器认识
+本模块的 API，已否决。要边遍历边改：先把待处理元素收进临时数组，循环后再统一改。
+
 ## API
 
 ### `Stack[T]`

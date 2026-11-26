@@ -206,6 +206,18 @@ main() {
         "import \"Containers\" as ct\nstruct S impl Iterable {\n    func each(): int { return 7 }\n}\n",
         "返回类型与 face 'Iterable' 不匹配")
 
+    // ④-7b 遍历中修改容器：**当前不报**（有意的取舍，见下）——
+    //   要报就得让编译器背一张 LenoContainers 的方法名表（名字特判），已否决。
+    //   这里钉住的是"确实不报"，防止有人日后偷偷把词表加回来还以为在修 bug。
+    //   ⚠ 真要覆盖，正确做法是方法上 `@mutates` 声明 + 随符号表导出（尚未做）。
+    files.write("__it_mutate_silent.leno",
+        "import \"Containers\" as ct\nmain() {\n    var s = new ct.Stack[int]()\n    s.push(1)\n    for s to v { s.pop() }\n}\n")
+    var mr = _exec(_executable() + " --check \"__it_mutate_silent.leno\"", 30000)
+    files.delete("__it_mutate_silent.leno")
+    var mrOut = mr.output as string
+    assert_true(not mrOut.has("遍历中修改容器"),
+                "④-7b 容器遍历中改容器目前**不该**报（靠 README 契约，不靠词表）")
+
     // ④-8 face 类型的变量直接遍历 ⇒ **警告**（不是错误）：VM 一次都不进，必须说出来
     files.write("__it_warn_face.leno",
         "import \"Containers\" as ct\nmain() {\n    var s = new ct.Stack[int]()\n    s.push(1)\n    Iterable it = s\n    for it to v { print(_str(v)) }\n}\n")
