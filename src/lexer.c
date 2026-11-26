@@ -124,6 +124,7 @@ static void init_keyword_table(void) {
 
         {"Socket", TOK_SOCKET_TYPE},
         {"Channel", TOK_CHANNEL_TYPE},
+        {"Atomic", TOK_ATOMIC_TYPE},
         {"Thread", TOK_THREAD_TYPE},
         {"Future", TOK_FUTURE_TYPE},
         {"Ptr", TOK_PTR_TYPE},

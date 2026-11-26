@@ -825,6 +825,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_FILE:     return "File";
         case TYPE_SOCKET:   return "Socket";
         case TYPE_CHANNEL:  return "Channel";
+        case TYPE_ATOMIC:   return "Atomic";
         case TYPE_THREAD:   return "Thread";
         case TYPE_FUTURE:   return "Future";
         case TYPE_PTR:      return "Ptr";

@@ -149,6 +149,13 @@ static TypeInfo* parse_base_type(Parser* p) {
         }
         return type_new(TYPE_CHANNEL);
     }
+    if (p->lex.current.type == TOK_ATOMIC_TYPE) {
+        // ★ 2026-11-26：`Atomic`（跨线程共享的原子整数）。无元素类型参数。
+        //   ⚠ 只解决"能标注"（`Atomic a` / 字段 / 形参）；操作仍走模块函数
+        //     `threads.atomic_add(a, n)` —— 实例方法形态要接 VM 的方法分派，另说。
+        lexer_next(&p->lex);
+        return type_new(TYPE_ATOMIC);
+    }
     if (p->lex.current.type == TOK_THREAD_TYPE) {
         lexer_next(&p->lex);
         // Thread[T]（TH4 顺带）：此前**只有原生规格内部能造** Thread[T]，用户写不出来 ✗

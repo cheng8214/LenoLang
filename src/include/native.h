@@ -176,6 +176,7 @@ extern const NativeTypeSpec NATIVE_T_PTR;
 extern const NativeTypeSpec NATIVE_T_FILE;
 extern const NativeTypeSpec NATIVE_T_SOCKET;
 extern const NativeTypeSpec NATIVE_T_CHANNEL;
+extern const NativeTypeSpec NATIVE_T_ATOMIC;
 extern const NativeTypeSpec NATIVE_T_THREAD;
 extern const NativeTypeSpec NATIVE_T_FUTURE;
 extern const NativeTypeSpec NATIVE_T_ARR;          // 裸 Array（元素未指定）

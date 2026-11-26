@@ -1,0 +1,67 @@
+// test_atomic_method.leno —— `Atomic` 作为**类型名** + 实例方法形态（2026-11-26）
+//
+// 两件事：
+//   ① `Atomic a` 可以标注（字段 / 形参 / 局部），不再是 `any`；
+//   ② `a.add(n)` / `a.load()` 等**实例方法**可用（与 `threads.atomic_add(a, n)` 等价）。
+//
+// 为什么之前不行：VM 的方法分派里，`ic_type_supported()` 没收录 OBJ_ATOMIC ⇒
+//   `a.add()` 掉进慢路径，运行期报「类型 object 上不存在方法 'add'」。
+//   补上分派 + 内联缓存白名单即可（类型系统那侧本来就得先有 TYPE_ATOMIC）。
+import threads
+import files
+
+struct Counter {
+    Atomic hits
+    string name = ""
+}
+
+func bump(Atomic a, int n) {
+    for 0 : n - 1 to i { a.add(1) }
+}
+
+main() {
+    // ==================== ① 类型标注 ====================
+    Atomic a = threads.atomic(0)              // 显式标注（编译期成立即通过）
+    assert_eq(a.load(), 0, "① 标注 + 初值")
+
+    var c = new Counter()
+    c.hits = threads.atomic(0)
+    bump(c.hits, 3)
+    assert_eq(c.hits.load(), 3, "① struct 字段里的 Atomic（形参标注 Atomic）")
+
+    // ==================== ② 实例方法语义 ====================
+    assert_eq(a.add(5), 5, "② add 返回新值")
+    assert_eq(a.load(), 5, "② add 之后")
+    assert_eq(a.sub(2), 3, "② sub 返回新值")
+    assert_eq(a.swap(100), 3, "② swap 返回旧值")
+    assert_eq(a.load(), 100, "② swap 之后")
+    assert_true(a.cas(100, 7), "② cas 命中")
+    assert_eq(a.load(), 7, "② cas 命中后生效")
+    assert_true(not a.cas(999, 1), "② cas 未命中")
+    assert_eq(a.load(), 7, "② cas 未命中不改值")
+    a.store(0)
+    assert_eq(a.load(), 0, "② store")
+
+    // ==================== ③ 两种形态等价 ====================
+    a.add(10)
+    threads.atomic_add(a, 5)
+    assert_eq(a.load(), 15, "③ a.add 与 threads.atomic_add 等价")
+
+    // ==================== ④ 跨线程共享（方法形态） ====================
+    var shared = threads.atomic(0)
+    Array[Thread] ts = []
+    for 0 : 7 to i { ts.add(threads.start(bump, shared, 10000)) }
+    threads.join_all(ts)
+    assert_eq(shared.load(), 80000, "④ 8 线程 × 10000 次 a.add = 80000")
+
+    // ==================== ⑤ 方法名写错：编译期报错且点名 Atomic ====================
+    files.write("__atomic_bad_method.leno",
+        "import threads\nmain() {\n    var a = threads.atomic(0)\n    a.nope(1)\n}\n")
+    var r = _exec(_executable() + " --check \"__atomic_bad_method.leno\"", 30000)
+    files.delete("__atomic_bad_method.leno")
+    var out = r.output as string
+    assert_true((r.code as int) != 0, "⑤ 不存在的方法必须编译失败")
+    assert_true(out.has("Atomic"), "⑤ 报错要点名 Atomic；实际：" + out)
+
+    print("test_atomic_method passed（Atomic 标注 + 实例方法 + 跨线程 80000 + 误用报错）")
+}

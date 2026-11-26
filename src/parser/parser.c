@@ -643,6 +643,7 @@ static Ast* parse_statement_impl(Parser* p) {
         // case TOK_BINT:  // 已移除：对外统一用 int
         case TOK_FILE_TYPE:
         case TOK_SOCKET_TYPE:
+        case TOK_ATOMIC_TYPE:
         case TOK_CHANNEL_TYPE:
         case TOK_THREAD_TYPE:
         case TOK_FUTURE_TYPE:

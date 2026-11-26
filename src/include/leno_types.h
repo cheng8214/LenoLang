@@ -340,6 +340,7 @@ TOK_EXTEND,        // extend 关键字（顶层：把 target struct 的方法写
     TOK_FILE_TYPE, TOK_PTR_TYPE,
     TOK_SOCKET_TYPE,     // Socket 类型
     TOK_CHANNEL_TYPE,    // Channel 类型
+TOK_ATOMIC_TYPE,     // Atomic 类型（2026-11-26）
     TOK_THREAD_TYPE,     // Thread 类型
     TOK_FUTURE_TYPE,     // Future 类型
     // C 布局类型关键字
@@ -423,6 +424,7 @@ typedef enum {
     TYPE_PTR_GENERIC,           // 泛型指针 Ptr[T]
     TYPE_THREAD,                // 线程类型
     TYPE_CHANNEL,               // Channel 类型
+    TYPE_ATOMIC,                // Atomic 类型（2026-11-26）
     TYPE_FUTURE,                // Future 类型（异步结果）
     TYPE_SOCKET,                // Socket 类型
     TYPE_GENERIC_PARAM,         // 泛型类型参数（如 T、U）
@@ -514,6 +516,7 @@ typedef enum {
     NTYPE_FILE,
     NTYPE_SOCKET,
     NTYPE_CHANNEL,
+    NTYPE_ATOMIC,
     NTYPE_THREAD,
     NTYPE_FUTURE,
     // ---- "引用第 0 个实参"的**关系型**标签（2026-09-27）----

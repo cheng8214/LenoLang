@@ -47,5 +47,6 @@ static inline int ic_type_supported(ObjType type) {
            type == OBJ_STRUCT ||
            type == OBJ_CSTRUCT_DEF || type == OBJ_CSTRUCT ||
            type == OBJ_THREAD || type == OBJ_CHANNEL ||
+           type == OBJ_ATOMIC ||
            type == OBJ_SOCKET;
 }

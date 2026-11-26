@@ -734,7 +734,7 @@ native_register_module_method("threads", "channel", threads_channel, &NATIVE_T_C
     //   （`Atomic? a` 这类标注、`a.add()` 的静态解析链），是另一件独立的事。
     //   现在这条路径与 `arrays.xxx(...)` 同形，够用且不欠债（操作集封闭，无法绕过原子性）。
     TypeKind atomic_params[] = {TYPE_INT};
-    native_register_module_method("threads", "atomic", threads_atomic, &NATIVE_T_ANY,
+    native_register_module_method("threads", "atomic", threads_atomic, &NATIVE_T_ATOMIC,
                                   NATIVE_FIXED(atomic_params));
 
     TypeKind atom1[] = {TYPE_ANY};
