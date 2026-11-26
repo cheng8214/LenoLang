@@ -57,7 +57,11 @@ typedef enum {
 // 位分配（见 gc.c 的小对象池）：0x0F = 池 size-class 索引、0x80 = 池化位；
 // 0x40 = 「已在 remembered set 中」——用于写屏障入集的 O(1) 去重（§8.71）。
 // 该位由 gc_alloc 保证清零（新对象 obj->flags = pooled_flags 是赋值）。
-#define OBJ_FLAG_INTERNED 0x01
+// ★ 2026-11-27：0x01 原名 OBJ_FLAG_INTERNED，全仓从未使用过（只有这一行定义）
+//   ⇒ 直接改成 **FROZEN**（冻结共享对象，见 docs/大对象零拷贝共享设计.md）。
+//   为什么要这个位：冻结对象不属于任何线程堆，跨线程传递只加引用计数；
+//   它必须**永远只读**，而编译期只认得静态类型 ⇒ `any` 路径要靠这一位兜底。
+#define OBJ_FLAG_FROZEN 0x01
 #define OBJ_FLAG_IN_REMSET 0x40
 // ★ 2026-10-24：**只读对象**（`const A = [...]` / `const s = new S()` 创建的那些）。
 //   为什么要运行期标记：const 的语义是"整体不可变"，但编译期只认得"变量符号" ——
@@ -73,6 +77,12 @@ typedef enum {
 
 typedef struct Object {
     ObjType type;
+    // ★ 2026-11-27：**冻结图的对象引用计数**（0 = 普通对象，不是冻结对象）。
+    //   为什么能白拿：type(4B) 与 next(8B) 之间本来有 4 字节对齐空洞
+    //   ⇒ 塞在这里 sizeof(Object) 在 64 位下**不变**（下方有编译期断言钉住）。
+    //   语义：>0 只对 `OBJ_FLAG_FROZEN` 的对象有意义（父→子边 + 每个 VM 的注册表各一份）；
+    //         普通对象恒为 0，GC 的 sweep/晋升路径完全不看它。
+    int32_t refcnt;
     struct Object* next;
     int marked;
     uint8_t flags;
@@ -86,6 +96,12 @@ typedef struct Object {
     uint8_t owner_thread;
     size_t size;
 } Object;
+
+// ★ 2026-11-27：`refcnt` 必须落进 type 之后的对齐空洞 ⇒ 64 位下 Object 仍是 32 字节。
+//   本仓 -std=c99（无 _Static_assert），用负长度数组做编译期断言。
+//   只对 64 位断言：32 位下 type(4)+refcnt(4) 没有空洞，Object 会从 20 长到 24 —— 本仓不构建 32 位。
+typedef char leno_object_layout_check[
+    (sizeof(void*) != 8 || sizeof(Object) == 32) ? 1 : -1];
 
 // 前向声明
 struct VM;
