@@ -1713,6 +1713,9 @@ typedef struct PoolItem {
     struct PoolItem* next;
 } PoolItem;
 
+// 当前线程是否是池 worker（THREAD_LOCAL）：嵌套批次要据此回退，避免饿死
+static THREAD_LOCAL int tls_in_pool_worker = 0;
+
 static PlatformMutex   g_pool_mu;
 static PlatformCondVar g_pool_cv_work;    // worker 等任务
 static PoolItem* g_pool_head = NULL;
@@ -1767,6 +1770,7 @@ static void pool_capture_snapshot(void) {
 // worker 主循环
 static void* pool_worker_main(void* arg) {
     (void)arg;
+    tls_in_pool_worker = 1;   // 见 pool_ready()：本线程内的嵌套批次回退到独立线程
 
     VM vm;
     memset(&vm, 0, sizeof(VM));
@@ -1848,7 +1852,14 @@ static void pool_ensure_started(void) {
 int pool_worker_count(void) { return g_pool_workers; }
 
 // 池是否可用（会**懒启动**）：调用方拿它决定"走池"还是"回退到一任务一线程"
+//
+// ★★ 2026-11-26（压测发现）：**池任务内部再开批（嵌套 map/parallel_for）必须回退到独立线程**。
+//   否则经典饿死：池只有 N 个 worker，N 个外层任务把 worker 全占了、各自在里面等内层任务，
+//   而内层任务排在队列里没人跑 ⇒ **死锁**（实测 `set_pool_size(2)` + 嵌套 map，8 秒不返回）。
+//   检测方式：worker 线程自己带一个 THREAD_LOCAL 标记，看到它就让调用方走老路径
+//   （每次一条独立 OS 线程）。嵌套并行本来就少见，这个代价可以接受，胜在**不会死锁**。
 int pool_ready(void) {
+    if (tls_in_pool_worker) return 0;
     pool_ensure_started();
     return g_pool_workers > 0;
 }
@@ -1887,6 +1898,30 @@ ObjThread* thread_new_pool_task(ObjClosure* closure, Value* call_args, int call_
             t->pending_arg_count = call_arg_count;
         }
         platform_mutex_unlock(&t->mutex);
+    }
+
+    // ★★ 2026-11-26（压测抓到的真崩溃）：**必须登记进 active_threads**。
+    //   任务对象分配在调用方堆，而调用方只把它存进一个 C 数组（不是 GC 根）⇒
+    //   调用方的 GC 完全可以把"还没被 worker 跑/还没 reap"的任务对象回收掉，
+    //   而 worker 仍在往它的 mutex/result 上写 ⇒ 0xC0000005（实测 GC 压力下 1/10 复现，
+    //   fault addr 0x24 正好是 ObjThread 里 mutex 之后的字段偏移）。
+    //   active_threads 是 VM 的 GC 根之一（gc_mark_roots 会扫），普通线程也是靠它保命的；
+    //   reap 时会把本对象从中移除（见 thread_reap 末尾那段）。
+    {
+        extern THREAD_LOCAL VM* current_exec_vm;
+        extern VM vm;
+        VM* tv = current_exec_vm ? current_exec_vm : &vm;
+        if (tv->active_thread_count >= tv->active_thread_capacity) {
+            int nc = tv->active_thread_capacity == 0 ? 8 : tv->active_thread_capacity * 2;
+            ObjThread** nt = (ObjThread**)realloc(tv->active_threads, (size_t)nc * sizeof(ObjThread*));
+            if (nt) {
+                tv->active_threads = nt;
+                tv->active_thread_capacity = nc;
+            }
+        }
+        if (tv->active_threads && tv->active_thread_count < tv->active_thread_capacity) {
+            tv->active_threads[tv->active_thread_count++] = t;
+        }
     }
     return t;
 }

@@ -92,5 +92,21 @@ main() {
     int ran2 = threads.parallel_for(20, func(int i) { })
     assert_eq(ran2, 20, "⑥ 出错后 parallel_for 仍可用")
 
-    print("test_thread_pool passed（顺序正确 + 300 任务不多不少 + 30 批不泄漏 + 中途失败不打死池 + 1 万元素 " + _str(ms) + " ms）")
+    // ---------- ⑦ 嵌套批次：池任务内部再调 map 不能饿死 ----------
+    //   池只有 N 个 worker，若 N 个外层任务各自在里面等内层任务、而内层任务排在队列里
+    //   没人跑 ⇒ 死锁（实测 set_pool_size(2) + 嵌套 map 时 8 秒不返回）。
+    //   修法：worker 线程带 THREAD_LOCAL 标记，嵌套批次回退到"独立线程"老路径。
+    threads.set_pool_size(2)
+    Array[int] outerIn = []
+    for 0 : 3 to i { outerIn.add(i) }
+    var nested = threads.map(outerIn, func(int x, int i): int {
+        Array[int] inner = [x, x + 1]
+        var r = threads.map(inner, sq)
+        return _int(r[0]) + _int(r[1])
+    })
+    assert_eq(nested.len(), 4, "⑦ 嵌套 map 能返回（不死锁）")
+    assert_eq(_int(nested[0]), 1, "⑦ 嵌套 map 结果正确（0²+1²=1）")
+    assert_eq(_int(nested[3]), 3 * 3 + 4 * 4, "⑦ 嵌套 map 末项正确（9+16=25）")
+
+    print("test_thread_pool passed（顺序正确 + 300 任务不多不少 + 30 批不泄漏 + 中途失败不打死池 + 嵌套不死锁 + 1 万元素 " + _str(ms) + " ms）")
 }
