@@ -2,6 +2,7 @@
 #include "include/native.h"
 #include "include/platform_thread.h"
 #include "include/leno_vm.h"
+#include "include/leno_frozen.h"   // frozen：克隆模式常量 / 拒绝文案（2026-11-27）
 #include "include/method_table.h"
 #include "include/string_table.h"   // intern_should_intern（长串克隆的快路径判据）
 #include <stdlib.h>
@@ -183,7 +184,32 @@ void channel_unref(ObjChannel* channel);
 //     改 TLS 后同一压测 0 崩溃 ✓；下面再补一道 `cl` 上界钳位（防御性，杜绝再次下溢）✓。
 static THREAD_LOCAL char g_channel_clone_ctx[192] = "";
 
-static Value channel_clone_value(Value val, int depth);
+// ★ 2026-11-27：加 mode 参数（LENO_CLONE_CHANNEL / _FREEZE / _THAW）。
+//   为什么合并成一个函数：三者的"拒绝面"和"循环/深度保护"必须是同一份实现 ——
+//   历史上 dict 的 key 漏克隆、闭包 upvalue 漏克隆都出在这条路上，复制一份就等着漏第二遍。
+static Value channel_clone_value(Value val, int depth, int mode);
+
+static const char* obj_tag_name(int tag);   // 定义在下面（诊断文案用）
+
+// 冻结模式下的拒绝文案（与跨线程那句分开：两种能力支持的类型集合不同）
+static void channel_clone_reject_frozen(int type_tag) {
+    const char* support = "冻结只支持 标量 / string / Array / Dict / struct";
+    char kindbuf[64];
+    const char* nm = obj_tag_name(type_tag);
+    if (nm) {
+        snprintf(kindbuf, sizeof(kindbuf), "%s", nm);
+    } else {
+        snprintf(kindbuf, sizeof(kindbuf), "值类型标记 %d", type_tag);
+    }
+    char msg[384];
+    if (g_channel_clone_ctx[0] != '\0') {
+        snprintf(msg, sizeof(msg), "不能冻结此类型（来自 %s，%s）—— %s",
+                 g_channel_clone_ctx, kindbuf, support);
+    } else {
+        snprintf(msg, sizeof(msg), "不能冻结此类型（%s）—— %s", kindbuf, support);
+    }
+    native_throw_error(msg);
+}
 
 // 跨线程克隆**长字符串**（> INTERN_MAX_SHORT_LEN，永远不进内化表）：直接沿用源串的
 // `char_len` / `hash`，省掉两遍整串扫描。
@@ -277,7 +303,7 @@ static void channel_clone_reject(int type_tag) {
 //   （闭包/函数自 TH10 起已支持跨线程，不再是拒绝面 ✓）
 //   报「不能跨线程传递此类型」（由 g_channel_clone_ctx 指认是哪个字段 ✓）。
 //   ⚠ 这一层**必须**在（跨堆引用 ⇒ 收尾时同一块内存被两个堆各释放一次 ⇒ 0xC0000374 堆损坏）。
-static Value channel_clone_struct(ObjStruct* src, int depth) {
+static Value channel_clone_struct(ObjStruct* src, int depth, int mode) {
     if (!src || !src->def) {
         native_throw_error("跨线程传递 struct 失败：实例缺少结构体定义");
         return val_null();
@@ -288,8 +314,25 @@ static Value channel_clone_struct(ObjStruct* src, int depth) {
     }
 
     ObjStructDef* def = src->def;
-    ObjStruct* copy = struct_instance_new(def);
-    if (!copy) return val_null();   // gc_alloc 失败时已报过
+    ObjStruct* copy = NULL;
+    if (mode == LENO_CLONE_FREEZE) {
+        // ★ 冻结专用：**不跑 struct_instance_new 的默认值初始化**。
+        //   那个函数会先给 Array/Dict/嵌套 struct 字段各造一个默认对象，随后被逐字段覆盖
+        //   ⇒ 那些对象没人引用（冻结图只从根遍历），等于每次冻结都漏一批空容器。
+        //   这里"先有值、再建壳"，按 field_count 一次分配（与 struct_instance_new 同布局）。
+        size_t total = sizeof(ObjStruct) + (size_t)def->field_count * sizeof(Value);
+        copy = (ObjStruct*)gc_alloc(total, OBJ_STRUCT);
+        if (!copy) return val_null();
+        copy->def = def;
+        copy->field_values = (Value*)((char*)copy + sizeof(ObjStruct));
+        copy->declared_face = NULL;
+        copy->generic_type_args = NULL;
+        copy->generic_type_arg_count = 0;
+        copy->fields_inline = 1;
+    } else {
+        copy = struct_instance_new(def);
+        if (!copy) return val_null();   // gc_alloc 失败时已报过
+    }
 
     for (int i = 0; i < def->field_count; i++) {
         Value fv = src->field_values[i];
@@ -301,17 +344,26 @@ static Value channel_clone_struct(ObjStruct* src, int depth) {
         snprintf(g_channel_clone_ctx, sizeof(g_channel_clone_ctx), "%s.%s",
                  def->name ? def->name : "?", fname);
 
-        Value cloned = channel_clone_value(fv, depth + 1);
+        Value cloned = channel_clone_value(fv, depth + 1, mode);
 
         memcpy(g_channel_clone_ctx, saved_ctx, sizeof(g_channel_clone_ctx));
 
-        // 走 struct_set_field（struct 字段写入的**唯一入口** ✓）：它负责边界与写屏障 ✓
-        struct_set_field(copy, i, cloned);
+        if (mode == LENO_CLONE_FREEZE) {
+            // 冻结图不可写、不在堆里 ⇒ 不需要边界检查与写屏障，直接填
+            copy->field_values[i] = cloned;
+        } else {
+            // 走 struct_set_field（struct 字段写入的**唯一入口** ✓）：它负责边界与写屏障 ✓
+            struct_set_field(copy, i, cloned);
+        }
     }
 
     // 元数据也要带上：face 声明（`Speaker s = new Dog()` ⇒ 跨线程后仍是 face ✓）
     if (src->declared_face) {
-        ObjString* face = str_copy(src->declared_face->chars, src->declared_face->len);
+        // 冻结模式必须走 str_clone_long：str_copy 会进**本线程**的内化表，
+        //   而冻结串不进任何线程的表（表是 THREAD_LOCAL，别的线程找不到，收尾还会误删）。
+        ObjString* face = (mode == LENO_CLONE_FREEZE)
+                        ? str_clone_long(src->declared_face)
+                        : str_copy(src->declared_face->chars, src->declared_face->len);
         copy->declared_face = face;
         if (face) gc_write_barrier((Object*)copy, val_obj((Object*)face));
     }
@@ -331,7 +383,7 @@ static Value channel_clone_struct(ObjStruct* src, int depth) {
     return val_obj((Object*)copy);
 }
 
-static Value channel_clone_value(Value val, int depth) {
+static Value channel_clone_value(Value val, int depth, int mode) {
     switch (val_get_type(val)) {
         case VAL_NULL:
         case VAL_INT:
@@ -343,6 +395,11 @@ static Value channel_clone_value(Value val, int depth) {
             switch (obj->type) {
                 case OBJ_STRING: {
                     ObjString* str = (ObjString*)obj;
+                    // 冻结：一律走 str_clone_long —— 冻结串**不进任何线程的内化表**
+                    //   （表是 THREAD_LOCAL，别的线程查不到，收尾还会对已释放的指针做 intern_remove）
+                    if (mode == LENO_CLONE_FREEZE) {
+                        return val_obj((Object*)str_clone_long(str));
+                    }
                     // 长串（>40）永远不在内化表里 ⇒ 无"重复串零分配"快路径可丢，直接复用元数据 ✓
                     if (!intern_should_intern(str->len)) {
                         return val_obj((Object*)str_clone_long(str));
@@ -384,10 +441,10 @@ static Value channel_clone_value(Value val, int depth) {
                                 snprintf(g_channel_clone_ctx + cl,
                                          sizeof(g_channel_clone_ctx) - cl,
                                          "%s[%d]", cl > 0 ? "" : "数组", i);
-                                copy->elements[i] = channel_clone_value(elem, depth + 1);
+                                copy->elements[i] = channel_clone_value(elem, depth + 1, mode);
                                 memcpy(g_channel_clone_ctx, saved_ctx, sizeof(g_channel_clone_ctx));
                             } else {
-                                copy->elements[i] = channel_clone_value(elem, depth + 1);
+                                copy->elements[i] = channel_clone_value(elem, depth + 1, mode);
                             }
                         }
                     }
@@ -411,7 +468,7 @@ static Value channel_clone_value(Value val, int depth) {
                         for (int i = 0; i < dict->asize; i++) {
                             Value elem = dict->array[i];
                             if (val_is_null(elem)) continue;
-                            dict_set(copy, val_int(i), channel_clone_value(elem, depth + 1));
+                            dict_set(copy, val_int(i), channel_clone_value(elem, depth + 1, mode));
                         }
                     }
                     // 拷贝哈希表部分
@@ -424,16 +481,22 @@ static Value channel_clone_value(Value val, int depth) {
                             //   进程收尾时同一块内存被两个堆各释放一次 ⇒ **0xC0000374 堆损坏**。
                             //   实测对照（8 次采样）：跳过接收侧克隆 0/8、保留克隆 6/8；
                             //   消息换成**字符串**（无键）0/8 ⇒ 正是"dict 的键"这一条特有路径。
-                            dict_set(copy, channel_clone_value(entry_key, depth + 1),
-                                    channel_clone_value(dict->entries[i].value, depth + 1));
+                            dict_set(copy, channel_clone_value(entry_key, depth + 1, mode),
+                                    channel_clone_value(dict->entries[i].value, depth + 1, mode));
                         }
                     }
                     return val_obj((Object*)copy);
                 }
                 case OBJ_STRUCT:
                     // TH1（2026-10-12）：struct 实例也能跨线程了（深克隆 + 接收侧重建）
-                    return channel_clone_struct((ObjStruct*)obj, depth);
+                    return channel_clone_struct((ObjStruct*)obj, depth, mode);
                 case OBJ_CLOSURE: {
+                    // ★ 冻结不接受闭包：它捕获的 upvalue 会指向某条线程的栈/堆，
+                    //   冻结图要跨线程长期存活 ⇒ 指针迟早悬空。真要共享函数请只共享 `func`。
+                    if (mode == LENO_CLONE_FREEZE) {
+                        channel_clone_reject_frozen(OBJ_CLOSURE);
+                        return val_null();
+                    }
                     // TH10（2026-10-20）：闭包也能跨线程（深克隆）
                     //   ① `function` 是**只读字节码**，直接共享 —— 与"线程入口闭包"的重建同口径
                     //      （`thread_entry_point` 里就是 `child_closure->function = closure->function`）
@@ -456,7 +519,7 @@ static Value channel_clone_value(Value val, int depth) {
                     for (int i = 0; i < src->upvalue_count && i < MAX_UPVALUES; i++) {
                         Upvalue* suv = src->upvalues[i];
                         Value captured = suv ? *suv->location : val_null();
-                        Value cloned = channel_clone_value(captured, depth + 1);
+                        Value cloned = channel_clone_value(captured, depth + 1, mode);
                         Upvalue* uv = (Upvalue*)gc_alloc(sizeof(Upvalue), OBJ_UPVALUE);
                         if (!uv) {
                             copy->upvalue_count = i;   // 部分初始化（调用时缺捕获会报未定义）
@@ -470,36 +533,60 @@ static Value channel_clone_value(Value val, int depth) {
                     return val_obj((Object*)copy);
                 }
                 case OBJ_FUNCTION:
+                    // 冻结不接受函数：ObjFunction 挂在**创建线程的堆**上（S4 之前无法保证它比冻结图活得久）
+                    if (mode == LENO_CLONE_FREEZE) {
+                        channel_clone_reject_frozen(OBJ_FUNCTION);
+                        return val_null();
+                    }
                     // TH10：裸函数对象（跨模块 exports 里取到的那种）是**只读代码**，直接共享 ✓
                     //   子线程调用时由 OP_CALL 的 OBJ_FUNCTION 分支现场包一层闭包（分配在子线程堆）
                     return val;
                 case OBJ_CHANNEL: {
+                    if (mode == LENO_CLONE_FREEZE) {
+                        channel_clone_reject_frozen(OBJ_CHANNEL);
+                        return val_null();
+                    }
                     ObjChannel* ch = (ObjChannel*)obj;
                     channel_ref(ch);
                     return val_obj((Object*)ch);
                 }
                 case OBJ_ATOMIC:
+                    if (mode == LENO_CLONE_FREEZE) {
+                        channel_clone_reject_frozen(OBJ_ATOMIC);
+                        return val_null();
+                    }
                     // ★ 2026-11-26：**唯一**跨线程共享的可变对象 —— 故意不克隆。
                     //   理由：它所有访问都走原子指令（下一个人想加"非原子"字段前请先想清楚），
                     //   共享是它的全部意义（计数器 / 连接池 / 限流）。生命周期由
                     //   atomic_free_all() 在进程收尾统一负责，不进任何堆 ⇒ 不会被 GC 回收。
                     return val_obj((Object*)obj);
                 default:
-                    channel_clone_reject(obj->type);
+                    if (mode == LENO_CLONE_FREEZE) channel_clone_reject_frozen(obj->type);
+                    else channel_clone_reject(obj->type);
                     return val_null();
             }
         }
         default:
             // 对象就报**对象类型**（能翻成人话），非对象才退回值标记
-            channel_clone_reject(val_is_obj(val) ? (int)val_as_obj(val)->type
-                                                : (int)val_get_type(val));
+            if (mode == LENO_CLONE_FREEZE) {
+                channel_clone_reject_frozen(val_is_obj(val) ? (int)val_as_obj(val)->type
+                                                            : (int)val_get_type(val));
+            } else {
+                channel_clone_reject(val_is_obj(val) ? (int)val_as_obj(val)->type
+                                                    : (int)val_get_type(val));
+            }
             return val_null();
     }
 }
 
 // 跨线程传值的**唯一闸门**（对外入口，符号名不变 —— 多处调用点依赖它 ✓）
 Value value_clone_for_channel(Value val) {
-    return channel_clone_value(val, 0);
+    return channel_clone_value(val, 0, LENO_CLONE_CHANNEL);
+}
+
+// ★ 2026-11-27：冻结/解冻共用的深拷贝入口（对象头 leno_frozen.h 的契约）
+Value leno_clone_value(Value val, int mode) {
+    return channel_clone_value(val, 0, mode);
 }
 
 // ============================================================================

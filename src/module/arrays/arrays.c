@@ -24,8 +24,8 @@ static Value arr_len(int argc, Value* args) {
 //   ⚠ 只放 mutator：len/has/copy/map/filter/flatten/sum/join/reduce/index_of 都是只读操作 ✓
 #define ARR_REJECT_READONLY()                                                          \
     do {                                                                              \
-        if (obj_is_readonly(args[0])) {                                               \
-            native_throw_error("const 数组不可修改（const 是**整体不可变**：需要可变数组请声明为 var）"); \
+        if (obj_is_immutable(args[0])) {                                              \
+            native_throw_error(immutable_msg(args[0], "const 数组不可修改（const 是**整体不可变**：需要可变数组请声明为 var）")); \
             return val_null();                                                        \
         }                                                                             \
     } while (0)

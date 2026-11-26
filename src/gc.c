@@ -42,6 +42,7 @@
 #include "include/string_table.h"
 #include "include/native.h"
 #include "include/leno_vm.h"
+#include "include/leno_frozen.h"   // frozen 图的分配/统计/注册表（2026-11-27）
 // guis module removed
 #include <stdlib.h>
 #include <stdio.h>
@@ -695,11 +696,54 @@ void gc_free_detached(void* p) {
 // 对象分配
 // ============================================================================
 
+// ============================================================================
+// ★ 2026-11-27：frozen 图的分配（见 LenoDocsSrc/大对象零拷贝共享设计.md §4.2）
+// ----------------------------------------------------------------------------
+// 为什么要绕开常规分配：frozen 对象属于**堆外共享区**，跨线程零拷贝、引用计数存活。
+//   一旦被挂进 young_heap/old_heap，线程退出时整堆会被 free ⇒ 别的线程立刻 UAF。
+//   也不能池化：gc_free_object 的池化路径会 memset 32B 再挂回 free_list，与 refcount 冲突。
+// 做法：`_freeze` 期间打开 g_frozen_build 开关，让**所有** gc_alloc 走这条（构造器不用改）。
+//   开关是 THREAD_LOCAL：子线程同时在自己的堆里正常分配，互不干扰 ✓
+// ============================================================================
+static THREAD_LOCAL int g_frozen_build = 0;
+
+int gc_frozen_build_begin(void) {
+    int prev = g_frozen_build;
+    g_frozen_build = 1;
+    return prev;
+}
+
+void gc_frozen_build_end(int prev) { g_frozen_build = prev; }
+
+int gc_in_frozen_build(void) { return g_frozen_build; }
+
+Object* gc_alloc_frozen_object(size_t size, ObjType type) {
+    Object* obj = (Object*)malloc(size);
+    if (!obj) {
+        error_add_at_fmt(ERR_RUNTIME, 0, 0, "冻结对象内存分配失败");
+        return NULL;
+    }
+    memset(obj, 0, size);
+    obj->type = type;
+    obj->flags = 0;              // FROZEN 位由 frozen_finalize 统一打（构建期不拦自己的写）
+    obj->generation = GEN_YOUNG; // 写屏障据此早退（frozen 永不进 remembered set）
+    obj->survived = 0;
+    obj->marked = 1;             // 同时被 frozen_finalize 当"已访问"标记用
+    obj->owner_thread = 0xFF;    // 0xFF = 不属于任何线程堆
+    obj->refcnt = 0;             // 父→子边由 finalize 统计；根由 VM 注册表持有一份
+    obj->size = size;
+    obj->next = NULL;            // 绝不进堆链
+    return obj;
+}
+
 // 分配 GC 管理的对象，新对象分配到年轻代
 // 注意：不再同步触发 GC，仅设置 deferred_gc 标志。
 // 由 GUI 事件循环在帧间（draw callback 返回后）调用 gc_try_collect_deferred() 执行。
 // 这样一帧内创建几百个对象时不会产生多次 GC 暂停。
 Object* gc_alloc(size_t size, ObjType type) {
+    // 冻结构建期：一律堆外分配（含 str/dict/struct 内部构造），不做阈值判断
+    if (g_frozen_build) return gc_alloc_frozen_object(size, type);
+
     // 年轻代分配超阈值时设置延迟 GC 标志（不在此处同步执行）
     if (gc.enabled && !gc.running &&
         (gc.young_allocated + size > gc.young_threshold ||
@@ -848,6 +892,16 @@ void gc_force_collect(void) {
 // 跟踪非 GC 对象的内存变化（如动态数组扩容）
 // 同时更新 obj->size，确保分代晋升时内存计数正确转移
 void gc_track_memory(Object* obj, size_t old_size, size_t new_size) {
+    // ★ 2026-11-27：冻结构建期**不进本线程账面**。
+    //   否则 `_freeze(100MB)` 会把 young_allocated 顶到阈值以上，而 frozen 永远回收不掉
+    //   ⇒ 每次分配都请求一次 GC、每次 GC 都收不回一个字节（空转）。
+    //   字节数改记到全局 frozen 账（`_mem()` 单列），对象自身 size 照常累加（引用计数释放时按它扣减）。
+    if (g_frozen_build) {
+        if (new_size > old_size) frozen_stats_add((long)(new_size - old_size), 0);
+        else if (old_size > new_size) frozen_stats_add(-(long)(old_size - new_size), 0);
+        if (obj) obj->size = obj->size - old_size + new_size;
+        return;
+    }
     if (new_size > old_size) {
         size_t diff = new_size - old_size;
         if (obj && obj->generation == GEN_OLD) {
@@ -2898,6 +2952,12 @@ void gc_free_all(void) {
         gc.vm->active_thread_count = 0;
         gc.vm->active_thread_capacity = 0;
     }
+
+    // ★ 2026-11-27：释放本 VM 持有的全部 frozen 引用。
+    //   frozen 图在**堆外**、靠引用计数存活（GC 摸不到它）⇒ 必须显式放光，否则整图泄漏。
+    //   放在"worker 已 join"之后、堆释放之前：图里只持有 ObjStructDef* 之类的只读指针，
+    //   释放时**不读**它们，所以与堆的先后无关；放在这里是为了让冻结字节尽早归零。
+    if (gc.vm) frozen_reg_release_all(gc.vm);
 
     // 释放全局作用域
     if (gc.vm && gc.vm->global_scope) {

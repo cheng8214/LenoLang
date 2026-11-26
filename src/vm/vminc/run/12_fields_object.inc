@@ -128,8 +128,8 @@
             DISPATCH();                                                               \
         }                                                                             \
         /* ★ 2026-10-24：const 深保护 —— `const s = new S()` 的实例字段也不许写。 */  \
-        if (unlikely(obj_is_readonly(obj))) {                                         \
-            if (!throw_runtime_error("const 对象的字段不可修改（const 是**整体不可变**：需要可变对象请声明为 var）", line)) return -1; \
+        if (unlikely(obj_is_immutable(obj))) {                                        \
+            if (!throw_runtime_error(immutable_msg(obj, "const 对象的字段不可修改（const 是**整体不可变**：需要可变对象请声明为 var）"), line)) return -1; \
             frame = &vm.frames[vm.frame_cnt - 1];                                     \
             DISPATCH();                                                               \
         }                                                                             \

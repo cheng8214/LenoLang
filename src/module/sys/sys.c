@@ -4,6 +4,7 @@
 #include "include/platform_thread.h"  // PlatformMutex（_spawn/_kill 的槽位表要加锁）
 #include "include/leno_types.h"  // MAX_PATH_LEN
 #include "include/leno_vm.h"     // 2026-10-19：_gc_stats / _mem（读 VM 的活动线程表 + GC 计数）
+#include "include/leno_frozen.h" // 2026-11-27：_freeze / _thaw / _is_frozen
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1638,6 +1639,14 @@ static Value native_gc_stats(int argCount, Value* args) {
     sys_dict_put_bool(d, "enabled", enabled);
     sys_dict_put_int(d, "active_threads", active);
     sys_dict_put_int(d, "thread_pending_bytes", pending);
+    // ★ 2026-11-27：冻结对象单列 —— 它在**堆外**、不计入 young/old（计入会让 GC 空转），
+    //   但账必须看得见，否则"内存去哪了"只能靠猜。
+    {
+        size_t fbytes = 0, fobjs = 0;
+        frozen_get_stats(&fbytes, &fobjs);
+        sys_dict_put_int(d, "frozen_bytes", (long long)fbytes);
+        sys_dict_put_int(d, "frozen_objs", (long long)fobjs);
+    }
     return val_obj((Object*)d);
 }
 
@@ -1731,6 +1740,13 @@ void sys_init_globals(void) {
     // 2026-10-19：观测接口（只读字段；只在调用时执行 ⇒ 对热路径零开销）
     vm_register_native("_gc_stats", native_gc_stats, TYPE_DICT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
     vm_register_native("_mem", native_mem, TYPE_DICT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+
+    // ★ 2026-11-27：冻结对象（大对象跨线程零拷贝共享；见 LenoDocsSrc/大对象零拷贝共享设计.md）
+    //   注册在这里只是"就近"（与 _gc/_mem 同一家族），实现全在 src/object/object_frozen.c ✓
+    //   S1 先按 TYPE_ANY 注册；S1b 会给 `_freeze` 加"跟随实参"的返回类型规格。
+    vm_register_native("_freeze", frozen_native_freeze, TYPE_ANY, TYPE_UNKNOWN, NATIVE_VARARG(1, 1, 0, NULL, TYPE_ANY));
+    vm_register_native("_thaw", frozen_native_thaw, TYPE_ANY, TYPE_UNKNOWN, NATIVE_VARARG(1, 1, 0, NULL, TYPE_ANY));
+    vm_register_native("_is_frozen", frozen_native_is_frozen, TYPE_BOOL, TYPE_UNKNOWN, NATIVE_VARARG(1, 1, 0, NULL, TYPE_ANY));
 
     // 注册全局 _os 函数（返回 string，0 个参数）
     vm_register_native("_os", native_os, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));

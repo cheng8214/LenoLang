@@ -72,9 +72,9 @@
         // ★ 2026-10-24：const 深保护 —— `arr.add(x)` 被 codegen 融合成这条指令
         //   （见 codegen_expr.c 的 gen_method_call），所以**必须在这里也查一次**，
         //   否则 `const A = [1]; tryMut(A)` 里 add 照样能改（实测漏过一次 ✗）。
-        if (unlikely(obj_is_readonly(R(b)))) {
+        if (unlikely(obj_is_immutable(R(b)))) {
             int rline = GET_CURRENT_LINE();
-            if (!throw_runtime_error("const 数组不可修改（const 是**整体不可变**：需要可变数组请声明为 var）", rline)) return -1;
+            if (!throw_runtime_error(immutable_msg(R(b), "const 数组不可修改（const 是**整体不可变**：需要可变数组请声明为 var）"), rline)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
@@ -680,9 +680,9 @@
         int a = READ_A(), b = READ_B(), c = READ_C();
         ObjDict* dd = (ObjDict*)val_as_obj(R(b));
         // ★ 2026-10-24：const 深保护（同 OP_INDEX_SET）
-        if (unlikely(obj_is_readonly(R(b)))) {
+        if (unlikely(obj_is_immutable(R(b)))) {
             int rline = GET_CURRENT_LINE();
-            if (!throw_runtime_error("const 容器不可修改（const 是**整体不可变**：需要可变值请声明为 var）", rline)) return -1;
+            if (!throw_runtime_error(immutable_msg(R(b), "const 容器不可修改（const 是**整体不可变**：需要可变值请声明为 var）"), rline)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
@@ -708,8 +708,8 @@
         // ★ 2026-10-24：**const 深保护** —— 只读对象一律拒绝下标写。
         //   `const A = [1,2]; tryMut(A)` 里函数体拿到的是形参（不是 const）⇒ 编译期拦不住，
         //   靠 OP_LOCK_REF 打的这一位兜住（round8 N14）。
-        if (unlikely(obj_is_readonly(obj))) {
-            if (!throw_runtime_error("const 容器不可修改（const 是**整体不可变**：需要可变值请声明为 var）", line)) return -1;
+        if (unlikely(obj_is_immutable(obj))) {
+            if (!throw_runtime_error(immutable_msg(obj, "const 容器不可修改（const 是**整体不可变**：需要可变值请声明为 var）"), line)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
@@ -1001,9 +1001,9 @@
         ARRAY_SPECIALIZED_NULL_GUARD(b);
         ObjArray* arr = (ObjArray*)val_as_obj(R(b));
         // ★ 2026-10-24：const 深保护（同 OP_INDEX_SET）
-        if (unlikely(obj_is_readonly(R(b)))) {
+        if (unlikely(obj_is_immutable(R(b)))) {
             int rline = GET_CURRENT_LINE();
-            if (!throw_runtime_error("const 数组不可修改（const 是**整体不可变**：需要可变数组请声明为 var）", rline)) return -1;
+            if (!throw_runtime_error(immutable_msg(R(b), "const 数组不可修改（const 是**整体不可变**：需要可变数组请声明为 var）"), rline)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }
@@ -1029,9 +1029,9 @@
     LABEL(OP_INDEX_SET_ARRAY_IMM): {
         int a = READ_A(), b = READ_B();
         // ★ 2026-10-24：const 深保护（同 OP_INDEX_SET）
-        if (unlikely(obj_is_readonly(R(b)))) {
+        if (unlikely(obj_is_immutable(R(b)))) {
             int rline = GET_CURRENT_LINE();
-            if (!throw_runtime_error("const 数组不可修改（const 是**整体不可变**：需要可变数组请声明为 var）", rline)) return -1;
+            if (!throw_runtime_error(immutable_msg(R(b), "const 数组不可修改（const 是**整体不可变**：需要可变数组请声明为 var）"), rline)) return -1;
             frame = &vm.frames[vm.frame_cnt - 1];
             DISPATCH();
         }

@@ -57,11 +57,14 @@ typedef enum {
 // 位分配（见 gc.c 的小对象池）：0x0F = 池 size-class 索引、0x80 = 池化位；
 // 0x40 = 「已在 remembered set 中」——用于写屏障入集的 O(1) 去重（§8.71）。
 // 该位由 gc_alloc 保证清零（新对象 obj->flags = pooled_flags 是赋值）。
-// ★ 2026-11-27：0x01 原名 OBJ_FLAG_INTERNED，全仓从未使用过（只有这一行定义）
-//   ⇒ 直接改成 **FROZEN**（冻结共享对象，见 docs/大对象零拷贝共享设计.md）。
+// ★ 2026-11-27：**frozen**（冻结共享对象，见 LenoDocsSrc/大对象零拷贝共享设计.md）
 //   为什么要这个位：冻结对象不属于任何线程堆，跨线程传递只加引用计数；
 //   它必须**永远只读**，而编译期只认得静态类型 ⇒ `any` 路径要靠这一位兜底。
-#define OBJ_FLAG_FROZEN 0x01
+//   ⚠ 位选 0x10，**不能**用 0x01 —— 低 4 位是池化 size-class 索引
+//     （`GC_POOL_CLASS_MASK 0x0F`，见 gc.c:371）⇒ 任何奇数 class 的池化小对象都会
+//     被误判成 frozen（实测：全量断言 88 个失败，全是"数组不可修改"）。
+//     0x01 原名 OBJ_FLAG_INTERNED、全仓从未使用，但它同样与 class 索引冲突，别复用。
+#define OBJ_FLAG_FROZEN 0x10
 #define OBJ_FLAG_IN_REMSET 0x40
 // ★ 2026-10-24：**只读对象**（`const A = [...]` / `const s = new S()` 创建的那些）。
 //   为什么要运行期标记：const 的语义是"整体不可变"，但编译期只认得"变量符号" ——
@@ -313,6 +316,29 @@ static inline Object* val_as_obj(Value v) {
 static inline int obj_is_readonly(Value v) {
     if (!val_is_obj(v)) return 0;
     return (val_as_obj(v)->flags & OBJ_FLAG_READONLY) != 0;
+}
+
+// ★ 2026-11-27：**冻结对象**（`_freeze()` 产生的共享只读图；见 LenoDocsSrc/大对象零拷贝共享设计.md）。
+//   与 const 的 READONLY 位刻意分开：两者的生命周期与文案都不一样 ——
+//     · const  = 「本堆里、只是不许写」，由 GC 正常回收；
+//     · frozen = 「堆外共享区、跨线程零拷贝」，靠引用计数存活，GC 永不回收它。
+//   判据唯一实现：写指令与 native mutator 都调 obj_is_immutable（= 两者之一）✓
+static inline int obj_is_frozen(Value v) {
+    if (!val_is_obj(v)) return 0;
+    return (val_as_obj(v)->flags & OBJ_FLAG_FROZEN) != 0;
+}
+
+static inline int obj_is_immutable(Value v) {
+    if (!val_is_obj(v)) return 0;
+    return (val_as_obj(v)->flags & (OBJ_FLAG_READONLY | OBJ_FLAG_FROZEN)) != 0;
+}
+
+// 不可改写失败时的文案：frozen 要给出**可执行的解法**（_thaw），否则用户只能猜。
+static inline const char* immutable_msg(Value v, const char* const_msg) {
+    if (obj_is_frozen(v)) {
+        return "冻结对象（frozen）不可修改 —— 需要可变副本请用 _thaw() 复制一份";
+    }
+    return const_msg;
 }
 
 static inline Value val_num(double n) {

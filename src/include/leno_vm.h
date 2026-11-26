@@ -1454,6 +1454,22 @@ typedef struct VM {
     unsigned char* tls_slot_ready;  // 每个槽是否已按默认值初始化（0/1）
     int tls_slot_count;             // 已分配槽位数
     int tls_slot_capacity;          // tls_slots / tls_slot_ready 的容量
+    // ========================================================================
+    // ★ 2026-11-27：**冻结对象注册表**（frozen，见 LenoDocsSrc/大对象零拷贝共享设计.md §5）
+    // ------------------------------------------------------------------------
+    // 为什么需要：frozen 图不在任何线程堆里 ⇒ GC 的标记-清除摸不到它，
+    //   存活完全靠引用计数。而引用计数**不在每次赋值上加减**（那样比深拷贝还贵），
+    //   改为「本 VM 用过哪些 frozen 对象」登记一次、VM 退出时统一释放 ⇒
+    //   VM 活着期间任何局部变量/容器里的指针都天然保活 ✓
+    // 结构：开放寻址哈希表 ptr→count（count 恒为 1，保留给"同一对象多次 acquire"去重）；
+    //   删除用墓碑（FROZEN_REG_TOMBSTONE），因为池任务要按 epoch 局部释放。
+    // ⚠ 它不是 GC 对象、不参与 mark（frozen 按定义永不被 GC 回收）。
+    Object** frozen_keys;
+    int*     frozen_counts;      // 引用次数（去重计数；0 = 空槽）
+    int*     frozen_epochs;      // 登记时的任务世代（frozen_reg_release_since 用）
+    int      frozen_cap;         // 槽数（0 或 2 的幂）
+    int      frozen_cnt;         // 活跃条目数
+    int      frozen_epoch;       // 当前世代（每次 frozen_reg_mark 递增）
 } VM;
 
 // 主线程使用全局 VM（效率第一）

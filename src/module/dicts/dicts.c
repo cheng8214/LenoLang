@@ -37,8 +37,8 @@ static Value dict_method_get(int argc, Value* args) {
 //   ⚠ 只放 mutator：len/has/get/keys/values/items/copy 都是只读操作 ✓
 #define DICT_REJECT_READONLY()                                                         \
     do {                                                                              \
-        if (obj_is_readonly(args[0])) {                                               \
-            native_throw_error("const 字典不可修改（const 是**整体不可变**：需要可变字典请声明为 var）"); \
+        if (obj_is_immutable(args[0])) {                                              \
+            native_throw_error(immutable_msg(args[0], "const 字典不可修改（const 是**整体不可变**：需要可变字典请声明为 var）")); \
             return val_null();                                                        \
         }                                                                             \
     } while (0)
