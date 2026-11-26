@@ -494,25 +494,25 @@ static void gc_pool_free_all(void) {
 }
 
 // ============================================================================
-// 子线程堆的“摘下 → 谁最后引用谁释放”
+// 子线程堆的"摘下 → 谁最后引用谁释放"
 // ----------------------------------------------------------------------------
 // ★ 2026-11-20（修 Aria 切歌内存只涨不降）：
-//   旧做法：只有“本线程没用过 channel”时才摘堆（gc_heap_detach_allowed）。用过 channel
+//   旧做法：只有"本线程没用过 channel"时才摘堆（gc_heap_detach_allowed）。用过 channel
 //   的线程（= 所有往通道回结果的 worker）整堆被 TLS 遗弃 —— 进程内再没有任何入口能
 //   释放它。实测每线程固定 75KB 起（带 30KB 负载时 2MB+），切歌一次起 3 条线程 ⇒
 //   内存线性上涨、永不回落。
 //   现在改成引用计数：
-//     · 线程第一次 send 时建一条“发送记录”（GCDeadHeap，refs=0）；
+//     · 线程第一次 send 时建一条"发送记录"（GCDeadHeap，refs=0）；
 //     · 每成功 send 一次，该 channel 槽的 owner 指向这条记录，refs++；
 //     · 线程退出时**总是**摘堆（active_thread_count==0 时）：把 young/old/pool 头填进
 //       这条记录；refs==0 且没被 ObjThread 钉住 ⇒ 立刻整堆释放；
 //     · receive / try_receive / try_take 取走一个槽时 refs--，减到 0 的人负责释放。
 //   安全性两条：
-//     ① 只有“没有任何 channel 槽还指向这个堆”时才 free —— 槽在 channel mutex 内先清空
+//     ① 只有"没有任何 channel 槽还指向这个堆"时才 free —— 槽在 channel mutex 内先清空
 //        再减计数，所以随后的 GC 不可能再从槽里标记到它；
 //     ② 反过来，**先前**那轮 GC 可能已经标记了这些对象、还压在它的 mark_stack 上
-//        （mark_stack 是 THREAD_LOCAL，排空在 GC 结束时）⇒ 用 g_gc_inflight 记“正在跑的
-//        GC 数”，非 0 就把死堆挂到待释放链，最后一轮 GC 收尾时统一 free。
+//        （mark_stack 是 THREAD_LOCAL，排空在 GC 结束时）⇒ 用 g_gc_inflight 记"正在跑的
+//        GC 数"，非 0 就把死堆挂到待释放链，最后一轮 GC 收尾时统一 free。
 // ============================================================================
 typedef struct GCDeadHeap {
     Object* young_heap;
@@ -567,8 +567,8 @@ static void dead_heap_maybe_free(GCDeadHeap* d) {
 }
 
 // 本线程的发送记录：首次 send 时建，线程退出摘堆时填堆头（见 gc_detach_heap ✓）
-//   ⚠ 建出来就带 1 个引用，代表“本线程还活着” —— 退出时由 gc_detach_heap_finish 放掉。
-//     这样“槽位减到 0”和“线程退出”永远只有一方能把计数减到 0，不会两个人都以为自己该释放 ✗
+//   ⚠ 建出来就带 1 个引用，代表"本线程还活着" —— 退出时由 gc_detach_heap_finish 放掉。
+//     这样"槽位减到 0"和"线程退出"永远只有一方能把计数减到 0，不会两个人都以为自己该释放 ✗
 void* gc_dead_heap_record(void) {
     if (!tls_send_rec) {
         tls_send_rec = (GCDeadHeap*)calloc(1, sizeof(GCDeadHeap));
@@ -595,7 +595,7 @@ void gc_dead_heap_unref(void* h) {
 }
 
 // 摘堆收尾：keep_ref=1 ⇒ 这份堆先交给 ObjThread 持有（result 是对象，join 还要从堆里克隆）；
-// 然后放掉“本线程”那一份。**返回后 h 可能已被释放，调用方不得再碰它** ✓
+// 然后放掉"本线程"那一份。**返回后 h 可能已被释放，调用方不得再碰它** ✓
 void gc_detach_heap_finish(void* h, int keep_ref) {
     GCDeadHeap* d = (GCDeadHeap*)h;
     if (!d) return;
@@ -629,7 +629,7 @@ static void free_object_resources_ex(Object* obj, int remove_intern);   // 定�
 
 void* gc_detach_heap(void) {
     // 发送记录可能早就建好了（首次 send 时），这里把堆头填进同一条记录里 ⇒
-    //   channel 槽里存的 owner 指针不需要再改（省掉“退出时扫全局 channel 找属主” ✓）
+    //   channel 槽里存的 owner 指针不需要再改（省掉"退出时扫全局 channel 找属主" ✓）
     GCDeadHeap* d = tls_send_rec;
     if (!d) {
         d = (GCDeadHeap*)calloc(1, sizeof(GCDeadHeap));
@@ -919,6 +919,11 @@ static void mark_stack_push(Object* obj) {
 // 对每个子引用调用 gc_mark_object / gc_mark_value（标记 + 压栈）
 void gc_scan_children(Object* obj) {
     switch (obj->type) {
+        // Atomic（2026-11-26）：**没有子引用** —— 它只装一个 int64，
+        //   而且是 malloc 的（不进任何堆链表）⇒ 扫到它什么都不用做。
+        //   ⚠ 必须有这条：缺了它 -Wswitch 会警告，将来真加了字段也容易忘。
+        case OBJ_ATOMIC:
+            break;
         // 闭包：标记函数和所有 upvalue
         case OBJ_CLOSURE: {
             ObjClosure* closure = (ObjClosure*)obj;
@@ -1352,6 +1357,7 @@ static const char* gc_obj_type_name(int t) {
         case OBJ_MODULE:      return "Module";
         case OBJ_COROUTINE:   return "Coroutine";
         case OBJ_CHANNEL:     return "Channel";
+        case OBJ_ATOMIC:      return "Atomic";
         case OBJ_THREAD:      return "Thread";
         case OBJ_NATIVE:      return "Native";
         case OBJ_FACE_DEF:    return "FaceDef";
@@ -1399,7 +1405,7 @@ static void gc_verify_ref(Object* child) {
     //   ② Channel 是 malloc 的、Thread 由线程系统跨 VM 交接（全局标记由各自线程负责）；
     //   ③ 别人堆上的对象（跨堆引用合法，本 VM 的 marked 位对它没有意义）。
     if (child->type == OBJ_FFI_LIBRARY || child->type == OBJ_CHANNEL ||
-        child->type == OBJ_THREAD) return;
+        child->type == OBJ_THREAD || child->type == OBJ_ATOMIC) return;
     if (gc.vm && child->owner_thread != gc.vm->thread_serial) return;
     if (child->marked) return;
     // Minor GC 只扫年轻代：老年代子对象本来就不标记 ⇒ 只对年轻代子对象要求 marked
@@ -1472,7 +1478,8 @@ static void gc_verify_roots(void) {
                 if (o->owner_thread != gc.vm->thread_serial) continue;
                 // 这两类不走普通堆语义：Channel 是 malloc 的（不进任何堆链表，channel_free_all 收尾）、
                 // Thread 由线程系统跨 VM 交接 ⇒ 出现在寄存器里完全正常。
-                if (o->type == OBJ_CHANNEL || o->type == OBJ_THREAD) continue;
+                if (o->type == OBJ_CHANNEL || o->type == OBJ_THREAD ||
+                    o->type == OBJ_ATOMIC) continue;   // Atomic 也是 malloc 的、跨线程共享
                 fprintf(stderr,
                         "[GC-VERIFY] 悬空根：帧 %d 的寄存器 %d 指向**不在堆上**的对象 %p"
                         "（type=%s owner_thread=%d 本VM serial=%d）\n"
@@ -1824,6 +1831,7 @@ static void mark_roots(void) {
     number_mark_methods();
     thread_mark_methods();
     channel_mark_methods();
+    atomic_mark_methods();
     cstruct_mark_methods();
     struct_mark_methods();
 
@@ -2946,9 +2954,9 @@ void gc_free_all(void) {
     // 释放所有池块（池化对象槽内存随块释放）
     gc_pool_free_all();
 
-    // ★ 2026-11-20：把“等 GC 结束才释放”的死堆也收掉（进程收尾，不必再看 inflight）
+    // ★ 2026-11-20：把"等 GC 结束才释放"的死堆也收掉（进程收尾，不必再看 inflight）
     //   ⚠ 不释放 tls_send_rec 本身：它可能还被 channel 槽当着 owner 用（主线程的堆永不摘，
-    //     记录就活到进程结束）。它是 32 字节，收尾时留给 OS 比“先 free 再被 unref”安全 ✓
+    //     记录就活到进程结束）。它是 32 字节，收尾时留给 OS 比"先 free 再被 unref"安全 ✓
     gc_drain_pending();
 
     // 释放内化字符串表

@@ -2791,6 +2791,7 @@ int wmain(int argc, wchar_t* wargv[]) {
     module_ast_exports_cache_clear();
     // Channel 是 malloc + 引用计数的非 GC 对象 ⇒ GC 收不到，必须在这里整链收尾
     channel_free_all();
+        atomic_free_all();   // Atomic 也是非 GC 对象（见 ObjAtomic 的说明）
 
     // 释放内存
     for (int i = 0; i < argc; i++) {
@@ -2808,6 +2809,7 @@ int main(int argc, char* argv[]) {
     module_ast_exports_cache_clear();
     // Channel 是 malloc + 引用计数的非 GC 对象 ⇒ GC 收不到，必须在这里整链收尾
     channel_free_all();
+        atomic_free_all();   // Atomic 也是非 GC 对象（见 ObjAtomic 的说明）
     return result;
 }
 #endif

@@ -100,6 +100,58 @@ void channel_mark_methods(void) {
 }
 
 // ============================================================================
+// Atomic 方法注册表（2026-11-26）—— 结构同 Channel，只是对象是"共享的原子整数"
+// ============================================================================
+#define ATOMIC_METHOD_TABLE_INITIAL_CAPACITY 8
+
+static THREAD_LOCAL MethodTable atomicMethodTable = {NULL, 0, 0};
+
+void atomic_method_table_cleanup(void) { method_table_free(&atomicMethodTable); }
+
+void atomic_register_method(const char* name, ObjNative* method,
+                            TypeKind return_type, TypeKind return_element_type,
+                            NativeParamSpec params) {
+    method_table_register_method(&atomicMethodTable, "Atomic", name, method,
+                                 return_type, return_element_type, params);
+}
+
+ObjNative* atomic_find_method(const char* name) {
+    return method_table_find(&atomicMethodTable, name);
+}
+
+void atomic_init_methods(void) {
+    method_table_init_methods(&atomicMethodTable, ATOMIC_METHOD_TABLE_INITIAL_CAPACITY);
+}
+
+void atomic_mark_methods(void) {
+    method_table_mark(&atomicMethodTable);
+}
+
+// 全局登记链（与 Channel 同口径：非 GC 对象，收尾统一释放）
+static ObjAtomic* g_atomic_all = NULL;
+
+ObjAtomic* atomic_new(int64_t init) {
+    ObjAtomic* a = (ObjAtomic*)calloc(1, sizeof(ObjAtomic));
+    if (!a) return NULL;
+    a->header.type = OBJ_ATOMIC;
+    a->header.owner_thread = 0;     // 不归属任何堆：跨线程共享
+    a->value = init;
+    // 登记到全局链：一次原子交换完成"取旧头 + 换新头"（多线程同时创建也安全）
+#ifdef _WIN32
+    a->all_next = (ObjAtomic*)InterlockedExchangePointer((PVOID volatile*)&g_atomic_all, a);
+#else
+    a->all_next = __atomic_exchange_n(&g_atomic_all, a, __ATOMIC_SEQ_CST);
+#endif
+    return a;
+}
+
+void atomic_free_all(void) {
+    ObjAtomic* a = g_atomic_all;
+    while (a) { ObjAtomic* n = a->all_next; free(a); a = n; }
+    g_atomic_all = NULL;
+}
+
+// ============================================================================
 // 值深拷贝（跨 VM 安全）
 // ============================================================================
 
@@ -423,6 +475,12 @@ static Value channel_clone_value(Value val, int depth) {
                     channel_ref(ch);
                     return val_obj((Object*)ch);
                 }
+                case OBJ_ATOMIC:
+                    // ★ 2026-11-26：**唯一**跨线程共享的可变对象 —— 故意不克隆。
+                    //   理由：它所有访问都走原子指令（下一个人想加"非原子"字段前请先想清楚），
+                    //   共享是它的全部意义（计数器 / 连接池 / 限流）。生命周期由
+                    //   atomic_free_all() 在进程收尾统一负责，不进任何堆 ⇒ 不会被 GC 回收。
+                    return val_obj((Object*)obj);
                 default:
                     channel_clone_reject(obj->type);
                     return val_null();
@@ -918,6 +976,7 @@ static void* thread_entry_point(void* arg) {
         socket_method_table_cleanup();
         thread_method_table_cleanup();
         channel_method_table_cleanup();
+    atomic_method_table_cleanup();
         struct_method_table_cleanup();
         arr_free_list_release_all();
     }

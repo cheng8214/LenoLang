@@ -47,6 +47,7 @@ typedef enum {
     OBJ_THREAD,     // 线程对象
     OBJ_CHANNEL,    // Channel 对象
     OBJ_SOCKET,       // Socket 对象
+    OBJ_ATOMIC,       // 原子整数（2026-11-26）：跨线程**共享**的可变状态
     OBJ_NONE,       // 无效/空类型标记
     OBJ_INT,        // int 类型标记（内联缓存用）
     OBJ_FLOAT,      // float 类型标记（内联缓存用）
@@ -980,6 +981,23 @@ typedef struct ObjThread {
     //   没人 join 时由 free_object_resources 的 unpin 兜底 ✓
     void* dead_heap;
 } ObjThread;
+
+// 原子整数（2026-11-26）—— 跨线程**共享**的可变状态
+// ----------------------------------------------------------------------------
+// 为什么需要它：Leno 的并发模型是 shared-nothing（跨线程一律深克隆，见 M14），
+//   于是"多个线程累加同一个计数器"根本表达不出来（每个线程各改各的副本）。
+//   而裸 `lock()/unlock()` 一旦忘记解锁就是**静默死锁**，与"不能有静默错误"冲突。
+//   ⇒ 只提供**封闭操作集**（add/sub/load/store/cas/swap），由 VM 保证原子性，
+//     用不上锁、也漏不掉解锁。
+//
+// 生命周期：与 ffi 库对象同口径 —— malloc 分配、**永不回收**，登记全局链由
+//   atomic_free_all() 在进程收尾时统一释放。不做引用计数（Atomic 跨线程共享是常态，
+//   计数的收益远小于它带来的 double-free 风险）。
+typedef struct ObjAtomic {
+    Object header;
+    volatile int64_t value;
+    struct ObjAtomic* all_next;   // 全局登记链（收尾统一释放）
+} ObjAtomic;
 
 // Channel 对象
 typedef struct ObjChannel {
@@ -1937,6 +1955,16 @@ ObjNative* file_find_method(const char* name);
 
 ObjNative* thread_find_method(const char* name);
 ObjNative* channel_find_method(const char* name);
+
+// 原子整数（2026-11-26）：跨线程共享的可变状态，封闭操作集（add/sub/load/store/cas/swap）
+ObjNative* atomic_find_method(const char* name);
+void atomic_register_method(const char* name, ObjNative* method,
+                            TypeKind return_type, TypeKind return_element_type,
+                            NativeParamSpec params);
+void atomic_init_methods(void);
+void atomic_mark_methods(void);
+void atomic_free_all(void);
+ObjAtomic* atomic_new(int64_t init);
 
 void thread_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,
