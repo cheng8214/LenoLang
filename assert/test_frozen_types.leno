@@ -1,0 +1,112 @@
+// test_frozen_types.leno —— frozen 与类型系统的交互（face / as / 可空 / 泛型 / 只读方法）
+//
+// 判据：
+//   ① `Frozen[P]` 不能赋给 face（只读视图 vs 可变视图）—— 而且**文案必须说清是 frozen 的问题**，
+//      不能报成"struct 未实现 face"（实测误报过，已修）
+//   ② `as any` + `is P` 能读（运行期收窄不受 frozen 影响）
+//   ③ 可空：`== null` / `?.` / `??` 都正常
+//   ④ 泛型实参：`G[Frozen[Array[int]]]` 的字段可读
+//   ⑤ Dict 的值类型可以是 Frozen[...]
+//   ⑥ 只读方法可用：join / sum / index_of / copy / keys / values / items
+//   ⑦ `map` / `filter` 产出的是**新的可变数组**（能 add）
+//   ⑧ `type()` 不含 Frozen 字样（编译期概念不进运行期）
+//   ⑨ `_freeze(null)` 的静态类型不是 void（`var n = _freeze(null)` 不报警告，见 --check）
+import threads
+
+face Named {
+    func name(): string
+}
+
+struct P impl Named {
+    string n = ""
+    func name(): string { return self.n }
+}
+
+struct G[T] {
+    T v
+}
+
+main() {
+    P p = new P(n = "pp")
+    Frozen[P] fp = _freeze(p)
+    assert_eq(fp.name(), "pp", "①冻结 struct 自己的只读方法照常可调")
+
+    // ================= ① face：编译期要拒，且文案要提 frozen =================
+    var chk = _exec(_executable() + " --check assert/fixture_frozen_face_err.leno", 30000)
+    if chk is ExecResult {
+        assert_eq(_int(chk.code) != 0, true, "①Frozen[P] 不能当 face 用")
+        var out = _str(chk.output)
+        assert_eq(has_sub(out, "只读视图"), true, "①文案要解释 frozen（实际：" + out + "）")
+        assert_eq(has_sub(out, "未实现 face"), false, "①不能误报成没实现 face")
+    } else {
+        assert_eq(1, 0, "①--check 子进程没跑起来")
+    }
+
+    // ================= ② as any + is 收窄 =================
+    var pa = fp as any
+    var rown = ""
+    if pa is P => pv {
+        rown = pv.n
+    }
+    assert_eq(rown, "pp", "②any 中转后 is 收窄可读")
+
+    // ================= ③ 可空 =================
+    Frozen[P]? maybe = null
+    assert_eq(maybe == null, true, "③未赋值是 null")
+    maybe = fp
+    assert_eq(maybe == null, false, "③赋值后非 null")
+    var nm = maybe?.name() ?? "none"
+    assert_eq(nm, "pp", "③?. 与 ?? 正常")
+
+    // ================= ④ 泛型实参 =================
+    G[Frozen[Array[int]]] g = new G[Frozen[Array[int]]](v = _freeze([1, 2]))
+    assert_eq(g.v.len(), 2, "④泛型字段装 frozen")
+    assert_eq(_is_frozen(g.v), true, "④字段仍是 frozen")
+
+    // ================= ⑤ Dict 值类型是 frozen =================
+    Dict[string, Frozen[Array[int]]] dm = {}
+    dm.set("a", _freeze([9, 8]))
+    assert_eq(dm.get("a", null).len(), 2, "⑤dict 值可以装 frozen")
+
+    // ================= ⑥ 只读方法 =================
+    Frozen[Array[int]] nums = _freeze([3, 1, 2])
+    assert_eq(nums.join(","), "3,1,2", "⑥join")
+    assert_eq(_int(nums.sum()), 6, "⑥sum")
+    assert_eq(nums.index_of(1), 1, "⑥index_of")
+    assert_eq(nums.copy().len(), 3, "⑥copy")
+    assert_eq(nums.has(2), true, "⑥has")
+
+    Dict[string, int] dsrc = {}
+    dsrc.set("a", 1)
+    var fd = _freeze(dsrc)
+    assert_eq(fd.keys().len(), 1, "⑥keys")
+    assert_eq(fd.values().len(), 1, "⑥values")
+    assert_eq(fd.items().len(), 1, "⑥items")
+
+    // ================= ⑦ map / filter 产出可变新数组 =================
+    var doubled = nums.map(func(int x) { return x * 2 })
+    doubled.add(100)
+    assert_eq(doubled.len(), 4, "⑦map 结果是可变数组（能 add）")
+    var big = nums.filter(func(int x) { return x > 1 })
+    big.add(7)
+    assert_eq(big.len(), 3, "⑦filter 结果也是可变数组")
+    assert_eq(nums.len(), 3, "⑦原冻结数组不受影响")
+
+    // ================= ⑧ type() 不含 Frozen =================
+    var tn = type(nums)
+    assert_eq(has_sub(tn, "Frozen"), false, "⑧运行期类型名不该出现 Frozen（实际 " + tn + "）")
+
+    // ================= ⑨ _freeze(null) =================
+    var nv = _freeze(null)
+    assert_eq(nv == null, true, "⑨_freeze(null) 就是 null")
+
+    print("test_frozen_types passed")
+}
+
+func has_sub(string text, string needle): bool {
+    if text.len() < needle.len() { return false }
+    for 0 : text.len() - needle.len() to i {
+        if text[i : i + needle.len() - 1] == needle { return true }
+    }
+    return false
+}

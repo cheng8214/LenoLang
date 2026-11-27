@@ -1,0 +1,103 @@
+// test_frozen_semantics.leno —— frozen 的语义边界（空 / null / 长度 / 深度 / 环 / 幂等）
+//
+// 这些是"不测就会在用户那边炸"的边角：
+//   ① 空容器能不能冻、冻完 len 是几
+//   ② `_freeze(null)` 的静态类型不能变成 void（否则 `var n = _freeze(null)` 会误报警告）
+//   ③ 长字符串（> 40 走 str_clone_long 那条路）
+//   ④ 大字典（1 万键，哈希/顺序表两条路径都要走到）
+//   ⑤ 深度上限：63/64 层能冻，超过 64 层必须**明确报错**（不能栈溢出、不能静默截断）
+//   ⑥ 三种环（自引 / 间接 / 字典回指）都必须报错
+//   ⑦ 幂等：`_freeze(已有 frozen)` 不重复拷贝
+
+// 造 N 层嵌套（返回 any 才能逐层套）
+func wrap(any x, int n): any {
+    if n <= 0 { return x }
+    Array[any] arr = []
+    arr.add(x)
+    return wrap(arr, n - 1)
+}
+
+main() {
+    // ================= ① 空容器 =================
+    var empty = []
+    var fe = _freeze(empty)
+    assert_eq(fe.len(), 0, "①空数组")
+    assert_eq(_is_frozen(fe), true, "①空数组也带 frozen 位")
+
+    Dict[string, int] ed = {}
+    var fed = _freeze(ed)
+    assert_eq(fed.len(), 0, "①空字典")
+
+    // ================= ② `_freeze(null)` =================
+    var nn = _freeze(null)
+    assert_eq(nn == null, true, "②_freeze(null) 就返回 null")
+
+    // ================= ③ 长字符串（中文，> 40 走长串克隆） =================
+    var longstr = ""
+    for 0 : 499 to i { longstr = longstr + "中" }
+    Frozen[Array[string]] fs = _freeze([longstr, "短"])
+    assert_eq(fs[0].len(), 500, "③长串正文完整")
+    assert_eq(fs[0][499], "中", "③长串末字正确")
+    assert_eq(fs[1], "短", "③短串正确")
+
+    // ================= ④ 大字典 =================
+    Dict[string, int] bigd = {}
+    for 0 : 9999 to i { bigd.set("k" + _str(i), i) }
+    var fbig = _freeze(bigd)
+    assert_eq(fbig.len(), 10000, "④冻结大字典长度")
+    assert_eq(fbig.get("k5000", -1), 5000, "④随机键取值")
+    assert_eq(fbig.has("k9999"), true, "④has 末键")
+
+    // ================= ⑤ 深度上限 =================
+    var ok40 = _freeze(wrap(42, 40))
+    assert_eq(_is_frozen(ok40), true, "⑤40 层可以冻")
+    var ok60 = _freeze(wrap(42, 60))
+    assert_eq(_is_frozen(ok60), true, "⑤60 层可以冻")
+    var tooDeep = false
+    try { _freeze(wrap(42, 70)) } catch e { tooDeep = true }
+    assert_eq(tooDeep, true, "⑤超过 64 层必须报错（不能栈溢出）")
+
+    // ================= ⑥ 三种环 =================
+    var selfref = []
+    selfref.add(selfref)
+    var t1 = false
+    try { _freeze(selfref) } catch e { t1 = true }
+    assert_eq(t1, true, "⑥自引必须报错")
+
+    var a = []
+    var b = []
+    a.add(b)
+    b.add(a)
+    var t2 = false
+    try { _freeze(a) } catch e { t2 = true }
+    assert_eq(t2, true, "⑥间接环必须报错")
+
+    var dc = {}
+    dc.set("me", dc)
+    var t3 = false
+    try { _freeze(dc) } catch e { t3 = true }
+    assert_eq(t3, true, "⑥字典回指必须报错")
+
+    // ================= ⑦ 幂等 =================
+    Frozen[Array[int]] once = _freeze([1, 2, 3])
+    Frozen[Array[int]] twice = _freeze(once)
+    assert_eq(twice.len(), 3, "⑦重复冻结幂等")
+    assert_eq(_is_frozen(twice), true, "⑦仍是 frozen")
+
+    // ================= ⑧ 快照：冻完再改原件，冻结那份不变 =================
+    var src = [1, 2, 3]
+    Frozen[Array[int]] snap = _freeze(src)
+    src.add(4)
+    src[0] = 99
+    assert_eq(snap.len(), 3, "⑧冻结的是快照")
+    assert_eq(snap[0], 1, "⑧元素不受原件修改影响")
+
+    // ================= ⑨ struct 里的空字段 =================
+    struct Empty { int v = 0; Array[int] list = [] }
+    var eo = new Empty(v = 1)
+    var feo = _freeze(eo)
+    assert_eq(feo.v, 1, "⑨空数组字段可冻")
+    assert_eq(feo.list.len(), 0, "⑨空数组字段长度")
+
+    print("test_frozen_semantics passed")
+}

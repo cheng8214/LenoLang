@@ -1,0 +1,106 @@
+// test_frozen_concurrency.leno —— frozen 的并发场景（多线程同图 / 线程返回 / 批量原语 / 并发冻结）
+//
+// 判据：
+//   ① 同一张冻结图同时给 4 条线程（4 组通道对），四边都能读到完整数据且仍是 frozen
+//   ② 子线程**自己冻结并 return** ⇒ join 取回后仍可读、仍是 frozen
+//   ③ `parallel_for` 的闭包捕获 frozen（引用共享，非副本）
+//   ④ 4 条线程**同时各自 _freeze** 不同数据（注册表是每 VM 一份，不能互相踩）
+//   ⑤ 所有线程都退出后，主线程继续读自己那张图
+import threads
+
+func reader(any pair) {
+    if pair is Array {
+        var cin = pair[0] as Channel
+        var cout = pair[1] as Channel
+        var got = cin.receive()
+        if got is Array[int] => a {
+            cout.send([a.len(), a[0], _is_frozen(a)])
+        } else {
+            cout.send([-1, -1, false])
+        }
+    }
+}
+
+// 子线程里冻结再返回（返回值要克隆回主线程）
+func make_in_thread(): any {
+    var local = []
+    for 0 : 999 to i { local.add(i * 2) }
+    return _freeze(local)
+}
+
+main() {
+    var big = []
+    for 0 : 99999 to i { big.add(i) }
+    Frozen[Array[int]] snap = _freeze(big)
+
+    // ================= ① 同一张图给 4 条线程 =================
+    var pairs = []
+    for 0 : 3 to i {
+        pairs.add([threads.channel(1), threads.channel(1)])
+    }
+    var ts = []
+    for 0 : 3 to i {
+        ts.add(threads.start(reader, pairs[i]))
+    }
+    for 0 : 3 to i {
+        var ins = pairs[i] as Array[any]
+        var c = ins[0] as Channel
+        c.send(snap)
+    }
+    for 0 : 3 to i {
+        var outs = pairs[i] as Array[any]
+        var c2 = outs[1] as Channel
+        var r = c2.receive() as Array[any]
+        assert_eq(_int(r[0]), 100000, "①第 " + _str(i) + " 条线程看到的长度")
+        assert_eq(_int(r[1]), 0, "①第 " + _str(i) + " 条线程的元素")
+        assert_eq(_bool(r[2]), true, "①第 " + _str(i) + " 条线程仍是 frozen")
+    }
+    for ts to t { t.join() }
+
+    // ================= ② 线程返回 frozen =================
+    var t2 = threads.start(make_in_thread)
+    var ret = t2.join()
+    if ret is Array[int] => ra {
+        assert_eq(ra.len(), 1000, "②线程返回的冻结图长度")
+        assert_eq(ra[999], 1998, "②元素正确")
+        assert_eq(_is_frozen(ra), true, "②join 取回后仍是 frozen")
+    } else {
+        assert_eq(1, 0, "②应取回数组")
+    }
+
+    // ================= ③ parallel_for 捕获 frozen =================
+    var ch = threads.channel(8)
+    Frozen[Array[int]] cap = _freeze([100, 200, 300])
+    var n = threads.parallel_for(4, func(int i) {
+        ch.send(cap.len() + cap[i % 3])
+    })
+    var sum = 0
+    for 0 : n - 1 to k { sum = sum + _int(ch.receive()) }
+    // (3+100)+(3+200)+(3+300)+(3+100) = 712
+    assert_eq(sum, 712, "③闭包捕获 frozen（4 个任务都读到同一张图）")
+
+    // ================= ④ 并发冻结（各自冻、各自报） =================
+    var ch2 = threads.channel(4)
+    var ts2 = []
+    for 0 : 3 to i {
+        ts2.add(threads.start(func() {
+            var own = []
+            for 0 : 99 to j { own.add(j + 1000) }
+            var f = _freeze(own)
+            ch2.send([f.len(), f[0], _is_frozen(f)])
+        }))
+    }
+    for 0 : 3 to i {
+        var x = ch2.receive() as Array[any]
+        assert_eq(_int(x[0]), 100, "④并发冻结的长度")
+        assert_eq(_int(x[1]), 1000, "④并发冻结的首元素")
+        assert_eq(_bool(x[2]), true, "④并发冻结仍是 frozen")
+    }
+    for ts2 to t3 { t3.join() }
+
+    // ================= ⑤ 线程都退出后主线程继续读 =================
+    assert_eq(snap[99999], 99999, "⑤线程退出后主线程仍能读")
+    assert_eq(snap.len(), 100000, "⑤长度不变")
+
+    print("test_frozen_concurrency passed")
+}

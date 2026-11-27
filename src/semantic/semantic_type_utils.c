@@ -1792,6 +1792,21 @@ static void format_detailed_type_error_ex(char* buf, size_t buf_size,
                           expected_buf, actual_buf);
     }
     
+    // ★ 2026-11-27：**frozen 与可变双向不兼容** ⇒ 用专用提示，别落进通用建议。
+    //   为什么单列：通用路径会给出「数组类型是不变的」这类**误导**建议，
+    //   而 face 分支更糟 —— 会说「struct 'P' 未实现 face 'Named'」（明明实现了，
+    //   真正原因是"只读视图不能当可变 face 用"）。实测 `Named nn = _freeze(p)` 就撞这个。
+    if (expected && actual && expected->frozen != actual->frozen) {
+        const char* fz_hint = actual->frozen
+            ? "Frozen[...] 是只读视图，不能当可变值用：要改请 `_thaw()` 深拷贝一份，"
+              "或把目标声明成 `Frozen[...]`"
+            : "可变值不能当只读保证用：请先 `_freeze()` 得到 `Frozen[...]`"
+              "（直接把可变值标成只读会让静态保证变假）";
+        if ((size_t)offset < buf_size - 1) {
+            snprintf(buf + offset, buf_size - offset, "\n  %s", fz_hint);
+        }
+        return;
+    }
     // 添加转换建议
     if (expected && actual) {
         const char* hint = get_type_conversion_hint(expected->kind, actual->kind);

@@ -324,7 +324,9 @@
                             // 如果是 struct 未实现 face，追加提示（做成尾串 ⇒ 不必先拼整条消息 ✓）
                             char face_hint[256];
                             face_hint[0] = '\0';
-                            if (ast->u.var_decl.type->kind == TYPE_FACE && init_type->kind == TYPE_STRUCT
+                            //   ⚠ frozen 源码要排除：它跟 face 不兼容是**只读视图**的问题，
+                            //     不是"没实现 face"（实测误报「struct 'P' 未实现 face 'Named'」✗）
+                            if (!init_type->frozen && ast->u.var_decl.type->kind == TYPE_FACE && init_type->kind == TYPE_STRUCT
                                 && ast->u.var_decl.type->struct_name && init_type->struct_name) {
                                 snprintf(face_hint, sizeof(face_hint), " (struct '%s' 未实现 face '%s'，请添加 impl: struct %s impl %s { ... })",
                                     init_type->struct_name, ast->u.var_decl.type->struct_name,

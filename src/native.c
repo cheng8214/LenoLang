@@ -987,6 +987,12 @@ static TypeInfo* native_arg0_part_to_info(TypeInfo* arg0, NativeTypeTag tag) {
     // ★ 2026-11-27：`_freeze` / `_thaw` —— 返回"与实参同形"的类型，只改 frozen 位。
     //   `Frozen[Frozen[X]]` 不产生嵌套：先在副本上清位再置位 ✓
     if (tag == NTYPE_ARG0_FROZEN || tag == NTYPE_ARG0_THAWED) {
+        // `_freeze(null)` / 实参类型未知：**不**推成 `Frozen[null]`（那会让
+        //   `var n = _freeze(null)` 被当成 void 返回值而报警告），回落到 any ✓
+        if (arg0->kind == TYPE_NULL || arg0->kind == TYPE_UNKNOWN ||
+            arg0->kind == TYPE_INFER || arg0->kind == TYPE_ANY) {
+            return NULL;
+        }
         TypeInfo* copy = type_copy(arg0);
         if (!copy) return NULL;
         copy->frozen = (tag == NTYPE_ARG0_FROZEN) ? 1 : 0;

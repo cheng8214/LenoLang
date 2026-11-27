@@ -1,0 +1,18 @@
+// fixture_frozen_face_err.leno —— **应当编译失败**：Frozen[P] 不能赋给 face
+// 为什么要钉这条文案：face 的不匹配提示原本会说「struct 'P' 未实现 face 'Named'」，
+//   而 P 明明实现了 —— 真因是"只读视图不能当可变 face 用"（已修，见 test_frozen_types ①）。
+face Named {
+    func name(): string
+}
+
+struct P impl Named {
+    string n = ""
+    func name(): string { return self.n }
+}
+
+main() {
+    P p = new P(n = "x")
+    Frozen[P] fp = _freeze(p)
+    Named nn = fp          // ✗ 只读视图不能当可变 face
+    print(nn.name())
+}
