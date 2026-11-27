@@ -11,6 +11,21 @@ import threads
 var req = threads.channel(1)
 var res = threads.channel(1)
 
+// S4 用：struct 的“类型定义”在主线程加载模块时创建（owner_thread == 0）⇒ 冻结后可以跨线程
+struct FP {
+    int x = 0
+    string tag = ""
+}
+
+// 子线程里**冻结自己 new 的 struct**，再把冻结图送回主线程（子线程随后退出）
+func freeze_worker(any c) {
+    if c is Channel {
+        FP p = new FP(x = 42, tag = "from-child")
+        Frozen[FP] fp = _freeze(p)
+        c.send(fp)
+    }
+}
+
 // 小工具：输出里是否含某段（不额外依赖 strings 模块）
 func has_sub(string text, string needle): bool {
     if text.len() < needle.len() { return false }
@@ -101,6 +116,20 @@ main() {
     t5.join()
     assert_eq(child_len, 4, "④子线程改的是自己的副本")
     assert_eq(mutable.len(), 3, "④父线程的数组不受影响")
+
+    // ================= ⑤ S4：子线程冻结 struct → 子线程退出 → 主线程读 =================
+    //   冻结图带的是 `def` 裸指针，def 在**主线程堆**上（owner_thread == 0）⇒ 安全；
+    //   若 def 归子线程堆，_freeze 会**显式拒绝**（见 object_frozen.c 的 S4 注释）。
+    var ch3 = threads.channel(1)
+    var t6 = threads.start(freeze_worker, ch3)
+    var fp = ch3.receive()
+    t6.join()                                   // 子线程退出、堆已摘
+    if fp is FP => p2 {
+        assert_eq(p2.x, 42, "⑤子线程冻结的 struct 字段仍可读")
+        assert_eq(p2.tag, "from-child", "⑤string 字段仍可读")
+    } else {
+        assert_eq(1, 0, "⑤收到的应该是 struct")
+    }
 
     print("test_frozen_thread passed")
 }

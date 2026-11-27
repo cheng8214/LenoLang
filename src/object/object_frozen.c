@@ -176,6 +176,18 @@ static int fz_check_value(Value v, int depth) {
                 native_throw_error("冻结 struct 失败：实例缺少结构体定义");
                 return 0;
             }
+            // ★ 2026-11-27（S4）：**def 的堆归属**。
+            //   frozen struct 只带 `def` 裸指针（不复制定义：方法/字段布局必须与类型系统一致），
+            //   而 ObjStructDef 分配在**创建它的线程的堆**上（`owner_thread`：0 = 主线程）。
+            //   冻结图会比那个线程活得久 ⇒ 若 def 归某个子线程堆，那条线程一退出、
+            //   堆被释放，读 `f.x` 时按 def->field_count/fields 定位就直接读已释放内存。
+            //   ⇒ 能做的只有**显式拒绝**（比静默悬空好），并给出可执行的做法。
+            if (s->def->header.owner_thread != 0) {
+                native_throw_error("冻结 struct 失败：这个 struct 的类型定义是在子线程里创建/加载的，"
+                                   "它的堆会随线程退出而销毁。请在主线程先加载该模块（或在模块级声明 struct），"
+                                   "再冻结它的实例");
+                return 0;
+            }
             int n = s->def->field_count;
             for (int i = 0; i < n; i++) {
                 if (!fz_check_value(s->field_values[i], depth + 1)) return 0;
