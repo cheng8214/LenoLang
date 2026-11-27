@@ -539,9 +539,14 @@ build\leno.exe assert\run_tests.leno build\leno.exe assert
 
 :: 仓库内 examples 全量
 build\leno.exe --check <file>
+
+:: 改了语言/模块之后要打包（-p）时：先重建 VM 基底
+::   build.bat 只重建 leno.exe；-p 内嵌的是 leno_vm.exe（另有 GUI 版）
+::   漏了这步 ⇒ 打包产物是旧运行时，运行时报「未找到 native 函数」
+build_vm.bat
 ```
 
-**提交前必须全绿**：断言 573/573、`examples` 812/812。
+**提交前必须全绿**：断言 685/685、`examples` 812/812。
 
 ---
 
