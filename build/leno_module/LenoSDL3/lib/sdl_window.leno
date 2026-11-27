@@ -1,4 +1,4 @@
-// sdl_window.leno — SDL3 窗口封装
+﻿// sdl_window.leno — SDL3 窗口封装
 //
 // 提供两种使用模式：
 // 1. run() 回调模式（推荐）：
@@ -2961,6 +2961,13 @@ pri func _tickDt(int wid): float {
             if _needRedraw and not _fullFrame and not core.hasWindowRedraw() {
                 _fullFrame = true
             }
+            // ★ 2026-11-27：空闲让出 CPU。
+            //   主循环是 `while true { poll; render }` 的**非阻塞轮询**，没有任何休眠 ——
+            //   窗口静止时事件队列永远为空、`_needRedraw` 为假，循环却全速转。
+            //   实测：空窗口（无定时器、无控件、只 clear）跑 12 秒吃掉 66% 单核。
+            //   这里只在"既没事件、也没任何窗口要求重绘"时睡 1ms；
+            //   有事件 / 有重绘请求 / 定时器到点（都会置 _needRedraw）⇒ 不睡，帧率不受影响。
+            if not _needRedraw and not _hadEvent { core.delay(4) }
             // ★ 2026-11-21：后台时**不出帧**（Android surface 已销毁）。
             //   `_needRedraw` 保留不清 ⇒ 回前台那一拍自然会画（不必额外再置一次 ✓）
             if _needRedraw and not _backgrounded {
