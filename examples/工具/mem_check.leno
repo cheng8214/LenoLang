@@ -1,0 +1,224 @@
+// mem_check.leno — 内存完整性 / 坏块自测（纯 Leno + ffi）
+//
+// 用法:
+//   build\leno.exe examples\工具\mem_check.leno           :: 默认 8 块 × 512KB
+//   build\leno.exe examples\工具\mem_check.leno 32 1048576 :: 32 块 × 1MB
+//
+// 测什么（**只能测本进程拿得到的虚拟内存**，测不了物理内存条 —— 那要 MemTest86 那种
+// 带内核驱动/裸机的工具）：
+//   ① 块完整性：同时分配 N 块，每块填不同字节值，再逐字节读回校验
+//      ⇒ 能发现「读回值与写入值不符」以及「块之间互相串写」
+//   ② 越界写检测：给 B 块填守卫值，把 A 块**正好写满**，看 B 的守卫有没有被动
+//   ③ GC 堆数据完整性：造大量对象 → 触发多轮 GC → 逐个校验内容没被破坏
+//   ④ 碎片化：反复分配/释放不同大小，最后确认还能拿到一块大的
+//
+// 退出码：0 = 全过；1 = 有失败（便于脚本里判断）
+import ffi
+import files
+import strings
+import times
+import maths
+
+var passed = 0
+var failed = 0
+
+func check(string name, bool ok, string extra = "") {
+    if ok {
+        print("  [PASS] " + name + (if extra == "" then "" else "  (" + extra + ")"))
+        passed = passed + 1
+    } else {
+        print("  [FAIL] " + name + (if extra == "" then "" else "  (" + extra + ")"))
+        failed = failed + 1
+    }
+}
+
+// 逐字节校验一整块：返回 {badCount, firstBad}
+func verifyBlock(Ptr p, int size, int expect): Dict {
+    var bad = 0
+    var first = -1
+    // 分 64KB 一次读，避免一次生成几 MB 的 Array[int]
+    int chunk = 65536
+    var off = 0
+    while off < size {
+        var n = chunk
+        if off + n > size { n = size - off }
+        var s = ffi.read_bytes(p, off, n)
+        Array[int] b = s.to_bytes()
+        for 0:b.len()-1 to k {
+            if b[k] != expect {
+                bad = bad + 1
+                if first < 0 { first = off + k }
+            }
+        }
+        off = off + n
+    }
+    return {badCount: bad, firstBad: first}
+}
+
+// ==================== ① 块完整性 ====================
+func testBlocks(int nblocks, int bsize): bool {
+    print("")
+    print("① 块完整性：" + _str(nblocks) + " 块 × " + _str(bsize / 1024) + "KB = "
+          + _str(nblocks * bsize / 1024 / 1024) + "MB")
+    int t0 = _int(times.ms())
+    Array[Ptr] ptrs = []
+    for 0:nblocks-1 to i {
+        Ptr p = ffi.malloc(bsize)
+        if p == null {
+            print("  [FAIL] 第 " + _str(i) + " 块 malloc 失败（内存不足？）")
+            for ptrs to q { ffi.free(q) }
+            return false
+        }
+        ptrs.add(p)
+    }
+    // 每块填不同的值（块间互串会立刻暴露）
+    for 0:nblocks-1 to i {
+        ffi.memset(ptrs[i], 0x30 + i, bsize)
+    }
+    var allOk = true
+    var totalBad = 0
+    for 0:nblocks-1 to i {
+        var r = verifyBlock(ptrs[i], bsize, 0x30 + i)
+        int bad = r["badCount"] as int
+        if bad > 0 {
+            allOk = false
+            totalBad = totalBad + bad
+            print("  块 " + _str(i) + " 有 " + _str(bad) + " 字节不符，首个偏移 "
+                  + _str(r["firstBad"] as int))
+        }
+    }
+    for ptrs to q { ffi.free(q) }
+    int ms = _int(times.ms()) - t0
+    check("块完整性", allOk, "坏字节 " + _str(totalBad) + "，耗时 " + _str(ms) + "ms")
+    return allOk
+}
+
+// ==================== ② 越界写检测 ====================
+func testOverrun(): bool {
+    print("")
+    print("② 越界写检测（A 正好写满，B 的守卫值不能被动）")
+    int sz = 262144
+    Ptr a = ffi.malloc(sz)
+    Ptr b = ffi.malloc(sz)
+    if a == null or b == null {
+        check("越界写检测", false, "malloc 失败")
+        return false
+    }
+    bool ok = false
+    try {
+        ffi.memset(b, 0xEE, sz)                  // B 填守卫值
+        ffi.memset(a, 0x11, sz)                  // A 正好写满（不多写一个字节）
+        var rb = verifyBlock(b, sz, 0xEE)
+        var ra = verifyBlock(a, sz, 0x11)
+        int badB = rb["badCount"] as int
+        int badA = ra["badCount"] as int
+        ok = badA == 0 and badB == 0
+        if badB > 0 {
+            print("  B 块被写坏 " + _str(badB) + " 字节（首个偏移 " + _str(rb["firstBad"] as int) + "）")
+        }
+        check("A 写满不越界、B 守卫完好", ok)
+    } finally {
+        ffi.free(a)
+        ffi.free(b)
+    }
+    return ok
+}
+
+// ==================== ③ GC 堆数据完整性 ====================
+func testGcHeap(): bool {
+    print("")
+    print("③ GC 堆数据完整性（大量对象 → 多轮 GC → 校验内容）")
+    int t0 = _int(times.ms())
+    int n = 20000
+    Array[string] keep = []
+    // 造一批内容可验证的字符串（保留一半，另一半随时丢弃给 GC 制造压力）
+    for 0:n-1 to i {
+        var s = "obj-" + _str(i) + "-" + _str(i * 7)
+        if i % 2 == 0 { keep.add(s) }
+        else {
+            // 临时对象：用完就扔（每 2000 个做一次大分配，推动 GC）
+            if i % 2000 == 0 {
+                Array[int] junk = []
+                for 0:2000-1 to k { junk.add(k) }
+            }
+        }
+    }
+    var allOk = true
+    for 0:keep.len()-1 to i {
+        int idx = i * 2
+        var want = "obj-" + _str(idx) + "-" + _str(idx * 7)
+        if keep[i] != want {
+            allOk = false
+            print("  keep[" + _str(i) + "] 内容被破坏：期望「" + want + "」实际「" + keep[i] + "」")
+            break
+        }
+    }
+    var d = _gc_stats()
+    int minor = d["minor_count"] as int
+    int major = d["major_count"] as int
+    int ms = _int(times.ms()) - t0
+    check("GC 堆数据完整性", allOk,
+          "存活 " + _str(keep.len()) + " 个对象，minor " + _str(minor) + " / major "
+          + _str(major) + "，耗时 " + _str(ms) + "ms")
+    return allOk
+}
+
+// ==================== ④ 碎片化 ====================
+func testFragmentation(): bool {
+    print("")
+    print("④ 碎片化（反复分配/释放不同大小，最后还要能拿到连续大块）")
+    int t0 = _int(times.ms())
+    Array[Ptr] live = []
+    var seed = 12345
+    for 0:3000-1 to i {
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        int sz = 64 + seed % 4096
+        Ptr p = ffi.malloc(sz)
+        if p != null {
+            ffi.write_byte(p, 0, 0xA5)           // 摸一下，确保真的可写
+            live.add(p)
+        }
+        // 随机释放一半，制造空洞
+        if i % 2 == 0 and live.len() > 0 {
+            int at = seed % live.len()
+            ffi.free(live[at])
+            live.remove(at)
+        }
+    }
+    // 全部释放后再要一大块
+    for live to q { ffi.free(q) }
+    int bigSize = 4 * 1024 * 1024
+    Ptr big = ffi.malloc(bigSize)
+    var ok = big != null
+    if ok {
+        ffi.memset(big, 0x5A, bigSize)
+        var r = verifyBlock(big, 65536, 0x5A)    // 抽前 64KB 校验（省时间）
+        ok = (r["badCount"] as int) == 0
+        ffi.free(big)
+    }
+    int ms = _int(times.ms()) - t0
+    check("碎片后仍能分配并写满 4MB", ok, "耗时 " + _str(ms) + "ms")
+    return ok
+}
+
+main() {
+    var args = _args()
+    int nblocks = 8
+    int bsize = 512 * 1024
+    if args.len() >= 1 { nblocks = _int(args[0]) }
+    if args.len() >= 2 { bsize = _int(args[1]) }
+
+    print("=== Leno 内存完整性测试 ===")
+    print("进程：" + _str(_pid()) + "  平台：" + _os() + "  块数：" + _str(nblocks)
+          + " × " + _str(bsize / 1024) + "KB")
+
+    testBlocks(nblocks, bsize)
+    testOverrun()
+    testGcHeap()
+    testFragmentation()
+
+    print("")
+    print("========================================")
+    print("Results: " + _str(passed) + " passed, " + _str(failed) + " failed")
+    if failed > 0 { _exit(1) }
+}
