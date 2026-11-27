@@ -8,6 +8,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect; use core.sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ScrollView/Table 共用 ✓）
 import "sdl_tooltip.leno" as tip
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
@@ -31,6 +32,7 @@ export struct ListBox impl Widget, Themeable {
     Dict[int, bool] _selMap = {}  // 选中索引映射（O(1) 查找，与 _sel 同步维护）
     pri float itemH = 24.0          // 行高
     pri float scroll = 0.0          // 已向下滚动的像素（0 = 顶部）
+    pri ScrollPhys phys             // ★ 2026-11-27 物理滚动：滚轮加速 + 撞界回弹（见 dispY/pump_scroll）
     pri int hover = -1              // 当前悬停行索引（-1 无）
     float _fontSize = 15.0; pri string fontPath = ""; pri int fontStyle = 0; Font? _font
     int _mode = MODE_SINGLE       // 选择模式（MODE_SINGLE/MODE_MULTI）
@@ -84,6 +86,18 @@ export struct ListBox impl Widget, Themeable {
     pri func clamp_scroll() {
         // ★ 2026-11-01：两行手写夹取 ⇒ maths.clamp（同样的写法在 6 个滚动控件里各抄过一遍）
         scroll = maths.clamp(scroll, 0.0, max_scroll())
+    }
+    // ---- 物理滚动（2026-11-27，与 ScrollView/Table 共用 sdl_scrollphys）----
+    //   位置仍是上面的 `scroll`（行索引、滚动条几何都按它算），内核只管速度 + 弹性越界量
+    pri func dispY(): float { return scroll + phys.overY }
+    //   ⚠ 结尾必须 requestRedraw 续帧，否则事件循环挂起 ⇒ "滚了不动、动鼠标才动"✗
+    pri func pump_scroll() {
+        var[float, float](_nx, ny) = phys.pump(scroll, scroll, 0.0, max_scroll())
+        if ny != scroll { scroll = ny; core.markFrameRedraw() }
+        if phys.is_moving() {
+            core.markFrameRedraw()
+            core.requestRedraw()
+        }
     }
 
     // ==================== 布局接口 ====================
@@ -321,8 +335,10 @@ export struct ListBox impl Widget, Themeable {
         scroll = max_scroll()
         clamp_scroll()
     }
-    func scroll_to_bottom() { scroll = max_scroll(); clamp_scroll() }
-    func scroll_to_top()    { scroll = 0.0; clamp_scroll() }
+    // ★ 2026-11-27：程序化定位一律先 `phys.kill()` —— 否则残余速度会把刚设好的位置又推走
+    //   （ScrollView 那边实测过：set_scroll(0,0) 之后一帧变成 8.7 ✗）
+    func scroll_to_bottom() { phys.kill(); scroll = max_scroll(); clamp_scroll() }
+    func scroll_to_top()    { phys.kill(); scroll = 0.0; clamp_scroll() }
     func is_at_bottom(): bool { return scroll >= max_scroll() - 0.5 }
 
     func remove_item(int idx) {
@@ -342,7 +358,7 @@ export struct ListBox impl Widget, Themeable {
             clamp_scroll()
         }
     }
-    func clear() { items = []; sel_clear(); scroll = 0.0; hover = -1 }
+    func clear() { items = []; sel_clear(); scroll = 0.0; phys.kill(); hover = -1 }
     func set_enabled(bool e)     { enabled = e }
     func set_visible(bool v)      { visible = v }
     func is_visible(): bool       { return visible }
@@ -350,8 +366,12 @@ export struct ListBox impl Widget, Themeable {
     func get_x(): float          { return x }
     func get_y(): float          { return y }
 
-    func set_scroll(float p)     { scroll = p; clamp_scroll() }
+    func set_scroll(float p)     { phys.kill(); scroll = p; clamp_scroll() }
     func get_scroll(): float     { return scroll }
+    // ★ 2026-11-27：物理状态只读窗口（自测断言 / 应用做"滚动中"效果）
+    func get_scroll_velocity(): float { return phys.velY }
+    func get_overscroll_y(): float { return phys.overY }
+    func is_scrolling(): bool { return phys.is_moving() }
     func get_selected_indices(): Array[int] { return sel }
     func get_selected_index(): int {
         if sel.len() > 0 { return sel[0] }
@@ -365,6 +385,7 @@ export struct ListBox impl Widget, Themeable {
     func set_selected(int idx) {
         if idx < 0 or idx >= items.len() { return }
         sel_clear(); sel_add(idx)
+        phys.kill()          // 程序选中要立刻看到那一行 ⇒ 别让惯性把位置带跑 ✓
         float iy = idx * itemH
         if iy < scroll { scroll = iy }
         else if iy + itemH > scroll + h { scroll = iy + itemH - h }
@@ -448,7 +469,7 @@ export struct ListBox impl Widget, Themeable {
     //   应用层先前只能"自己抄一遍这个公式" ✗（本仓音乐下载器的播放条就抄了一份 ✓）
     func index_at(float mx, float my): int {
         if not contains(mx, my) { return -1 }
-        int idx = _int((my - y + scroll) / itemH)
+        int idx = _int((my - y + dispY()) / itemH)   // 与绘制同口径（含越界量）⇒ 回弹时也点得准 ✓
         if idx < 0 or idx >= items.len() { return -1 }
         return idx
     }
@@ -505,6 +526,7 @@ export struct ListBox impl Widget, Themeable {
             } else {
                 draggingScroll = true
                 sbDragOffset = thH / 2.0
+                phys.kill()       // 点槽跳转：立即到位，别让惯性接着推 ✓
                 float rel = my - g[2] - thH / 2.0
                 if trk - thH > 0.0 { scroll = rel * maxs / (trk - thH) }
                 clamp_scroll()
@@ -517,6 +539,7 @@ export struct ListBox impl Widget, Themeable {
             if ev.isMouseMotion() {
                 var g = sb_geom()
                 float maxs = g[6], trk = g[3] - g[2], thH = g[4]
+                phys.kill()       // 拖滚动条 1:1 跟手（否则"拽不住"✗）
                 float rel = my - g[2] - sbDragOffset
                 if trk - thH > 0.0 { scroll = rel * maxs / (trk - thH) }
                 clamp_scroll()
@@ -528,9 +551,10 @@ export struct ListBox impl Widget, Themeable {
         if ev.isMouseWheel() {
             // 滚轮只作用于光标当前所在的列表框，避免同一事件被所有列表框共享而一起滚动
             if not contains(ev.wheelMouseX(), ev.wheelMouseY()) { return }
-            float d = ev.wheelY() * itemH
-            scroll = scroll - d
-            clamp_scroll()
+            // ★ 2026-11-27：物理滚动 —— 只叠加速度（一格 = itemH 的位移），推进在 render 的 pump_scroll
+            phys.kick(0.0, -ev.wheelY() * itemH)
+            core.markFrameRedraw()
+            core.requestRedraw()      // 下一帧也得有人要（漏了就"滚了不动"✗）
         }
 
         if ev.isMouseMotion() {
@@ -627,6 +651,7 @@ export struct ListBox impl Widget, Themeable {
     func render(Renderer r) {
         if not _loaded { return }
         if not visible { return }
+        pump_scroll()          // 每帧推进一次物理（含续帧请求，见函数注释 ✓）
         ensure_font()
 
         Color bgC = bgColor
@@ -649,7 +674,7 @@ export struct ListBox impl Widget, Themeable {
         float textH = 0.0
         if _font != null and _font.ok { var[float, float](_agw, _agh) = _font.measureString("Ag"); textH = _agh }
         for items.len() to i {
-            float iy = r.snapY(y - scroll + i * itemH)
+            float iy = r.snapY(y - dispY() + i * itemH)   // 含弹性越界（回弹时行跟手移出视口 ✓）
             if iy + itemH < y or iy > y + h { continue }
             Color rowC = bgC
             if is_selected(i) { rowC = selColor }

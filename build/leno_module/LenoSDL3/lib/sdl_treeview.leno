@@ -24,6 +24,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect; use core.sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ScrollView/Table 共用 ✓）
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
@@ -98,6 +99,7 @@ export struct TreeView impl Widget, Themeable {
     float _indent = 16.0
     pri float padX = 6.0
     pri float scroll = 0.0
+    pri ScrollPhys phys             // ★ 2026-11-27 物理滚动：滚轮加速 + 撞界回弹（见 dispY/pump_scroll）
     pri int hover = -1
     pri int sel = -1
     pri Array[int] sel2 = []
@@ -282,6 +284,18 @@ export struct TreeView impl Widget, Themeable {
         if scroll < 0.0 { scroll = 0.0 }
         if scroll > m { scroll = m }
     }
+    // ---- 物理滚动（2026-11-27，与 ScrollView/Table/ListBox 共用 sdl_scrollphys）----
+    //   位置仍是 `scroll`（节点行号、滚动条几何都按它算），内核只管速度 + 弹性越界量
+    pri func dispY(): float { return scroll + phys.overY }
+    //   ⚠ 结尾必须 requestRedraw 续帧，否则事件循环挂起 ⇒ "滚了不动、动鼠标才动"✗
+    pri func pump_scroll() {
+        var[float, float](_nx, ny) = phys.pump(scroll, scroll, 0.0, max_scroll())
+        if ny != scroll { scroll = ny; core.markFrameRedraw() }
+        if phys.is_moving() {
+            core.markFrameRedraw()
+            core.requestRedraw()
+        }
+    }
 
     // ==================== 布局接口 ====================
     func get_w(): float { return w }
@@ -321,7 +335,7 @@ export struct TreeView impl Widget, Themeable {
         return mx >= x and mx <= x + w and my >= y and my <= y + h
     }
     pri func row_at(float my): int {
-        int idx = _int((my - y + scroll) / rowH)
+        int idx = _int((my - y + dispY()) / rowH)   // 与绘制同口径（含越界量）⇒ 回弹时也点得准 ✓
         if idx < 0 or idx >= flatIds.len() { return -1 }
         return idx
     }
@@ -334,7 +348,7 @@ export struct TreeView impl Widget, Themeable {
     pri func in_toggle(int idx, float mx, float my): bool {
         int depth = flatDepth[idx]
         float cx = x + padX + depth * _indent
-        float rowY = y - scroll + idx * rowH
+        float rowY = y - dispY() + idx * rowH
         return mx >= cx and mx <= cx + 16.0 and my >= rowY and my <= rowY + rowH
     }
     pri func in_check(int idx, float mx, float my): bool {
@@ -342,7 +356,7 @@ export struct TreeView impl Widget, Themeable {
         if not flatCheck[idx] { return false }
         int depth = flatDepth[idx]
         float cx = x + padX + depth * _indent
-        float rowY = y - scroll + idx * rowH
+        float rowY = y - dispY() + idx * rowH
         float bx = cx + 18.0
         float by = rowY + (rowH - 14.0) / 2.0
         return mx >= bx and mx <= bx + 14.0 and my >= by and my <= by + 14.0
@@ -396,7 +410,7 @@ export struct TreeView impl Widget, Themeable {
         if its is Array[Dict] { build_from_dicts(its) }
         else { roots = [] }
 
-        scroll = 0.0; hover = -1; sel = -1; sel2 = []
+        scroll = 0.0; phys.kill(); hover = -1; sel = -1; sel2 = []
 
         // 颜色：opts 未传则保持默认值
         if opts.get("bg_color") is Color => t { bgColor = t }
@@ -433,19 +447,23 @@ export struct TreeView impl Widget, Themeable {
     func set_items(Array[Dict] ds) {
         if ds is Array[Dict] { build_from_dicts(ds) }
         else { roots = [] }
-        scroll = 0.0; hover = -1; sel = -1; sel2 = []
+        scroll = 0.0; phys.kill(); hover = -1; sel = -1; sel2 = []
         flatten(); clamp_scroll()
     }
     func clear() {
         roots = []
-        scroll = 0.0; hover = -1; sel = -1; sel2 = []; flatDirty = true; flatten()
+        scroll = 0.0; phys.kill(); hover = -1; sel = -1; sel2 = []; flatDirty = true; flatten()
     }
     func set_enabled(bool e) { enabled = e }
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
     func set_font_size(float s) { _fontSize = s; if _font != null and _font.ok { fnt.releaseFont(_font) }; _font = null }
-    func set_scroll(float p) { scroll = p; clamp_scroll() }
+    func set_scroll(float p) { phys.kill(); scroll = p; clamp_scroll() }
     func get_scroll(): float { return scroll }
+    // ★ 2026-11-27：物理状态只读窗口（自测断言 / 应用做"滚动中"效果）
+    func get_scroll_velocity(): float { return phys.velY }
+    func get_overscroll_y(): float { return phys.overY }
+    func is_scrolling(): bool { return phys.is_moving() }
     // 层级连接线
     func set_show_lines(bool v) { showLines = v }
     func get_show_lines(): bool { return showLines }
@@ -571,6 +589,7 @@ export struct TreeView impl Widget, Themeable {
     pri func ensure_visible(int id) {
         for flatIds.len() to i {
             if flatIds[i] == id {
+                phys.kill()      // 键盘/程序定位：立即到位，别让惯性把选中的行又推走 ✓
                 float iy = i * rowH
                 if iy < scroll { scroll = iy }
                 else if iy + rowH > scroll + h { scroll = iy + rowH - h }
@@ -739,6 +758,7 @@ export struct TreeView impl Widget, Themeable {
                 draggingScroll = true; sbDragOffset = my - g[5]
             } else {
                 draggingScroll = true; sbDragOffset = thH / 2.0
+                phys.kill()       // 点槽跳转：立即到位，别让惯性接着推 ✓
                 float rel = my - g[2] - thH / 2.0
                 if trk - thH > 0.0 { scroll = rel * maxs / (trk - thH) }
                 clamp_scroll()
@@ -749,6 +769,7 @@ export struct TreeView impl Widget, Themeable {
             if ev.isMouseMotion() {
                 var g = sb_geom()
                 float maxs = g[6], trk = g[3] - g[2], thH = g[4]
+                phys.kill()       // 拖滚动条 1:1 跟手（否则"拽不住"✗）
                 float rel = my - g[2] - sbDragOffset
                 if trk - thH > 0.0 { scroll = rel * maxs / (trk - thH) }
                 clamp_scroll()
@@ -759,8 +780,10 @@ export struct TreeView impl Widget, Themeable {
 
         if ev.isMouseWheel() {
             if not contains(ev.wheelMouseX(), ev.wheelMouseY()) { return }
-            scroll = scroll - ev.wheelY() * rowH
-            clamp_scroll()
+            // ★ 2026-11-27：物理滚动 —— 只叠加速度（一格 = rowH 的位移），推进在 render 的 pump_scroll
+            phys.kick(0.0, -ev.wheelY() * rowH)
+            core.markFrameRedraw()
+            core.requestRedraw()      // 下一帧也得有人要（漏了就"滚了不动"✗）
             return
         }
 
@@ -813,6 +836,7 @@ export struct TreeView impl Widget, Themeable {
     func render(Renderer r) {
         if not _loaded { return }
         if not visible { return }
+        pump_scroll()          // 每帧推进一次物理（含续帧请求，见函数注释 ✓）
         ensure_font()
         if _font == null or not _font.ok { return }   // 字体无效时跳过渲染，避免"有背景无文字"的闪烁
         flatten()
@@ -834,7 +858,7 @@ export struct TreeView impl Widget, Themeable {
         if endRow > flatIds.len() { endRow = flatIds.len() }
         for startRow : endRow - 1 to i {
             int id = flatIds[i]
-            float rowY = r.snapY(y - scroll + i * rowH)
+            float rowY = r.snapY(y - dispY() + i * rowH)
             if rowY + rowH < y or rowY > y + h { continue }
             float checkOff = if showCheck then 18.0 else 0.0
 

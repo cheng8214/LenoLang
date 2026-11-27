@@ -65,7 +65,15 @@ export struct VirtualGrid impl Widget {
     // ★ 2026-11-27：物理滚动（与 ScrollView / Table 共用 `sdl_scrollphys`）
     //   位置仍是 scrollY（虚拟化的行列计算按它走），内核只持有速度 + 弹性越界量：
     //   滚轮不再"一格跳 60px"，撞到底会回弹 ✓
-    pri ScrollPhys ph
+    pri ScrollPhys phys
+    // ★ 2026-11-27：**触摸拖动滚动**（手机上唯一能滚卡片墙的手势）
+    //   只对"手指"生效（`ev.isTouchLike()`）：桌面鼠标左键要留给卡片的点击/拖拽 ✓
+    //   panSt：0 空闲 / 1 按下但未过阈值（卡片点击照常）/ 2 拖动中
+    pri int panSt = 0
+    pri float panX0 = 0.0, panY0 = 0.0
+    pri float panLastY = 0.0
+    pri int panNs = 0
+    pri float panThr = 6.0
 
     // ---- 槽位表（真正的"复用"在这里）----
     //   cells[slot]     = 已建好的控件（null 表示空槽）
@@ -127,7 +135,7 @@ export struct VirtualGrid impl Widget {
     }
 
     func set_scroll_y(float v) {
-        ph.kill()          // 程序定位：掐掉残余速度/回弹（否则"设到 0"又被推走 ✗）
+        phys.kill()          // 程序定位：掐掉残余速度/回弹（否则"设到 0"又被推走 ✗）
         scrollY = v
         clamp_scroll()
         core.markFrameRedraw()
@@ -135,9 +143,9 @@ export struct VirtualGrid impl Widget {
     func get_scroll_y(): float { return scrollY }
     // ★ 2026-11-27：物理状态只读窗口（自测断言 / 应用做"滚动中"效果）
     //   速度单位 px/秒；越界量正 = 越过下界、负 = 越过上界
-    func get_scroll_velocity(): float { return ph.velY }
-    func get_overscroll_y(): float { return ph.overY }
-    func is_scrolling(): bool { return ph.is_moving() }
+    func get_scroll_velocity(): float { return phys.velY }
+    func get_overscroll_y(): float { return phys.overY }
+    func is_scrolling(): bool { return phys.is_moving() }
 
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
@@ -178,13 +186,15 @@ export struct VirtualGrid impl Widget {
         scrollY = maths.clamp(scrollY, 0.0, max_scroll())
     }
     // ---- 物理滚动：绘制偏移（含弹性越界）+ 每帧推进 ----
-    pri func dispY(): float { return scrollY + ph.overY }
+    pri func dispY(): float { return scrollY + phys.overY }
     //   ⚠ 结尾必须 requestRedraw 续帧，否则事件循环挂起 ⇒ "滚了不动、动鼠标才动"✗
     //      （ScrollView / Table 踩过同一个坑）
     pri func pump_scroll() {
-        var[float, float](_nx, ny) = ph.pump(scrollY, scrollY, 0.0, max_scroll())
+        // 手指跟手期间不积分（1:1 由 `phys.drag` 直接改位置，再叠惯性就"抢方向盘"✗）
+        if panSt == 2 { phys.syncClock(); return }
+        var[float, float](_nx, ny) = phys.pump(scrollY, scrollY, 0.0, max_scroll())
         if ny != scrollY { scrollY = ny; core.markFrameRedraw() }
-        if ph.is_moving() {
+        if phys.is_moving() {
             core.markFrameRedraw()
             core.requestRedraw()
         }
@@ -304,7 +314,50 @@ export struct VirtualGrid impl Widget {
 
         // 失焦兜底：拖拽中途 Alt+Tab / 切走窗口会**丢掉 up 事件** ⇒ 必须归零，
         //   否则 dragging 永远为真、之后鼠标一动就跟着"拖"（照 ScrollView 的纪律 ✓）
-        if ev.isWindowFocusLost() { dragging = false; barHover = false }
+        if ev.isWindowFocusLost() { dragging = false; barHover = false; panSt = 0; phys.velY = 0.0 }
+
+        // ★ 2026-11-27：**手指拖动 = 滚动**（手机上唯一能滚卡片墙的手势；桌面左键语义不变 ✓）
+        if ev.isTouchLike() {
+            if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+                var[float, float](tx0, ty0) = ev.mousePos()
+                if tx0 >= x and tx0 <= x + w and ty0 >= y and ty0 <= y + h {
+                    panSt = 1; panX0 = tx0; panY0 = ty0; panLastY = ty0
+                    phys.velY = 0.0; panNs = 0
+                }
+            } else if ev.isMouseMotion() and panSt != 0 {
+                var[float, float](pmx, pmy) = ev.mousePos()
+                if panSt == 1 {
+                    if maths.abs(pmx - panX0) > panThr or maths.abs(pmy - panY0) > panThr { panSt = 2 }
+                }
+                if panSt == 2 {
+                    float ddy = pmy - panLastY
+                    panLastY = pmy
+                    // 速度按 move 事件的**真实时间差**算成 px/秒 ⇒ 帧率无关 ✓
+                    int nowNs = core.getTicksNS()
+                    float dts = 0.0166667
+                    if panNs != 0 {
+                        int dn = nowNs - panNs
+                        if dn > 0 {
+                            dts = _float(dn) / 1000000000.0
+                            if dts < 0.002 { dts = 0.002 }
+                            if dts > 0.1 { dts = 0.1 }
+                        }
+                    }
+                    panNs = nowNs
+                    phys.velY = maths.clamp(-ddy / dts, -4000.0, 4000.0)
+                    phys.velDrag = true
+                    var[float, float](_nx, ny) = phys.drag(0.0, ddy, 0.0, scrollY, 0.0, max_scroll())
+                    scrollY = ny
+                    core.markFrameRedraw()
+                    core.requestRedraw()
+                    return
+                }
+            } else if ev.isMouseButtonUp() and panSt != 0 {
+                bool wasPan = (panSt == 2)
+                panSt = 0
+                if wasPan { core.markFrameRedraw(); return }
+            }
+        }
 
         // 自动隐藏 / 悬停变深：鼠标进出本控件时**只请求一次重绘**（不是每帧 ✓）
         bool inNow = mx >= x and mx <= x + w and my >= y and my <= y + h
@@ -333,7 +386,7 @@ export struct VirtualGrid impl Widget {
         // 滚轮：只在自己身上生效
         if ev.isMouseWheel() and mx >= x and mx <= x + w and my >= y and my <= y + h {
             // ★ 2026-11-27：物理滚动 —— 只叠加速度，推进在 render 的 pump_scroll ✓
-            ph.kick(0.0, -ev.wheelY() * 60.0)
+            phys.kick(0.0, -ev.wheelY() * 60.0)
             core.markFrameRedraw()
             core.requestRedraw()      // 下一帧也得有人要（否则"滚了不动"✗）
             return
@@ -421,7 +474,7 @@ export struct VirtualGrid impl Widget {
         var t = thumb()
         float m = max_scroll()
         float span = h - t[3]
-        ph.kill()          // 拖滚动条 1:1 跟手 ⇒ 掐掉惯性/回弹（否则"拽不住"✗）
+        phys.kill()          // 拖滚动条 1:1 跟手 ⇒ 掐掉惯性/回弹（否则"拽不住"✗）
         if span > 1.0 { scrollY = (my - barGrab - y) / span * m }
         clamp_scroll()
     }

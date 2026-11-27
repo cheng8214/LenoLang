@@ -12,6 +12,7 @@ use theme.Color
 import "sdl_image.leno" as img
 import "sdl_edit.leno" as edt; use edt.Edit
 import "Containers" as ct          // 图标纹理缓存用 ct.ClockLRU（O(1) 命中 + 容量封顶 + 淘汰即销毁）
+import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（下拉弹层用，与 ScrollView/Table 共用 ✓）
 
 // 图标纹理淘汰回调（给 ct.ClockLRU 的 on_evict 用）—— 同 sdl_menu / sdl_popmenu 的做法
 func cbTexEvict(string path, Ptr[u8] t) {
@@ -26,6 +27,9 @@ export struct ComboBox impl Widget, Themeable {
     pri bool open = false
     pri float itemH = 24.0
     pri float scroll = 0.0
+    // ⚠ 字段名用 `phys` 而不是 `ph`：本文件里 `ph` 已经是**弹层高度**的局部变量，
+    //   同名会让 `float px = pr[0], ..., ph = pr[3]` 那句被解析成字段 ⇒ 类型全乱 ✗（踩过）
+    pri ScrollPhys phys           // ★ 2026-11-27 下拉弹层的物理滚动（滚轮加速 + 撞界回弹）
     pri int hover = -1
     pri float popupMax = 200.0    // 弹出列表最大高度
     float _fontSize = 15.0; pri string fontPath = ""; pri int fontStyle = 0; Font? _font
@@ -105,6 +109,18 @@ export struct ComboBox impl Widget, Themeable {
         if scroll < 0.0 { scroll = 0.0 }
         if scroll > m { scroll = m }
     }
+    // ---- 物理滚动（2026-11-27，与 ScrollView/Table/ListBox 共用 sdl_scrollphys）----
+    //   只作用于**下拉弹层**（`scroll` 是弹层内的行偏移）；收起弹层时会 `phys.kill()`
+    pri func dispY(): float { return scroll + phys.overY }
+    //   ⚠ 结尾必须 requestRedraw 续帧（弹层由第二遍绘制驱动），漏了就"滚了不动"✗
+    pri func pump_scroll() {
+        var[float, float](_nx, ny) = phys.pump(scroll, scroll, 0.0, max_scroll())
+        if ny != scroll { scroll = ny; core.markFrameRedraw() }
+        if phys.is_moving() {
+            core.markFrameRedraw()
+            core.requestRedraw()
+        }
+    }
 
     // ==================== 布局接口 ====================
     func get_w(): float          { return w }
@@ -160,7 +176,7 @@ export struct ComboBox impl Widget, Themeable {
         enabled = opts.get("enabled", true)
         visible = opts.get("visible", true)
         _tip = opts.get("tip", "")
-        open = false; scroll = 0.0; hover = -1   // 重置：收起弹层、滚动归零、悬停行清除
+        open = false; scroll = 0.0; phys.kill(); hover = -1   // 重置：收起弹层、滚动归零、悬停行清除
         editable = opts.get("editable", false)
         boxRadius = opts.get("radius", 6.0)
         padX = opts.get("pad_x", 4.0)
@@ -184,15 +200,20 @@ export struct ComboBox impl Widget, Themeable {
     }
 
     // ==================== 设置方法 ====================
-    func set_items(Array[string] its) { items = its; if sel >= items.len() { sel = -1 }; open = false; scroll = 0.0; itemImages = [] }
+    func set_items(Array[string] its) { items = its; if sel >= items.len() { sel = -1 }; open = false; scroll = 0.0; phys.kill(); itemImages = [] }
     func set_items_with_images(Array[string] its, Array[string] imgs) {
         items = its; itemImages = imgs
-        if sel >= items.len() { sel = -1 }; open = false; scroll = 0.0
+        if sel >= items.len() { sel = -1 }; open = false; scroll = 0.0; phys.kill()
     }
     func set_item_image(int idx, string path) {
         while itemImages.len() <= idx { itemImages.add("") }
         itemImages[idx] = path
     }
+    // ★ 2026-11-27：物理状态只读窗口（弹层滚动；自测断言 / 应用做"滚动中"效果）
+    func get_scroll(): float { return scroll }
+    func get_scroll_velocity(): float { return phys.velY }
+    func get_overscroll_y(): float { return phys.overY }
+    func is_scrolling(): bool { return phys.is_moving() }
     func get_item_image(int idx): string {
         if idx < 0 or idx >= itemImages.len() { return "" }
         return itemImages[idx]
@@ -200,7 +221,7 @@ export struct ComboBox impl Widget, Themeable {
     func set_image_size(float s) { imgSize = s }
     func set_image_gap(float g)  { imgGap = g }
     func add_item(string s)           { items.add(s) }
-    func clear()                      { items = []; itemImages = []; sel = -1; open = false; scroll = 0.0; hover = -1 }
+    func clear()                      { items = []; itemImages = []; sel = -1; open = false; scroll = 0.0; phys.kill(); hover = -1 }
     func set_enabled(bool e)          { enabled = e }
     func set_visible(bool v)           { visible = v }
     func is_visible(): bool           { return visible }
@@ -289,6 +310,7 @@ export struct ComboBox impl Widget, Themeable {
     func open_list() {
         open = true
         scroll = 0.0
+        phys.kill()      // 新开的弹层：旧速度不能让列表"一开就自己滑"✗
         if sel >= 0 {
             float iy = sel * itemH
             if iy + itemH > _ph() { scroll = iy + itemH - _ph() }
@@ -358,7 +380,7 @@ export struct ComboBox impl Widget, Themeable {
     pri func index_at(float mx, float my): int {
         if not in_popup(mx, my) { return -1 }
         var pr = popup_rect()
-        int idx = _int((my - pr[1] + scroll) / itemH)
+        int idx = _int((my - pr[1] + dispY()) / itemH)   // 与绘制同口径（含越界量）✓
         if idx < 0 or idx >= items.len() { return -1 }
         return idx
     }
@@ -476,6 +498,7 @@ export struct ComboBox impl Widget, Themeable {
             } else {
                 draggingScroll = true
                 sbDragOffset = thH / 2.0
+                phys.kill()       // 点槽跳转：立即到位，别让惯性接着推 ✓
                 float rel = my - g[2] - thH / 2.0
                 if trk - thH > 0.0 { scroll = rel * maxs / (trk - thH) }
                 clamp_scroll()
@@ -488,6 +511,7 @@ export struct ComboBox impl Widget, Themeable {
             if ev.isMouseMotion() {
                 var g = sb_geom_popup()
                 float maxs = g[6], trk = g[3] - g[2], thH = g[4]
+                phys.kill()       // 拖滚动条 1:1 跟手（否则"拽不住"✗）
                 float rel = my - g[2] - sbDragOffset
                 if trk - thH > 0.0 { scroll = rel * maxs / (trk - thH) }
                 clamp_scroll()
@@ -499,9 +523,10 @@ export struct ComboBox impl Widget, Themeable {
         if ev.isMouseWheel() and open {
             // 滚轮只作用于光标所在的弹层，避免同一事件被其它控件共享
             if not in_popup(ev.wheelMouseX(), ev.wheelMouseY()) { return }
-            float d = ev.wheelY() * itemH
-            scroll = scroll - d
-            clamp_scroll()
+            // ★ 2026-11-27：物理滚动 —— 只叠加速度（一格 = itemH），推进在 renderPopup 的 pump_scroll
+            phys.kick(0.0, -ev.wheelY() * itemH)
+            core.markFrameRedraw()
+            core.requestRedraw()      // 下一帧也得有人要（漏了就"滚了不动"✗）
         }
 
         if ev.isMouseMotion() {
@@ -525,6 +550,7 @@ export struct ComboBox impl Widget, Themeable {
                     }
                     open = true
                     scroll = 0.0
+                    phys.kill()      // 同上：新开的弹层不继承旧速度
                     if sel >= 0 {
                         float iy = sel * itemH
                         if iy + itemH > _ph() { scroll = iy + itemH - _ph() }
@@ -637,6 +663,7 @@ export struct ComboBox impl Widget, Themeable {
     // 保证下拉层永远盖在其它控件之上，不会被列表中靠后的 ComboBox 挡住）
     func renderPopup(Renderer r) {
         if not _loaded or not visible or not open or items.len() == 0 { return }
+        pump_scroll()          // 每帧推进一次物理（弹层是第二遍绘制 ⇒ 这里就是它的"每帧"✓）
         Color bgC = bgColor
         if not enabled { bgC = theme.darken(bgColor, 60) }
         var pr = popup_rect()
@@ -662,7 +689,7 @@ export struct ComboBox impl Widget, Themeable {
         // 行高为常量，复用 _fontH 缓存避免每行重复测量
         float textH = fontH
         for items.len() to i {
-            float iy = r.snapY(py - scroll + i * itemH)
+            float iy = r.snapY(py - dispY() + i * itemH)   // 含弹性越界（回弹时行跟手移出面板 ✓）
             if iy + itemH < py or iy > py + ph { continue }
             Color rowC = bgC
             if i == sel { rowC = selColor }

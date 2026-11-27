@@ -56,8 +56,16 @@ export struct Table impl Widget, Themeable {
     // ★ 2026-11-27：物理滚动（与 ScrollView 共用 `sdl_scrollphys`）—— 位置仍是上面两个字段
     //   （虚拟化、命中、滚动条几何都按它们算），内核只持有**速度 + 弹性越界量**：
     //     · 滚轮叠加速度 ⇒ 一格不再"一步跳到下一行"，末尾有滑行 ✓
-    //     · 撞到上下边界会回弹（越界量在 `ph.overY`，绘制偏移见 `dispY()`）✓
-    pri ScrollPhys ph
+    //     · 撞到上下边界会回弹（越界量在 `phys.overY`，绘制偏移见 `dispY()`）✓
+    pri ScrollPhys phys
+    // ★ 2026-11-27：**触摸拖动滚动**（手机上唯一能滚 Table 的手势 —— 滚轮不存在、滚动条太细）
+    //   只对"手指"生效（`ev.isTouchLike()`）：桌面鼠标左键拖动是"拖行/拖列/选文字"，不能抢 ✓
+    //   panSt：0 空闲 / 1 按下但还没超过阈值（子控件的点击照常生效）/ 2 拖动中
+    pri int panSt = 0
+    pri float panX0 = 0.0, panY0 = 0.0
+    pri float panLastY = 0.0
+    pri int panNs = 0
+    pri float panThr = 6.0
     pri int selRow = -1, selCol = -1, hoverRow = -1, hoverCol = -1; bool _multi = false; pri Array[int] selRows = []
     pri Array[bool] selSet = []           // 选中行标志数组（与 _rows 平行），让 _is_sel O(1) 避免 render 中线性扫描 _selRows
     bool _sortable = false; pri int sortCol = -1; pri bool sortDesc = false, _zebra = true
@@ -325,19 +333,21 @@ export struct Table impl Widget, Themeable {
     // ---- 物理滚动的两个小接口 ----
     // 绘制/命中的**显示偏移**（含弹性越界量）：回弹时内容跟着手指移出视口，由裁剪切掉 = 橡皮筋 ✓
     //   ⚠ 顶部/底部"有多少行"这类**逻辑**判断仍用 scrollY（clamp 过的），别用 dispY ✗
-    pri func dispX(): float { return scrollX + ph.overX }
-    pri func dispY(): float { return scrollY + ph.overY }
+    pri func dispX(): float { return scrollX + phys.overX }
+    pri func dispY(): float { return scrollY + phys.overY }
     // 每帧推进一次物理（`render` 开头调）：
     //   ⚠ 结尾必须 `requestRedraw()` 续帧 —— 漏了就是"滚轮滚了画面不动、动鼠标才动"✗
     //      （ScrollView 那边踩过同一个坑，见 sdl_scrollview.leno 的 sync 注释）
     pri func pump_scroll() {
-        var[float, float](nx, ny) = ph.pump(scrollX, scrollY, max_scroll_x(), max_scroll_y())
+        // 手指跟手期间不积分（1:1 由 `phys.drag` 直接改位置，再叠惯性就"抢方向盘"✗）
+        if panSt == 2 { phys.syncClock(); return }
+        var[float, float](nx, ny) = phys.pump(scrollX, scrollY, max_scroll_x(), max_scroll_y())
         if nx != scrollX or ny != scrollY {
             scrollX = nx; scrollY = ny
             fire_reach_bottom()          // 滑行过程中也可能到底 ⇒ 不能只在滚轮那一拍判 ✓
             core.markFrameRedraw()
         }
-        if ph.is_moving() {
+        if phys.is_moving() {
             core.markFrameRedraw()
             core.requestRedraw()
         }
@@ -355,7 +365,7 @@ export struct Table impl Widget, Themeable {
     // 滚动使指定行可见
     pri func ensure_row_visible(int row) {
         if row < 0 { return }
-        ph.kill()          // 键盘/程序定位：立即到位，别让惯性把选中的行又推走 ✓
+        phys.kill()          // 键盘/程序定位：立即到位，别让惯性把选中的行又推走 ✓
         var sb = compute_sb()
         float visH = h - headerH - sb[1]
         if visH < 0 { visH = 0 }
@@ -668,9 +678,9 @@ export struct Table impl Widget, Themeable {
     func scroll_y(): float { return scrollY }
     // ★ 2026-11-27：物理状态对外的只读窗口（做"滚动中淡出表头"这类效果、以及自测断言用）
     //   速度单位 px/秒；越界量正 = 越过下界、负 = 越过上界（绘制偏移见 dispY()）
-    func get_scroll_velocity(): float { return ph.velY }
-    func get_overscroll_y(): float { return ph.overY }
-    func is_scrolling(): bool { return ph.is_moving() }
+    func get_scroll_velocity(): float { return phys.velY }
+    func get_overscroll_y(): float { return phys.overY }
+    func is_scrolling(): bool { return phys.is_moving() }
     // 是否已滚到接近底部：`pad` = 距底部多少像素内算"到底"
     //   内容没超出视口（没有可滚的）⇒ **false** —— 那种情况该由调用方在"首屏就装满"时判断，
     //   这里返回 true 会让 tick 里无限触发加载 ✗
@@ -847,7 +857,7 @@ export struct Table impl Widget, Themeable {
     //   （口径：批量换数据用 `set_rows`（会重放排序 ✓）；`clear()`/`add_row()` 视为"改了行集合"⇒
     //     排序状态作废 ✓ —— 要么别谎报、要么别乱序，两条路都得有一条 ✓）
     //   ★ 同口径：清空时**单元格级颜色也一起清**（键 "row,col" 指的是旧行 ✗），rowColors 本来就清 ✓
-    func clear() { _rows = []; _srcIdx = []; rowImages = []; rowTips = []; rowChecked = []; rowColors = []; _cellFgColors.clear(); _cellBgColors.clear(); selRow = -1; selCol = -1; selRows = []; selSet = []; scrollX = 0; scrollY = 0; ph.kill(); checkHeaderState = false; checkedCount = -1; sortCol = -1; sortDesc = false; invalidate_fitted(); invalidate_sb() }
+    func clear() { _rows = []; _srcIdx = []; rowImages = []; rowTips = []; rowChecked = []; rowColors = []; _cellFgColors.clear(); _cellBgColors.clear(); selRow = -1; selCol = -1; selRows = []; selSet = []; scrollX = 0; scrollY = 0; phys.kill(); checkHeaderState = false; checkedCount = -1; sortCol = -1; sortDesc = false; invalidate_fitted(); invalidate_sb() }
     func row_count(): int { return _rows.len() }
     func col_count(): int { return ncols }
     func get_row(int idx): Array[string] {
@@ -1572,6 +1582,53 @@ export struct Table impl Widget, Themeable {
         var[float, float](mx, my) = ev.mousePos()
         if ev.isMouseWheel() { mx = ev.wheelMouseX(); my = ev.wheelMouseY() }
 
+        // ★ 2026-11-27：**手指拖动 = 滚动**（手机上唯一能滚 Table 的手势）
+        //   ⚠ 只对 `isTouchLike()` 生效：桌面鼠标左键拖动有"拖行/拖列/选文字"的语义，
+        //     被这条抢走就是把桌面弄坏了 ✗（与 ScrollView 同一条规则）
+        //   panSt=1（未过阈值）时不吞事件 ⇒ 行/单元格的点击照常生效 ✓
+        if ev.isTouchLike() {
+            if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
+                var[float, float](tx0, ty0) = ev.mousePos()
+                if contains(tx0, ty0) {
+                    panSt = 1; panX0 = tx0; panY0 = ty0; panLastY = ty0
+                    phys.velY = 0.0; panNs = 0
+                }
+            } else if ev.isMouseMotion() and panSt != 0 {
+                var[float, float](pmx, pmy) = ev.mousePos()
+                if panSt == 1 {
+                    if maths.abs(pmx - panX0) > panThr or maths.abs(pmy - panY0) > panThr { panSt = 2 }
+                }
+                if panSt == 2 {
+                    float ddy = pmy - panLastY
+                    panLastY = pmy
+                    // 速度按 move 事件的**真实时间差**算成 px/秒（不是 px/帧）⇒ 帧率无关 ✓
+                    int nowNs = core.getTicksNS()
+                    float dts = 0.0166667
+                    if panNs != 0 {
+                        int dn = nowNs - panNs
+                        if dn > 0 {
+                            dts = _float(dn) / 1000000000.0
+                            if dts < 0.002 { dts = 0.002 }
+                            if dts > 0.1 { dts = 0.1 }
+                        }
+                    }
+                    panNs = nowNs
+                    phys.velY = maths.clamp(-ddy / dts, -4000.0, 4000.0)
+                    phys.velDrag = true
+                    var[float, float](_nx, ny) = phys.drag(0.0, ddy, 0.0, scrollY, 0.0, max_scroll_y())
+                    scrollY = ny
+                    hoverRow = -1
+                    core.markFrameRedraw()
+                    core.requestRedraw()
+                    return
+                }
+            } else if ev.isMouseButtonUp() and panSt != 0 {
+                bool wasPan = (panSt == 2)
+                panSt = 0
+                if wasPan { core.markFrameRedraw(); return }
+            }
+        }
+
         // 滚动条自动隐藏：鼠标进出表格时**只请求一次重绘**（不是每帧 ✓）
         bool inNow = mx >= x and mx <= x + w and my >= y and my <= y + h
         if inNow != barHover {
@@ -1757,7 +1814,7 @@ export struct Table impl Widget, Themeable {
             float track = bodyH - 4.0
             float contentH = _rows.len() * rowH; if contentH <= 0 { contentH = 1 }
             float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
-            ph.kill()          // 拖滚动条必须 1:1 跟手 ⇒ 掐掉惯性/回弹（否则"拽不住"✗）
+            phys.kill()          // 拖滚动条必须 1:1 跟手 ⇒ 掐掉惯性/回弹（否则"拽不住"✗）
             scrollY = (my - (y + headerH + 2.0) - vDragOffset) * (maxY / (track - thumbH))
             clamp_scroll()
             fire_reach_bottom()          // ★ 拖滚动条到底也算（见 on_reach_bottom ✓）
@@ -1772,7 +1829,7 @@ export struct Table impl Widget, Themeable {
             float track = bodyW - 4.0
             float tw = total_w(); if tw <= 0 { tw = 1 }
             float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
-            ph.kill()          // 同上：横向拖动条 1:1 跟手
+            phys.kill()          // 同上：横向拖动条 1:1 跟手
             scrollX = (mx - (x + 2.0) - hDragOffset) * (maxX / (track - thumbW))
             clamp_scroll()
             core.markFrameRedraw()
@@ -1806,7 +1863,7 @@ export struct Table impl Widget, Themeable {
             // 自动滚动：拖到视口顶部/底部边缘时滚动
             float bodyTop = y + headerH
             float bodyBot = y + h
-            ph.kill()    // 拖行到边缘的"自动滚动"是程序驱动，别和惯性叠加 ✗
+            phys.kill()    // 拖行到边缘的"自动滚动"是程序驱动，别和惯性叠加 ✗
             if my < bodyTop + 30.0 { scrollY = scrollY - 3.0 * rowH; clamp_scroll() }
             eif my > bodyBot - 30.0 { scrollY = scrollY + 3.0 * rowH; clamp_scroll() }
             core.markFrameRedraw()
@@ -1837,7 +1894,7 @@ export struct Table impl Widget, Themeable {
                 if my >= thy and my <= thy + thumbH { draggingV = true; vDragOffset = my - thy }
                 else {
                     draggingV = true; vDragOffset = thumbH / 2.0
-                    ph.kill()      // 点在槽上跳一屏：立即到位，别让惯性接着推 ✓
+                    phys.kill()      // 点在槽上跳一屏：立即到位，别让惯性接着推 ✓
                     scrollY = (my - (y + headerH + 2.0) - thumbH / 2.0) * (maxY / (track - thumbH))
                     clamp_scroll()
                 }
@@ -1859,7 +1916,7 @@ export struct Table impl Widget, Themeable {
                 if mx >= thx and mx <= thx + thumbW { draggingH = true; hDragOffset = mx - thx }
                 else {
                     draggingH = true; hDragOffset = thumbW / 2.0
-                    ph.kill()      // 同上
+                    phys.kill()      // 同上
                     scrollX = (mx - (x + 2.0) - thumbW / 2.0) * (maxX / (track - thumbW))
                     clamp_scroll()
                 }
@@ -1872,8 +1929,8 @@ export struct Table impl Widget, Themeable {
             int mod = ev.keyMod()
             // ★ 2026-11-27：物理滚动 —— **只叠加速度**，不直接改位置；
             //   真正的推进在 `render` 开头的 `pump_scroll()`（一行 = rowH 像素，×11 系数在内核里）
-            if (mod & 1) != 0 { ph.kick(-ev.wheelX() * 24.0, 0.0) }
-            else { ph.kick(0.0, -ev.wheelY() * rowH) }
+            if (mod & 1) != 0 { phys.kick(-ev.wheelX() * 24.0, 0.0) }
+            else { phys.kick(0.0, -ev.wheelY() * rowH) }
             core.markFrameRedraw()
             core.requestRedraw()         // 下一帧也得有人要（否则"滚了不动、动鼠标才动"✗）
             return

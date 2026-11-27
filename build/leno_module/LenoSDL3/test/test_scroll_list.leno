@@ -1,0 +1,104 @@
+// test_scroll_list.leno —— ListBox / ComboBox 物理滚动 + Table 触摸拖动（2026-11-27）
+//
+// 这一批补的是「同一套滚动内核接到另外三个控件上」：
+//   · ListBox        滚轮一格不再瞬跳一行，撞界回弹
+//   · ComboBox 弹层  同上（弹层是第二遍绘制，pump 放在 renderPopup 里）
+//   · Table 触摸拖动 手机上手指按住行往上拖 ⇒ 内容跟手；抬手后有惯性（这是新加的手势）
+//   ⚠ TreeView 与 ListBox 的改动**逐行同构**（同一内核、同一 dispY/pump_scroll），
+//     本测试不重复覆盖它，靠 `--check` + 手测（造树数据成本高、收益低）
+//
+// ⚠ 第一次交互必须由 `addTimerOnce` 注入：窗口刚起时没有任何重绘请求，
+//   overlay 一帧都不会跑（踩过，见 test_scroll_table.leno 的注释）
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_scroll_list.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, ListBox, ComboBox, Table)
+
+int gFail = 0
+float gTouchY0 = 0.0
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+func finish() {
+    print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+    SDL3.requestExit()
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "scroll list test", w: 900, h: 700})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+
+    // ListBox：40 项 × 行高 24 ⇒ 可滚 ~660（视口 300）
+    Array[string] xs = []
+    for 40 to i { xs.add("项 " + _str(i)) }
+    ListBox lb = win.addListBox({x: 16, y: 16, w: 300, h: 300, items: xs})
+
+    // ComboBox：弹层最多 200 高，40 项 ⇒ 可滚
+    ComboBox cb = win.addComboBox({x: 660, y: 16, w: 200, h: 30, items: xs})
+
+    // Table：30 行（触摸拖动用）
+    Table tb = win.addTable({x: 16, y: 340, w: 400, h: 300, headers: ["行"]})
+    Array[Array[string]] rows = []
+    for 30 to i { rows.add(["行 " + _str(i)]) }
+    tb.set_rows(rows)
+
+    // ---- ListBox：一格滚轮 ----
+    win.addTimerOnce(400, func() { SDL3.testWheelAt(win.getID(), 100.0, 100.0, -1.0) })
+    win.addTimerOnce(520, func() {
+        check(lb.get_scroll() > 0.0 and lb.get_scroll() < 24.0,
+            "ListBox 滚轮不是瞬跳一行（" + _str(lb.get_scroll()) + " px，行高 24）")
+        check(lb.get_scroll_velocity() > 0.0, "ListBox 滚轮转成了速度（" + _str(lb.get_scroll_velocity()) + " px/s）")
+    })
+    win.addTimerOnce(1100, func() {
+        check(not lb.is_scrolling(), "ListBox 滑行收敛（不再动画）")
+        check(lb.get_scroll() > 28.0 and lb.get_scroll() < 60.0,
+            "ListBox 一格滑行 ≈1.4 行（" + _str(lb.get_scroll()) + " px）")
+        // ---- ComboBox 弹层：展开后滚一格 ----
+        cb.open_list()
+        SDL3.testWheelAt(win.getID(), 720.0, 120.0, -1.0)
+    })
+    win.addTimerOnce(1900, func() {
+        check(cb.get_scroll() > 0.0, "ComboBox 弹层滚轮生效（" + _str(cb.get_scroll()) + " px）")
+        check(not cb.is_scrolling(), "ComboBox 弹层滑行收敛")
+        cb.open_list()          // 收起? open_list 只开；这里再设一次确保状态干净
+        // ---- Table：手指拖动 ----
+        SDL3.testTouchDown(win.getID(), 200.0, 560.0)
+    })
+    win.addTimerOnce(2000, func() { SDL3.testTouchMove(win.getID(), 200.0, 460.0) })
+    win.addTimerOnce(2100, func() { SDL3.testTouchMove(win.getID(), 200.0, 360.0) })
+    win.addTimerOnce(2250, func() {
+        gTouchY0 = tb.scroll_y()
+        check(gTouchY0 > 150.0, "Table 手指拖动跟手（拖 200 ⇒ " + _str(gTouchY0) + " px）")
+        SDL3.testTouchUp(win.getID(), 200.0, 360.0)
+    })
+    win.addTimerOnce(2450, func() {
+        check(tb.scroll_y() > gTouchY0 + 5.0,
+            "Table 抬手后惯性继续滑（" + _str(gTouchY0) + " → " + _str(tb.scroll_y()) + "）")
+    })
+    // 惯性尾巴按 drag_friction 0.94（τ≈0.27s）走，1000px/s 甩出去要 ~1.2s 才停 ⇒ 给足时间再判收敛
+    win.addTimerOnce(3900, func() {
+        check(not tb.is_scrolling(), "Table 惯性最终收敛（速度 " + _str(tb.get_scroll_velocity()) + " px/s）")
+        finish()
+    })
+    // 兜底：12 秒还没结束就判失败
+    win.addTimerOnce(12000, func() { check(false, "12 秒内没跑完 ✗"); finish() })
+
+    win.setOverlay(func(Renderer r) { })
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}

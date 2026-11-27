@@ -85,7 +85,7 @@ export struct ScrollView impl Widget, Themeable {
     //     · 滚轮/甩动只叠加速度，不直接改位置 ⇒ 连续滚轮累积成"一次飞" ✓
     //     · 撞界 ⇒ 多余位移折减成越界量、速度交给弹簧（欠阻尼 ⇒ 顶到边界有"呼吸" ✓）
     //   ⚠ 单位：内核里的速度是 **px/秒**（不是 px/帧）—— 老实现那个 px/帧 的 `panV` 已删
-    pri ScrollPhys ph
+    pri ScrollPhys phys
 
     pri bool autoW = false, autoH = false      // 自动内容尺寸标志（content_w/h < 0 时启用）
     // ── 内容尺寸「跟随视图」（自适应布局用 ✓）──
@@ -155,7 +155,7 @@ export struct ScrollView impl Widget, Themeable {
         //   键仍在白名单里 ⇒ 老调用方不会因为"不认识键"刷警告，但传了也不起作用 ✓
         // `friction`/`drag_friction` 是**每帧**（60fps 基准）速度保留率：
         //   越小停得越快（0.85 很"黏"、0.96 很"飘"）；τ 的换算与钳位在内核里 ✓
-        ph.set_friction(opts.get("friction", 0.88), opts.get("drag_friction", 0.94))
+        phys.set_friction(opts.get("friction", 0.88), opts.get("drag_friction", 0.94))
         barAutoHide = opts.get("bar_auto_hide", true)
         // 滚动条宽度（默认 12）：浮层/小面板里 12 太粗，可调到 6~8 ✓
         barW = opts.get("bar_w", 12.0)
@@ -237,17 +237,17 @@ export struct ScrollView impl Widget, Themeable {
     // ==================== 物理滚动（委托给共享内核 `ScrollPhys`）====================
     //   参数（速度上限 / 弹簧 400·28 / 收尾 20px/s / dt 钳位 / 越界上限）全部在
     //   `sdl_scrollphys.leno` 里，本控件只负责"位置"以及"什么时候推进、什么时候请求重绘" ✓
-    pri func kill_motion() { ph.kill() }
+    pri func kill_motion() { phys.kill() }
 
     // 手指拖动：1:1 跟手 + 越界弹性（内核 drag 会返回夹好的新位置 ✓）
     pri func drag_by(float ddx, float ddy) {
-        var[float, float](nx, ny) = ph.drag(ddx, ddy, scrollX, scrollY, hmax(), vmax())
+        var[float, float](nx, ny) = phys.drag(ddx, ddy, scrollX, scrollY, hmax(), vmax())
         scrollX = nx; scrollY = ny
     }
 
     // 滚轮入口：只**叠加速度**（连续滚轮累积成"一次飞"），不直接改位置 ✓
     pri func wheel_scroll(float dx, float dy) {
-        ph.kick(dx, dy)
+        phys.kick(dx, dy)
         core.markFrameRedraw()
         core.requestRedraw()   // 本帧会画，但**下一帧**也得有人要（见 `sync` 顶部那段注释 ✓）
     }
@@ -257,15 +257,15 @@ export struct ScrollView impl Widget, Themeable {
     //   最终位置必须一致，靠真实时钟是测不出这一点的 ✓
     func step_physics(float dt) {
         if dt <= 0.0 { return }
-        var[float, float](nx, ny) = ph.step(scrollX, scrollY, dt, hmax(), vmax())
+        var[float, float](nx, ny) = phys.step(scrollX, scrollY, dt, hmax(), vmax())
         scrollX = nx; scrollY = ny
         core.requestRedraw()
     }
 
     // 真实时钟入口：跟手期间只对齐时钟（1:1 由 `process` 直接改位置，不能再叠惯性 ✓）
     pri func pump_physics() {
-        if panSt == 2 { ph.syncClock(); return }
-        var[float, float](nx, ny) = ph.pump(scrollX, scrollY, hmax(), vmax())
+        if panSt == 2 { phys.syncClock(); return }
+        var[float, float](nx, ny) = phys.pump(scrollX, scrollY, hmax(), vmax())
         scrollX = nx; scrollY = ny
     }
 
@@ -294,7 +294,7 @@ export struct ScrollView impl Widget, Themeable {
     // 程序化"甩一下"：给一段初速度（px/秒），交给物理积分 ⇒ 自然滑行 + 撞界回弹 ✓
     //   典型用法：点一下"回顶部"按钮给一个负速度，看着像被推回去的（而不是瞬间跳 ✗）
     func fling(float vx, float vy) {
-        ph.fling(vx, vy)
+        phys.fling(vx, vy)
         core.markFrameRedraw()
         core.requestRedraw()   // 同上：把"下一帧"预约上 ✓
     }
@@ -326,11 +326,11 @@ export struct ScrollView impl Widget, Themeable {
     //     get_velocity_*  —— px/秒（静止恒 0）
     //     get_overscroll_* —— 弹性越界量（正 = 越过下/右界，负 = 越过上/左界）
     //     is_animating    —— 有没有未收敛的运动（速度 / 回弹任一）
-    func get_velocity_x(): float { return ph.velX }
-    func get_velocity_y(): float { return ph.velY }
-    func get_overscroll_x(): float { return ph.overX }
-    func get_overscroll_y(): float { return ph.overY }
-    func is_animating(): bool { return ph.is_moving() }
+    func get_velocity_x(): float { return phys.velX }
+    func get_velocity_y(): float { return phys.velY }
+    func get_overscroll_x(): float { return phys.overX }
+    func get_overscroll_y(): float { return phys.overY }
+    func is_animating(): bool { return phys.is_moving() }
 
     // 每帧把内容定位到（视口 - 偏移），设定内容尺寸，并刷新滚动条几何
     // 自动内容尺寸模式下，每帧重新测算（子控件可能动态增减）
@@ -346,7 +346,7 @@ export struct ScrollView impl Widget, Themeable {
         //     ⇒ 事件循环空闲挂起（500ms 超时）⇒ 画面停住，直到鼠标事件把它叫醒 ✗
         //   ⇒ `step_physics` 末尾的 requestRedraw 只在"**已经推进过**"的帧里补请求，
         //     接不上"刚被加速的那一帧" —— 必须在这里（去重之前、每帧都过）兜底 ✓
-        if ph.is_moving() { core.requestRedraw() }
+        if phys.is_moving() { core.requestRedraw() }
         // ⚠ 去重**不能只看帧号**：同一帧内可能来多个滚轮事件（快速滚 ✗），位置变了就必须重做，
         //   否则渲染用的还是"第一个事件"留下的旧位置 ⇒ 视觉滞后/一顿一顿 ✗（"抽搐"的第二个成因）
         // ⚠ 去重**必须连自身尺寸一起比**：窗口缩放（最大化/还原）时滚动位置没变，但 `fit_w/fit_h`
@@ -372,7 +372,7 @@ export struct ScrollView impl Widget, Themeable {
         // ⚠ 内容定位**取整**：分数偏移会让文字落在半像素上 ⇒ 边缘发虚/闪 ✗（与"裁剪闪烁"同源）
         //   `overX/overY` 是弹性越界量，越界时内容跟手移出视口，
         //   由 render 的裁剪矩形切掉 ⇒ 露出的就是 ScrollView 自己的底色 = 橡皮筋的视觉 ✓
-        _content?.set_pos(x - _int(ph.renderX(scrollX)), y - _int(ph.renderY(scrollY)))
+        _content?.set_pos(x - _int(phys.renderX(scrollX)), y - _int(phys.renderY(scrollY)))
         _content?.set_size(_contentW, _contentH)
     }
 
@@ -433,7 +433,7 @@ export struct ScrollView impl Widget, Themeable {
             layoutEpoch = layoutEpoch + 1
             // 视口尺寸变了 ⇒ 可滚范围也变了，残留的弹性越界量没有意义（还会把内容顶出视口 ✗）
             //   ⚠ 只在**真的变了**时清：布局每帧都调 set_size（值相同），无条件清会把回弹打断 ✗
-            ph.overX = 0.0; ph.overY = 0.0; ph.overVelX = 0.0; ph.overVelY = 0.0
+            phys.overX = 0.0; phys.overY = 0.0; phys.overVelX = 0.0; phys.overVelY = 0.0
         }
         w = sw; h = sh
         // 视图尺寸变了 ⇒ `fit_w` 的内容宽立刻跟着变（不必等下一帧 `_sync` ✓）
@@ -525,7 +525,7 @@ export struct ScrollView impl Widget, Themeable {
         // 失焦兜底：拖拽中途 Alt+Tab / 切走窗口会**丢掉 up 事件** ⇒ 捕获状态必须归零，
         //   否则 `innerDown` 永远为真、闸门永久敞开（= 这篇修复白做 ✗）
         if ev.isWindowFocusLost() { innerDown = false; mouseIn = false; barHover = false
-            panSt = 0; ph.velX = 0.0; ph.velY = 0.0 }   // ★ 丢 up 事件 ⇒ 拖动状态也要归零（否则"粘手" ✗）
+            panSt = 0; phys.velX = 0.0; phys.velY = 0.0 }   // ★ 丢 up 事件 ⇒ 拖动状态也要归零（否则"粘手" ✗）
         sync()
         // 滚动条交互优先于内容
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
@@ -559,7 +559,7 @@ export struct ScrollView impl Widget, Themeable {
                     panSt = 1; panX0 = px0; panY0 = py0
                     panLastX = px0; panLastY = py0
                     // 按下就接管方向盘 ⇒ 残余速度必须掐掉（越界量留着，手指从当前位置接手 ✓）
-                    ph.velX = 0.0; ph.velY = 0.0; panNs = 0
+                    phys.velX = 0.0; phys.velY = 0.0; panNs = 0
                     return
                 }
             } else if ev.isMouseMotion() and panSt != 0 {
@@ -588,9 +588,9 @@ export struct ScrollView impl Widget, Themeable {
                         }
                     }
                     panNs = nowNs
-                    ph.velY = maths.clamp(-ddy / dts, -4000.0, 4000.0)
-                    ph.velX = maths.clamp(-ddx / dts, -4000.0, 4000.0)
-                    ph.velDrag = true
+                    phys.velY = maths.clamp(-ddy / dts, -4000.0, 4000.0)
+                    phys.velX = maths.clamp(-ddx / dts, -4000.0, 4000.0)
+                    phys.velDrag = true
                     drag_by(ddx, ddy)
                     core.markFrameRedraw()
                     return
