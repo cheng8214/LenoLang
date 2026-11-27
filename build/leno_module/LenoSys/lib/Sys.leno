@@ -467,6 +467,19 @@ export func cpuUsage(): int {
     return _cpuPct
 }
 
+// ==================== 文件图标（2026-11-27）====================
+// 取文件在资源管理器里显示的图标：{ok, w, h, pixels}，pixels = Array[int]（RGBA，行优先）
+//   · small=true ⇒ 16×16；false ⇒ 32×32
+//   · **对存在的文件与目录都有效**；不存在的路径 ⇒ ok=false
+//     ⚠ 不要去加 `SHGFI_USEFILEATTRIBUTES`（"按属性给通用图标"）：实测加了之后**目录反而
+//       拿不到图标**（hIcon 为空），不加才对
+//   · 老图标没有 alpha 通道时 alpha 全补 255（不做 mask 合成）
+//   · Linux/macOS **未实现**（freedesktop 那边要走 icon theme 查找）⇒ ok=false
+export func fileIcon(string path, bool small = false): Dict {
+    if _isW() { return w.fileIcon(path, small) }
+    return {ok: false, w: 0, h: 0, pixels: []}
+}
+
 // ==================== 桌面集成 ====================
 
 // 用**系统默认程序**打开一个文件 / 目录 / URI（`https://…` 也认 ✓）

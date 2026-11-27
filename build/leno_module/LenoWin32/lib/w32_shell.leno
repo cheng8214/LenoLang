@@ -12,6 +12,28 @@ clib shell32 {
     // 通用文件操作（复制/移动/删除）：op = SHFILEOPSTRUCTW*（56 字节，手排布局见下）
     // 成功返回 0；fAnyOperationsAborted（偏移 36）=用户/系统中止
     i32 SHFileOperationW(Ptr op)
+
+    // 取文件/目录的图标：psfi = SHFILEINFOW*（x64 = 696 字节），返回非 0 = 成功
+    //   flags: SHGFI_ICON(0x100) | SHGFI_SMALLICON(0x1) 或 SHGFI_LARGEICON(0x0)
+    //          | SHGFI_USEFILEATTRIBUTES(0x10)（路径可不存在，按 attrs 给通用图标）
+    Ptr SHGetFileInfoW(Ptr[u16] path, u32 attrs, Ptr psfi, u32 cbFileInfo, u32 flags)
+}
+
+// ==================== USER32（图标）====================
+clib user32 {
+    i32 DestroyIcon(Ptr hIcon)
+    // ICONINFO（x64 32 字节）：fIcon@0 xHotspot@4 yHotspot@8 pad@12 hbmMask@16 hbmColor@24
+    i32 GetIconInfo(Ptr hIcon, Ptr pii)
+}
+
+// ==================== GDI32（位图取像素）====================
+clib gdi32 {
+    // BITMAP（x64 32 字节）：bmType@0 bmWidth@4 bmHeight@8 bmWidthBytes@12 bmPlanes@16 bmBitsPixel@18 ...
+    i32 GetObjectW(Ptr h, i32 cb, Ptr out)
+    Ptr CreateCompatibleDC(Ptr hdc)
+    i32 DeleteDC(Ptr hdc)
+    // BITMAPINFOHEADER（40 字节）；usage: DIB_RGB_COLORS = 0
+    i32 GetDIBits(Ptr hdc, Ptr hbm, u32 start, u32 lines, Ptr bits, Ptr bmi, u32 usage)
 }
 
 // ==================== KERNEL32 ====================
@@ -36,6 +58,17 @@ func _shellLib(): shell32 {
     if _shell == null { _shell = ffi.load("shell32.dll") }
     return _shell
 }
+user32 _user = null
+func _userLib(): user32 {
+    if _user == null { _user = ffi.load("user32.dll") }
+    return _user
+}
+gdi32 _gdi = null
+func _gdiLib(): gdi32 {
+    if _gdi == null { _gdi = ffi.load("gdi32.dll") }
+    return _gdi
+}
+
 kernel32 _krnl = null
 func _krnlLib(): kernel32 {
     if _krnl == null { _krnl = ffi.load("kernel32.dll") }
@@ -116,6 +149,92 @@ export func volumeInfo(string root): Dict {
         ffi.free(pSerial)
         ffi.free(pMaxComp)
         ffi.free(pFsFlags)
+    }
+}
+
+// ==================== 文件图标（2026-11-27）====================
+// 取文件在资源管理器里显示的图标，转成 RGBA 像素。
+//   返回 {ok, w, h, pixels}：pixels 是 Array[int]，每像素 4 个 0..255（R,G,B,A），行优先
+//   · small=true ⇒ 16×16；false ⇒ 32×32（系统标准尺寸，不做缩放）
+//   · **对存在的文件与目录都有效**（目录给文件夹图标）；不存在的路径 ⇒ ok=false
+//     ⚠ 不要加 `SHGFI_USEFILEATTRIBUTES`：实测加了之后**目录反而拿不到 hIcon**
+//   · 老图标没有 alpha 通道 ⇒ 该图标的 alpha 全补 255（不做 mask 合成）
+//   · bpp 不是 32 的图标直接返回 ok=false（Win10 的图标都是 32bpp，极少遇到）
+export func fileIcon(string path, bool small = false): Dict {
+    Ptr shfi = ffi.calloc(1, 696)     // SHFILEINFOW(x64 696)：hIcon@0 iIcon@8 attrs@12 display@16 type@536
+    Ptr pw = ffi.utf8_to_utf16(path)
+    try {
+        int flags = 0x100                        // SHGFI_ICON
+        if small { flags = flags | 0x1 }         // SHGFI_SMALLICON（不带就是 LARGEICON 32×32）
+        Ptr r = _shellLib().SHGetFileInfoW(pw, 0, shfi, 696, flags)
+        if r == null { return {ok: false, w: 0, h: 0, pixels: []} }
+        Ptr hIcon = ffi.read_ptr(shfi, 0)
+        if hIcon == null { return {ok: false, w: 0, h: 0, pixels: []} }
+        try {
+            Ptr ii = ffi.calloc(1, 32)           // ICONINFO
+            try {
+                if _userLib().GetIconInfo(hIcon, ii) == 0 { return {ok: false, w: 0, h: 0, pixels: []} }
+                Ptr hbm = ffi.read_ptr(ii, 24)   // hbmColor
+                if hbm == null { return {ok: false, w: 0, h: 0, pixels: []} }
+                Ptr bm = ffi.calloc(1, 32)       // BITMAP
+                try {
+                    _gdiLib().GetObjectW(hbm, 32, bm)
+                    int w = ffi.read_int(bm, 4)
+                    int h = ffi.read_int(bm, 8)
+                    int bpp = ffi.read_uint16(bm, 18)
+                    if w <= 0 or h <= 0 or w > 256 or h > 256 or bpp != 32 {
+                        return {ok: false, w: 0, h: 0, pixels: []}
+                    }
+                    Ptr hdc = _gdiLib().CreateCompatibleDC(null)
+                    Ptr bmi = ffi.calloc(1, 40)  // BITMAPINFOHEADER
+                    Ptr buf = ffi.malloc(w * h * 4)
+                    try {
+                        ffi.write_int(bmi, 0, 40)
+                        ffi.write_int(bmi, 4, w)
+                        ffi.write_int(bmi, 8, 0 - h)   // 负高度 ⇒ 自上而下，省一次翻转
+                        ffi.write_int16(bmi, 12, 1)    // planes
+                        ffi.write_int16(bmi, 14, 32)   // bitcount
+                        ffi.write_int(bmi, 16, 0)      // BI_RGB
+                        if _gdiLib().GetDIBits(hdc, hbm, 0, h, buf, bmi, 0) == 0 {
+                            return {ok: false, w: 0, h: 0, pixels: []}
+                        }
+                        // 先扫一遍看有没有 alpha（GDI 给的是 BGRA；老图标 alpha 全 0）
+                        var anyAlpha = false
+                        for 0:h-1 to y {
+                            for 0:w-1 to x {
+                                if ffi.read_byte(buf, (y * w + x) * 4 + 3) != 0 { anyAlpha = true }
+                            }
+                        }
+                        Array[int] px = []
+                        for 0:h-1 to y {
+                            for 0:w-1 to x {
+                                int o = (y * w + x) * 4
+                                px.add(ffi.read_byte(buf, o + 2))   // R
+                                px.add(ffi.read_byte(buf, o + 1))   // G
+                                px.add(ffi.read_byte(buf, o))       // B
+                                int a = ffi.read_byte(buf, o + 3)
+                                if not anyAlpha { a = 255 }
+                                px.add(a)
+                            }
+                        }
+                        return {ok: true, w: w, h: h, pixels: px}
+                    } finally {
+                        ffi.free(bmi)
+                        ffi.free(buf)
+                        _gdiLib().DeleteDC(hdc)
+                    }
+                } finally {
+                    ffi.free(bm)
+                }
+            } finally {
+                ffi.free(ii)
+            }
+        } finally {
+            _userLib().DestroyIcon(hIcon)
+        }
+    } finally {
+        ffi.free(pw)
+        ffi.free(shfi)
     }
 }
 

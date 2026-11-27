@@ -230,6 +230,11 @@ export func cpuTimes(): Dict {
     return Win32.cpuTimes()
 }
 
+// 文件图标（Shell 取，RGBA 像素）：{ok, w, h, pixels} —— 只对存在的文件有效
+export func fileIcon(string path, bool small): Dict {
+    return Win32.fileIcon(path, small)
+}
+
 // 取 path 所在盘的根（`C:\Users\x` ⇒ `C:\`）✓ 认不出 ⇒ SystemDrive 兜底 ✓
 export func driveRootOf(string path): string {
     string p = strings.trim(path)

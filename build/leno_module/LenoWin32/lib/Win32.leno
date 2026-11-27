@@ -283,6 +283,13 @@ export func volumeInfo(string root): Dict {
     return shell.volumeInfo(root)
 }
 
+// 文件图标（RGBA 像素）：{ok, w, h, pixels:Array[int]}；small=true ⇒ 16×16，否则 32×32
+//   ⚠ 只对**存在的文件**有效（目录 / 不存在的路径实测拿不到 hIcon）⇒ 失败一律 ok=false
+export func fileIcon(string path, bool small = false): Dict {
+    if not _is_supported() { return {ok: false, w: 0, h: 0, pixels: []} }
+    return shell.fileIcon(path, small)
+}
+
 // 清空回收站（默认无确认/无进度/无声；空回收站也返回 true）
 export func emptyRecycleBin(int flags = 7): bool {
     if not _is_supported() { return false }
