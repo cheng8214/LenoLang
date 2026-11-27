@@ -71,6 +71,8 @@ import "sdl_popmenu.leno" as pmenu; use pmenu.PopMenu    // 自绘弹出菜单�
 @optkeys(["font_size:num", "x:num", "y:num", "w:num", "h:num", "visible:bool", "bg_color:color", "border_color:color", "radius:num",
           "item_h:num", "min_w"])
 export func createPopMenu(Dict opts): PopMenu { return pmenu.createPopMenu(opts) }
+// 菜单（下拉/右键）弹出淡入的进度（0~1）—— 自测断言用（2026-11-27）
+export func menuFade(): float { return menu.menuFade() }
 
 
 // ==================== 重新导出类型 ====================

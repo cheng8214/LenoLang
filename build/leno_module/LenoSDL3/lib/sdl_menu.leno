@@ -37,6 +37,7 @@ import "sdl_image.leno" as img
 import "sdl_opts.leno" as dochk    // 选项对账（见 sdl_opts.leno 头部的来龙去脉 ✓）
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+import "sdl_animator.leno" as ani; use ani.Tween   // 菜单/子菜单弹出淡入 ✓
 use theme.Color
 import maths                      // 只需要 ceil：把内容裁剪矩形对齐到"面板的真实覆盖"（见 drawPanel ✓）
 
@@ -315,7 +316,12 @@ export struct MenuBar impl Widget, Themeable {
     // 记录所属窗口句柄，供上下文菜单按窗口隔离绘制（渲染循环据 hwnd 只画本窗口菜单）
     func setWindowHandle(Ptr[u8] hwnd) { winHnd = hwnd }
     func getWindowHandle(): Ptr[u8] { return winHnd }
-    func close() { open = -1; openSub = -1; hoverItem = -1; hoverSub = -1; _clearActiveMenu(self) }
+    func close() { open = -1; openSub = -1; hoverItem = -1; hoverSub = -1; _menuFade.snap(0.0); _clearActiveMenu(self) }
+    // 淡入起点：只有"从完全关闭到打开"才从头播；子菜单/换一个顶部菜单不重播 ✓
+    pri func _menu_shine() {
+        if _menuFade.value() <= 0.01 { _menuFade.snap(0.0) }
+        _menuFade.set_target(1.0)
+    }
     // 设置透明背景（嵌入标题栏时推荐开启）
     func set_transparent(bool t) { transparent = t; core.markFrameRedraw() }
     // 设置自动宽度
@@ -456,6 +462,7 @@ export struct MenuBar impl Widget, Themeable {
         closeOtherMenus()   // 展开前先关闭其它菜单（顶部菜单栏/其它右击菜单），保证仅一个
         close()
         open = ctxIdx
+        _menu_shine()
         ctxAnchor[ctxIdx] = [x, y]
         openSub = -1; hoverItem = -1; hoverSub = -1
         ensure_font()
@@ -664,6 +671,7 @@ export struct MenuBar impl Widget, Themeable {
                 else {
                     closeOtherMenus()   // 展开新标题前关闭其它菜单（如编辑框右击菜单），保证仅一个
                     open = hitTop; openSub = -1; hoverItem = -1; hoverSub = -1
+                    _menu_shine()
                     _setActiveMenu(self)   // 标记本菜单为当前活动菜单（窗口级），供互斥关闭
                 }
                 return
@@ -738,6 +746,7 @@ export struct MenuBar impl Widget, Themeable {
     // 第二遍：把下拉面板（含子菜单）画在最上层，并登记弹层捕获区
     func renderPopup(Renderer r) {
         if not _loaded or open < 0 { return }
+        if _menuFade.pump() { core.requestRedraw() }   // 淡入没走完就续帧 ✓
         var items = menus[open]
         var g = panelRect(open)
         float px = g[0], py = g[1], pw = g[2], ph = g[3]
@@ -815,7 +824,10 @@ export struct MenuBar impl Widget, Themeable {
 
     pri func drawPanel(Renderer r, Array[MenuItem] items, float px, float py, float pw, int hoverIdx) {
         float ph = _panelH(items, itemH, itemGap)
-        r.setColor(bgColor)
+        // ★ 2026-11-27：整块面板按淡入进度乘 alpha（见 _menuFade 注释）
+        float f = _menuFade.value()
+        if f < 0.01 { return }
+        r.setColor(_menuA(bgColor, f))
         r.fillRoundedRect(px, py, pw, ph, 6.0)
 
         SDL_Rect clip = SDL_Rect.malloc()
@@ -830,7 +842,7 @@ export struct MenuBar impl Widget, Themeable {
         for items.len() to i {
             var it = items[i]
             if it.separator {
-                r.setColor(theme.withAlpha(sepColor, 200))
+                r.setColor(theme.withAlpha(sepColor, _int(200.0 * f)))
                 r.drawLine(px + 10.0, iy + 4.0, px + pw - 10.0, iy + 4.0)
                 iy = iy + 9.0 + (if i < items.len() - 1 then itemGap else 0.0)
                 continue
@@ -838,7 +850,7 @@ export struct MenuBar impl Widget, Themeable {
             float ry = iy
             bool hov = (i == hoverIdx) and it.enabled
             if hov {
-                r.setColor(hovColor)
+                r.setColor(_menuA(hovColor, f))
                 // 悬停行统一走渲染器的共用件：圆角**锚在面板的边**上 ✓
                 //   ⚠ 旧写法"首尾项按自己的矩形补圆角"在末项只露一半时，圆角落到面板底边
                 //     下方 ⇒ 面板两个底角变方、各冒一块底色方块 ✗（2026-10-13 实测 ✓）
@@ -846,6 +858,7 @@ export struct MenuBar impl Widget, Themeable {
             }
             Color lc = txtColor
             if not it.enabled { lc = disColor }
+            lc = _menuA(lc, f)      // 淡入（三角/快捷字都用同一份 lc ✓）
             // 图标
             float iconW = draw_icon(r, it.image, px, ry)
             if _font != null and _font.ok {
@@ -868,7 +881,7 @@ export struct MenuBar impl Widget, Themeable {
         r.popClipRect()
         clip.free()
 
-        r.setColor(theme.withAlpha(bdrColor, 220))
+        r.setColor(theme.withAlpha(bdrColor, _int(220.0 * f)))
         r.drawRoundedRect(px, py, pw, ph, 6.0)
     }
 
@@ -902,6 +915,19 @@ func applyTheme(Theme t) {
 // 但 _winHnd 为 null，绘制时由任意窗口兜底绘制（保持旧行为，避免嵌套控件右键菜单不显示）。
 // 区别于旧的「全局数组永不摘除」反模式：本数组在 MenuBar.dispose() 时摘除自身，
 // 窗口销毁（递归 dispose 所有控件）后不残留，无悬空引用累积、无跨窗口数组无限增长。
+// ★ 2026-11-27：下拉 / 右键菜单弹出**淡入**（0→1，约 100ms）
+//   为什么只做淡入、不做"从上往下拉开"：菜单是"高频短促"的交互，鼠标在弹出瞬间已经在目标项上，
+//   高度动画会让项的位置在移动中撞到光标（感觉"抓不住"）。ComboBox 弹层能做高度动画，是因为
+//   它出现时鼠标通常还停在触发器上 ✓
+//   ⚠ 模块级变量默认 null ⇒ 必须 new（struct 字段才默认构造）
+Tween _menuFade = new Tween()
+// 按淡入进度给颜色乘 alpha（菜单里每处颜色都要走它）
+func _menuA(Color c, float f): Color {
+    return theme.withAlpha(c, _int(_float(theme.colorA(c)) * f))
+}
+// 菜单淡入进度（0~1，1 = 完全不透明）—— 自测断言用
+export func menuFade(): float { return _menuFade.value() }
+
 Array[MenuBar] _ctxMenuRegistry = []
 export func registerContextMenu(MenuBar m) {
     if not (m is MenuBar) { return }

@@ -1,0 +1,64 @@
+// test_menu_fade.leno —— 菜单（下拉 / 右键）弹出**淡入**回归（2026-11-27）
+//
+// 以前 `open = idx` 之后菜单直接满不透明地出现，弹出那一下"啪"地砸在屏幕上 ✗
+// 现在由 `Tween` 驱动 0→1（约 100ms）：面板底色、分隔线、悬停底、文字、图标、边框一起渐显。
+//   ⚠ 只做淡入、不做"从上往下拉开"：菜单是高频短促交互，鼠标在弹出瞬间已经落在目标项上，
+//     高度动画会让项在移动中撞到光标（"抓不住"）。ComboBox 弹层能做高度，是因为鼠标还在触发器上 ✓
+//
+// 本测试钉住：
+//   ① 弹出后头几十毫秒，进度在 (0,1) 之间（是在淡入，不是瞬现）
+//   ② ~300ms 后到 1
+//   ③ `close()` 立刻归零（下次重新从透明开始）
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_menu_fade.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, MenuBar)
+
+int gFail = 0
+float gMid = 0.0
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "menu fade test", w: 480, h: 320})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    MenuBar bar = win.addMenuBar({x: 0, y: 0, w: 400, h: 28, font_size: 14})
+    int ctx = bar.addContextMenu("ctx")
+    bar.addContextItem(ctx, {text: "复制", shortcut: "Ctrl+C"})
+    bar.addContextItem(ctx, {text: "粘贴"})
+    bar.addContextSeparator(ctx)
+    bar.addContextItem(ctx, {text: "全选"})
+
+    win.addTimerOnce(300, func() { bar.openContext(ctx, 80.0, 100.0) })
+    win.addTimerOnce(350, func() { gMid = SDL3.menuFade() })
+    win.addTimerOnce(700, func() {
+        check(gMid > 0.02 and gMid < 0.99, "弹出时有淡入中间态（进度 " + _str(gMid) + "）")
+        check(maths.abs(SDL3.menuFade() - 1.0) < 0.02, "最终完全不透明（" + _str(SDL3.menuFade()) + "）")
+        bar.close()
+    })
+    win.addTimerOnce(900, func() {
+        check(SDL3.menuFade() < 0.01, "close() 后进度归零（" + _str(SDL3.menuFade()) + "）")
+        print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+        SDL3.requestExit()
+    })
+    win.addTimerOnce(8000, func() { check(false, "8 秒内没跑完 ✗"); SDL3.requestExit() })
+
+    win.setOverlay(func(Renderer r) { })
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}
