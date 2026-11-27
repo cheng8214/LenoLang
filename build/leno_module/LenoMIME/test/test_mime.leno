@@ -1,0 +1,120 @@
+// test_mime.leno -- MIME 自测（扩展名表 / 魔数 / 分类 / detect 读盘）
+//   build\leno.exe build\leno_module\LenoMIME\test\test_mime.leno
+import "MIME" as mime
+import dirs
+import files
+import strings
+
+var passed = 0
+var failed = 0
+
+func check(string name, bool ok) {
+    if ok {
+        print("  [PASS] " + name)
+        passed = passed + 1
+    } else {
+        print("  [FAIL] " + name)
+        failed = failed + 1
+    }
+}
+
+func eq(string name, string got, string want) {
+    if got == want {
+        print("  [PASS] " + name + " = " + got)
+        passed = passed + 1
+    } else {
+        print("  [FAIL] " + name + "：期望「" + want + "」实际「" + got + "」")
+        failed = failed + 1
+    }
+}
+
+func bytes(Array[int] a): string {
+    return strings.from_bytes(a)
+}
+
+main() {
+    print("=== LenoMIME 自测 ===")
+
+    // ---------- ① 扩展名 ----------
+    print("① 扩展名")
+    eq("a.PNG", mime.byExt("a.PNG"), "image/png")
+    eq("dir/x.JpEg", mime.byExt("dir\\x.JpEg"), "image/jpeg")
+    eq("no_ext", mime.byExt("no_ext"), "")
+    eq("a.txt", mime.byExt("a.txt"), "text/plain")
+    eq("表.xlsx", mime.byExt("D:\\data\\表.xlsx"),
+       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    eq("a.unknown", mime.byExt("a.unknown"), "")
+
+    // ---------- ② 魔数 ----------
+    print("② 魔数")
+    eq("PNG", mime.byMagic(bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2])), "image/png")
+    eq("JPEG", mime.byMagic(bytes([0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10])), "image/jpeg")
+    eq("GIF", mime.byMagic(bytes([0x47, 0x49, 0x46, 0x38, 0x39, 0x61])), "image/gif")
+    eq("PDF", mime.byMagic(bytes([0x25, 0x50, 0x44, 0x46, 0x2D, 0x31])), "application/pdf")
+    eq("ZIP", mime.byMagic(bytes([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00])), "application/zip")
+    eq("EXE(MZ)", mime.byMagic(bytes([0x4D, 0x5A, 0x90, 0x00])), "application/x-msdownload")
+    eq("ELF", mime.byMagic(bytes([0x7F, 0x45, 0x4C, 0x46, 2, 1])), "application/x-elf")
+    eq("SQLite", mime.byMagic("SQLite format 3\u0000rest"), "application/vnd.sqlite3")
+    eq("OLE2(xls/doc)", mime.byMagic(bytes([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])),
+       "application/x-ole-storage")
+    eq("MP4", mime.byMagic(bytes([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D])), "video/mp4")
+    eq("MKV", mime.byMagic(bytes([0x1A, 0x45, 0xDF, 0xA3, 1, 2])), "video/x-matroska")
+    eq("7z", mime.byMagic(bytes([0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C])), "application/x-7z-compressed")
+    eq("gzip", mime.byMagic(bytes([0x1F, 0x8B, 0x08, 0x00])), "application/gzip")
+    eq("空内容", mime.byMagic(""), "")
+    eq("纯文本头", mime.byMagic("hello world"), "")
+
+    // ---------- ③ detect（真读盘）----------
+    print("③ detect 读盘")
+    var root = dirs.join(_tmpdir(), "leno_mime_test")
+    if dirs.exists(root) { dirs.delete(root) }
+    dirs.mkdir_p(root)
+
+    // 真 PNG 文件
+    var pngPath = dirs.join(root, "real.png")
+    files.write(pngPath, bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D]))
+    eq("detect(real.png)", mime.detect(pngPath), "image/png")
+
+    // 扩展名骗人：内容其实是 PDF
+    var fakePath = dirs.join(root, "fake.png")
+    files.write(fakePath, bytes([0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37]))
+    eq("detect(fake.png) 靠魔数识破", mime.detect(fakePath), "application/pdf")
+
+    // 纯文本，没有魔数 ⇒ 回退扩展名
+    var txtPath = dirs.join(root, "note.md")
+    files.write(txtPath, "# 标题\n正文")
+    eq("detect(note.md) 回退扩展名", mime.detect(txtPath), "text/markdown")
+
+    // 不存在 ⇒ ""
+    eq("detect(不存在) ", mime.detect(dirs.join(root, "nope.bin")), "")
+
+    // ---------- ④ 分类 ----------
+    print("④ 分类")
+    eq("kindOf(image/png)", mime.kindOf("image/png"), "image")
+    eq("kindOf(video/mp4)", mime.kindOf("video/mp4"), "video")
+    eq("kindOf(audio/flac)", mime.kindOf("audio/flac"), "audio")
+    eq("kindOf(application/json)", mime.kindOf("application/json"), "text")
+    // SVG 是特例：kindOf 判 image（当图片用），但 isText 也为真（能当 XML 源码读）
+    eq("kindOf(image/svg+xml)", mime.kindOf("image/svg+xml"), "image")
+    check("isText(image/svg+xml) 特例为真", mime.isText("image/svg+xml"))
+    eq("kindOf(application/zip)", mime.kindOf("application/zip"), "archive")
+    eq("kindOf(application/x-msdownload)", mime.kindOf("application/x-msdownload"), "executable")
+    eq("kindOf(application/pdf)", mime.kindOf("application/pdf"), "document")
+    eq("kindOf(未知)", mime.kindOf("application/x-nothing"), "other")
+    check("isText(text/csv)", mime.isText("text/csv"))
+    check("isImage(image/webp)", mime.isImage("image/webp"))
+    check("isText(application/pdf) 为假", not mime.isText("application/pdf"))
+
+    // ---------- ⑤ 反查扩展名 ----------
+    print("⑤ 反查")
+    eq("extOf(image/jpeg)", mime.extOf("image/jpeg"), "jpg")
+    eq("extOf(text/plain)", mime.extOf("text/plain"), "txt")
+    eq("extOf(application/pdf)", mime.extOf("application/pdf"), "pdf")
+    eq("extOf(未知)", mime.extOf("application/x-nothing"), "")
+
+    dirs.delete(root)
+
+    print("")
+    print("========================================")
+    print("Results: " + _str(passed) + " passed, " + _str(failed) + " failed")
+}

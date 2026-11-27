@@ -21,6 +21,7 @@
 import files
 import dirs
 import strings
+import "MIME" as mimeLib          // 封面 MIME 统一由 LenoMIME 判定（原先这里手写了一份 .jpg 判断）
 
 const int CHUNK = 1048576       // 1MB 分块
 const string OWNER = "LenoMusic"
@@ -135,14 +136,13 @@ func id3_text(string s): string { return from_bytes([3]) + s }      // 编码 0x
 
 func id3_apic(string coverPath): string {
     if coverPath == "" or not files.exists(coverPath) { return "" }
-    string mime = "image/png"
-    string ext = dirs.extname(coverPath).to_lower()
-    if ext == ".jpg" or ext == ".jpeg" { mime = "image/jpeg" }
+    string mimeType = mimeLib.byExt(coverPath)
+    if mimeType == "" { mimeType = "image/png" }      // 认不出扩展名 ⇒ 保持原默认（不猜）
     string img = ""
     try { img = files.read(coverPath) } catch e { print("[tag] 读封面失败：" + _str(e)) }
     if img.byte_len() <= 0 { return "" }
     // 编码 0x03 + MIME(ASCII,0) + 图片类型 0x03(封面正面) + 描述("",0) + 数据
-    string body = from_bytes([3]) + mime + from_bytes([0]) + from_bytes([3]) + from_bytes([0]) + img
+    string body = from_bytes([3]) + mimeType + from_bytes([0]) + from_bytes([3]) + from_bytes([0]) + img
     return id3_frame("APIC", body)
 }
 
@@ -272,14 +272,13 @@ func flac_vorbis(string title, string artist, string lyricText): string {
 
 func flac_picture(string coverPath): string {
     if coverPath == "" or not files.exists(coverPath) { return "" }
-    string mime = "image/png"
-    string ext = dirs.extname(coverPath).to_lower()
-    if ext == ".jpg" or ext == ".jpeg" { mime = "image/jpeg" }
+    string mimeType = mimeLib.byExt(coverPath)
+    if mimeType == "" { mimeType = "image/png" }      // 认不出扩展名 ⇒ 保持原默认（不猜）
     string img = ""
     try { img = files.read(coverPath) } catch e { print("[tag] 读封面失败：" + _str(e)) }
     if img.byte_len() <= 0 { return "" }
     // type(4)=3 + mime + 空描述 + 宽/高/色深/色数(0 = 未提供) + 数据长度 + 数据
-    return be32(3) + be32(mime.byte_len()) + mime + be32(0) +
+    return be32(3) + be32(mimeType.byte_len()) + mimeType + be32(0) +
            be32(0) + be32(0) + be32(0) + be32(0) + be32(img.byte_len()) + img
 }
 
