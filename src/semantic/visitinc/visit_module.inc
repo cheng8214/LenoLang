@@ -344,7 +344,11 @@
             visit_list(s, &ast->u.module_call.args);
             const char* actual_module = native_resolve_module_alias(ast->u.module_call.module_name);
 
-            int is_native_module = native_is_module(actual_module);
+            // ★ 2026-11-28：名字被**变量**遮蔽时不算模块调用（`var bytes = [...]` 之后
+            //   `bytes.len()` 是数组方法）。缺了这一步，任何把变量名取成内置模块名
+            //   （bytes / files / times …）的代码一用方法就报"模块未导入" ✗
+            int is_native_module = native_is_module(actual_module) &&
+                                   !semantic_native_module_shadowed(s, ast->u.module_call.module_name);
 
             int is_imported_module = 0;
             ImportedModuleInfo* module_info = find_imported_module(s, ast->u.module_call.module_name);

@@ -20,6 +20,9 @@ static const char* builtin_module_names[] = {
     // 2026-11-23：reflect —— 运行期只读反射（struct 字段名/声明类型/方法表）。
     //   必须登记在这里，否则 parser 不认 `import reflect`。
     "reflect",
+    // 2026-11-28：bytes —— 二进制缓冲的定宽读写（小端/大端）。取代各模块里手抄的
+    //   `_u8/_u16/_u32`（越界口径三套并存：给 0 / 给 null / 抛错 ⇒ 统一成抛错）。
+    "bytes",
     NULL
 };
 
@@ -49,6 +52,7 @@ extern void ffi_init_module(void);
 extern void threads_init_module(void);
 extern void regexs_init_module(void);
 extern void reflect_init_module(void);
+extern void bytes_init_module(void);
 
 // 模块初始化函数映射表
 typedef void (*ModuleInitFunc)(void);
@@ -74,6 +78,7 @@ static ModuleInitEntry module_init_table[] = {
     {"threads", threads_init_module},
     {"regexs", regexs_init_module},
     {"reflect", reflect_init_module},
+    {"bytes", bytes_init_module},
     {NULL, NULL}
 };
 
@@ -680,6 +685,10 @@ void native_register_all_module_metas(void) {
     //   `Array[string]` 返回类型（缺了这行，编译期只能拿到 any，调用点全部要手写收窄）。
     extern void reflect_init_module(void);
     reflect_init_module();
+    // bytes：同理 —— 编译期要知道 `bytes.u32(x, o)` 是 int（否则调用点全变 any，
+    //   而这里恰恰是"要常量折叠/要参与算术前先用"的地方）
+    extern void bytes_init_module(void);
+    bytes_init_module();
 }
 
 // ============================================================================

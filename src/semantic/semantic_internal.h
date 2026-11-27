@@ -143,6 +143,12 @@ void semantic_check_not_precedence(Ast* operand, int line, int column, int kind)
 //   变量声明（visit_var.inc）✓
 void semantic_check_alias_shadow(Semantic* s, const char* name, const char* what, int line, int column);
 
+// ★ 2026-11-28：**内置模块名被同名变量遮蔽**的告警（WARN_BUILTIN_MODULE_SHADOWED）
+//   `func f(Array[int] bytes)` / `var files = …` —— 语义上变量优先（能用），但本作用域里
+//   `bytes.某方法(...)` 就再也不是模块调用了 ⇒ 报一条 warning 说清（不改语义 ✓）。
+//   登记点：变量声明（visit_var.inc）与形参（semantic_visit_func.c）✓
+void semantic_check_builtin_shadow(Semantic* s, const char* name, const char* what, int line, int column);
+
 // printf 名字骗人（WARN_PRINTF_NO_FORMAT，2026-10-10 加）：`printf` 只做"**不换行打印**"、
 // **不做 % 格式化** ✗（实测：`printf("%d = %s\n", 3, "x")` 不报错、`%d` 原样打出 ✓）
 // ⇒ 首参是**含 '%' 的字符串字面量**且**实参 > 1** 时提醒 ✓（其它形状一律不报 ✓ 少报不误报）
@@ -173,6 +179,9 @@ void sem_local_release(Semantic* s, int mark); // 回退到 max(mark, 钉住下�
 ImportedModuleInfo* find_imported_module(Semantic* s, const char* alias);
 // 名字是**未被遮蔽的用户模块别名** ⇒ 返回该模块信息，否则 NULL（判据见实现处的说明）
 ImportedModuleInfo* semantic_module_alias_info(Semantic* s, const char* name);
+// 名字是原生模块名、但**被当前作用域里的变量遮蔽** ⇒ 返回 1（`var bytes = …` 之后
+//   `bytes.len()` 是实例方法，不是模块调用）。判据见 semantic_upvalue.c 的实现处。
+int semantic_native_module_shadowed(Semantic* s, const char* name);
 // （N1 的 semantic_report_module_var_write 已删：跨模块写导出变量 2026-10-25 打通，
 //   `m.var = v` 会写穿到 module->globals 并同步 exports；只保留 const / 非导出两条硬约束）
 // 两个模块路径是否同一个文件（N7 的重复别名判据：只用于**放过**，宁漏报不误报）

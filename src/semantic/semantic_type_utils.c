@@ -617,6 +617,28 @@ void semantic_check_alias_shadow(Semantic* s, const char* name, const char* what
     }
 }
 
+// 内置模块名被同名变量遮蔽（WARN_BUILTIN_MODULE_SHADOWED，2026-11-28 加）
+// ----------------------------------------------------------------------------
+// 现场：加内置 `bytes` 模块时，`func bytes_to_hex(Array[int] bytes) { … bytes.len() … }`
+//   直接编译失败（「模块 'bytes' 未导入」）—— 因为 `x.方法(...)` 在语法上一律是
+//   "模块调用"（见 parse_dot），而 `bytes` 又是内置模块名 ✗。
+//   语义层已改成"局部变量优先"（semantic_native_module_shadowed），**行为**对了；
+//   但撞名本身仍是坑：这段作用域里 `bytes.read_u32(...)` 用不了（变量挡着，
+//   `import bytes` 也救不回来）⇒ 报一条 warning 把话说清，不改语义 ✓。
+// 少报不误报：只对"名字 == 内置模块名"的变量/形参报，其它一律不报 ✓
+void semantic_check_builtin_shadow(Semantic* s, const char* name, const char* what, int line, int column) {
+    (void)s;
+    if (!name || !what || !name[0]) return;
+    extern bool native_is_builtin_module(const char* name);
+    if (!native_is_builtin_module(name)) return;
+    warning_add_at_fmt(WARN_BUILTIN_MODULE_SHADOWED, line, column,
+             "「%s」既是**内置模块名**，这里又拿它当%s —— 名字解析优先给%s，"
+             "所以在本作用域里 `%s.某方法(...)` 会被当成对%s的实例方法调用，"
+             "内置模块 `%s` **用不了**（写 `import %s` 也救不回来）。"
+             "两个都要用就给%s换个名（如 `my_%s` / `%s2`）；这里就是普通变量则忽略本条",
+             name, what, what, name, what, name, name, what, name, name);
+}
+
 // printf 名字骗人（WARN_PRINTF_NO_FORMAT）—— **唯一实现**（2026-10-10 加）
 // ----------------------------------------------------------------------------
 // 症状（速查 §三 ㉖ 实测）：`printf("%d = %s\n", 3, "x")` **一声不吭** ✗ —— `%d`/`%s`

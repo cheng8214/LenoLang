@@ -44,6 +44,7 @@ src\module\sockets\sockets.c
 src\module\ffi\ffi.c
 src\module\threads\threads.c
 src\module\reflect\reflect.c
+src\module\bytes\bytes.c
 src\module\assert\assert.c
 src\module\sys\sys.c
 src\module\regexs\regexs.c

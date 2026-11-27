@@ -1286,6 +1286,9 @@ void visit_func_impl(Semantic* s, Ast* ast, int is_struct_method) {
                          ast->u.func.params[i], j + 1, i + 1);
             }
         }
+        // ★ 2026-11-28：形参名撞上内置模块名 ⇒ 遮蔽告警
+        //   （现场：`func bytes_to_hex(Array[int] bytes)` 里 `bytes.len()` 一度被当成模块调用）
+        semantic_check_builtin_shadow(s, ast->u.func.params[i], "形参", ast->line, ast->column);
         Symbol* sym = scope_define(s->current, ast->u.func.params[i], SYM_PARAM);
         if (sym) {
             sym->index = i;

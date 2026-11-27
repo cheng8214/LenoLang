@@ -14,6 +14,27 @@ ImportedModuleInfo* semantic_module_alias_info(Semantic* s, const char* name) {
     return info;
 }
 
+// 名字是不是**被变量遮蔽的原生模块名** —— 是则调用点不能再走"原生模块"路径。
+// ----------------------------------------------------------------------------
+// 为什么需要（2026-11-28，加 `bytes` 模块时踩到）：
+//   parser 把 `x.method(...)` **一律**建成 AST_MODULE_CALL（见 parse_dot 的注释：
+//   "统一创建为 MODULE_CALL，由语义分析阶段确定具体类型"）⇒ `bytes.len()` 与
+//   `strings.pad_start()` 在 AST 上长得一模一样。语义层原先是先判"这个名字是不是原生模块"，
+//   是就要求 import ⇒ 任何把变量命名为 `bytes` / `files` / `times` 的代码，只要用了
+//   `.方法()`，立刻报「模块 'bytes' 未导入」（实测 assert/test_string_concat.leno 里
+//   `func bytes_to_hex(Array[int] bytes) { ... bytes[i] ... bytes.len() ... }`）。
+//   这是**遮蔽问题**，不是"这个名字不能当变量"：局部变量本就该优先于模块名
+//   （与 semantic_module_alias_info 对用户模块别名的判据同源 ✓）。
+// 判据：作用域里解析到的符号**不是** SYM_GLOBAL / SYM_MODULE ⇒ 它是变量（局部/形参/upvalue）。
+int semantic_native_module_shadowed(Semantic* s, const char* name) {
+    if (!s || !name || !name[0]) return 0;
+    extern int native_is_module(const char* module_name);
+    if (!native_is_module(name)) return 0;      // 名字本身不是原生模块 ⇒ 无遮蔽可言
+    Symbol* sym = scope_resolve(s->current, name);
+    if (!sym) return 0;                          // 没有同名符号：按模块名处理（才能报"未导入"）
+    return sym->kind != SYM_GLOBAL && sym->kind != SYM_MODULE;
+}
+
 // 两个模块路径是否指向**同一个模块文件**（N7 的判据）。
 //   按文件名比较（去掉目录）：同别名重复 import 同一个文件是合法写法（md07 就是 a/b 两次），
 //   只有"同别名指向不同文件"才是冲突。⚠ 保守方向：判据只用于**放过**，宁漏报不误报 ✓

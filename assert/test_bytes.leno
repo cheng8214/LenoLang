@@ -1,0 +1,121 @@
+// bytes 模块：二进制缓冲的定宽读写（string / Array[int] 两种载体）
+//   口径：越界**抛错**（与 b[o] 一致），不静默给 0；要容错先 bytes.check
+//   ⚠ 方法名不能写 u8/u16/u32 —— 那是语言保留字（C 布局类型名）
+import bytes
+import strings
+
+main() {
+    print("=== bytes 读：两种载体结果一致 ===")
+    Array[int] arr = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+    string str = strings.from_bytes(arr)
+
+    assert_eq(bytes.read_u8(arr, 0), 1)
+    assert_eq(bytes.read_u8(str, 0), 1)
+    assert_eq(bytes.read_u16(arr, 0), 0x0201)
+    assert_eq(bytes.read_u16(str, 0), 0x0201)
+    assert_eq(bytes.read_u32(arr, 0), 0x04030201)
+    assert_eq(bytes.read_u32(str, 0), 0x04030201)
+    assert_eq(bytes.read_u64(arr, 0), 0x0807060504030201)
+    assert_eq(bytes.read_u64(str, 0), 0x0807060504030201)
+    print("  小端 u8/u16/u32/u64: OK")
+
+    print("=== 大端 ===")
+    assert_eq(bytes.read_u16be(arr, 0), 0x0102)
+    assert_eq(bytes.read_u32be(arr, 0), 0x01020304)
+    assert_eq(bytes.read_u64be(arr, 0), 0x0102030405060708)
+    print("  read_u16be/u32be/u64be: OK")
+
+    print("=== 有符号与浮点 ===")
+    Array[int] neg = [0xFE, 0xFF]                    // -2 (int16)
+    assert_eq(bytes.read_i16(neg, 0), -2)
+    Array[int] neg32 = [0xFE, 0xFF, 0xFF, 0xFF]      // -2 (int32)
+    assert_eq(bytes.read_i32(neg32, 0), -2)
+    assert_eq(bytes.read_u32(neg32, 0), 4294967294)
+
+    // f32 = 1.5 的位模式 0x3FC00000 → 小端 [00 00 C0 3F]
+    Array[int] f = [0x00, 0x00, 0xC0, 0x3F]
+    assert_eq(bytes.read_f32(f, 0), 1.5)
+    // f64 = 1.5 的位模式 0x3FF8000000000000 → 小端 [00 00 00 00 00 00 F8 3F]
+    Array[int] d = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF8, 0x3F]
+    assert_eq(bytes.read_f64(d, 0), 1.5)
+    print("  i16/i32/f32/f64: OK")
+
+    print("=== 越界必须抛错（不静默给 0）===")
+    var thrown = false
+    try {
+        bytes.read_u32(arr, 6)                       // 只剩 2 字节
+    } catch e {
+        thrown = true
+    }
+    assert_eq(thrown, true)
+    var thrown2 = false
+    try {
+        bytes.read_u8(arr, 8)
+    } catch e {
+        thrown2 = true
+    }
+    assert_eq(thrown2, true)
+    print("  越界抛错: OK")
+
+    print("=== len / check ===")
+    assert_eq(bytes.len(arr), 8)
+    assert_eq(bytes.len(str), 8)
+    assert_eq(bytes.check(arr, 0, 8), true)
+    assert_eq(bytes.check(arr, 5, 3), true)
+    assert_eq(bytes.check(arr, 6, 3), false)
+    assert_eq(bytes.check(arr, -1, 2), false)
+    print("  len/check: OK")
+
+    print("=== 写（追加到 Array[int]，小端/大端）===")
+    Array[int] out = []
+    bytes.write_u8(out, 0xAA)
+    bytes.write_u16(out, 0x0201)
+    bytes.write_u32(out, 0x04030201)
+    bytes.write_u64(out, 0x0807060504030201)
+    assert_eq(out.len(), 15)
+    // 布局：AA | 01 02 | 01 02 03 04 | 01 02 03 04 05 06 07 08
+    assert_eq(out[0], 0xAA)
+    assert_eq(out[1], 0x01)
+    assert_eq(out[2], 0x02)
+    assert_eq(out[3], 0x01)
+    assert_eq(out[6], 0x04)
+    assert_eq(out[14], 0x08)
+    print("  小端写入: OK")
+
+    Array[int] out2 = []
+    bytes.write_u16be(out2, 0x0102)
+    bytes.write_u32be(out2, 0x01020304)
+    bytes.write_u64be(out2, 0x0102030405060708)
+    assert_eq(out2.len(), 14)          // 2 + 4 + 8
+    assert_eq(out2[0], 0x01)
+    assert_eq(out2[1], 0x02)
+    assert_eq(out2[2], 0x01)
+    assert_eq(out2[13], 0x08)
+    print("  大端写入: OK")
+
+    print("=== 往返：写出去再读回来 ===")
+    Array[int] buf = []
+    bytes.write_u32(buf, 123456789)
+    assert_eq(bytes.read_u32(buf, 0), 123456789)
+    assert_eq(bytes.read_u32be(buf, 0), 0x15CD5B07)   // 123456789 = 0x075BCD15
+    print("  往返一致: OK")
+
+    print("=== 参数形状错必须报错 ===")
+    var bad1 = false
+    try {
+        bytes.read_u32(123, 0)
+    } catch e {
+        bad1 = true
+    }
+    assert_eq(bad1, true)
+    var bad2 = false
+    try {
+        bytes.write_u16("notarray", 1)
+    } catch e {
+        bad2 = true
+    }
+    assert_eq(bad2, true)
+    print("  载体/类型错误: OK")
+
+    print("=== 所有测试通过 ===")
+}

@@ -2817,7 +2817,9 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
             const char* actual_module = native_resolve_module_alias(ast->u.module_call.module_name);
 
             // 检查是否是原生模块
-            int is_native_module = native_is_module(actual_module);
+            //   ★ 2026-11-28：被变量遮蔽的名字不算模块（判据见 semantic_native_module_shadowed）
+            int is_native_module = native_is_module(actual_module) &&
+                                   !semantic_native_module_shadowed(s, ast->u.module_call.module_name);
 
             if (is_native_module) {
                 const char* method_name = ast->u.module_call.method_name;

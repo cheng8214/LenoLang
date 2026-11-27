@@ -64,6 +64,10 @@
             } else {
                 kind = SYM_LOCAL;
             }
+            // ★ 2026-11-28：变量名撞上**内置模块名**（bytes / files / times …）⇒ 遮蔽告警。
+            //   放在"预注册"判断之前：模块级 var 走预注册分支，不在这之前报就漏了 ✓
+            semantic_check_builtin_shadow(s, ast->u.var_decl.name, "变量", ast->line, ast->column);
+
             // 检查是否已被预注册（全局变量前向引用预扫描）
             Symbol* sym = scope_resolve_local(s->current, ast->u.var_decl.name);
             if (sym && (sym->kind == SYM_GLOBAL || sym->kind == SYM_MODULE) &&
