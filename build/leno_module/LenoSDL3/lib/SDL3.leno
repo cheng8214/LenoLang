@@ -36,6 +36,7 @@ import "sdl_theme.leno" as thm
 import "sdl_imageview.leno" as iv
 import "sdl_texcache.leno" as tcx   // 图片纹理共享缓存（诊断/上限配置用 ✓）
 import "sdl_separator.leno" as sep
+import "sdl_filedialog.leno" as fdlg              // 系统文件/文件夹对话框（2026-11-27 补转发）
 import "sdl_badge.leno" as bdg; use bdg.Badge     // 胶囊徽标（不可点状态标签 ✓）
 import "sdl_calendar.leno" as cal; use cal.Calendar   // 签到日历（月历网格 + 每天状态色 + 可选点选/切月）
 @optkeys(["alert_color:color", "alert_text_color:color", "arrow_color:color", "arrow_left:string", "arrow_right:string",
@@ -742,6 +743,16 @@ export func destroyTexture(Ptr[u8] texture) { _sdlLib.SDL_DestroyTexture(texture
 export func captureScreen(): Dict { return cap.captureScreen() }
 // PNG 文件 → 像素（导出以便单测；也方便"先存盘再解码"的用法 ✓）
 export func pngFileToPixels(string path): Dict { return cap.pngFileToPixels(path) }
+
+// ==================== 系统文件对话框（2026-11-27 转发）====================
+// 为什么补这一层：`sdl_filedialog.leno` 一直是完整的（SDL3 的原生对话框 + 回调），
+// 但 **SDL3 入口没转发** ⇒ 应用层写不出来（模块内的相对路径 `import "sdl_filedialog"`
+// 在外部解析不到）。实测：LenoSDL3 自己的示例能跑、外部应用 `import "SDL3"` 后无入口。
+// 回调签名与 sdl_filedialog 一致：func(Array[string] paths, int filter)，取消时 paths 为空。
+export func showOpenFileDialog(Window win, any onResult, Dict opts)   { fdlg.showOpenFileDialog(win, onResult, opts) }
+export func showSaveFileDialog(Window win, any onResult, Dict opts)   { fdlg.showSaveFileDialog(win, onResult, opts) }
+export func showOpenFolderDialog(Window win, any onResult, Dict opts) { fdlg.showOpenFolderDialog(win, onResult, opts) }
+export func isDialogActive(): bool { return fdlg.isActive() }
 
 // ==================== 主题 ====================
 

@@ -1,0 +1,23 @@
+// dev_xls_read.leno -- 手工验证 .xls 读取器（OLE2 + BIFF8）
+//   用法：build\leno.exe build\leno_module\LenoXLSX\test\dev_xls_read.leno <file.xls>
+import "xls_read.leno" as xr
+
+main() {
+    var r = xr.load("D:\\CLeno\\1月份.xls")
+    if not (r["ok"] as bool) {
+        print("读取失败：" + (r["err"] as string))
+        return
+    }
+    Array[Dict] ss = r["sheets"] as Array[Dict]
+    print("sheet 数：" + _str(ss.len()))
+    for ss to s {
+        Array[Array[string]] rows = s["rows"] as Array[Array[string]]
+        print("== [" + (s["name"] as string) + "] " + _str(rows.len()) + " 行")
+        var lim = rows.len()
+        if lim > 6 { lim = 6 }
+        for 0:lim-1 to ri {
+            Array[string] row = rows[ri]
+            print("  " + _str(ri + 1) + ": " + row.join(" | "))
+        }
+    }
+}

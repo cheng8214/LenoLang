@@ -1,0 +1,286 @@
+// mem_check_window.leno — 内存完整性/坏块测试的窗口版（分片执行，不阻塞 UI）
+//
+// 用法:
+//   build\leno.exe "leno_gui\应用\内存监视\mem_check_window.leno"
+//
+// 和 CLI 版（examples\工具\mem_check.leno）测同样的四件事，区别是**按帧分片**：
+//   每帧只处理 8MB，然后回到事件循环更新进度条 —— 否则几 GB 的测试会把窗口卡死。
+//
+// 阶段：0 空闲 → 1 覆盖+块完整性 → 2 越界写 → 3 GC 堆 → 4 碎片化 → 5 完成
+import "SDL3" as SDL3
+import "Sys" as Sys
+import ffi
+import strings
+import times
+import maths
+use SDL3.(Event, Renderer, Scancode, WindowFlag, Window)
+use Sys.SysInfo
+
+var passed = 0
+var failed = 0
+
+// ---------- 校验：快路径 memcmp，失败才逐字节定位 ----------
+func countBad(string s, int expect): int {
+    Array[int] b = s.to_bytes()
+    var bad = 0
+    for 0:b.len()-1 to k {
+        if b[k] != expect { bad = bad + 1 }
+    }
+    return bad
+}
+
+func verifyBlock(Ptr p, int size, int expect): Dict {
+    int chunk = 262144
+    string pat = strings.from_bytes([expect]).rep(chunk)
+    var bad = 0
+    var off = 0
+    while off < size {
+        var n = chunk
+        if off + n > size { n = size - off }
+        var s = ffi.read_bytes(p, off, n)
+        if n == chunk {
+            if s != pat { bad = bad + countBad(s, expect) }
+        } else {
+            if s != strings.byte_slice(pat, 0, n - 1) { bad = bad + countBad(s, expect) }
+        }
+        off = off + n
+    }
+    return {badCount: bad}
+}
+
+main() {
+    SysInfo si = Sys.sysInfo()
+    int physMb = si.memTotalKb / 1024
+    int availMb = si.memAvailKb / 1024
+    int targetMb = physMb / 4
+    if availMb > 0 {
+        int cap = availMb * 6 / 10
+        if targetMb > cap { targetMb = cap }
+    }
+
+    var win = SDL3.createWindow({title: "内存完整性测试", w: 960, h: 620, flags: WindowFlag.RESIZABLE})
+    if not win.ok {
+        print("窗口创建失败（无显示器 / 视频驱动不可用）")
+        return
+    }
+    win.addTimer(50, func() { })      // 20fps 叫醒：测试期间靠它推进分片
+
+    var btn = win.addButton({text: "开始测试", x: 10, y: 10, w: 120, h: 34, type: "primary"})
+    var bar = win.addProgressBar({x: 140, y: 14, w: 800, h: 26, value: 0.0, min: 0.0, max: 100.0, show_text: true})
+    var tbl = win.addTable({
+        x: 10, y: 56, w: 940, h: 550,
+        headers: ["项目", "结果"],
+        col_widths: [200.0, 728.0],
+        item_h: 24.0,
+        font_size: 14
+    })
+
+    // 状态
+    var phase = 0                 // 0 空闲 1 覆盖 2 越界 3 GC 4 碎片 5 完成
+    var doneMb = 0
+    int blockKb = 4096
+    int sliceMb = 8
+    var badBytes = 0
+    var t0 = 0
+    var tPhase = 0
+    Array[string] r1 = ["① 块完整性", "待运行"]
+    Array[string] r2 = ["② 越界写", "待运行"]
+    Array[string] r3 = ["③ GC 堆", "待运行"]
+    Array[string] r4 = ["④ 碎片化", "待运行"]
+    Array[Array[string]] lastRows = []
+    bool tableInited = false
+    bool verbose = _env("MEMCHK_LOG") != null
+    // 自测钩子：MEMCHK_AUTO=1 启动即开跑（不用点按钮）；MEMCHK_EXIT_MS=15000 到点退出
+    bool autoStart = _env("MEMCHK_AUTO") != null
+    var autoExit = -1
+    var ae = _env("MEMCHK_EXIT_MS")
+    if ae is string => ss { autoExit = _int(ss) }
+    int tAll = _int(times.ms())
+    var reported = false
+
+    var startTest = func() {
+        if phase != 0 and phase != 5 { return }        // 正在跑就别重入
+        phase = 1
+        doneMb = 0
+        badBytes = 0
+        passed = 0
+        failed = 0
+        t0 = _int(times.ms())
+        tPhase = t0
+        r1 = ["① 块完整性", "运行中…"]
+        r2 = ["② 越界写", "等待"]
+        r3 = ["③ GC 堆", "等待"]
+        r4 = ["④ 碎片化", "等待"]
+        bar.set_value(0.0)
+        tableInited = false
+        reported = false
+    }
+    btn.on_click(func() { startTest() })
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            if autoExit > 0 and _int(times.ms()) - tAll > autoExit { return false }
+            return true
+        },
+        func(Renderer r) {
+            // 自测模式：第一帧自动开跑（等价于点按钮）
+            if autoStart and phase == 0 { startTest() }
+
+            // ---------- 阶段推进（每帧一片）----------
+            if phase == 1 {
+                var want = sliceMb
+                if targetMb - doneMb < want { want = targetMb - doneMb }
+                if want <= 0 {
+                    int ms = _int(times.ms()) - tPhase
+                    r1 = ["① 块完整性", "覆盖 " + _str(doneMb) + "MB · 坏字节 " + _str(badBytes)
+                          + " · " + _str(ms) + "ms"]
+                    if badBytes == 0 { passed = passed + 1 } else { failed = failed + 1 }
+                    phase = 2
+                    tPhase = _int(times.ms())
+                } else {
+                    int bsize = blockKb * 1024
+                    int nb = want * 1024 * 1024 / bsize
+                    if nb < 1 { nb = 1 }
+                    Array[Ptr] ps = []
+                    for 0:nb-1 to i {
+                        Ptr p = ffi.malloc(bsize)
+                        if p == null { break }
+                        ps.add(p)
+                    }
+                    for 0:ps.len()-1 to i { ffi.memset(ps[i], 0x30 + ((doneMb + i) % 16), bsize) }
+                    for 0:ps.len()-1 to i {
+                        var got = verifyBlock(ps[i], bsize, 0x30 + ((doneMb + i) % 16))
+                        badBytes = badBytes + (got["badCount"] as int)
+                    }
+                    doneMb = doneMb + ps.len() * bsize / 1024 / 1024
+                    for ps to q { ffi.free(q) }
+                    var pct = 100.0
+                    if targetMb > 0 { pct = 100.0 * doneMb / targetMb }
+                    bar.set_value(pct)
+                    r1 = ["① 块完整性", "已覆盖 " + _str(doneMb) + " / " + _str(targetMb)
+                          + "MB · 坏字节 " + _str(badBytes)]
+                }
+            } else if phase == 2 {
+                // 越界写
+                int sz = 262144
+                Ptr a = ffi.malloc(sz)
+                Ptr b = ffi.malloc(sz)
+                var ok = false
+                if a != null and b != null {
+                    ffi.memset(b, 0xEE, sz)
+                    ffi.memset(a, 0x11, sz)
+                    ok = (verifyBlock(a, sz, 0x11)["badCount"] as int) == 0
+                        and (verifyBlock(b, sz, 0xEE)["badCount"] as int) == 0
+                    ffi.free(a)
+                    ffi.free(b)
+                }
+                int ms = _int(times.ms()) - tPhase
+                r2 = ["② 越界写", (if ok then "通过" else "失败") + " · " + _str(ms) + "ms"]
+                if ok { passed = passed + 1 } else { failed = failed + 1 }
+                phase = 3
+                tPhase = _int(times.ms())
+            } else if phase == 3 {
+                // GC 堆
+                Array[string] keep = []
+                for 0:19999 to i {
+                    var s = "obj-" + _str(i) + "-" + _str(i * 7)
+                    if i % 2 == 0 { keep.add(s) }
+                    else if i % 2000 == 0 {
+                        Array[int] junk = []
+                        for 0:1999 to k { junk.add(k) }
+                    }
+                }
+                var ok = true
+                for 0:keep.len()-1 to i {
+                    int idx = i * 2
+                    if keep[i] != "obj-" + _str(idx) + "-" + _str(idx * 7) { ok = false }
+                }
+                var d = _gc_stats()
+                int ms = _int(times.ms()) - tPhase
+                r3 = ["③ GC 堆", (if ok then "通过" else "失败") + " · 存活 " + _str(keep.len())
+                      + " 个 · minor " + _str(d["minor_count"] as int) + " · " + _str(ms) + "ms"]
+                if ok { passed = passed + 1 } else { failed = failed + 1 }
+                phase = 4
+                tPhase = _int(times.ms())
+            } else if phase == 4 {
+                // 碎片化
+                Array[Ptr] live = []
+                var seed = 12345
+                for 0:2999 to i {
+                    seed = (seed * 1103515245 + 12345) % 2147483648
+                    Ptr p = ffi.malloc(64 + seed % 4096)
+                    if p != null {
+                        ffi.write_byte(p, 0, 0xA5)
+                        live.add(p)
+                    }
+                    if i % 2 == 0 and live.len() > 0 {
+                        int at = seed % live.len()
+                        ffi.free(live[at])
+                        live.remove(at)
+                    }
+                }
+                for live to q { ffi.free(q) }
+                Ptr big = ffi.malloc(4 * 1024 * 1024)
+                var ok = big != null
+                if ok {
+                    ffi.memset(big, 0x5A, 4 * 1024 * 1024)
+                    ok = (verifyBlock(big, 65536, 0x5A)["badCount"] as int) == 0
+                    ffi.free(big)
+                }
+                int ms = _int(times.ms()) - tPhase
+                r4 = ["④ 碎片化", (if ok then "通过" else "失败") + " · 4MB 分配 · " + _str(ms) + "ms"]
+                if ok { passed = passed + 1 } else { failed = failed + 1 }
+                bar.set_value(100.0)
+                phase = 5
+                if verbose and not reported {
+                    reported = true
+                    print("[mem-check] " + r1[1])
+                    print("[mem-check] " + r2[1])
+                    print("[mem-check] " + r3[1])
+                    print("[mem-check] " + r4[1])
+                    print("[mem-check] 总耗时 " + _str((_int(times.ms()) - t0) / 1000.0)
+                          + " 秒，结果 " + _str(passed) + " 通过 / " + _str(failed) + " 失败")
+                }
+            }
+
+            // ---------- 表格（差异化更新）----------
+            if phase != 0 {
+                Array[Array[string]] fresh = []
+                fresh.add(["物理内存", _str(physMb) + " MB（可用 " + _str(availMb) + "MB）"])
+                fresh.add(["计划覆盖", _str(targetMb) + " MB（物理内存 25%，上限为可用的 60%）"])
+                fresh.add(r1)
+                fresh.add(r2)
+                fresh.add(r3)
+                fresh.add(r4)
+                fresh.add(["总耗时", _str((_int(times.ms()) - t0) / 1000.0) + " 秒"])
+                fresh.add(["结果", _str(passed) + " 通过 / " + _str(failed) + " 失败"
+                           + (if phase == 5 then "（完成）" else "（运行中…）")])
+
+                var same = tableInited and fresh.len() == lastRows.len()
+                if same {
+                    for 0:fresh.len()-1 to i {
+                        if fresh[i].len() != lastRows[i].len() { same = false }
+                    }
+                }
+                if not same {
+                    tbl.set_rows(fresh)
+                    lastRows = fresh
+                    tableInited = true
+                } else {
+                    for 0:fresh.len()-1 to i {
+                        for 0:fresh[i].len()-1 to c {
+                            if fresh[i][c] != lastRows[i][c] {
+                                tbl.set_cell(i, c, fresh[i][c])
+                                lastRows[i][c] = fresh[i][c]
+                            }
+                        }
+                    }
+                }
+            }
+            r.setColor(#101420FF)
+            r.clear()
+        }
+    )
+}

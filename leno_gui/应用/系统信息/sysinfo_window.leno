@@ -1,0 +1,120 @@
+// sysinfo_window.leno — 系统信息面板（Sys.sysInfo / listVolumes / memoryUsage / cpuUsage）
+//
+// 用法:
+//   build\leno.exe "leno_gui\应用\系统信息\sysinfo_window.leno"
+//
+// 说明：
+//   · 静态信息（OS/CPU/磁盘卷）开机取一次；内存与 CPU 每秒刷新一次
+//   · 窗口静止时 SDL3 **不重绘** ⇒ 挂 1 秒定时器把窗口叫醒（否则永远停在第一帧）
+//   · cpuUsage() 首次返回 -1（无基准），界面上显示"采样中…"，1 秒后才有数字
+import "SDL3" as SDL3
+import "Sys" as Sys
+import maths
+import times
+use SDL3.(Event, Renderer, Scancode, WindowFlag)
+use Sys.(SysInfo, MemUsage, VolumeInfo)
+
+// 字节 → "127.58 GB"（保留两位小数，不用 _str 的浮点形态）
+func fmtGb(int bytes): string {
+    if bytes <= 0 { return "0 GB" }
+    int h = maths.roundi((1.0 * bytes / 1073741824.0) * 100.0)
+    int ip = h / 100
+    int fp = h % 100
+    var s = _str(ip) + "."
+    if fp < 10 { s = s + "0" }
+    return s + _str(fp) + " GB"
+}
+
+func fmtKb(int kb): string {
+    if kb <= 0 { return "0 MB" }
+    return _str(kb / 1024) + " MB"
+}
+
+func fmtUptime(int sec): string {
+    if sec <= 0 { return "—" }
+    int d = sec / 86400
+    int h = (sec % 86400) / 3600
+    int m = (sec % 3600) / 60
+    if d > 0 { return _str(d) + " 天 " + _str(h) + " 小时" }
+    if h > 0 { return _str(h) + " 小时 " + _str(m) + " 分" }
+    return _str(m) + " 分"
+}
+
+main() {
+    SysInfo si = Sys.sysInfo()
+    Array[VolumeInfo] vols = Sys.listVolumes()
+
+    var win = SDL3.createWindow({title: "系统信息", w: 920, h: 640, flags: WindowFlag.RESIZABLE})
+    if not win.ok {
+        print("窗口创建失败（无显示器 / 视频驱动不可用）")
+        return
+    }
+    win.addTimer(1000, func() { })      // 只负责叫醒窗口，数据在 onRender 里取
+
+    var tbl = win.addTable({
+        x: 10, y: 10, w: 900, h: 620,
+        headers: ["项目", "值"],
+        col_widths: [150.0, 738.0],
+        item_h: 24.0,
+        font_size: 14
+    })
+
+    Array[Array[string]] rows = []
+    var lastRefresh = 0
+    bool verbose = _env("SYSPANEL_LOG") != null
+    // 自测钩子：SYSPANEL_EXIT_MS=6000 ⇒ 6 秒后自己退出（正常退出才会 flush stdout）
+    var autoExit = -1
+    var envExit = _env("SYSPANEL_EXIT_MS")
+    if envExit is string => es { autoExit = _int(es) }
+    int t0 = _int(times.ms())
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            if autoExit > 0 and _int(times.ms()) - t0 > autoExit { return false }
+            return true
+        },
+        func(Renderer r) {
+            int now = _int(times.ms())
+            if now - lastRefresh >= 900 {
+                lastRefresh = now
+                MemUsage mu = Sys.memoryUsage()
+                int cpu = Sys.cpuUsage()
+
+                rows.clear()
+                rows.add(["系统", si.osName + "（内核 " + si.kernel + "）"])
+                rows.add(["主机", si.host])
+                rows.add(["用户", si.user + (if si.elevated then "（管理员/root）" else "")])
+                rows.add(["CPU", si.cpuModel])
+                rows.add(["核心", _str(si.cpuCount) + " 个逻辑核"])
+                rows.add(["内存总量", fmtKb(si.memTotalKb)])
+                rows.add(["运行时长", fmtUptime(si.uptimeSec)])
+                rows.add(["", ""])
+                var cpuText = "采样中…"
+                if cpu >= 0 { cpuText = _str(cpu) + " %" }
+                rows.add(["CPU 占用", cpuText])
+                var memText = "未知"
+                if mu.totalKb > 0 {
+                    memText = _str(mu.percent) + " %（已用 " + fmtKb(mu.usedKb)
+                        + " / 可用 " + fmtKb(mu.availKb) + " / 共 " + fmtKb(mu.totalKb) + "）"
+                }
+                rows.add(["内存占用", memText])
+                rows.add(["", ""])
+                for vols to v {
+                    var tag = ""
+                    if not v.ready { tag = "  [未就绪]" }
+                    rows.add(["磁盘 " + v.root,
+                              "「" + v.label + "」 " + v.fsType + "  " + v.kind
+                              + "  总 " + fmtGb(v.totalBytes) + "  余 " + fmtGb(v.freeBytes) + tag])
+                }
+                tbl.set_rows(rows)
+                if verbose {
+                    for rows to line { print("[row] " + line[0] + "  " + line[1]) }
+                }
+            }
+            r.setColor(#101420FF)
+            r.clear()
+        }
+    )
+}

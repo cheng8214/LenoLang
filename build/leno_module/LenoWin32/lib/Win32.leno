@@ -276,6 +276,20 @@ export func diskSpace(string root): Dict {
     return shell.diskSpace(root)
 }
 
+// 卷信息（卷标 / 文件系统 / 驱动器类型 / 序列号）；不返回容量（那是 diskSpace 的事）
+//   ⇒ {ok, root, label, fsType, serial, driveType, kind}，kind ∈ removable/fixed/network/cdrom/ram/unknown
+export func volumeInfo(string root): Dict {
+    if not _is_supported() { return {ok: false, root: root, label: "", fsType: "", serial: 0, driveType: 0, kind: "unknown"} }
+    return shell.volumeInfo(root)
+}
+
+// 文件图标（RGBA 像素）：{ok, w, h, pixels:Array[int]}；small=true ⇒ 16×16，否则 32×32
+//   ⚠ 只对**存在的文件**有效（目录 / 不存在的路径实测拿不到 hIcon）⇒ 失败一律 ok=false
+export func fileIcon(string path, bool small = false): Dict {
+    if not _is_supported() { return {ok: false, w: 0, h: 0, pixels: []} }
+    return shell.fileIcon(path, small)
+}
+
 // 清空回收站（默认无确认/无进度/无声；空回收站也返回 true）
 export func emptyRecycleBin(int flags = 7): bool {
     if not _is_supported() { return false }
@@ -305,6 +319,13 @@ export func memoryKb(): Dict {
 export func uptimeSec(): int {
     if not _is_supported() { return -1 }
     return sysinfo.uptimeSec()
+}
+
+// CPU 累计时间（毫秒，开机以来）：{ok, idle, total}；kernel 含 idle，total = kernel + user
+//   ⇒ 调用方两次采样求差算使用率（本函数不保存状态 ✓）
+export func cpuTimes(): Dict {
+    if not _is_supported() { return {ok: false, idle: 0, total: 0} }
+    return sysinfo.cpuTimes()
 }
 
 // 主机名（系统 API 的答案，不是环境变量 ✓）；取不到 ⇒ ""

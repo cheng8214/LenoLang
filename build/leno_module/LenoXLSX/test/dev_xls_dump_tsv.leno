@@ -1,0 +1,26 @@
+// dev_xls_dump_tsv.leno -- 把 .xls 读成 TSV（与 dev_xls_crosscheck.py 对照用）
+import files
+import "xls_read.leno" as xr
+
+main() {
+    var r = xr.load("D:\\CLeno\\1月份.xls")
+    if not (r["ok"] as bool) {
+        print("读取失败：" + (r["err"] as string))
+        return
+    }
+    Array[Dict] ss = r["sheets"] as Array[Dict]
+    Array[string] lines = []
+    var si = 0
+    for ss to s {
+        lines.add("S" + _str(si) + "\t" + (s["name"] as string))
+        Array[Array[string]] rows = s["rows"] as Array[Array[string]]
+        for 0:rows.len()-1 to ri {
+            Array[string] row = rows[ri]
+            var joined = row.join("\t")
+            if joined != "" { lines.add("R" + _str(ri) + "\t" + joined) }
+        }
+        si = si + 1
+    }
+    files.write("D:\\CLeno\\Leno\\build\\leno_module\\LenoXLSX\\test\\.tmp_leno.tsv", lines.join("\n") + "\n")
+    print("lines=" + _str(lines.len()))
+}

@@ -1,0 +1,96 @@
+// test_sys_icon.leno -- Sys.fileIcon 自测（Windows Shell 图标 → RGBA 像素）
+//   build\leno.exe build\leno_module\LenoSys\test\test_sys_icon.leno
+import "Sys" as s
+import "Image" as imglib
+import dirs
+import files
+
+var passed = 0
+var failed = 0
+
+func check(string name, bool ok) {
+    if ok {
+        print("  [PASS] " + name)
+        passed = passed + 1
+    } else {
+        print("  [FAIL] " + name)
+        failed = failed + 1
+    }
+}
+
+func pixelCount(Dict r): int {
+    if not (r["pixels"] is Array[int]) { return -1 }
+    Array[int] px = r["pixels"] as Array[int]
+    return px.len()
+}
+
+// 存成 PNG（肉眼可验，也验 pixel 数组真的是 RGBA）
+func saveIcon(Dict r, string path): bool {
+    if not (r["pixels"] is Array[int]) { return false }
+    Array[int] px = r["pixels"] as Array[int]
+    int w = r["w"] as int
+    int h = r["h"] as int
+    var im = imglib.fromPixels(w, h, px)
+    var e = imglib.encodePNG(im)
+    if e.isOk() {
+        files.write(path, e.val)
+        return true
+    }
+    return false
+}
+
+main() {
+    print("=== Sys.fileIcon 自测 ===")
+
+    if _os() != "windows" {
+        print("  [SKIP] 本机不是 Windows（fileIcon 目前只有 Windows 实现）")
+        var r0 = s.fileIcon("x.txt", false)
+        check("非 Windows ⇒ ok=false", not (r0["ok"] as bool))
+        print("")
+        print("Results: " + _str(passed) + " passed, " + _str(failed) + " failed")
+        return
+    }
+
+    var out = dirs.join(_tmpdir(), "leno_icon_test")
+    if dirs.exists(out) { dirs.delete(out) }
+    dirs.mkdir_p(out)
+
+    // ① 32×32
+    var r32 = s.fileIcon("C:\\Windows\\notepad.exe", false)
+    check("notepad 32×32 ok", r32["ok"] as bool)
+    check("w=32", (r32["w"] as int) == 32)
+    check("h=32", (r32["h"] as int) == 32)
+    check("像素数 = w*h*4", pixelCount(r32) == 32 * 32 * 4)
+    check("写出 PNG（肉眼验）", saveIcon(r32, dirs.join(out, "notepad32.png")))
+
+    // ② 16×16
+    var r16 = s.fileIcon("C:\\Windows\\notepad.exe", true)
+    check("notepad 16×16 ok", r16["ok"] as bool)
+    check("w=16", (r16["w"] as int) == 16)
+    check("像素数 = w*h*4", pixelCount(r16) == 16 * 16 * 4)
+
+    // ③ 不同扩展名给不同图标（用两个内容相同的像素数无法区分，这里只验"都成功且尺寸对"）
+    var rxls = s.fileIcon("D:\\CLeno\\1月份.xls", false)
+    if rxls["ok"] as bool {
+        check("xls 图标 32×32", (rxls["w"] as int) == 32)
+        check("xls 写出 PNG", saveIcon(rxls, dirs.join(out, "xls32.png")))
+    } else {
+        print("  [SKIP] 1月份.xls 不存在（换机器跑时正常）")
+    }
+
+    // ④ 不存在的文件 ⇒ ok=false（不崩）
+    var rno = s.fileIcon(dirs.join(out, "no_such_file.xyz"), false)
+    check("不存在的文件 ⇒ ok=false", not (rno["ok"] as bool))
+
+    // ⑤ 存在的目录 ⇒ **也能取到**（文件夹图标）。注意：不能加 SHGFI_USEFILEATTRIBUTES，
+    //    加了反而拿不到（实测）
+    var rdir = s.fileIcon("C:\\Windows", false)
+    check("目录 32×32 ok", rdir["ok"] as bool)
+    check("目录 w=32", (rdir["w"] as int) == 32)
+    check("目录写出 PNG", saveIcon(rdir, dirs.join(out, "folder32.png")))
+
+    print("  图标 PNG 目录：" + out)
+    print("")
+    print("========================================")
+    print("Results: " + _str(passed) + " passed, " + _str(failed) + " failed")
+}

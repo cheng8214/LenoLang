@@ -1,0 +1,265 @@
+// mem_check.leno — 内存完整性 / 坏块自测（纯 Leno + ffi）
+//
+// 用法:
+//   build\leno.exe examples\工具\mem_check.leno              :: 默认覆盖「物理内存的 25%」
+//   build\leno.exe examples\工具\mem_check.leno 4096         :: 覆盖 4 GB
+//   build\leno.exe examples\工具\mem_check.leno 1024 8       :: 覆盖 1 GB，块大小 8 MB
+//
+// 按 **物理内存规模**测，不是固定几 MB 抽样：目标量默认取 `Sys.sysInfo().memTotalKb` 的 25%，
+// 分批（每批 ≤64MB）分配 → 填值 → 校验 → 释放，峰值只占一批。
+//
+// 测什么（**只能测本进程拿得到的虚拟内存**，测不了物理内存条 —— 那要 MemTest86 那种裸机工具）：
+//   ① 覆盖率+块完整性：分批覆盖目标量，每块填不同字节值，整块读回比对
+//      比对走**字符串比较（C memcmp）**，不是逐字节解释循环 —— 4MB 从 129ms 降到个位数毫秒
+//   ② 越界写检测：A 正好写满，B 的守卫值不能被动
+//   ③ GC 堆数据完整性：2 万对象 + 多轮 GC 后逐个校验内容
+//   ④ 碎片化：3000 次随机分配/释放后仍能拿到并写满 4MB
+//
+// 退出码：0 = 全过；1 = 有失败
+import ffi
+import strings
+import times
+import maths
+import "Sys" as Sys
+use Sys.SysInfo
+
+var passed = 0
+var failed = 0
+
+func check(string name, bool ok, string extra = "") {
+    if ok {
+        print("  [PASS] " + name + (if extra == "" then "" else "  (" + extra + ")"))
+        passed = passed + 1
+    } else {
+        print("  [FAIL] " + name + (if extra == "" then "" else "  (" + extra + ")"))
+        failed = failed + 1
+    }
+}
+
+// 整块校验：快路径用字符串比较（C memcmp），失败才进慢路径定位首个坏字节
+func verifyBlock(Ptr p, int size, int expect): Dict {
+    int chunk = 262144
+    string pat = strings.from_bytes([expect]).rep(chunk)
+    var bad = 0
+    var first = -1
+    var off = 0
+    while off < size {
+        var n = chunk
+        if off + n > size { n = size - off }
+        var s = ffi.read_bytes(p, off, n)
+        if n == chunk {
+            if s != pat { bad = bad + countBad(ffi.read_bytes(p, off, n), expect) }
+        } else {
+            var tail = strings.byte_slice(pat, 0, n - 1)
+            if s != tail { bad = bad + countBad(ffi.read_bytes(p, off, n), expect) }
+        }
+        if bad > 0 and first < 0 { first = off }
+        off = off + n
+    }
+    return {badCount: bad, firstBad: first}
+}
+
+// 慢路径：逐字节数坏字节（只在快路径失败时才跑）
+func countBad(string s, int expect): int {
+    Array[int] b = s.to_bytes()
+    var bad = 0
+    for 0:b.len()-1 to k {
+        if b[k] != expect { bad = bad + 1 }
+    }
+    return bad
+}
+
+// ==================== ① 覆盖 + 块完整性 ====================
+func testCoverage(int targetMb, int blockKb): bool {
+    int bsize = blockKb * 1024
+    int batchBytes = 64 * 1024 * 1024
+    int totalBytes = targetMb * 1024 * 1024
+    print("")
+    print("① 块完整性：目标 " + _str(targetMb) + "MB，块 " + _str(blockKb) + "KB，每批 ≤64MB")
+    int t0 = _int(times.ms())
+    int done = 0
+    var totalBad = 0
+    var allOk = true
+    while done < totalBytes and allOk {
+        var want = batchBytes
+        if totalBytes - done < want { want = totalBytes - done }
+        var nb = want / bsize
+        if nb < 1 { nb = 1 }
+
+        // 先全部分配、逐块填不同值（块间互串会被后面的校验抓到）
+        Array[Ptr] ps = []
+        for 0:nb-1 to i {
+            Ptr p = ffi.malloc(bsize)
+            if p == null { break }
+            ps.add(p)
+        }
+        if ps.len() == 0 {
+            check("分配内存", false, "malloc 失败（目标 " + _str(targetMb) + "MB 过大？）")
+            return false
+        }
+        for 0:ps.len()-1 to i {
+            ffi.memset(ps[i], 0x30 + (i % 16), bsize)
+        }
+        for 0:ps.len()-1 to i {
+            var r = verifyBlock(ps[i], bsize, 0x30 + (i % 16))
+            int bad = r["badCount"] as int
+            if bad > 0 {
+                allOk = false
+                totalBad = totalBad + bad
+                print("  第 " + _str(done / 1024 / 1024) + "MB 起的块 " + _str(i)
+                      + " 有 " + _str(bad) + " 字节不符，首个偏移 " + _str(r["firstBad"] as int))
+            }
+        }
+        done = done + ps.len() * bsize
+        for ps to q { ffi.free(q) }
+    }
+    int ms = _int(times.ms()) - t0
+    var mbps = 0
+    if ms > 0 { mbps = _int(done / 1024 / 1024 * 1000 / ms) }
+    check("覆盖 " + _str(done / 1024 / 1024) + "MB 全部一致", allOk,
+          "坏字节 " + _str(totalBad) + "，耗时 " + _str(ms) + "ms（≈" + _str(mbps) + " MB/s）")
+    return allOk
+}
+
+// ==================== ② 越界写检测 ====================
+func testOverrun(): bool {
+    print("")
+    print("② 越界写检测（A 正好写满，B 的守卫值不能被动）")
+    int sz = 262144
+    Ptr a = ffi.malloc(sz)
+    Ptr b = ffi.malloc(sz)
+    if a == null or b == null {
+        check("越界写检测", false, "malloc 失败")
+        return false
+    }
+    var ok = false
+    try {
+        ffi.memset(b, 0xEE, sz)
+        ffi.memset(a, 0x11, sz)
+        int badA = (verifyBlock(a, sz, 0x11)["badCount"] as int)
+        int badB = (verifyBlock(b, sz, 0xEE)["badCount"] as int)
+        ok = badA == 0 and badB == 0
+        check("A 写满不越界、B 守卫完好", ok, "A 坏 " + _str(badA) + " / B 坏 " + _str(badB))
+    } finally {
+        ffi.free(a)
+        ffi.free(b)
+    }
+    return ok
+}
+
+// ==================== ③ GC 堆数据完整性 ====================
+func testGcHeap(): bool {
+    print("")
+    print("③ GC 堆数据完整性（大量对象 → 多轮 GC → 校验内容）")
+    int t0 = _int(times.ms())
+    int n = 20000
+    Array[string] keep = []
+    for 0:n-1 to i {
+        var s = "obj-" + _str(i) + "-" + _str(i * 7)
+        if i % 2 == 0 { keep.add(s) }
+        else if i % 2000 == 0 {
+            Array[int] junk = []
+            for 0:2000-1 to k { junk.add(k) }
+        }
+    }
+    var allOk = true
+    for 0:keep.len()-1 to i {
+        int idx = i * 2
+        var want = "obj-" + _str(idx) + "-" + _str(idx * 7)
+        if keep[i] != want {
+            allOk = false
+            print("  keep[" + _str(i) + "] 内容被破坏")
+            break
+        }
+    }
+    var d = _gc_stats()
+    int minor = d["minor_count"] as int
+    int major = d["major_count"] as int
+    var m = _mem()
+    int ms = _int(times.ms()) - t0
+    check("GC 堆数据完整性", allOk,
+          "存活 " + _str(keep.len()) + " 个，minor " + _str(minor) + " / major " + _str(major)
+          + "，工作集 " + _str((m["working_set"] as int) / 1024 / 1024) + "MB，耗时 " + _str(ms) + "ms")
+    return allOk
+}
+
+// ==================== ④ 碎片化 ====================
+func testFragmentation(): bool {
+    print("")
+    print("④ 碎片化（反复分配/释放不同大小，最后还要能拿到连续大块）")
+    int t0 = _int(times.ms())
+    Array[Ptr] live = []
+    var seed = 12345
+    for 0:3000-1 to i {
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        int sz = 64 + seed % 4096
+        Ptr p = ffi.malloc(sz)
+        if p != null {
+            ffi.write_byte(p, 0, 0xA5)
+            live.add(p)
+        }
+        if i % 2 == 0 and live.len() > 0 {
+            int at = seed % live.len()
+            ffi.free(live[at])
+            live.remove(at)
+        }
+    }
+    for live to q { ffi.free(q) }
+    int bigSize = 4 * 1024 * 1024
+    Ptr big = ffi.malloc(bigSize)
+    var ok = big != null
+    if ok {
+        ffi.memset(big, 0x5A, bigSize)
+        ok = (verifyBlock(big, 65536, 0x5A)["badCount"] as int) == 0
+        ffi.free(big)
+    }
+    int ms = _int(times.ms()) - t0
+    check("碎片后仍能分配并写满 4MB", ok, "耗时 " + _str(ms) + "ms")
+    return ok
+}
+
+main() {
+    var args = _args()
+    SysInfo si = Sys.sysInfo()
+    int physMb = si.memTotalKb / 1024
+    int availMb = si.memAvailKb / 1024
+
+    // 默认覆盖物理内存的 25%，且不超过当前可用内存的 60%（别把系统拖死）
+    var targetMb = 0
+    if physMb > 0 { targetMb = physMb / 4 }
+    var auto = true
+    if args.len() >= 1 {
+        targetMb = _int(args[0])
+        auto = false
+    }
+    if availMb > 0 {
+        int cap = availMb * 6 / 10
+        if targetMb > cap {
+            if auto {
+                print("⚠ 默认目标 " + _str(targetMb) + "MB（物理内存 25%）超过可用内存的 60%（"
+                      + _str(cap) + "MB）⇒ 自动截断到 " + _str(cap) + "MB")
+                targetMb = cap
+            } else {
+                print("⚠ 你手动指定的 " + _str(targetMb) + "MB 超过可用内存的 60%（" + _str(cap)
+                      + "MB）—— 按你说的测，但可能分配失败或拖慢系统")
+            }
+        }
+    }
+    var blockKb = 4096
+    if args.len() >= 2 { blockKb = _int(args[1]) }
+
+    print("=== Leno 内存完整性测试 ===")
+    print("进程 " + _str(_pid()) + " · " + _os() + " · 物理内存 " + _str(physMb)
+          + "MB（可用 " + _str(availMb) + "MB）")
+    print("计划覆盖 " + _str(targetMb) + "MB（" + (if auto then "物理内存的 25%，可用 -m 指定" else "手动指定") + "）")
+
+    testCoverage(targetMb, blockKb)
+    testOverrun()
+    testGcHeap()
+    testFragmentation()
+
+    print("")
+    print("========================================")
+    print("Results: " + _str(passed) + " passed, " + _str(failed) + " failed")
+    if failed > 0 { _exit(1) }
+}

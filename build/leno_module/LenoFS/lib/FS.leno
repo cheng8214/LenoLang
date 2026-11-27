@@ -16,7 +16,9 @@ import files
 import dirs
 import strings
 import "Result" as res
+import "watch.leno" as wch
 use res.Result
+use wch.Watcher
 
 // 计数结果（原来是 Dict 里的 files/dirs 两个数字）
 //   ⚠ 字段不能叫 `files` / `dirs`：本文件 `import files` / `import dirs` 用的正是这两个名字，
@@ -134,6 +136,23 @@ export func count(string path): Result[FsCount] {
     }
     _count(path, st)
     return _okCount(st["files"] as int, st["dirs"] as int)
+}
+
+// ==================== 变化监控（2026-11-27） ====================
+//   var w = fs.watch("d:\\proj", recursive = true, exclude = ["$RECYCLE.BIN", ".git"])
+//   Array[Dict] evs = w.poll()      // 非阻塞，没有变化返回 []
+//   // ev = {action: "add"|"del"|"mod"|"rename"|"overflow", path: "src/a.leno"}
+//   // rename 额外带 ev["old_path"]（同一批里配好对，不再给两条孤立事件）
+//   w.stop()
+// 引擎：Windows 走 ReadDirectoryChangesW（内核事件，递归 + 溢出通知）；
+//       其它平台走轮询（默认 300ms 一次全树 mtime/size 比对）。详见 watch.leno 顶部注释。
+export func watch(string path, bool recursive = false, string engine = "auto",
+                  Array[string]? exclude = null): Watcher {
+    return wch.watch(path, recursive, engine, exclude)
+}
+
+export func isWatching(Watcher w): bool {
+    return wch.isWatching(w)
 }
 
 func _count(string path, Dict st) {

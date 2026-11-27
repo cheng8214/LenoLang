@@ -152,6 +152,56 @@ export func parse_proc_mounts(string text): Array[string] {
     return res
 }
 
+// `/proc/stat` 第一行 → CPU 累计时间（2026-11-27，cpuUsage 用）
+//   ⚠ 名字带 `_cpu`：下面还有一个 `parse_proc_stat`，那是解析 **`/proc/<pid>/stat`**（进程级）
+//     —— Leno 没有同名重载，两个同名的结果就是后者静默覆盖前者（编译期已会报重复定义）
+//   形态：`cpu  user nice system idle iowait irq softirq steal guest guest_nice`
+//   · `total` = user…steal 之和（1..8）；**不含** guest/guest_nice —— 它们已经算在
+//     user/nice 里了，重复计会让 total 偏大、使用率偏低 ✗
+//   · `idle` = idle + iowait（iowait 期间 CPU 实际空闲 ✓）
+//   · 单位是 jiffies，两次采样求差即可；调用方只做比例，不需要换算成毫秒
+export func parse_cpu_stat(string text): Dict {
+    var ls = split_lines(text)
+    for ls to l {
+        var t = tokens(l)
+        if t.len() < 9 { continue }
+        if at(t, 0) != "cpu" { continue }
+        int total = 0
+        int idle = 0
+        for 1:8 to i {
+            if is_number(at(t, i)) {
+                int v = _int(at(t, i))
+                total = total + v
+                if i == 4 or i == 5 { idle = idle + v }
+            }
+        }
+        if total <= 0 { return {ok: false, idle: 0, total: 0} }
+        return {ok: true, idle: idle, total: total}
+    }
+    return {ok: false, idle: 0, total: 0}
+}
+
+// `/proc/mounts` 的**带类型**版本：每项 {device, mount, fstype}（2026-11-27，listVolumes 用）
+//   · 只认以 `/` 开头的挂载点（排除 swap 之类）；同一挂载点只留第一条（bind mount 会重复 ✓）
+//   · device 也走 unescape_mount（设备名里同样可能有 `\040` ✓）
+export func parse_mounts_detail(string text): Array[Dict] {
+    Array[Dict] res = []
+    var ls = split_lines(text)
+    for ls to l {
+        var t = tokens(l)
+        if t.len() < 3 { continue }
+        string mp = unescape_mount(at(t, 1))
+        if not strings.starts_with(mp, "/") { continue }
+        bool dup = false
+        for res to r {
+            if (r["mount"] as string) == mp { dup = true }
+        }
+        if dup { continue }
+        res.add({device: unescape_mount(at(t, 0)), mount: mp, fstype: at(t, 2)})
+    }
+    return res
+}
+
 // `/proc/mounts` 字段里的八进制转义还原：`\040`→空格、`\011`→Tab、`\012`→换行、`\134`→`\`
 //   ⚠ 按**字节**处理（不是码点）：转义本身就是字节级规则，而挂载点里的中文是多字节 UTF-8
 //     ⇒ 逐码点处理会把"从字节流里拣出来的某个字节"变成非法码点 ✗（`from_bytes` 才严格互逆 ✓）

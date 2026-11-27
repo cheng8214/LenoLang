@@ -192,6 +192,49 @@ export func listDrives(): Array[string] {
     return out
 }
 
+// 所有卷的详细信息：卷标 / 文件系统 / 类型 / 容量 一次取齐（2026-11-27）
+//   ⚠ 取不到**不编**：字段留 ""/0；`ready=false` 表示容量都拿不到（空的 DVD 驱动器、
+//     已拔出的 U 盘、无权限的网络盘）—— 上层应据此显示"未就绪"而不是 0 字节
+export func listVolumes(): Array[Dict] {
+    Array[Dict] out = []
+    for listDrives() to x {
+        var v = Win32.volumeInfo(x)
+        var cap = diskSpace(x)
+        out.add({
+            root: x,
+            label: jsons.get_str(v, "label", ""),
+            fsType: jsons.get_str(v, "fsType", ""),
+            serial: jsons.get_int(v, "serial", 0),
+            driveType: jsons.get_int(v, "driveType", 0),
+            kind: jsons.get_str(v, "kind", "unknown"),
+            total: jsons.get_int(cap, "total", 0),
+            free: jsons.get_int(cap, "free", 0),
+            ready: jsons.get_bool(cap, "ok", false)
+        })
+    }
+    return out
+}
+
+// ==================== 实时资源（2026-11-27）====================
+
+// 物理内存（KB）：{ok, totalKb, availKb} —— 取不到就是 ok=false，别当成 0 内存
+export func memInfo(): Dict {
+    var m = Win32.memoryKb()
+    return {ok: jsons.get_bool(m, "ok", false),
+            totalKb: jsons.get_int(m, "totalKb", 0),
+            availKb: jsons.get_int(m, "availKb", 0)}
+}
+
+// CPU 累计时间（毫秒，开机以来）：{ok, idle, total} —— 差值/百分比由门面算
+export func cpuTimes(): Dict {
+    return Win32.cpuTimes()
+}
+
+// 文件图标（Shell 取，RGBA 像素）：{ok, w, h, pixels} —— 只对存在的文件有效
+export func fileIcon(string path, bool small): Dict {
+    return Win32.fileIcon(path, small)
+}
+
 // 取 path 所在盘的根（`C:\Users\x` ⇒ `C:\`）✓ 认不出 ⇒ SystemDrive 兜底 ✓
 export func driveRootOf(string path): string {
     string p = strings.trim(path)

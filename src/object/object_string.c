@@ -144,7 +144,12 @@ ObjString* str_new(const char* chars, int len) {
     }
 
     // 先尝试在字符串表中查找已有的等价字符串（去重）
-    if (string_table.entries && string_table.capacity > 0) {
+    // ⚠ 只有**短串**才进表（见 intern_should_intern / INTERN_MAX_SHORT_LEN）⇒ 长串查表
+    //   必定 miss，但 intern_find 内部要先算一遍**整串 hash** 才能定位桶。
+    //   二进制读盘路径（.xls/.zip 的流切片）经常构造 10~100 KB 的"字符串"，
+    //   这一趟纯属白扫（40 KB 实测 ≈ 60 µs/次）。与 str_concat 的写法对齐：
+    //   先按长度判据过滤，再查表 —— 语义完全等价（长串本来就查不到）。
+    if (intern_should_intern(len) && string_table.entries && string_table.capacity > 0) {
         ObjString* existing = intern_find(chars, len);
         if (existing) return existing;
     }

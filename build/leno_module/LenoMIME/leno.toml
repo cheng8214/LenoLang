@@ -1,0 +1,11 @@
+[package]
+name = "LenoMIME"
+version = "0.1.0"
+description = "Leno MIME 识别：扩展名表 + 魔数嗅探 + 分类（image/text/archive/...），纯 Leno"
+authors = ""
+license = "Apache-2.0"
+
+[modules]
+root = "lib"
+
+# 纯 Leno，无原生库；只依赖内置 files / strings

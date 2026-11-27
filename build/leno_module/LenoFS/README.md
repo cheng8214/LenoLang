@@ -1,6 +1,6 @@
-# LenoFS v0.1.0
+# LenoFS v0.2.0
 
-Leno 的文件系统扩展（**纯 Leno**）：补 `dirs` 缺的三件（shutil 的核心）。
+Leno 的文件系统扩展（**纯 Leno**）：补 `dirs` 缺的三件（shutil 的核心）+ 目录变化监控。
 
 ```leno
 import "FS" as fs
@@ -37,10 +37,69 @@ fs.count("src")                                  // Result[FsCount]{fileCount, d
 - 二进制安全（`files.read/write` 按字节，含 NUL 与 0xFF）
 - 失败一律 `Result.isErr()` + `code` 分清"源不存在 / 类型用错 / 目标冲突 / 删不掉"
 
+## 目录变化监控（v0.2 新增）
+
+```leno
+import "FS" as fs
+
+// exclude 是**相对路径前缀**（可选）：命中的不报事件。典型噪声：
+//   删除文件进回收站 ⇒ `$RECYCLE.BIN` 里冒出 add；版本库/依赖目录刷屏
+var w = fs.watch("d:\\proj", recursive = true,
+                 exclude = ["$RECYCLE.BIN", "System Volume Information", ".git", "node_modules"])
+if not fs.isWatching(w) { print(w.err) }         // 创建失败原因在这里
+
+// 主循环 / 每帧
+Array[Dict] evs = w.poll()                       // **非阻塞**：没有变化返回 []
+for evs to e {
+    // e["action"] : "add" | "del" | "mod" | "rename" | "overflow"
+    // e["path"]   : 相对 watch 根的路径（统一用 '/' 分隔）
+    // rename 另有 e["old_path"]（旧名；配不上对时是 ""）
+    print((e["action"] as string) + "  " + (e["path"] as string))
+}
+w.stop()
+```
+
+**为什么是 `poll()` 而不是回调**：Leno 的闭包**不能跨线程调用**（`threads` 只传值），
+回调式 API 就得把事件搬回主线程再调，反而更绕。poll 模型下不需要后台线程——
+Windows 的 `ReadDirectoryChangesW` 本来就是"先发请求、再查事件"。
+
+| 引擎 | 平台 | 机制 | 延迟 / 开销 |
+|---|---|---|---|
+| `native` | Windows | `ReadDirectoryChangesW`（overlapped + 事件，非阻塞） | 内核级，几乎即时 |
+| `poll` | 全平台 | `dirs.walk` + `stat` 比对 size/mtime | 每 `intervalMs`（默认 300）一轮，一轮扫全树 |
+
+`engine` 参数：`"auto"`（默认，Windows 用 native、其它用 poll）/ `"native"` / `"poll"`。
+
+**口径与边界**（都是刻意的）：
+
+- **一次 `poll` 会排空所有已完成的事件**，调用方不用每帧调多次；同一次 poll 内同路径合并
+  （一次「保存」Windows 会连报 修改/修改，这里只留一条；`add` 不会被紧跟的 `mod` 覆盖）
+- **`add` 与 `mod` 的合并规则**：同一次 poll 内 add 之后的 mod 会被丢弃（新建文件必然
+  ADDED + MODIFIED；留 add 才不会丢"这是新文件"的语义）
+- **`rename` 已配对**：Windows 原生是「旧名」「新名」两条记录，这里合并成一条
+  `{action:"rename", path:新名, old_path:旧名}`；配不上对（跨批被 buffer 切开）时
+  会给 `path: ""` 的 rename，**不丢事件**
+- **目录自身的 `mod` 已过滤**：里面增删文件时 Windows 会同时把父目录标脏，那一条没有信息量
+  （轮询引擎本来就不报目录 mod）
+- **`exclude` 只过滤事件，不省扫描成本**：轮询引擎仍会 `dirs.walk` 进去（`dirs` 没有剪枝能力）
+  ⇒ 想省扫描就把大目录从监控根上排开（分开 watch 子目录）
+- `poll` 引擎的 `mod` 靠 **size + mtime** 判断 ⇒ mtime 精度是**秒**，同一秒内改两次且大小不变
+  可能漏报；也**分不清"改了内容"和"只动了 mtime"**（要更严就自己 hash）
+- `poll` 引擎的延迟上限就是 `intervalMs`（默认 300ms），且一轮扫全树 —— 别拿它监控整盘；
+  递归扫描时若目录在两次 poll 之间被删，本轮按空处理（`err` 有说明），不会中断程序
+- **缓冲区溢出**：Windows 侧变化太密集时会回一个 `{action: "overflow", path: ""}` 事件，
+  调用方应据此**全量重扫**（这是 Windows 官方口径，不是错误）
+- `stop()` 之后 `poll()` 返回空数组，重复 `stop()` 安全
+- ⚠ **Linux 的 inotify 引擎未实现**（本机没有 Linux 环境可实测，不写未验证代码）——
+  Linux/macOS 上请用默认的轮询引擎；`engine="native"` 在非 Windows 上返回 `err` 而不是
+  静默退化，避免调用方误以为拿到内核事件
+- 轮询引擎识别不出改名，会表现为 `del` + `add`（配对是 Windows 原生引擎独有的）
+
 ## 验证
 
 ```bat
 build\leno.exe build\leno_module\LenoFS\test\test_fs.leno
+build\leno.exe build\leno_module\LenoFS\test\test_watch.leno     :: 双引擎各跑 add/mod/递归/rename/del/stop
 ```
 
 6 组：count（3 文件/3 目录）/ copytree（逐文件校验，含 6 字节二进制与中文）/

@@ -1,0 +1,607 @@
+// xls_read.leno -- 读 Excel 97-2003 工作簿（.xls = OLE2 复合文档 + BIFF8 记录流）
+//
+// 为什么单独一层：.xls 不是 zip，xlsx 那套（LenoZip + XML）完全用不上。
+// 这里做两件事：
+//   ① OLE2（复合文档）：DIFAT / FAT / miniFAT / 目录项 → 取出 "Workbook" 流
+//   ② BIFF8：解析记录流 → sheet 名 + 行 × 列的单元格值
+//
+// 返回结构与 xlsx_read 一致：{ok, err, sheets: [{name, rows: Array[Array[string]]}]}
+//   · 值一律 string：整数不带 ".0"（RK/NUMBER 里的 2.0 就是 2），其余原样
+//   · 认的记录：BOUNDSHEET / SST(+CONTINUE) / LABELSST / LABEL / RSTRING /
+//               RK / MULRK / NUMBER / BOOLERR / BLANK / MULBLANK
+//   · **没有样式**⇒ 日期只能拿到 Excel 序列号（与 xlsx_read 同口径，不猜数字格式）
+//   · 不支持：加密（FILEPASS）、BIFF5 及更早（.xls 95 以前）、图表/图片/嵌入对象、
+//             公式的缓存值（FORMULA 记录留着不动）
+import strings
+import files
+import maths
+
+// ==================== 小端读取（全部带边界检查，越界给 0） ====================
+func _u8(Array[int] b, int o): int {
+    if o < 0 or o >= b.len() { return 0 }
+    return b[o]
+}
+
+func _u16(Array[int] b, int o): int {
+    if o < 0 or o + 1 >= b.len() { return 0 }
+    return b[o] | (b[o + 1] << 8)
+}
+
+func _u32(Array[int] b, int o): int {
+    if o < 0 or o + 3 >= b.len() { return 0 }
+    return b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)
+}
+
+
+
+// ==================== BIFF 字符串 ====================
+// UTF-16LE（BIFF8 的 fHighByte=1）。bytes 可能不是 2 的倍数（不会发生，但别越界）
+//
+// ⚠ 为什么不写成 `parts.add(strings.from_codepoint(u))` + join：
+//   每调一次 from_codepoint 都要**造一个 ObjString**，而 str_new 内部要
+//   intern_find（hash 查表）+ utf8_char_len（全扫）+ hash_string（全扫）
+//   ⇒ 10 字的中文串实测 9 µs。改成"手写 UTF-8 字节 + strings.from_bytes 一次构造"
+//   后 2 µs（4.5x）；142 个共享字符串上省约 1 ms。
+func _utf16(Array[int] b, int off, int bytes): string {
+    Array[int] out = []
+    var i = 0
+    while i + 1 < bytes and off + i + 1 < b.len() {
+        int u = b[off + i] | (b[off + i + 1] << 8)
+        i = i + 2
+        var cp = u
+        if u >= 0xD800 and u <= 0xDBFF and i + 1 < bytes and off + i + 1 < b.len() {
+            int u2 = b[off + i] | (b[off + i + 1] << 8)
+            if u2 >= 0xDC00 and u2 <= 0xDFFF {
+                cp = 0x10000 + ((u - 0xD800) << 10) + (u2 - 0xDC00)   // 代理对
+                i = i + 2
+            }
+        }
+        if cp < 0x80 {
+            out.add(cp)
+        } else if cp < 0x800 {
+            out.add(0xC0 | (cp >> 6))
+            out.add(0x80 | (cp & 0x3F))
+        } else if cp < 0x10000 {
+            out.add(0xE0 | (cp >> 12))
+            out.add(0x80 | ((cp >> 6) & 0x3F))
+            out.add(0x80 | (cp & 0x3F))
+        } else {
+            out.add(0xF0 | (cp >> 18))
+            out.add(0x80 | ((cp >> 12) & 0x3F))
+            out.add(0x80 | ((cp >> 6) & 0x3F))
+            out.add(0x80 | (cp & 0x3F))
+        }
+    }
+    return strings.from_bytes(out)
+}
+
+// BIFF 的 8 位压缩字符串（fHighByte=0）：每个字节一个码点（Latin-1 口径）
+func _latin1(Array[int] b, int off, int bytes): string {
+    // 快路径：全是 ASCII ⇒ 数组切片 + 一次构造（sheet 名、英文串走这条）
+    var hi = false
+    var i = 0
+    while i < bytes and off + i < b.len() {
+        if b[off + i] >= 0x80 { hi = true }
+        i = i + 1
+    }
+    if not hi {
+        var end = off + bytes - 1
+        if end >= b.len() { end = b.len() - 1 }
+        if end < off { return "" }
+        return strings.from_bytes(b[off : end])
+    }
+    Array[int] out = []
+    i = 0
+    while i < bytes and off + i < b.len() {
+        int u = b[off + i]
+        if u < 0x80 {
+            out.add(u)
+        } else {
+            out.add(0xC0 | (u >> 6))
+            out.add(0x80 | (u & 0x3F))
+        }
+        i = i + 1
+    }
+    return strings.from_bytes(out)
+}
+
+// ==================== OLE2 复合文档 ====================
+// 性能要点（2026-11-26 实测）：**大流一律走字符串切片**（strings.byte_slice），
+// 不要逐字节 out.add(bs[off+k])——44 KB 的 Workbook 流那样拷要 3.5 ms，
+// 切片拼完再一次 to_bytes() 只要 0.3 ms（Array[int] 逐元素 add 有类型检查 + 写屏障）。
+export struct Ole {
+    string raw = ""                 // 整个文件（字节串载体）
+    int fileLen = 0
+    Array[int] fat = []
+    Array[int] miniFat = []
+    string mini = ""                // 根项的流（也是字节串，别再转 Array[int]）
+    Array[string] names = []
+    Array[int] kinds = []
+    Array[int] starts = []
+    Array[int] sizes = []
+    int ssz = 512
+    int mssz = 64
+    int miniCut = 4096
+    string err = ""
+
+    func fail(string msg): bool {
+        err = msg
+        return false
+    }
+
+    func sectorOff(int sid): int { return 512 + sid * ssz }
+
+    // 文件里 [off, off+len) 这一段（len <= 0 ⇒ 空）。只转**小段**，不要整文件 to_bytes
+    func seg(int off, int len): Array[int] {
+        if len <= 0 or off < 0 or off >= fileLen { return [] }
+        var end = off + len - 1
+        if end >= fileLen { end = fileLen - 1 }
+        return strings.byte_slice(raw, off, end).to_bytes()
+    }
+
+    // FAT 链上的字节（size < 0 ⇒ 整条链）。返回**字节串**，最后 join 一次。
+    // ⚠ 不要写成 `out = out + slice`：那是 O(n²)（39 KB 的 Workbook 流 80 个扇区
+    //   实测 1.25 ms，join 后 ~50 µs）。Array[int] 逐字节 add 更慢（3.5 ms）。
+    func readFat(int start, int size): string {
+        // ① 走链拿扇区号 ② **连续扇区合并成一段**，每段只切片一次
+        //    （字符串构造要 intern_find + utf8_char_len + hash 三次全扫描，
+        //      80 段各切一次实测 465 µs；本文件链是连续的 ⇒ 1 段 225 µs）
+        Array[int] ch = []
+        var cur = start
+        var guard = 0
+        while cur >= 0 and cur < fat.len() and guard < 1000000 {
+            ch.add(cur)
+            cur = fat[cur]
+            guard = guard + 1
+        }
+        Array[string] parts = []
+        var i = 0
+        while i < ch.len() {
+            var j = i
+            while j + 1 < ch.len() and ch[j + 1] == ch[j] + 1 { j = j + 1 }
+            int off = sectorOff(ch[i])
+            var end = sectorOff(ch[j]) + ssz - 1
+            if end >= fileLen { end = fileLen - 1 }
+            if off <= end { parts.add(strings.byte_slice(raw, off, end)) }
+            i = j + 1
+        }
+        var out = ""
+        if parts.len() == 1 { out = parts[0] } else { out = parts.join("") }
+        if size < 0 or out.byte_len() <= size { return out }
+        return strings.byte_slice(out, 0, size - 1)
+    }
+
+    // miniFAT 链上的字节（小流 < miniCutoff 时走这里）。连续 mini 扇区同样合并
+    func readMini(int start, int size): string {
+        Array[int] ch = []
+        var cur = start
+        var guard = 0
+        while cur >= 0 and cur < miniFat.len() and guard < 1000000 {
+            ch.add(cur)
+            cur = miniFat[cur]
+            guard = guard + 1
+        }
+        Array[string] parts = []
+        int mn = mini.byte_len()
+        var i = 0
+        while i < ch.len() {
+            var j = i
+            while j + 1 < ch.len() and ch[j + 1] == ch[j] + 1 { j = j + 1 }
+            int off = ch[i] * mssz
+            var end = ch[j] * mssz + mssz - 1
+            if end >= mn { end = mn - 1 }
+            if off <= end { parts.add(strings.byte_slice(mini, off, end)) }
+            i = j + 1
+        }
+        var out = ""
+        if parts.len() == 1 { out = parts[0] } else { out = parts.join("") }
+        if size < 0 or out.byte_len() <= size { return out }
+        return strings.byte_slice(out, 0, size - 1)
+    }
+
+    func open(string data): bool {
+        raw = data
+        fileLen = raw.byte_len()
+        if fileLen < 512 { return fail("文件太小（< 512 字节），不是 .xls") }
+        Array[int] hdr = seg(0, 512)
+        if hdr[0] != 0xD0 or hdr[1] != 0xCF or hdr[2] != 0x11 or hdr[3] != 0xE0 {
+            return fail("不是 .xls（OLE2 复合文档签名不对）——.xlsx 请用 read()")
+        }
+        ssz = 1 << _u16(hdr, 30)
+        mssz = 1 << _u16(hdr, 32)
+        if ssz != 512 and ssz != 4096 { return fail("OLE2 扇区大小异常：" + _str(ssz)) }
+        if mssz < 16 or mssz > 4096 { return fail("OLE2 迷你扇区大小异常：" + _str(mssz)) }
+
+        int nFat = _u32(hdr, 44)
+        int dirStart = _u32(hdr, 48)
+        miniCut = _u32(hdr, 56)
+        int miniFatStart = _u32(hdr, 60)
+        int nMiniFat = _u32(hdr, 64)
+        int difatStart = _u32(hdr, 68)
+        int nDifat = _u32(hdr, 72)
+
+        // ---- FAT 扇区号：头里 109 项 + DIFAT 链 ----
+        Array[int] fatSecs = []
+        for 0:108 to i {
+            int v = _u32(hdr, 76 + i * 4)
+            if v != 0xFFFFFFFF and v != 0xFFFFFFFE { fatSecs.add(v) }
+        }
+        var cur = difatStart
+        var guard = 0
+        while nDifat > 0 and cur != 0xFFFFFFFE and cur != 0xFFFFFFFF and guard < 100000 {
+            Array[int] sec = seg(sectorOff(cur), ssz)
+            if sec.len() < ssz { break }
+            int per = ssz / 4
+            for 0:per-2 to i {
+                int v = _u32(sec, i * 4)
+                if v != 0xFFFFFFFF and v != 0xFFFFFFFE { fatSecs.add(v) }
+            }
+            cur = _u32(sec, ssz - 4)
+            guard = guard + 1
+        }
+        if nFat > 0 and fatSecs.len() > nFat { fatSecs = fatSecs[0 : nFat - 1] }
+
+        // ---- FAT ----
+        for fatSecs to fs {
+            Array[int] sec = seg(sectorOff(fs), ssz)
+            if sec.len() < ssz { break }
+            for 0:ssz/4-1 to k { fat.add(_u32(sec, k * 4)) }
+        }
+        if fat.len() == 0 { return fail("OLE2 FAT 为空（文件损坏或被截断）") }
+
+        // ---- 目录项（小流：最多几 KB，转 Array[int] 方便按 128 字节切） ----
+        Array[int] dir = readFat(dirStart, -1).to_bytes()
+        var rootStart = 0
+        var rootSize = 0
+        var i = 0
+        while i + 128 <= dir.len() {
+            int nameLen = _u16(dir, i + 64)
+            int typ = dir[i + 66]
+            int start = _u32(dir, i + 116)
+            int size = _u32(dir, i + 120)   // 高 32 位在流 > 4GB 时才有意义
+            if typ != 0 {
+                var nm = ""
+                if nameLen >= 2 { nm = _utf16(dir, i, nameLen - 2) }
+                names.add(nm)
+                kinds.add(typ)
+                starts.add(start)
+                sizes.add(size)
+                if typ == 5 {
+                    rootStart = start
+                    rootSize = size
+                }
+            }
+            i = i + 128
+        }
+        if names.len() == 0 { return fail("OLE2 目录为空") }
+
+        // ---- mini 流（根项的流）+ miniFAT ----
+        if rootSize > 0 { mini = readFat(rootStart, rootSize) }
+        if miniFatStart != 0xFFFFFFFE and miniFatStart != 0xFFFFFFFF and nMiniFat > 0 {
+            Array[int] mf = readFat(miniFatStart, -1).to_bytes()
+            for 0:mf.len()/4-1 to k { miniFat.add(_u32(mf, k * 4)) }
+        }
+        return true
+    }
+
+    // 按名字取流（不存在 ⇒ 空）。返回**字节串**，调用方按需 to_bytes()
+    func stream(string name): string {
+        for 0:names.len()-1 to i {
+            if kinds[i] == 2 and names[i] == name {
+                if sizes[i] == 0 { return "" }
+                if sizes[i] < miniCut { return readMini(starts[i], sizes[i]) }
+                return readFat(starts[i], sizes[i])
+            }
+        }
+        return ""
+    }
+
+    // 列出所有流名（报错信息用）
+    func streamNames(): string {
+        var s = ""
+        for 0:names.len()-1 to i {
+            if kinds[i] == 2 {
+                if s != "" { s = s + ", " }
+                s = s + names[i]
+            }
+        }
+        return s
+    }
+}
+
+// ==================== 数值 ====================
+// IEEE754 双精度（hi/lo 各 32 位）→ float。不做 inf/nan（表格里不该出现）
+func _dbl(int hi, int lo): float {
+    int sign = (hi >> 31) & 1
+    int e = (hi >> 20) & 0x7FF
+    int mh = hi & 0xFFFFF
+    float mant = 1.0 * mh * 4294967296.0 + 1.0 * lo
+    var v = 0.0
+    if e == 0 {
+        v = mant * 4.9406564584124654e-324        // 次正规数
+    } else if e != 2047 {
+        v = (1.0 + mant / 4503599627370496.0) * maths.pow(2.0, 1.0 * e - 1023.0)
+    }
+    if sign == 1 { v = 0.0 - v }
+    return v
+}
+
+// RK 编码：bit0 = 值 /100，bit1 = 30 位有符号整数（否则是高 30 位的 double 尾数）
+func _rkFloat(int rk): float {
+    int f100 = rk & 1
+    int fint = rk & 2
+    int v = rk & 0xFFFFFFFC
+    var out = 0.0
+    if fint != 0 {
+        int n = v >> 2
+        if n >= 0x20000000 { n = n - 0x40000000 }
+        out = 1.0 * n
+    } else {
+        // rk 的 bit31..2 就是 double 的 bit63..34 ⇒ 高 32 位直接是 rk 本身（低 2 位清零）
+        out = _dbl(v, 0)
+    }
+    if f100 != 0 { out = out / 100.0 }
+    return out
+}
+
+// 数字 → 文本：整数不带 ".0"（2.0 ⇒ "2"），其余走 _str
+// 用 _int 截断再比回去判断"整数值"：比 maths.floor + maths.roundi 各调一次少一次
+// 函数调用（612 个单元格实测省 ~0.1 ms）
+func _numText(float v): string {
+    var a = v
+    if a < 0.0 { a = 0.0 - a }
+    if a < 1000000000000000.0 {
+        int n = _int(v)
+        if 1.0 * n == v { return _str(n) }
+    }
+    return _str(v)
+}
+
+// ==================== BIFF8 ====================
+func _err(string msg): Dict {
+    return {ok: false, err: msg, sheets: []}
+}
+
+// 单元格下标（行，列，文本）。行/列可以跳号 ⇒ 补空行/空单元格
+func _putCell(Array[Array[string]] rows, int r, int c, string v) {
+    if r < 0 or c < 0 { return }
+    while rows.len() <= r {
+        Array[string] blank = []
+        rows.add(blank)
+    }
+    Array[string] cur = rows[r]
+    while cur.len() <= c { cur.add("") }
+    cur[c] = v
+    rows[r] = cur
+}
+
+// 逻辑流里 pos 之后的下一个块边界（SST/CONTINUE 的拆分点）
+func _nextBound(Array[int] bounds, int pos): int {
+    for bounds to b {
+        if b > pos { return b }
+    }
+    return 1073741824
+}
+
+// SST：cstUnique 个字符串，字符数据可以跨 CONTINUE（跨块时新块首字节是新的 fHighByte）
+func _parseSst(Array[int] wb, Array[int] rOff, Array[int] rId, Array[int] rLen, int idx): Array[string] {
+    Array[int] data = []
+    Array[int] bounds = []
+    var blk = idx
+    var first = true
+    var acc = 0
+    while blk < rId.len() and (first or rId[blk] == 0x003C) {
+        int s = rOff[blk] + 4
+        int e = s + rLen[blk]
+        for s:e-1 to k {
+            if k < wb.len() { data.add(wb[k]) }
+        }
+        acc = acc + rLen[blk]
+        bounds.add(acc)
+        first = false
+        blk = blk + 1
+    }
+    Array[string] out = []
+    if data.len() < 8 { return out }
+    int unique = _u32(data, 4)
+    var pos = 8
+    for 0:unique-1 to si {
+        if pos + 3 > data.len() { break }
+        int cch = _u16(data, pos)
+        int flags = data[pos + 2]
+        pos = pos + 3
+        var cRun = 0
+        var cbExt = 0
+        if (flags & 8) != 0 {                 // fRichSt：后跟 cRun 个 4 字节格式段
+            if pos + 2 > data.len() { break }
+            cRun = _u16(data, pos)
+            pos = pos + 2
+        }
+        if (flags & 4) != 0 {                 // fExtSt：后跟 cbExtRst 字节
+            if pos + 4 > data.len() { break }
+            cbExt = _u32(data, pos)
+            pos = pos + 4
+        }
+        var high = (flags & 1) != 0
+        var need = cch
+        Array[string] parts = []
+        while need > 0 {
+            int nb = _nextBound(bounds, pos)
+            int avail = nb - pos
+            if pos >= data.len() { break }
+            if avail <= 0 { break }
+            if high {
+                var can = avail / 2
+                if can > need { can = need }
+                parts.add(_utf16(data, pos, can * 2))
+                pos = pos + can * 2
+                need = need - can
+            } else {
+                var can = avail
+                if can > need { can = need }
+                parts.add(_latin1(data, pos, can))
+                pos = pos + can
+                need = need - can
+            }
+            if need > 0 {
+                if pos >= data.len() { break }
+                high = (data[pos] & 1) != 0      // 新块的头 1 字节：重置 fHighByte
+                pos = pos + 1
+            }
+        }
+        out.add(parts.join(""))
+        pos = pos + 4 * cRun + cbExt
+        if pos > data.len() { break }
+    }
+    return out
+}
+
+export func decode(string raw): Dict {
+    var ole = new Ole()
+    if not ole.open(raw) { return _err(ole.err) }
+
+    // 大流只在最后转一次 Array[int]（BIFF 记录解析要按下标读）
+    Array[int] wb = ole.stream("Workbook").to_bytes()
+    if wb.len() == 0 { wb = ole.stream("Book").to_bytes() }      // BIFF5 的流名
+    if wb.len() == 0 {
+        return _err("不是 Excel 工作簿（OLE2 里没有 Workbook 流；实际流：" + ole.streamNames() + "）")
+    }
+    if wb.len() < 8 { return _err("Workbook 流过短") }
+    if _u16(wb, 0) != 0x0809 { return _err("Workbook 首记录不是 BOF（不是 BIFF 数据）") }
+    int vers = _u16(wb, 4)
+    if vers != 0x0600 {
+        return _err("只支持 BIFF8（Excel 97-2003），本文件版本 0x" + strings.hex(vers) + "（.xls 95 及更早不支持）")
+    }
+
+    // ---- 记录表 ----
+    Array[int] rOff = []
+    Array[int] rId = []
+    Array[int] rLen = []
+    var off = 0
+    int n = wb.len()
+    while off + 4 <= n {
+        // 热点内联：这里每条记录读 2 个 u16，1500+ 条 ⇒ 3000+ 次调用。
+        // off + 4 <= n 已经保证 off..off+3 都合法，不需要 _u16 的边界判断。
+        int rid = wb[off] | (wb[off + 1] << 8)
+        int rl = wb[off + 2] | (wb[off + 3] << 8)
+        if off + 4 + rl > n { break }
+        rOff.add(off)
+        rId.add(rid)
+        rLen.add(rl)
+        off = off + 4 + rl
+    }
+    if rId.len() == 0 { return _err("Workbook 里没有任何记录") }
+
+    // ---- BOUNDSHEET：sheet 名 + 该 sheet 的 BOF 偏移 ----
+    Array[string] names = []
+    Array[int] pos = []
+    for 0:rId.len()-1 to i {
+        if rId[i] == 0x0085 {
+            int o = rOff[i] + 4
+            int bof = _u32(wb, o)
+            int cch = _u8(wb, o + 6)
+            int fl = _u8(wb, o + 7)
+            var nm = ""
+            if (fl & 1) != 0 { nm = _utf16(wb, o + 8, cch * 2) } else { nm = _latin1(wb, o + 8, cch) }
+            names.add(nm)
+            pos.add(bof)
+        }
+    }
+    if names.len() == 0 { return _err("工作簿里没有任何 sheet（BOUNDSHEET 缺失）") }
+
+    // ---- 共享字符串表 ----
+    var sstIdx = -1
+    for 0:rId.len()-1 to i {
+        if rId[i] == 0x00FC { sstIdx = i }
+    }
+    Array[string] sst = []
+    if sstIdx >= 0 { sst = _parseSst(wb, rOff, rId, rLen, sstIdx) }
+
+    // ---- 逐记录填单元格：记录偏移 >= 某 sheet 的 BOF 偏移 ⇒ 属于该 sheet ----
+    Array[Dict] sheets = []
+    for names to nm2 { sheets.add({name: nm2, rows: []}) }
+
+    var cur = -1
+    Array[Array[string]] rows = []
+    for 0:rId.len()-1 to i {
+        int o = rOff[i]
+        var nextIdx = cur + 1
+        while nextIdx < pos.len() and o >= pos[nextIdx] { nextIdx = nextIdx + 1 }
+        if nextIdx != cur + 1 {
+            if cur >= 0 {
+                sheets[cur].set("rows", rows)
+            }
+            cur = nextIdx - 1
+            if cur >= 0 { rows = [] }
+        }
+        if cur >= 0 {
+            int bt = o + 4
+            int rid = rId[i]
+            int rl = rLen[i]
+            // ⚠ 下面全部**手工内联** _u16/_u32（每处省一次函数调用 + 两次越界判断）：
+            //    612 个单元格 × 3~4 次读取。代价是不再逐字段"越界宽容返回 0"，
+            //    改用 rl 判据先挡掉截断记录 —— 这些记录的长度在格式里是固定的，
+            //    长度不对就是坏文件，跳过它比写一个"第 0 行 0 列的幽灵单元格"更合理。
+            if rid == 0x00FD and rl >= 10 {                          // LABELSST
+                int r = wb[bt] | (wb[bt + 1] << 8)
+                int c = wb[bt + 2] | (wb[bt + 3] << 8)
+                int k = wb[bt + 6] | (wb[bt + 7] << 8) | (wb[bt + 8] << 16) | (wb[bt + 9] << 24)
+                var v = ""
+                if k >= 0 and k < sst.len() { v = sst[k] }
+                _putCell(rows, r, c, v)
+            } else if rid == 0x027E and rl >= 10 {                   // RK
+                int r = wb[bt] | (wb[bt + 1] << 8)
+                int c = wb[bt + 2] | (wb[bt + 3] << 8)
+                int rk = wb[bt + 6] | (wb[bt + 7] << 8) | (wb[bt + 8] << 16) | (wb[bt + 9] << 24)
+                _putCell(rows, r, c, _numText(_rkFloat(rk)))
+            } else if rid == 0x00BD and rl >= 6 {                    // MULRK
+                int r = wb[bt] | (wb[bt + 1] << 8)
+                int c0 = wb[bt + 2] | (wb[bt + 3] << 8)
+                int cnt = (rl - 6) / 6
+                for 0:cnt-1 to q {
+                    int p2 = bt + 6 + q * 6
+                    int rk = wb[p2] | (wb[p2 + 1] << 8) | (wb[p2 + 2] << 16) | (wb[p2 + 3] << 24)
+                    _putCell(rows, r, c0 + q, _numText(_rkFloat(rk)))
+                }
+            } else if rid == 0x0203 and rl >= 14 {                   // NUMBER
+                int r = wb[bt] | (wb[bt + 1] << 8)
+                int c = wb[bt + 2] | (wb[bt + 3] << 8)
+                int hi = wb[bt + 6] | (wb[bt + 7] << 8) | (wb[bt + 8] << 16) | (wb[bt + 9] << 24)
+                int lo = wb[bt + 10] | (wb[bt + 11] << 8) | (wb[bt + 12] << 16) | (wb[bt + 13] << 24)
+                _putCell(rows, r, c, _numText(_dbl(hi, lo)))
+            } else if (rid == 0x0204 or rid == 0x00D6) and rl >= 9 { // LABEL / RSTRING
+                int r = wb[bt] | (wb[bt + 1] << 8)
+                int c = wb[bt + 2] | (wb[bt + 3] << 8)
+                int cch = wb[bt + 6] | (wb[bt + 7] << 8)
+                int fl = wb[bt + 8]
+                var v = ""
+                if (fl & 1) != 0 { v = _utf16(wb, bt + 9, cch * 2) } else { v = _latin1(wb, bt + 9, cch) }
+                _putCell(rows, r, c, v)
+            } else if rid == 0x0205 and rl >= 8 {                    // BOOLERR
+                int r = wb[bt] | (wb[bt + 1] << 8)
+                int c = wb[bt + 2] | (wb[bt + 3] << 8)
+                int bv = wb[bt + 6]
+                int isErr = wb[bt + 7]
+                if isErr != 0 {
+                    _putCell(rows, r, c, "#ERR")
+                } else {
+                    _putCell(rows, r, c, if bv == 0 then "false" else "true")
+                }
+            }
+        }
+    }
+    if cur >= 0 { sheets[cur].set("rows", rows) }
+
+    return {ok: true, err: "", sheets: sheets}
+}
+
+export func load(string path): Dict {
+    if not files.exists(path) { return _err("文件不存在：" + path) }
+    var text = ""
+    try {
+        text = files.read(path)
+    } catch ex {
+        return _err("读文件失败：" + path)
+    }
+    return decode(text)
+}

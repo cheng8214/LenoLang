@@ -1,0 +1,53 @@
+// xls-dump —— 打印 Excel 内容（走 LenoXLSX；.xls / .xlsx 按文件头自动识别）
+// 用法:
+//   leno xls-dump.leno <文件.xls|文件.xlsx>              打印到控制台（单元格用 " | " 分隔）
+//   leno xls-dump.leno <文件.xls|文件.xlsx> <输出.tsv>    写 UTF-8 TSV（行号 + 制表符分列）
+import files
+import strings
+import "XLSX" as xlsx
+
+main() {
+    var args = _args()
+    if args.len() < 1 {
+        print("用法: leno xls-dump.leno <文件.xls|文件.xlsx> [输出.tsv]")
+        return
+    }
+    string path = args[0]
+    var toFile = ""
+    if args.len() >= 2 { toFile = args[1] }
+
+    var r = xlsx.read(path)
+    if not (r["ok"] as bool) {
+        print("读取失败：" + (r["err"] as string))
+        return
+    }
+
+    Array[Dict] sheets = r["sheets"] as Array[Dict]
+    Array[string] lines = []
+    for sheets to s {
+        string name = s["name"] as string
+        Array[Array[string]] rows = s["rows"] as Array[Array[string]]
+        if toFile == "" {
+            print("===== " + name + "（" + _str(rows.len()) + " 行）=====")
+        } else {
+            lines.add("===== " + name + " =====")
+        }
+        for 0:rows.len()-1 to ri {
+            Array[string] cells = (rows[ri] as Array[string]).copy()
+            while cells.len() > 0 and cells[cells.len() - 1] == "" { cells.pop() }
+            if toFile == "" {
+                // 空行不打印（xls 的行号是稀疏的，中间大片空行没有信息）
+                if cells.len() > 0 {
+                    print(strings.pad_start(_str(ri + 1), 4, " ") + "  " + cells.join(" | "))
+                }
+            } else {
+                lines.add(_str(ri) + "\t" + cells.join("\t"))
+            }
+        }
+    }
+
+    if toFile != "" {
+        files.write(toFile, lines.join("\n") + "\n")
+        print("已写入 " + toFile + "（" + _str(lines.len()) + " 行）")
+    }
+}

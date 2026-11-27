@@ -9,18 +9,21 @@
 //   xlsx.save("out.xlsx", wb)
 //
 //   var r = xlsx.read("out.xlsx")                // {ok, sheets:[{name, rows}]}
+//   var r2 = xlsx.read("旧表.xls")               // 按文件头自动分派；.xls 走 OLE2+BIFF8
 //   for r.sheets to s { print(s.name + "  " + _str(s.rows.len()) + " 行") }
 //
-// 边界（v0.1，明确写下来）：
-//   · 写：单文件多 sheet；**不支持**样式（字体/颜色/列宽/合并单元格/公式/日期格式）
+// 边界（v0.3，明确写下来）：
+//   · 写：只有 .xlsx；单文件多 sheet；**不支持**样式（字体/颜色/列宽/合并单元格/公式/日期格式）
 //   · 写：小数、日期、带前导零的编号都按**文本**写（避免"看着像数字其实错"）
-//   · 读：数值原样返回字符串；日期读到的是 Excel 序列号（没有样式就无法还原）
+//   · 读：.xlsx（zip+XML）与 .xls（Excel 97-2003，BIFF8）都读，返回值结构相同
+//   · 读：数值原样返回字符串（整数不带 .0）；日期读到的是 Excel 序列号（没有样式无法还原）
 //   · 读：只认 sheet 数据与共享字符串；图片/图表/数据透视表一律忽略
 //   · 容器：LenoZip **默认用 deflate 压缩**（method 8），xlsx 体积接近 Excel
 //     （⚠ 2026-11-09 更正：这里原先写"LenoZip 写的是 stored"，是压缩端完成前的状态）
 import files
 import "xlsx_write.leno" as w
 import "xlsx_read.leno" as r
+import "xls_read.leno" as xls
 
 // ==================== 写 ====================
 // 空工作簿（真正的 sheet 由 addSheet 加；一个都没有时会自动补 Sheet1）
@@ -42,8 +45,29 @@ export func save(string path, Dict wb): bool {
 }
 
 // ==================== 读 ====================
-export func readBytes(string raw): Dict { return r.decode(raw) }
-export func read(string path): Dict { return r.load(path) }
+// 按**文件头**分派：D0 CF 11 E0 ⇒ .xls（OLE2 复合文档，走 xls_read）；
+// 其余 ⇒ .xlsx（zip + XML）。不看扩展名：改名过的文件也能读。
+export func readBytes(string raw): Dict {
+    Array[int] head = raw.to_bytes()
+    if head.len() >= 8 and head[0] == 0xD0 and head[1] == 0xCF and head[2] == 0x11 and head[3] == 0xE0 {
+        return xls.decode(raw)
+    }
+    return r.decode(raw)
+}
+
+export func read(string path): Dict {
+    if not files.exists(path) { return {ok: false, err: "文件不存在：" + path, sheets: []} }
+    var raw = ""
+    try {
+        raw = files.read(path)
+    } catch ex {
+        return {ok: false, err: "读文件失败：" + path, sheets: []}
+    }
+    return readBytes(raw)
+}
+
+// 强制按 .xls（BIFF8）读；想知道"为什么不是 xls"时用它，错误信息更具体
+export func readXls(string path): Dict { return xls.load(path) }
 
 export func sheetNames(Dict book): Array[string] {
     Array[string] out = []

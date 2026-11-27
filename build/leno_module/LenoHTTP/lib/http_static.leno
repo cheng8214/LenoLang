@@ -7,25 +7,21 @@
 import files
 import dirs
 import strings
+import "MIME" as mime
 
+// 静态资源的 Content-Type。
+//   · 扩展名表统一交给 LenoMIME（原先本文件手写了一份，LenoMusic 里还有另一份 ⇒ 改一处漏一处）
+//   · 文本类补 `charset=utf-8`：不写的话浏览器按 latin-1 猜，中文直接乱码
+//   · 认不出 ⇒ `application/octet-stream`（HTTP 语义：让浏览器下载或交给外部程序）
 export func content_type(string path): string {
-    string p = strings.to_lower(path)
-    if strings.ends_with(p, ".html") or strings.ends_with(p, ".htm") { return "text/html; charset=utf-8" }
-    if strings.ends_with(p, ".css") { return "text/css; charset=utf-8" }
-    if strings.ends_with(p, ".js") { return "application/javascript; charset=utf-8" }
-    if strings.ends_with(p, ".json") { return "application/json; charset=utf-8" }
-    if strings.ends_with(p, ".txt") or strings.ends_with(p, ".md") { return "text/plain; charset=utf-8" }
-    if strings.ends_with(p, ".svg") { return "image/svg+xml" }
-    if strings.ends_with(p, ".png") { return "image/png" }
-    if strings.ends_with(p, ".jpg") or strings.ends_with(p, ".jpeg") { return "image/jpeg" }
-    if strings.ends_with(p, ".gif") { return "image/gif" }
-    if strings.ends_with(p, ".webp") { return "image/webp" }
-    if strings.ends_with(p, ".ico") { return "image/x-icon" }
-    if strings.ends_with(p, ".pdf") { return "application/pdf" }
-    if strings.ends_with(p, ".mp4") { return "video/mp4" }
-    if strings.ends_with(p, ".woff2") { return "font/woff2" }
-    if strings.ends_with(p, ".zip") { return "application/zip" }
-    return "application/octet-stream"
+    string m = mime.byExt(path)
+    if m == "" { return "application/octet-stream" }
+    if m == "text/html" or m == "text/css" or m == "text/javascript"
+        or m == "text/plain" or m == "text/markdown" or m == "text/csv"
+        or m == "application/json" or m == "application/xml" {
+        return m + "; charset=utf-8"
+    }
+    return m
 }
 
 func has_dotdot(string rel): bool {
