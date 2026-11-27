@@ -64,6 +64,17 @@ export struct Button impl Widget, Themeable {
     pri string btnType = ""   // 预设类型（primary/danger/success/warning/dark/normal）
     pri bool showBackground = true // 是否显示背景（false = 仅显示图标，无框无背景）
     pri bool autoImgEffect = true  // 未提供 hover/press 图时，自动给普通图标加色调效果
+
+    // ★ 2026-11-27（反哺：Aria 侧栏选中态）：选中态**左侧指示条**
+    //   导航项/标签这类"选中项"过去只能整块浅粉底，缺一个明确的视觉锚点；
+    //   加一条左侧竖条（Qt QListWidget::setCurrentRow / Material NavigationRail 的惯例），
+    //   控件自己画 ⇒ 每个应用不必再套一层 Canvas ✓
+    //   selected = false / barW = 0 时一像素都不画，零破坏 ✓
+    pri bool selected = false          // 是否处于选中态（由 set_selected 切换）
+    pri float selBarW = 0.0            // 指示条宽度（0 = 不画；默认关闭 ⇒ 老行为不变 ✓）
+    pri float selBarPadY = 6.0         // 指示条相对按钮上下的内缩
+    pri Color selBarColor = #E76F9BFF  // 指示条颜色（默认品牌粉，可被 opts/ setter 覆盖）
+
     pri bool loaded = false
     pri string tipText = ""    // 悬停提示文本（空 = 不提示）（pri：仅自己可用 ✓）
                                // ⚠ 不能叫 `tip` ✗ —— 本文件 `import "sdl_tooltip.leno" as tip`
@@ -76,6 +87,7 @@ export struct Button impl Widget, Themeable {
     pri int    imgPos = IMG_LEFT   // 图标相对文字位置（IMG_LEFT/RIGHT/TOP/BOTTOM）
     pri float  imgSize = 0.0    // 图标边长（0 = 自动：取 min(h-8, 自然高)）
     pri float  imgGap = 6.0     // 图标与文字间距
+    pri float  textOffsetY = 0.0 // 图标+文字时的文字垂直微调（负 = 上移；修字体行盒与图标视觉中心不一致）
     pri int    imgAlpha = 255   // 图标透明度 0~255
     pri Color    imgTint = -1   // 图标着色（-1 = 不着色，其余为 #RRGGBBAA 着色）
     // （2026-10-25 晚：`icon_name` 矢量图标已从公共库移除 —— 图标属应用资产，
@@ -191,6 +203,11 @@ export struct Button impl Widget, Themeable {
         padding = _float(opts.get("padding", 0.0))
         if opts.get("hover_color") is Color => t { hovColor = t }
         if opts.get("pressed_color") is Color => t { prColor = t }
+        // 选中态左侧指示条（反哺 Aria 侧栏 / 通用导航项）：给了宽度才画
+        selBarW = _float(opts.get("select_bar_w", 0.0))
+        selBarPadY = _float(opts.get("select_bar_pad_y", 6.0))
+        if opts.get("select_bar_color") is Color => t { selBarColor = t }
+        if opts.get("selected") is bool => t { selected = t }
 
         // 外观开关
         showShadow = opts.get("shadow", true)
@@ -231,6 +248,7 @@ export struct Button impl Widget, Themeable {
         }
         imgSize  = opts.get("image_size", 0.0)
         imgGap   = opts.get("image_gap", 6.0)
+        textOffsetY = _float(opts.get("text_offset_y", 0.0))
         imgAlpha = opts.get("image_alpha", 255)
         var tint = opts.get("image_tint")
         if tint is int { imgTint = tint }
@@ -280,6 +298,12 @@ export struct Button impl Widget, Themeable {
     func set_align(int a)      { textAlign = a }
     func set_border_color(Color c) { bdrColor = c }
     func set_padding(float p)  { padding = p }
+    // 选中态左侧指示条（导航项视觉锚点）：set_selected(b) 只切状态，条宽/色由 opts 或 setter 给
+    func set_selected(bool s)            { selected = s }
+    func is_selected(): bool             { return selected }
+    func set_select_bar(float bw, Color c) { selBarW = bw; selBarColor = c }
+    func set_select_bar_width(float bw)  { selBarW = bw }
+    func set_select_bar_color(Color c)   { selBarColor = c }
 
     // ★ 文本尺寸缓存的**唯一测量点**（text 不变 ⇒ 零测量）。
     //   为什么要有它：以前 render 主路径已缓存，但 `draw_text_aligned` 的**右对齐分支**仍每帧
@@ -336,6 +360,7 @@ export struct Button impl Widget, Themeable {
     func set_image_gap(float g)  { imgGap = g }
     func set_image_alpha(int a)  { imgAlpha = a }
     func set_image_tint(Color color) { imgTint = color }
+    func set_text_offset_y(float dy)  { textOffsetY = dy }
     func set_image_hover(string path) { imgPathHover = path; imgTexHover = null; imgLoadHover = "" }
     func set_image_pressed(string path) { imgPathPressed = path; imgTexPressed = null; imgLoadPressed = "" }
     func set_image_disabled(string path) { imgPathDisabled = path; imgTexDisabled = null; imgLoadDisabled = "" }
@@ -530,6 +555,18 @@ export struct Button impl Widget, Themeable {
             }
         }
 
+        // 选中态左侧指示条（反哺 Aria 侧栏）：画在背景之上、图标文字之下。
+        //   用圆角矩形、左端内缩 radius/2 ⇒ 竖条两端跟着按钮圆角走，不会露出方角 ✗
+        if selected and selBarW > 0.0 and showBackground {
+            float barH = h - selBarPadY * 2.0
+            if barH > 0.0 {
+                float bx = x + radius / 3.0
+                float by = y + selBarPadY
+                r.setColor(selBarColor)
+                r.fillRoundedRect(bx, by, selBarW, barH, selBarW / 2.0)
+            }
+        }
+
         // ============ 图标 + 文字布局 ============
         // 内容裁剪到按钮矩形内，防止图标/文字溢出按钮（对齐 sdl_edit / sdl_panel 做法）
         if not clipRectInit { clipRect = core.SDL_Rect.malloc(); clipRectInit = true }
@@ -665,7 +702,7 @@ export struct Button impl Widget, Themeable {
                 _draw_glyph(r, itex, ix, iy, isize, dw, dh, imgAutoDim)
                 float tx = ix + isize + imgGap
                 float tw = (x + w) - tx - pad
-                float ty = y + (h - textH) / 2.0
+                float ty = y + (h - textH) / 2.0 + textOffsetY
                 // 整块已居中 ⇒ 文字紧跟图标（左对齐）；否则仍按 align 在剩余区里排 ✓
                 if midBand { r.drawText(font, text, tx, ty, txtC) }
                 else { draw_text_aligned(r, tx, tw, ty, txtC) }
@@ -682,7 +719,7 @@ export struct Button impl Widget, Themeable {
                 }
                 float iy = y + (h - isize) / 2.0
                 _draw_glyph(r, itex, ix, iy, isize, dw, dh, imgAutoDim)
-                float ty = y + (h - textH) / 2.0
+                float ty = y + (h - textH) / 2.0 + textOffsetY
                 if midBand { r.drawText(font, text, tx, ty, txtC) }
                 else {
                     float tw = ix - imgGap - tx

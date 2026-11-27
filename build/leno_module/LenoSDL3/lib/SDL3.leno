@@ -129,7 +129,8 @@ export func createCheckBox(Dict opts): CheckBox     { return chk.createCheckBox(
           "enabled:bool", "font_path:string", "font_size:num", "font_style:int", "h:num", "hover_color:color", "image_alpha:int",
           "image_gap", "image_mode", "image_path:string", "image_path_disabled:string", "image_path_hover:string",
           "image_path_pressed:string", "image_pos:string", "image_size", "image_tint", "padding:float",
-          "pressed_color:color", "radius:num", "shadow:bool", "text:string", "text_color:color", "tip:string", "type", "visible:bool",
+          "pressed_color:color", "radius:num", "select_bar_color:color", "select_bar_pad_y:num", "select_bar_w:num", "selected:bool",
+          "shadow:bool", "text:string", "text_color:color", "text_offset_y:float", "tip:string", "type", "visible:bool",
           "w:num", "x:num", "y:num"])
 export func createButton(Dict opts): Button          { return btn.createButton(opts) }
 // ★ 2026-10-31：Label 原来**没有** `_opts_keys()`（运行时那条对账它一直缺席），
@@ -429,6 +430,10 @@ export func testLastAppliedForce(): int                       { return core.test
 //     dlg.setRootAt(root, 0, tb.get_h())            // 内容根让出标题栏高度
 export const DIALOG_TB_H = dlg.DIALOG_TB_H
 export func dialogTitleBar(Window dlg2, string title): TitleBar { return dlg.dialogTitleBar(dlg2, title) }
+// 可覆盖配色的版本（2026-11-27 反哺 Aria 登录窗白底标题栏；style = Dict 或 null）
+export func dialogTitleBarEx(Window dlg2, string title, any style): TitleBar {
+    return dlg.dialogTitleBarEx(dlg2, title, style)
+}
 export func dialogFramePaint(Renderer r, int w, int h) { dlg.dialogFramePaint(r, w, h) }
 
 // 公共确认弹窗（模态）：详见 sdl_dialog.leno 的 msgBox

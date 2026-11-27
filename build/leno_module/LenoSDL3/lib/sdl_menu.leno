@@ -801,7 +801,9 @@ export struct MenuBar impl Widget, Themeable {
         float imgX = px + imgPad
         float imgY = ry + (itemH - imgSize) / 2.0
         r.setTextureAlpha(tex, 255)
-        r.setTextureColor(tex, #FFFFFFFF)
+        // 图标源统一是纯白透明 PNG：白 × txtColor = txtColor。
+        // 这样浅色主题里是深灰图标、深色主题里是浅色图标，不再"白底上白图标" ✗
+        r.setTextureColor(tex, txtColor)
         var[float, float](nw, nh) = r.getTextureSize(tex)
         // aspectFit：保持比例完整显示
         float s = imgSize / nw; if imgSize / nh < s { s = imgSize / nh }
