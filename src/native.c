@@ -1258,6 +1258,9 @@ ObjStruct* native_struct_new(const char* name) {
 
 int native_struct_set(ObjStruct* obj, const char* field_name, Value value) {
     if (!obj || !obj->def || !field_name) return 0;
+    // ★ 2026-11-27：只读实例一律拒绝（返回 0 = 没写）。这条是给**模块**用的批量写入口
+    //   （CSV/XLSX/HTTP 之类构造行），它们不会去查 OP_SET_FIELD 的只读位。
+    if (obj->header.flags & (OBJ_FLAG_FROZEN | OBJ_FLAG_READONLY)) return 0;
     for (int i = 0; i < obj->def->field_count; i++) {
         if (obj->def->fields[i].name && strcmp(obj->def->fields[i].name, field_name) == 0) {
             struct_set_field(obj, i, value);   // inline：带 GC 写屏障（leno_value.h）

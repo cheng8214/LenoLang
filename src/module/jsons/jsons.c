@@ -1218,6 +1218,18 @@ static Value jsons_fill_func(int argc, Value* args) {
     }
     ObjStruct* target = (ObjStruct*)val_as_obj(args[0]);
 
+    // ★ 2026-11-27：**只读目标必须先拒**。fill 是"原地写字段"的批量入口，
+    //   它走 struct_set_field 直写，绕过 OP_SET_FIELD 的只读检查 ——
+    //   实测 `jsons.fill(frozenStruct, d)` 把冻结实例的字改掉了，且**不报错** ✗。
+    //   （frozen 与 const 共用这一处：文案由 obj_write_error_msg 统一给）
+    {
+        const char* wmsg = obj_write_error_msg((Object*)target);
+        if (wmsg != NULL) {
+            native_throw_error(wmsg);
+            return val_null();
+        }
+    }
+
     // 第二个参数：JSON 字符串 **或** 已解析好的 Dict
     //   （DB 行 / CSV 行本来就已经是 Dict，再拼成字符串再解析一遍是浪费）
     if (val_is_obj(args[1]) && val_as_obj(args[1])->type == OBJ_DICT) {

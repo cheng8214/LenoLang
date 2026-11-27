@@ -1,0 +1,187 @@
+// test_frozen_edge.leno —— frozen 的"奇葩"用法（能跑的先跑起来，不能跑的要有明确诊断）
+//
+// 覆盖：
+//   ① `Frozen[...]` 作为 **struct 字段**（要过符号表序列化，字段类型位最容易丢）
+//   ② `Array[Frozen[int]]`（frozen 当元素类型）
+//   ③ 可空 `Frozen[...]?`
+//   ④ `extend` 给 struct 加的**只读**方法在 frozen 实例上可调用
+//   ⑤ `reflect` / `jsons.encode` / `_str` / `print` 对 frozen 的行为（按运行期标签 ⇒ 应与普通值一致）
+//   ⑥ `for` 遍历 frozen Dict
+//   ⑦ 闭包捕获 frozen 后跨线程（捕获是副本，但 frozen 只加引用）
+//   ⑧ 编译期必须拒的两种：`f.sort()`、`f.add()`（子进程 --check）
+import threads
+import reflect
+import jsons
+
+struct Holder {
+    string tag = ""
+    // ① 字段类型就是 Frozen[...]
+    //   ⚠ 字段默认值只能是字面量 ⇒ 这里必须可空，才能留到构造器里 _freeze 再赋
+    Frozen[Array[int]]? nums = null
+}
+
+struct Pt {
+    int x = 0
+    int y = 0
+}
+
+// ⑩ 用：嵌套泛型实参 / 带载荷 enum
+struct Box2[T] {
+    T v
+}
+
+enum Msg {
+    progress(int done, int total)
+    finished(int total)
+}
+
+// ④ extend 加的只读方法
+extend Pt {
+    func sum(): int { return self.x + self.y }
+}
+
+func read_captured(): int {
+    return 0
+}
+
+main() {
+    // ================= ① Frozen 作为 struct 字段 =================
+    var src = [1, 2, 3]
+    Holder h = new Holder(tag = "h", nums = _freeze(src))
+    if h.nums is Array[int] => hn {
+        assert_eq(hn.len(), 3, "①字段里的 frozen 可读")
+        assert_eq(hn[2], 3, "①字段元素可读")
+        assert_eq(_is_frozen(hn), true, "①字段确实是冻结的")
+    } else {
+        assert_eq(1, 0, "①字段应已赋值")
+    }
+
+    // ================= ② Array[Frozen[int]] =================
+    Array[Frozen[Array[int]]] list = []
+    list.add(_freeze([1]))
+    list.add(_freeze([2, 2]))
+    assert_eq(list.len(), 2, "②frozen 当元素类型")
+    assert_eq(list[1].len(), 2, "②元素可读")
+
+    // ================= ③ 可空 Frozen =================
+    Frozen[Array[int]]? maybe = null
+    assert_eq(maybe == null, true, "③未赋值是 null")
+    maybe = _freeze([9, 8])
+    if maybe is Array[int] => m {
+        assert_eq(m.len(), 2, "③可空收窄后可用")
+        assert_eq(_is_frozen(m), true, "③还是冻结的")
+    } else {
+        assert_eq(1, 0, "③应该收窄成功")
+    }
+
+    // ================= ④ extend 的只读方法 =================
+    Pt p = new Pt(x = 3, y = 4)
+    Frozen[Pt] fp = _freeze(p)
+    assert_eq(fp.sum(), 7, "④extend 方法在 frozen 上可调用")
+
+    // ================= ⑤ reflect / jsons / _str =================
+    var fields = reflect.fields(fp)
+    assert_eq(fields.len(), 2, "⑤reflect.fields 看得见字段")
+    var ft = reflect.field_type(fp, "x")
+    assert_eq(ft == "int", true, "⑤reflect.field_type（实际 " + ft + "）")
+
+    var js = jsons.encode(fp)
+    assert_eq(js, "{\"x\":3,\"y\":4}", "⑤jsons.encode 按 struct 输出（实际 " + js + "）")
+    var s = _str(fp)
+    assert_eq(s.len() > 0, true, "⑤_str 不崩")
+
+    // ================= ⑥ 遍历 frozen Dict =================
+    Dict[string, int] d = {}
+    d.set("a", 1)
+    d.set("b", 2)
+    var fd = _freeze(d)
+    var sum = 0
+    for fd to k {
+        sum = sum + _int(fd.get(k))
+    }
+    assert_eq(sum, 3, "⑥遍历冻结字典")
+    assert_eq(fd.keys().len(), 2, "⑥keys() 在 frozen 上可用")
+
+    // ================= ⑦ 闭包捕获 frozen 跨线程 =================
+    Frozen[Array[int]] cap = _freeze([5, 6, 7])
+    var t = threads.start(func() {
+        // 捕获的是副本（引用计数共享同一张冻结图）
+        return cap.len() + cap[0]
+    })
+    assert_eq(t.join(), 8, "⑦闭包捕获 frozen 跨线程可读")
+
+    // ================= ⑧ 编译期必须拒 =================
+    var chk = _exec(_executable() + " --check assert/fixture_frozen_edge_err.leno", 30000)
+    if chk is ExecResult {
+        assert_eq(_int(chk.code) != 0, true, "⑧sort/add frozen 应编译失败")
+        var out = _str(chk.output)
+        assert_eq(has_sub(out, "调用修改方法"), true, "⑧要报 mutator 文案（实际：" + out + "）")
+    } else {
+        assert_eq(1, 0, "⑧--check 子进程没跑起来")
+    }
+
+    // ================= ⑨ 绕过编译期的写入口也必须拒（实测踩到的洞） =================
+    //   ① `jsons.fill` 走 struct_set_field **直写**，原先一条只读检查都没有 ⇒
+    //      实测把冻结实例的字改掉了、且不报错（最坏的一类：静默改坏了"保证只读"的东西）。
+    //   ② `s["f"] = v` 的通用索引写同样没查只读位（OP_SET_FIELD 查了，它没查）。
+    var pt = new Pt(x = 10, y = 20)
+    Frozen[Pt] fpt = _freeze(pt)
+
+    var dd = {}
+    dd.set("x", 999)
+    var threw = false
+    try { jsons.fill(fpt, dd) } catch e { threw = true }
+    assert_eq(threw, true, "⑨jsons.fill 写 frozen 必须抛错")
+    assert_eq(fpt.x, 10, "⑨值不能被改")
+
+    var pa = fpt as any
+    var t2 = false
+    if pa is Pt => pp {
+        try { pp["x"] = 999 } catch e { t2 = true }
+    }
+    assert_eq(t2, true, "⑨s[\"f\"] = v 写 frozen 必须抛错")
+    assert_eq(fpt.x, 10, "⑨值仍不能被改")
+
+    // ================= ⑩ 运行期标签 / 嵌套泛型 / 载荷 enum / 冻中冻 =================
+    //   ① `type()` 对 frozen 仍按运行期标签（`Frozen` 不进字节码，所以不会变成怪名字）
+    var tname = type(fp)
+    assert_eq(has_sub(tname, "Pt"), true, "⑩type(frozen struct) 应含类型名（实际 " + tname + "）")
+    assert_eq(has_sub(tname, "Frozen"), false, "⑩Frozen 是编译期概念，不该出现在运行期类型名里")
+    //   ② 嵌套泛型实参也能冻
+    Box2[Array[int]] bb = new Box2[Array[int]](v = [1, 2, 3])
+    Frozen[Box2[Array[int]]] fbb = _freeze(bb)
+    assert_eq(fbb.v.len(), 3, "⑩嵌套泛型实参")
+    //   ③ 带载荷 enum 冻结后仍能 switch 匹配（它是 struct 形状，走 enum_sig）
+    var msg = Msg.progress(3, 10)
+    var fmsg = _freeze(msg)
+    var matched = ""
+    switch fmsg {
+        case Msg.progress(d, t) { matched = _str(d) + "/" + _str(t) }
+        case Msg.finished(t) { matched = "fin:" + _str(t) }
+    }
+    assert_eq(matched, "3/10", "⑩冻结的载荷 enum 仍可 switch")
+    //   ④ 冻中冻：外层数组里有已冻结的子图 ⇒ 整体仍是冻结的、子图可读
+    Frozen[Array[int]] inner = _freeze([7, 8])
+    Array[any] outer = []
+    outer.add(inner)
+    outer.add(1)
+    var fo = _freeze(outer)
+    assert_eq(_is_frozen(fo), true, "⑩冻中冻整体 frozen")
+    var innerBack = fo[0] as Array[int]
+    assert_eq(innerBack.join(","), "7,8", "⑩子图可读")
+    //   ⑤ 冻结字典的只读 API
+    assert_eq(fd.keys().len(), 2, "⑩keys()")
+    assert_eq(fd.values().len(), 2, "⑩values()")
+    assert_eq(fd.has("a"), true, "⑩has()")
+    assert_eq(fd.get("b", -1), 2, "⑩get()")
+
+    print("test_frozen_edge passed")
+}
+
+func has_sub(string text, string needle): bool {
+    if text.len() < needle.len() { return false }
+    for 0 : text.len() - needle.len() to i {
+        if text[i : i + needle.len() - 1] == needle { return true }
+    }
+    return false
+}

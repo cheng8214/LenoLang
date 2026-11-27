@@ -1,0 +1,19 @@
+// fixture_frozen_xmod_err.leno —— **应当编译失败**：跨模块类型的 frozen 写拦截
+// 由 test_frozen_xmod.leno 的 ⑧ 组用 --check 跑（校验退出码非 0 且文案带 frozen）。
+import "./fixture_frozen_xmod.leno" as fx
+use fx.Row
+
+main() {
+    Row r = new Row(id = 1, name = "a")
+    Frozen[Row] fr = _freeze(r)
+
+    // ① 字段写
+    fr.id = 2
+
+    // ② 元素写（跨模块 struct 里的数组字段）
+    Frozen[Array[Row]] fs = _freeze([r])
+    fs[0].name = "b"
+
+    // ③ 赋给可变类型
+    Row bad = fr
+}

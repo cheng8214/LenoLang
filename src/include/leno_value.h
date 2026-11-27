@@ -318,6 +318,21 @@ static inline int obj_is_readonly(Value v) {
     return (val_as_obj(v)->flags & OBJ_FLAG_READONLY) != 0;
 }
 
+// ★ 2026-11-27：**写只读对象的统一文案**（NULL = 可写）。
+//   为什么要单列一个函数：frozen 与 const 走的是两套位、却共用同一批写入口，
+//   以前 native 侧（`s["f"]=v` / `jsons.fill` / `native_struct_set`）**根本没查** ——
+//   实测 `jsons.fill(frozenStruct, d)` 把冻结实例的字**改掉了且不报错** ✗（真正的洞）。
+static inline const char* obj_write_error_msg(Object* o) {
+    if (!o) return NULL;
+    if ((o->flags & OBJ_FLAG_FROZEN) != 0) {
+        return "冻结对象（frozen）不可修改 —— 需要可变副本请用 _thaw() 复制一份";
+    }
+    if ((o->flags & OBJ_FLAG_READONLY) != 0) {
+        return "const 对象不可修改（const 是**整体不可变**：需要可变对象请声明为 var）";
+    }
+    return NULL;
+}
+
 // ★ 2026-11-27：**冻结对象**（`_freeze()` 产生的共享只读图；见 LenoDocsSrc/大对象零拷贝共享设计.md）。
 //   与 const 的 READONLY 位刻意分开：两者的生命周期与文案都不一样 ——
 //     · const  = 「本堆里、只是不许写」，由 GC 正常回收；

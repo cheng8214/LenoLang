@@ -1,0 +1,54 @@
+// fixture_frozen_xmod.leno —— frozen 跨模块测试用的从属模块（不进 test_* 自动套件）
+//
+// 为什么要有它：`Frozen[T]` 是**编译期**类型（`TypeInfo.frozen` 位），它要跨模块成立，
+//   必须在符号表缓存（.lenosymc v46）里完整往返 —— 单文件用例一条都覆盖不到这条路径。
+// 这里放四样最容易被漏掉的东西：
+//   ① 跨模块的 struct 定义（`Frozen[fx.Row]` 里的 T 来自别的模块）
+//   ② 形参声明成 `Frozen[...]` 的**导出函数**
+//   ③ 模块级 `export` 的 frozen 变量（globals 克隆路径）
+//   ④ 泛型 struct（`Box[T]`）与嵌套泛型（`Frozen[Dict[string, Array[Row]]]`）
+
+export struct Row {
+    int id = 0
+    string name = ""
+    Array[int] nums = []
+}
+
+export struct Box[T] {
+    T v
+
+    func get(): T { return v }
+}
+
+// ② 形参是 Frozen[...]（跨模块）：函数体里读它、不写它
+export func sum_of(Frozen[Array[int]] xs): int {
+    var s = 0
+    for xs to v { s = s + v }
+    return s
+}
+
+// 跨模块 struct 的冻结形参：读字段
+export func first_name(Frozen[Array[Row]] rows): string {
+    if rows.len() == 0 { return "" }
+    return rows[0].name
+}
+
+// 跨模块冻结返回：模块自己冻一份、把 Frozen 交出去
+export func make_frozen(int n): Frozen[Array[int]] {
+    var local = []
+    for 0 : n - 1 to i { local.add(i * i) }
+    return _freeze(local)
+}
+
+export func make_rows(int n): Array[Row] {
+    var out = []
+    for 0 : n - 1 to i {
+        out.add(new Row(id = i, name = "row" + _str(i), nums = [i, i + 1]))
+    }
+    return out
+}
+
+// ③ 模块级导出的 frozen 变量：子线程 start 时 globals 会被克隆，frozen 只加一次引用
+export Frozen[Array[int]] SHARED = _freeze([10, 20, 30])
+
+export func shared_len(): int { return SHARED.len() }

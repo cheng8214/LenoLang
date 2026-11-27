@@ -153,6 +153,15 @@ static THREAD_LOCAL int g_cross_heap_warned = 0;
 void module_warn_cross_heap_write(ObjModule* mod, int slot, Value value) {
     if (g_cross_heap_warned) return;
     if (!mod || !val_is_obj(value)) return;
+    // ★ 2026-11-27：**frozen 图不是"本线程堆上的对象"** —— 它在堆外、靠引用计数存活，
+    //   owner_thread 固定 0xFF。跨线程共享它正是设计目标，不能按跨堆引用报警。
+    //   实测：模块里有 `export Frozen[...]` 时，子线程 start 克隆 globals 就会误报一次
+    //   （"线程序号 255 / 模块属于 0"）。Channel / Atomic 同理（malloc + 引用计数）。
+    {
+        Object* vo = (Object*)val_as_obj(value);
+        if ((vo->flags & OBJ_FLAG_FROZEN) != 0) return;
+        if (vo->type == OBJ_CHANNEL || vo->type == OBJ_ATOMIC) return;
+    }
     uint8_t value_owner = ((Object*)val_as_obj(value))->owner_thread;
     uint8_t mod_owner = ((Object*)mod)->owner_thread;
     if (value_owner == mod_owner) return;

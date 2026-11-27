@@ -1,0 +1,7 @@
+// fixture_frozen_edge_err.leno —— **应当编译失败**：frozen 上的 mutator
+var src = [3, 1, 2]
+Frozen[Array[int]] f = _freeze(src)
+
+f.sort()
+f.add(4)
+f.reverse()

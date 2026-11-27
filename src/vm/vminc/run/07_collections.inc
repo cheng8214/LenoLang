@@ -840,6 +840,16 @@
                 } else if (et == TYPE_FLOAT && val_is_bigint(nv)) {
                     nv = val_float(bigint_to_double(val_as_bigint(nv)));
                 }
+                // ★ 2026-11-27：`s["f"] = v` 这条**通用索引写**以前完全没查只读位 ——
+                //   `OP_SET_FIELD` 查了、它没查 ⇒ frozen / const 实例可以这样被改（实测）。
+                {
+                    const char* wmsg = obj_write_error_msg((Object*)so);
+                    if (unlikely(wmsg != NULL)) {
+                        if (!throw_runtime_error(wmsg, line)) return -1;
+                        frame = &vm.frames[vm.frame_cnt - 1];
+                        DISPATCH();
+                    }
+                }
                 struct_set_field(so, fi, nv);
                 gc_write_barrier((Object*)so, nv);
                 DISPATCH();
