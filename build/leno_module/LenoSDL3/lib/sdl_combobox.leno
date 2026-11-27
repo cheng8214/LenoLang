@@ -13,6 +13,7 @@ import "sdl_image.leno" as img
 import "sdl_edit.leno" as edt; use edt.Edit
 import "Containers" as ct          // 图标纹理缓存用 ct.ClockLRU（O(1) 命中 + 容量封顶 + 淘汰即销毁）
 import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（下拉弹层用，与 ScrollView/Table 共用 ✓）
+import "sdl_animator.leno" as ani; use ani.Anim         // 弹层展开动画的缓动 ✓
 
 // 图标纹理淘汰回调（给 ct.ClockLRU 的 on_evict 用）—— 同 sdl_menu / sdl_popmenu 的做法
 func cbTexEvict(string path, Ptr[u8] t) {
@@ -30,6 +31,9 @@ export struct ComboBox impl Widget, Themeable {
     // ⚠ 字段名用 `phys` 而不是 `ph`：本文件里 `ph` 已经是**弹层高度**的局部变量，
     //   同名会让 `float px = pr[0], ..., ph = pr[3]` 那句被解析成字段 ⇒ 类型全乱 ✗（踩过）
     pri ScrollPhys phys           // ★ 2026-11-27 下拉弹层的物理滚动（滚轮加速 + 撞界回弹）
+    // ★ 2026-11-27：弹层**展开动画**（0→1，高度从 0 长到目标）—— 以前是"啪"一下出现 ✗
+    //   只用 Anim 做"打开"；收起仍是瞬时（收起时焦点/命中状态已变，延迟绘制容易点穿 ✗）
+    pri Anim openA
     pri int hover = -1
     pri float popupMax = 200.0    // 弹出列表最大高度
     float _fontSize = 15.0; pri string fontPath = ""; pri int fontStyle = 0; Font? _font
@@ -214,6 +218,8 @@ export struct ComboBox impl Widget, Themeable {
     func get_scroll_velocity(): float { return phys.velY }
     func get_overscroll_y(): float { return phys.overY }
     func is_scrolling(): bool { return phys.is_moving() }
+    // 弹层展开进度（0 = 刚打开、1 = 完全展开）—— 自测断言 / 应用做自定义入场效果用
+    func get_open_anim(): float { return openA.value() }
     func get_item_image(int idx): string {
         if idx < 0 or idx >= itemImages.len() { return "" }
         return itemImages[idx]
@@ -311,6 +317,7 @@ export struct ComboBox impl Widget, Themeable {
         open = true
         scroll = 0.0
         phys.kill()      // 新开的弹层：旧速度不能让列表"一开就自己滑"✗
+        openA.snap(0.0); openA.set_target(1.0)   // 展开动画：从 0 长到完整高度
         if sel >= 0 {
             float iy = sel * itemH
             if iy + itemH > _ph() { scroll = iy + itemH - _ph() }
@@ -551,6 +558,7 @@ export struct ComboBox impl Widget, Themeable {
                     open = true
                     scroll = 0.0
                     phys.kill()      // 同上：新开的弹层不继承旧速度
+                    openA.snap(0.0); openA.set_target(1.0)   // 同上：展开动画
                     if sel >= 0 {
                         float iy = sel * itemH
                         if iy + itemH > _ph() { scroll = iy + itemH - _ph() }
@@ -670,10 +678,16 @@ export struct ComboBox impl Widget, Themeable {
         float px = pr[0], py = pr[1], pw = pr[2], ph = pr[3]
 
         // 把弹出矩形登记为事件捕获区，使下层控件忽略落在弹层范围内的鼠标/滚轮事件
+        //   ⚠ 捕获区用**完整** ph：展开动画那 150ms 里点到弹层下半部分也不该穿透给下层 ✗
         core.setPopupCapture(px, py, pw, ph)
 
+        // ★ 2026-11-27：展开动画（绘制高度 ah 从 0 长到 ph）
+        bool amv = openA.pump()
+        if amv { core.requestRedraw() }
+        float ah = ph * openA.value()
+
         r.setColor(bgC)
-        r.fillRoundedRect(px, py, pw, ph, 6.0)
+        r.fillRoundedRect(px, py, pw, ah, 6.0)
 
         SDL_Rect clip = SDL_Rect.malloc()
         clip.x = _int(px); clip.y = _int(py)
@@ -682,7 +696,7 @@ export struct ComboBox impl Widget, Themeable {
         //   会漏到面板/边框**外面** 1px ✗（实测症状："字体下沿有一丢丢出框" ✓）
         //   ⇒ 用 ceil 算出面板的真实覆盖（永不超出 ✓，也永不缺一角 ✓）
         clip.w = _int(maths.ceil(px + pw)) - _int(px)
-        clip.h = _int(maths.ceil(py + ph)) - _int(py)
+        clip.h = _int(maths.ceil(py + ah)) - _int(py)
         r.pushClipRect(clip.to_ptr())
 
         float radius = 6.0
@@ -690,7 +704,7 @@ export struct ComboBox impl Widget, Themeable {
         float textH = fontH
         for items.len() to i {
             float iy = r.snapY(py - dispY() + i * itemH)   // 含弹性越界（回弹时行跟手移出面板 ✓）
-            if iy + itemH < py or iy > py + ph { continue }
+            if iy + itemH < py or iy > py + ah { continue }
             Color rowC = bgC
             if i == sel { rowC = selColor }
             else if i == hover { rowC = hovColor }
@@ -699,7 +713,7 @@ export struct ComboBox impl Widget, Themeable {
             //   ⚠ 旧写法是"按行自己的矩形补圆角 + 补缺口"：末行只露 18px（200/26=7.69 行）时
             //     圆角落到了面板底边**下方 8px** ⇒ 面板两个底角仍是方角、被这行铺满 ✗
             //     （2026-10-13 实测：面板底行整行铺满到边框线上，左下/右下各一块方角底色 ✓）
-            r.fillRowInPanel(px, py, pw, ph, radius, px, iy, pw, itemH)
+            r.fillRowInPanel(px, py, pw, ah, radius, px, iy, pw, itemH)
 
             if textH > 0.0 {
                 Color tcC = txtColor
@@ -729,7 +743,7 @@ export struct ComboBox impl Widget, Themeable {
         clip.free()
 
         r.setColor(bdrColor)
-        r.drawRoundedRect(px, py, pw, ph, 6.0)
+        r.drawRoundedRect(px, py, pw, ah, 6.0)
 
         // 弹出滚动条：悬停/拖动 ⇒ 展开并变深；否则（bar_auto_hide）折叠成 3px 提示条
         float maxs = max_scroll()
@@ -745,13 +759,13 @@ export struct ComboBox impl Widget, Themeable {
             float sx = px + pw - sw - 2.0
             if fold {
                 r.setColor(theme.withAlpha(track, 90))
-                r.fillRoundedRect(sx, py + 2.0, sw, ph - 4.0, sw / 2.0)
+                r.fillRoundedRect(sx, py + 2.0, sw, ah - 4.0, sw / 2.0)
             } else {
                 r.setColor(theme.withAlpha(track, 230))
-                r.fillRoundedRect(sx, py + 2.0, sw, ph - 4.0, sw / 2.0)
+                r.fillRoundedRect(sx, py + 2.0, sw, ah - 4.0, sw / 2.0)
                 float ratio = scroll / maxs
-                float thH = maths.max(20.0, maths.min(ph * ph / (items.len() * itemH), ph - 4.0))
-                float thy = py + 2.0 + ratio * (ph - 4.0 - thH)
+                float thH = maths.max(20.0, maths.min(ah * ah / (items.len() * itemH), ah - 4.0))
+                float thy = py + 2.0 + ratio * (ah - 4.0 - thH)
                 r.setColor(theme.brighten(track, 60))
                 r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
             }

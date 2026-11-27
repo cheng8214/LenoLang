@@ -1,0 +1,76 @@
+// test_tab_underline.leno —— TabControl 下划线**滑过去**（不再瞬跳）回归（2026-11-27）
+//
+// 以前下划线直接画在激活标签下方 ⇒ 切页那一下位置瞬变，观感"咔"✗
+// 现在由 `Anim`（lib/sdl_animator.leno）驱动 x/宽度缓动，本测试钉住三点：
+//   ① 切页后的下一两帧，位置**介于起点与终点之间**（说明是在滑，不是跳）
+//   ② 最终停在目标位置（宽度也跟着换）
+//   ③ 结束后 `is_underline_moving()` 为 false（不会一直续帧空转）
+//
+// ⚠ 第一次交互必须由 timer 注入：窗口刚起时没有重绘请求，overlay 不会跑
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_tab_underline.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, TabControl)
+
+int gFail = 0
+float gX0 = 0.0
+float gMid = 0.0
+bool gClicked = false
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "tab underline test", w: 640, h: 260})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+
+    // 3 个等宽标签（640/3 ≈ 213），初始激活第 0 个
+    TabControl tab = win.addTabControl({x: 0, y: 0, w: 640, h: 260,
+        tabs: ["第一个", "第二个", "第三个"], active: 0, tab_h: 36})
+
+    // 首帧落位后再取起点（snap 在第一次 render 里发生）
+    //   ⚠ 用 `set_active` 而不是点击：标签宽度是按**文字**算的（这里约 73px），
+    //     点击坐标写死很容易落到标签栏的空白上 ⇒ 不切页（实测踩过 ✗）
+    win.addTimerOnce(300, func() {
+        gX0 = tab.get_underline_x()
+        tab.set_active(2)
+        gClicked = true
+    })
+    // 点完第一帧：还在滑
+    win.addTimerOnce(360, func() {
+        if gClicked { gMid = tab.get_underline_x() }
+    })
+    win.addTimerOnce(900, func() {
+        float f = tab.get_underline_x()
+        check(gX0 >= 0.0, "首帧下划线已落位（x=" + _str(gX0) + "）")
+        check(gMid > gX0 + 1.0 and gMid < f - 1.0,
+            "切页时下划线在**滑动中**（起点 " + _str(gX0) + " → 中间 " + _str(gMid) + " → 终点 " + _str(f) + "）")
+        check(f > gX0 + 100.0, "终点落到第三个标签（x=" + _str(f) + "）")
+        check(not tab.is_underline_moving(), "动画结束（不再请求下一帧）")
+        check(tab.get_underline_w() > 10.0, "宽度也跟上了（w=" + _str(tab.get_underline_w()) + "）")
+        print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+        SDL3.requestExit()
+    })
+    win.addTimerOnce(8000, func() {
+        check(false, "8 秒内没跑完 ✗")
+        SDL3.requestExit()
+    })
+
+    win.setOverlay(func(Renderer r) { })
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}

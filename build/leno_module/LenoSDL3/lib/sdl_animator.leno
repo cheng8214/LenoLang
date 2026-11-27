@@ -1,0 +1,86 @@
+// sdl_animator.leno — 过渡动画的「一个小值 + 缓动/弹簧」，所有控件共用
+//
+// 为什么要有它（2026-11-27）：
+//   控件里的过渡一直是**各写一套**：Toggle 有 `step_anim`（指数逼近、还带个 opt-in 开关），
+//   Progress / Toast / Ring 又各有一份，滚动刚统一到 `sdl_scrollphys`。
+//   再往下做（Tab 下划线、弹层展开、hover 渐变）就是第七套第八套 ⇒ 抽成这一个 ✓
+//
+// 两种模式（都按 **dt** 推进 ⇒ 60Hz / 144Hz 走同样快）：
+//   · speed 模式（默认）：每秒收敛 `speed` 比例，`v += (target-v)·min(speed·dt, 1)`
+//     —— 和 Toggle 的 `anim_speed` 同口径，适合"下划线滑过去"这类短过渡 ✓
+//   · spring 模式：`set_spring(k, c)` 之后按弹簧积分，末端有一点点过冲（"呼吸"）
+//     —— 适合"弹一下"的反馈（按钮按下的回弹之类）；默认参数 ω≈20、ζ≈0.7
+//
+// 用法（每帧一次 + 变了才续帧）：
+//   Anim a = new Anim()          // 字段里放一个（struct 字段默认构造 ✓）
+//   a.set_target(1.0)            // 目标变了才启动
+//   if a.pump() { core.requestRedraw() }    // pump 返回"还在动" ⇒ 续帧
+//   float t = a.value()          // 0..1 插值用
+import maths
+import "sdl_core.leno" as core
+
+export struct Anim {
+    float v = 0.0                  // 当前值
+    float target = 0.0
+    float vel = 0.0                // 弹簧模式下的速度（单位/秒）
+    int ns = 0                     // 上次推进时刻（getTicksNS），0 = 未初始化
+    float speed = 12.0             // 每秒收敛比例（speed 模式）
+    float k = 400.0, c = 28.0      // 弹簧刚度/阻尼（spring 模式；ω≈20rad/s、ζ≈0.70）
+    bool useSpring = false
+
+    func set_speed(float s) { speed = s }
+    // ω = √k、ζ = c/(2√k)：ζ<1 欠阻尼（末端有过冲 = "呼吸"）、ζ=1 临界（啪地贴住）
+    func set_spring(float stiffness, float damping) {
+        k = stiffness; c = damping; useSpring = true
+    }
+    // ⚠ 方法名叫 `set_target` 而不是 `to`：`to` 是循环语法的保留字，不能做方法名 ✗（编译器会直接报）
+    func set_target(float t) {
+        target = t
+        if ns == 0 { ns = core.getTicksNS() }   // 不补这行：第一次会白等一帧 ✗
+    }
+    // 立即到位（初始化 / 关闭动画 / 程序化重置）
+    func snap(float x) {
+        v = x; target = x; vel = 0.0
+    }
+    func value(): float { return v }
+    func at_target(): bool { return v == target and vel == 0.0 }
+    func is_moving(): bool { return not at_target() }
+
+    // 推进 dt 秒，返回"是否还在动"（调用方据此 requestRedraw 续帧）
+    func step(float dt): bool {
+        if dt <= 0.0 { return is_moving() }
+        if dt > 0.033 { dt = 0.033 }        // 与滚动内核同口径：掉帧时不瞬移
+        if useSpring {
+            // 半隐式欧拉：a = -k·(v-target) - c·vel
+            vel = vel + (-k * (v - target) - c * vel) * dt
+            v = v + vel * dt
+            if maths.abs(v - target) < 0.01 and maths.abs(vel) < 1.0 {
+                v = target; vel = 0.0
+            }
+        } else {
+            if speed <= 0.0 { v = target; return false }
+            float f = speed * dt
+            if f > 1.0 { f = 1.0 }
+            v = v + (target - v) * f
+            // 收尾：差值小于"看不出来"的量就吸附（否则永远差一点点 ⇒ 一直续帧空转 ✗）
+            //   ⚠ 阈值要**按目标量级缩放**：写死 0.002 的话，像素级动画（目标 146px）
+            //     从差 0.03 到差 0.002 要多滑十几帧 ⇒ "看着已经到位了还在续帧"✗（实测踩过）
+            float eps = 0.002 + 0.0005 * maths.abs(target)
+            if maths.abs(target - v) < eps { v = target }
+        }
+        return is_moving()
+    }
+
+    // 真实时钟入口（控件每帧调用）：返回"是否还在动"
+    func pump(): bool {
+        int now = core.getTicksNS()
+        if ns == 0 { ns = now; return is_moving() }
+        int dn = now - ns
+        ns = now
+        if dn <= 0 { return is_moving() }
+        return step(_float(dn) / 1000000000.0)
+    }
+
+    // 只对齐时钟（跟手期间用：手指直接改值，不该再叠缓动）
+    func syncClock() { ns = core.getTicksNS() }
+}

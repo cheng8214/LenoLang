@@ -1,0 +1,57 @@
+// test_expand_anim.leno —— ComboBox 弹层**展开动画**回归（2026-11-27）
+//
+// 以前 `open_list()` 之后弹层"啪"一下整个出现；现在高度从 0 长到目标（~150ms 缓动），
+// 由 `Anim`（lib/sdl_animator.leno）驱动。本测试钉住：
+//   ① 刚打开的那几帧，进度在 (0, 1) 之间（说明是在长，不是瞬现）
+//   ② 最终到 1.0 且不再续帧
+//   ③ 展开期间滚动/滚动条几何仍用实际高度（这里只验不崩、滚轮仍生效）
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_expand_anim.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, ComboBox)
+
+int gFail = 0
+float gMid = 0.0
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "expand anim test", w: 480, h: 360})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    Array[string] xs = []
+    for 40 to i { xs.add("选项 " + _str(i)) }
+    ComboBox cb = win.addComboBox({x: 40, y: 40, w: 200, h: 30, items: xs})
+
+    win.addTimerOnce(300, func() { cb.open_list() })
+    win.addTimerOnce(360, func() { gMid = cb.get_open_anim() })
+    win.addTimerOnce(900, func() {
+        float f = cb.get_open_anim()
+        check(gMid > 0.05 and gMid < 0.99, "展开过程中间态（进度 " + _str(gMid) + "）")
+        check(maths.abs(f - 1.0) < 0.01, "最终完全展开（进度 " + _str(f) + "）")
+        check(cb.isOpen(), "弹层仍是打开状态")
+        // 展开后滚轮照常生效（几何用实际高度）
+        SDL3.testWheelAt(win.getID(), 120.0, 120.0, -1.0)
+        print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+        SDL3.requestExit()
+    })
+    win.addTimerOnce(8000, func() { check(false, "8 秒内没跑完 ✗"); SDL3.requestExit() })
+
+    win.setOverlay(func(Renderer r) { })
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}

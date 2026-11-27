@@ -27,6 +27,7 @@ import "sdl_menu.leno" as menu     // 切页时收掉残留的右击菜单（见
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 import "sdl_image.leno" as img     // 标签图标纹理（tab_icons ✓ 2026-10-26）
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
+import "sdl_animator.leno" as ani; use ani.Anim   // 下划线滑动的缓动（与其它控件共用 ✓）
 use theme.Color
 
 
@@ -77,6 +78,12 @@ export struct TabControl impl Widget, Themeable {
     pri float tabRadius = 8.0
     // 激活标签下方的下划线：默认画（老观感）；用胶囊底时应当关掉（有底色再加线很脏 ✓）
     pri bool showUnderline = true
+    // ★ 2026-11-27：下划线**滑过去**而不是"跳"过去（切页时 ~150ms 缓动）
+    //   以前是直接画在激活标签下方 ⇒ 切页那一下位置瞬变，观感"咔"✗
+    //   `usW.value() <= 0` 当作"还没初始化"⇒ 首帧直接落位，不从 0 滑进来 ✓
+    pri Anim usX          // 内嵌 struct 字段（默认构造）—— 不能写 `= new Anim()`（字段默认值必须是常量 ✗）
+    pri Anim usW
+    float _usSpeed = 12.0        // 每秒收敛比例（12 ⇒ ~150ms 到位；调小更飘）
     pri Color actColor = #3C96EBFF     // 激活标签
     pri Color txtColor = #78808CFF     // 文字色（非激活）
     pri Color actTxtColor = #EBEBF5FF  // 激活文字色
@@ -497,6 +504,11 @@ export struct TabControl impl Widget, Themeable {
     }
 
     // ==================== 渲染 ====================
+    // ★ 2026-11-27：下划线当前位置/宽度（自测断言用；应用要自定义指示器也读它）
+    func get_underline_x(): float { return usX.value() }
+    func get_underline_w(): float { return usW.value() }
+    func is_underline_moving(): bool { return usX.is_moving() or usW.is_moving() }
+
     func render(Renderer r) {
         if not _loaded or not enabled or not visible { return }
         ensure_font()
@@ -511,11 +523,13 @@ export struct TabControl impl Widget, Themeable {
 
         // 各标签
         var rs = tabRects()
+        // 激活标签的矩形（循环里记下来，下划线在**循环外**画 ⇒ 才能整体滑动 ✓）
+        float actX = -1.0, actY = 0.0, actW = 0.0, actH = 0.0
         for rs.len() to i {
             var rr = rs[i]
             Color bC = tabColor
             Color tC = txtColor
-            if i == _active { bC = actColor; tC = actTxtColor }
+            if i == _active { bC = actColor; tC = actTxtColor; actX = rr[0]; actY = rr[1]; actW = rr[2]; actH = rr[3] }
             else if i == hover { bC = theme.brighten(tabColor, 15) }
             // 标签底：alpha=0 不画；`tab_radius` > 0 画圆角（默认 8，`tab_h/2` 就是胶囊 ✓）
             if theme.colorA(bC) > 0 {
@@ -548,11 +562,23 @@ export struct TabControl impl Widget, Themeable {
                 r.drawText(_font, _tabs[i], r.snapX(bx), r.snapY(ty), tC)
             }
 
-            // 激活标签下划线（隐藏表头时同样不画 ✓）—— 圆角端点，配胶囊底不突兀
-            if showHeader and showUnderline and i == _active {
-                r.setColor(accColor)
-                r.fillRoundedRect(rr[0], rr[1] + rr[3] - 3.0, rr[2], 3.0, 1.5)
+        }
+
+        // 激活标签下划线（隐藏表头时同样不画 ✓）—— 圆角端点，配胶囊底不突兀
+        //   ★ 2026-11-27：现在由 `Anim` 驱动 x/宽度**滑动过去**（以前直接画在激活标签下 ⇒ 切页瞬跳 ✗）
+        if showHeader and showUnderline and actX >= 0.0 {
+            usX.set_speed(_usSpeed)
+            usW.set_speed(_usSpeed)
+            if usW.value() <= 0.0 {
+                // 首帧 / 标签栏重建：直接落位，不从 0 滑进来
+                usX.snap(actX); usW.snap(actW)
+            } else {
+                usX.set_target(actX); usW.set_target(actW)
             }
+            bool mv = usX.pump() or usW.pump()
+            if mv { core.requestRedraw() }      // 动画没结束就每帧再要一帧 ✓
+            r.setColor(accColor)
+            r.fillRoundedRect(usX.value(), actY + actH - 3.0, usW.value(), 3.0, 1.5)
         }
 
         // 标签栏底边（隐藏表头时这条线会横在内容区顶上 ⇒ 跳过 ✓）
