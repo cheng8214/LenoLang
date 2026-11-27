@@ -21,7 +21,7 @@ import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 use core.sdl3        // 2026-10-13：图标缓存回收要调 SDL_DestroyTexture ⇒ 得先能命名 clib ✓
-import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_widget.leno" as wgt; use wgt.(Widget, Tickable)
 import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ScrollView 共用 ✓）
 import "sdl_animator.leno" as ani; use ani.Tween         // 悬停行渐变 ✓
 import "sdl_edit.leno" as edt; use edt.Edit
@@ -39,7 +39,7 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
 
-export struct Table impl Widget, Themeable {
+export struct Table impl Widget, Themeable, Tickable {
     float x = 0.0, y = 0.0, w = 360.0, h = 240.0
     Array[string] _headers = []
     Array[float] _colW = []
@@ -341,22 +341,27 @@ export struct Table impl Widget, Themeable {
     //   ⚠ 顶部/底部"有多少行"这类**逻辑**判断仍用 scrollY（clamp 过的），别用 dispY ✗
     pri func dispX(): float { return scrollX + phys.overX }
     pri func dispY(): float { return scrollY + phys.overY }
-    // 每帧推进一次物理（`render` 开头调）：
-    //   ⚠ 结尾必须 `requestRedraw()` 续帧 —— 漏了就是"滚轮滚了画面不动、动鼠标才动"✗
-    //      （ScrollView 那边踩过同一个坑，见 sdl_scrollview.leno 的 sync 注释）
-    pri func pump_scroll() {
+    // ★ 2026-11-27：**每帧推进交给窗口**（Tickable，见 sdl_widget.leno）——
+    //   滚动 / 悬停渐变 / 滚动条折叠全在这里推，不再由 `render` 各自 pump + requestRedraw
+    //   ⚠ 仍然自己 `requestRedraw()`（双保险）：不把续帧全押在窗口汇总上
+    func tick(float dt): bool {
+        if dt <= 0.0 { return false }
+        bool m = false
         // 手指跟手期间不积分（1:1 由 `phys.drag` 直接改位置，再叠惯性就"抢方向盘"✗）
-        if panSt == 2 { phys.syncClock(); return }
-        var[float, float](nx, ny) = phys.pump(scrollX, scrollY, max_scroll_x(), max_scroll_y())
-        if nx != scrollX or ny != scrollY {
-            scrollX = nx; scrollY = ny
-            fire_reach_bottom()          // 滑行过程中也可能到底 ⇒ 不能只在滚轮那一拍判 ✓
-            core.markFrameRedraw()
+        if panSt != 2 {
+            var[float, float](nx, ny) = phys.step(scrollX, scrollY, dt, max_scroll_x(), max_scroll_y())
+            if nx != scrollX or ny != scrollY {
+                scrollX = nx; scrollY = ny
+                fire_reach_bottom()      // 滑行过程中也可能到底 ⇒ 不能只在滚轮那一拍判 ✓
+                m = true
+            }
         }
-        if phys.is_moving() {
-            core.markFrameRedraw()
-            core.requestRedraw()
-        }
+        if hovA.step(dt) { m = true }
+        if barA.step(dt) { m = true }
+        if m { core.markFrameRedraw() }
+        bool mv = phys.is_moving() or hovA.is_moving() or barA.is_moving()
+        if mv { core.requestRedraw() }
+        return mv
     }
     // 键盘导航：选中某行并滚动到可见
     pri func select_key(int row) {
@@ -2545,8 +2550,7 @@ export struct Table impl Widget, Themeable {
     func render(Renderer r) {
         if not _loaded or not visible { return }
         ensure_font()
-        pump_scroll()          // 每帧推进一次物理（含续帧请求，见函数注释 ✓）
-        if hovA.pump() { core.requestRedraw() }   // 悬停渐入/渐出也要续帧 ✓
+        // 推进（滚动/悬停/滚动条）由窗口的 Tickable.tick() 负责 ✓
 
         // 背景底色（在字体检查之前画，避免字体偶发未就绪时 Table 区域变透明露出容器底色 → 闪一下）
         Color bgC = bgColor
@@ -2865,8 +2869,7 @@ export struct Table impl Widget, Themeable {
     //   返回当前展开程度（barAutoHide 关掉时恒 1）
     pri func bar_fold_anim(): float {
         bool hot = barHover or draggingV or draggingH
-        barA.set_target(if hot then 1.0 else 0.0)
-        if barA.pump() { core.requestRedraw() }
+        barA.set_target(if hot then 1.0 else 0.0)   // 进度在 tick() 里推进 ✓
         return if barAutoHide then barA.value() else 1.0
     }
 

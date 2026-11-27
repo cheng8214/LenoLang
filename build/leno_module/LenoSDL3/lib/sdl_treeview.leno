@@ -23,7 +23,7 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect; use core.sdl3
-import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_widget.leno" as wgt; use wgt.(Widget, Tickable)
 import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ScrollView/Table 共用 ✓）
 import "sdl_animator.leno" as ani; use ani.Tween         // 悬停行渐变 ✓
 import "sdl_tooltip.leno" as tip
@@ -56,7 +56,7 @@ string imageExpanded = ""  // 展开状态图标（空 = 用 image）
     int _parent = -1
 }
 
-export struct TreeView impl Widget, Themeable {
+export struct TreeView impl Widget, Themeable, Tickable {
     float x = 0.0, y = 0.0, w = 200.0, h = 200.0
     pri int nextId = 1
     // ===== 规范状态：嵌套树（唯一数据源）=====
@@ -298,14 +298,18 @@ export struct TreeView impl Widget, Themeable {
     // ---- 物理滚动（2026-11-27，与 ScrollView/Table/ListBox 共用 sdl_scrollphys）----
     //   位置仍是 `scroll`（节点行号、滚动条几何都按它算），内核只管速度 + 弹性越界量
     pri func dispY(): float { return scroll + phys.overY }
-    //   ⚠ 结尾必须 requestRedraw 续帧，否则事件循环挂起 ⇒ "滚了不动、动鼠标才动"✗
-    pri func pump_scroll() {
-        var[float, float](_nx, ny) = phys.pump(scroll, scroll, 0.0, max_scroll())
-        if ny != scroll { scroll = ny; core.markFrameRedraw() }
-        if phys.is_moving() {
-            core.markFrameRedraw()
-            core.requestRedraw()
-        }
+    // ★ 2026-11-27：**每帧推进交给窗口**（Tickable）—— 滚动 / 悬停渐变 / 展开滑入都在这里推
+    func tick(float dt): bool {
+        if dt <= 0.0 { return false }
+        bool m = false
+        var[float, float](_nx, ny) = phys.step(scroll, scroll, dt, 0.0, max_scroll())
+        if ny != scroll { scroll = ny; m = true }
+        if hovA.step(dt) { m = true }
+        if expA.step(dt) { m = true }
+        if m { core.markFrameRedraw() }
+        bool mv = phys.is_moving() or hovA.is_moving() or expA.is_moving()
+        if mv { core.requestRedraw() }   // 双保险
+        return mv
     }
 
     // ==================== 布局接口 ====================
@@ -865,9 +869,7 @@ export struct TreeView impl Widget, Themeable {
     func render(Renderer r) {
         if not _loaded { return }
         if not visible { return }
-        pump_scroll()          // 每帧推进一次物理（含续帧请求，见函数注释 ✓）
-        if hovA.pump() { core.requestRedraw() }   // 悬停渐入/渐出也要续帧 ✓
-        if expA.pump() { core.requestRedraw() }   // 展开滑入同理 ✓
+        // 推进（滚动/悬停/展开滑入）由窗口的 Tickable.tick() 负责 ✓
         ensure_font()
         if _font == null or not _font.ok { return }   // 字体无效时跳过渲染，避免"有背景无文字"的闪烁
         flatten()

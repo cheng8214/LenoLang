@@ -32,7 +32,7 @@ import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.(SystemCursor, Scancode, SDL_Rect, sdl3, SDL_Point)
-import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_widget.leno" as wgt; use wgt.(Widget, Tickable)
 import "sdl_image.leno" as img
 import "sdl_opts.leno" as dochk    // 选项对账（见 sdl_opts.leno 头部的来龙去脉 ✓）
 import "sdl_tooltip.leno" as tip
@@ -142,7 +142,16 @@ func _itemAt(Array[MenuItem] items, float px, float py, float pw, float mx, floa
 Array[Ptr[u8]] _activeHnds = []
 Array[MenuBar] _activeMenus = []
 
-export struct MenuBar impl Widget, Themeable {
+export struct MenuBar impl Widget, Themeable, Tickable {
+    // ★ 2026-11-27：菜单淡入交给窗口统一推进（Tickable）✓（关闭时不必推进）
+    func tick(float dt): bool {
+        if dt <= 0.0 or open < 0 { return false }
+        if _menuFade.step(dt) { core.markFrameRedraw() }
+        bool mv = _menuFade.is_moving()
+        if mv { core.requestRedraw() }
+        return mv
+    }
+
     float x = 0.0, y = 0.0, w = 600.0, h = 28.0
     pri float itemH = 26.0
     pri float itemGap = 0.0          // 竖直排列项之间的额外间距（下拉项 / 竖栏顶级项）
@@ -746,7 +755,7 @@ export struct MenuBar impl Widget, Themeable {
     // 第二遍：把下拉面板（含子菜单）画在最上层，并登记弹层捕获区
     func renderPopup(Renderer r) {
         if not _loaded or open < 0 { return }
-        if _menuFade.pump() { core.requestRedraw() }   // 淡入没走完就续帧 ✓
+        // 进度在 tick() 里推进 ✓
         var items = menus[open]
         var g = panelRect(open)
         float px = g[0], py = g[1], pw = g[2], ph = g[3]

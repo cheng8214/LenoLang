@@ -24,7 +24,7 @@ import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核�
 import "sdl_animator.leno" as ani; use ani.Tween         // 滚动条折叠/展开渐变 ✓
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_core.leno" as core
-import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_widget.leno" as wgt; use wgt.(Widget, Tickable)
 import "sdl_opts.leno" as dochk
 import "sdl_theme.leno" as theme; use theme.Color
 import maths          // 滚动夹取 / 行列号夹取（2026-11-01 起统一走 maths.clamp(i)）
@@ -35,7 +35,7 @@ func _vg_opts_keys(): Array[string] {
             "bar_auto_hide", "bar_hover_color"]
 }
 
-export struct VirtualGrid impl Widget {
+export struct VirtualGrid impl Widget, Tickable {
     pri float x = 0, y = 0, w = 300, h = 200
     pri float itemW = 200, itemH = 90
     pri float gapX = 16, gapY = 16
@@ -189,17 +189,20 @@ export struct VirtualGrid impl Widget {
     }
     // ---- 物理滚动：绘制偏移（含弹性越界）+ 每帧推进 ----
     pri func dispY(): float { return scrollY + phys.overY }
-    //   ⚠ 结尾必须 requestRedraw 续帧，否则事件循环挂起 ⇒ "滚了不动、动鼠标才动"✗
-    //      （ScrollView / Table 踩过同一个坑）
-    pri func pump_scroll() {
+    // ★ 2026-11-27：**每帧推进交给窗口**（Tickable）—— 不再在 render 里 pump
+    func tick(float dt): bool {
+        if dt <= 0.0 { return false }
+        bool m = false
         // 手指跟手期间不积分（1:1 由 `phys.drag` 直接改位置，再叠惯性就"抢方向盘"✗）
-        if panSt == 2 { phys.syncClock(); return }
-        var[float, float](_nx, ny) = phys.pump(scrollY, scrollY, 0.0, max_scroll())
-        if ny != scrollY { scrollY = ny; core.markFrameRedraw() }
-        if phys.is_moving() {
-            core.markFrameRedraw()
-            core.requestRedraw()
+        if panSt != 2 {
+            var[float, float](_nx, ny) = phys.step(scrollY, scrollY, dt, 0.0, max_scroll())
+            if ny != scrollY { scrollY = ny; m = true }
         }
+        if barA.step(dt) { m = true }
+        if m { core.markFrameRedraw() }
+        bool mv = phys.is_moving() or barA.is_moving()
+        if mv { core.requestRedraw() }   // 双保险
+        return mv
     }
 
     // 可见行区间（上下各留 1 行缓冲，滚动时不会露白 ✓）
@@ -410,7 +413,7 @@ export struct VirtualGrid impl Widget {
 
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        pump_scroll()          // 每帧推进一次物理（含续帧请求，见函数注释 ✓）
+        // 推进（滚动/滚动条）由窗口的 Tickable.tick() 负责 ✓
         sync_cells()
         // ★ 必须裁剪到自己这块矩形：滚出视口的项会被画到外面
         //   （不裁的话卡片会盖住上面的标题、下面的播放条 —— 实测"滚动后穿模" ✗）
@@ -493,8 +496,7 @@ export struct VirtualGrid impl Widget {
         // ★ 2026-11-27：折叠/展开**渐变**（ba：0 = 3px 细条、1 = 完整轨道+手柄）
         //   以前是布尔 fold ⇒ 鼠标一进 3px↔barW 硬跳 ✗（与 ScrollView/Table 同一套）
         bool hot = barHover or dragging
-        barA.set_target(if hot then 1.0 else 0.0)
-        if barA.pump() { core.requestRedraw() }
+        barA.set_target(if hot then 1.0 else 0.0)   // 进度在 tick() 里推进 ✓
         float ba = if barAutoHide then barA.value() else 1.0
 
         // ① 细提示条（永远画，宽度跟着 ba 长）

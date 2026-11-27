@@ -11,14 +11,14 @@
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_event.leno" as evt; use evt.Event
-import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_widget.leno" as wgt; use wgt.(Widget, Tickable)
 import "sdl_theme.leno" as theme
 use theme.Color
 import "sdl_core.leno" as core
 import "sdl_animator.leno" as ani; use ani.Tween   // 打开时渐显（与 Tab/Card/Tooltip 共用 ✓）
 
 
-export struct Scrim impl Widget {
+export struct Scrim impl Widget, Tickable {
     float x = 0.0, y = 0.0
     float _w = 0.0, _h = 0.0
     Color _color = #00000000     // 遮罩颜色（默认黑色）
@@ -91,11 +91,19 @@ export struct Scrim impl Widget {
         // 不做任何处理 = 事件被消费，背景控件不会收到
     }
 
+    // ★ 2026-11-27：渐显交给窗口统一推进（Tickable）✓
+    func tick(float dt): bool {
+        if dt <= 0.0 or not visible { return false }
+        if _fade.step(dt) { core.markFrameRedraw() }
+        bool mv = _fade.is_moving()
+        if mv { core.requestRedraw() }
+        return mv
+    }
+
     func render(Renderer r) {
         if not _loaded or not visible { return }
         // ★ 2026-11-27：渐显 —— 进度没走完就续帧（漏了 requestRedraw 会"卡在中间透明度"✗）
-        if _fade.pump() { core.requestRedraw() }
-        float f = _fade.value()
+        float f = _fade.value()   // 进度在 tick() 里推进 ✓
         if f < 0.01 { return }
         r.setColor(theme.withAlpha(_color, _int(_float(alpha) * f)))
         r.fillRect(x, y, _w, _h)
