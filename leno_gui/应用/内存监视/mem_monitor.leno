@@ -1,0 +1,165 @@
+// mem_monitor.leno — Leno 进程内存监视（_gc_stats + _mem）
+//
+// 用法:
+//   build\leno.exe "leno_gui\应用\内存监视\mem_monitor.leno"
+//
+// 为什么看曲线而不是看数字：单点数值说明不了问题，**持续上涨的斜线**才是泄漏。
+//   · 上半表格：当前快照（工作集 / 私有内存 / 各代字节 / GC 次数 / remembered set）
+//   · 下半折线：工作集与年轻代最近 60 个采样点的走势
+//   · 空格键 = 手动触发一次 GC，能立刻看到回收效果
+//
+// ⚠ 两个刻意的性能取舍（2026-11-27 实测踩出来的）：
+//   1. **差异化更新**：表格首次 `set_rows`，之后只在值真的变化时 `set_cell`
+//      —— `sdl_font` 的文字纹理缓存是 1024 槽 × ~25 KB，每秒整表重建 40 个
+//      不重复字符串会在 ~26 秒内把缓存灌满、常驻 ~25 MB（看起来像泄漏，其实是缓存）
+//   2. **2 秒一次**：内存曲线看的是分钟级趋势，1 秒太密
+//
+// 自测钩子：MEMMON_LOG=1 每轮打印一行；MEMMON_EXIT_MS=8000 定时退出（正常退出才 flush）
+import "SDL3" as SDL3
+import maths
+import times
+use SDL3.(Event, Renderer, Scancode, WindowFlag)
+
+func fmtMb(int bytes): string {
+    if bytes <= 0 { return "0 MB" }
+    int h = maths.roundi((1.0 * bytes / 1048576.0) * 100.0)
+    var s = _str(h / 100) + "."
+    if h % 100 < 10 { s = s + "0" }
+    return s + _str(h % 100) + " MB"
+}
+
+func fmtKb(int bytes): string {
+    if bytes <= 0 { return "0 KB" }
+    return _str(bytes / 1024) + " KB"
+}
+
+main() {
+    var win = SDL3.createWindow({title: "内存监视", w: 960, h: 700, flags: WindowFlag.RESIZABLE})
+    if not win.ok {
+        print("窗口创建失败（无显示器 / 视频驱动不可用）")
+        return
+    }
+    win.addTimer(500, func() { })      // 叫醒窗口；刷新节奏由下面的 refreshMs 控制
+
+    var tbl = win.addTable({
+        x: 10, y: 10, w: 940, h: 250,
+        headers: ["指标", "值"],
+        col_widths: [180.0, 748.0],
+        item_h: 22.0,
+        font_size: 13
+    })
+    var chart = win.addLineChart({
+        x: 10, y: 270, w: 940, h: 410,
+        title: "内存走势（单位 MB）",
+        show_grid: true,
+        show_points: false,
+        font_size: 12
+    })
+
+    Array[Array[string]] lastRows = []
+    bool tableInited = false
+    Array[string] labels = []
+    Array[float] wsSeries = []
+    Array[float] yaSeries = []
+    var lastRefresh = 0
+    int refreshMs = 2000
+    var samples = 0
+    bool verbose = _env("MEMMON_LOG") != null
+    var autoExit = -1
+    var envExit = _env("MEMMON_EXIT_MS")
+    if envExit is string => es { autoExit = _int(es) }
+    int t0 = _int(times.ms())
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() {
+                if e.scancode() == Scancode.ESCAPE { return false }
+                if e.scancode() == Scancode.SPACE { _gc(true) }
+            }
+            if autoExit > 0 and _int(times.ms()) - t0 > autoExit { return false }
+            return true
+        },
+        func(Renderer r) {
+            int now = _int(times.ms())
+            if now - lastRefresh >= refreshMs {
+                lastRefresh = now
+                samples = samples + 1
+
+                var d = _gc_stats()
+                var m = _mem()
+                int ws = m["working_set"] as int
+                int peak = m["peak_working_set"] as int
+                int priv = m["private_bytes"] as int
+                int young = d["young_bytes"] as int
+                int old = d["old_bytes"] as int
+                int pooled = d["pooled_bytes"] as int
+                int minor = d["minor_count"] as int
+                int major = d["major_count"] as int
+                int rem = d["remembered"] as int
+                int thr = d["active_threads"] as int
+                int pend = d["thread_pending_bytes"] as int
+                bool enabled = d["enabled"] as bool
+
+                // 构造这一轮的行（新数组，不复用 lastRows）
+                Array[Array[string]] fresh = []
+                fresh.add(["工作集", fmtMb(ws)])
+                fresh.add(["峰值工作集", fmtMb(peak)])
+                fresh.add(["私有内存", fmtMb(priv)])
+                fresh.add(["年轻代", fmtMb(young)])
+                fresh.add(["老年代", fmtMb(old)])
+                fresh.add(["对象池", fmtKb(pooled)])
+                fresh.add(["GC 次数", "minor " + _str(minor) + " / major " + _str(major)])
+                fresh.add(["remembered set", _str(rem) + " 个对象"])
+                fresh.add(["线程堆", _str(thr) + " 个活动线程，" + fmtKb(pend) + " 待处理"])
+                fresh.add(["GC 开关", if enabled then "开启" else "已关闭"])
+                fresh.add(["采样", _str(samples) + " 次（每 2 秒）· 空格 = 手动 GC"])
+
+                // 差异化更新：形状变了就整表重建，否则只写变化的格子
+                var shapeSame = tableInited and fresh.len() == lastRows.len()
+                if shapeSame {
+                    for 0:fresh.len()-1 to i {
+                        if fresh[i].len() != lastRows[i].len() { shapeSame = false }
+                    }
+                }
+                if not shapeSame {
+                    tbl.set_rows(fresh)
+                    lastRows = fresh
+                    tableInited = true
+                } else {
+                    var changed = 0
+                    for 0:fresh.len()-1 to i {
+                        for 0:fresh[i].len()-1 to c {
+                            if fresh[i][c] != lastRows[i][c] {
+                                tbl.set_cell(i, c, fresh[i][c])
+                                lastRows[i][c] = fresh[i][c]
+                                changed = changed + 1
+                            }
+                        }
+                    }
+                    if verbose { print("  [cells] 本轮更新 " + _str(changed) + " 格") }
+                }
+
+                // 折线：最近 60 个采样点
+                labels.add(times.format(times.now(), "%H:%M:%S"))
+                wsSeries.add(1.0 * ws / 1048576.0)
+                yaSeries.add(1.0 * young / 1048576.0)
+                if labels.len() > 60 {
+                    int keepFrom = labels.len() - 60
+                    labels = labels[keepFrom : labels.len() - 1]
+                    wsSeries = wsSeries[keepFrom : wsSeries.len() - 1]
+                    yaSeries = yaSeries[keepFrom : yaSeries.len() - 1]
+                }
+                Array[Array[float]] series = [wsSeries, yaSeries]
+                chart.set_data(labels, series, ["工作集 MB", "年轻代 MB"])
+
+                if verbose {
+                    print("[sample " + _str(samples) + "] ws=" + fmtMb(ws) + " young=" + fmtMb(young)
+                          + " minor=" + _str(minor) + " major=" + _str(major))
+                }
+            }
+            r.setColor(#101420FF)
+            r.clear()
+        }
+    )
+}
