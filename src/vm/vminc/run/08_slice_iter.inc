@@ -51,7 +51,7 @@
 
         if (val_is_obj(obj_val) && val_as_obj(obj_val)->type == OBJ_STRING) {
             ObjString* s = (ObjString*)val_as_obj(obj_val);
-            int arr_len = s->char_len;
+            int arr_len = str_char_len_of(s);   // 大块串的 char_len 可能是惰性未算 ✓
             int start_idx = 0, end_idx = arr_len - 1;
 
             if (!val_is_null(start_val)) {
@@ -86,7 +86,7 @@
                 DISPATCH();
             }
             int byte_start = utf8_char_offset(s->chars, s->len, start_idx);
-            int byte_end = (start_idx + nchars >= s->char_len)
+            int byte_end = (start_idx + nchars >= arr_len)
                                ? s->len
                                : utf8_char_offset(s->chars, s->len, start_idx + nchars);
             R(a) = val_obj((Object*)str_new(&s->chars[byte_start], byte_end - byte_start));
@@ -207,7 +207,7 @@
             }
             case OBJ_STRING: {
                 ObjString* str = (ObjString*)val_as_obj(obj_val);
-                if (unlikely(index < 0 || index >= str->char_len)) {
+                if (unlikely(index < 0 || index >= str_char_len_of(str))) {
                     if (!throw_runtime_error("字符串迭代索引越界", line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();

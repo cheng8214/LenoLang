@@ -1,0 +1,50 @@
+// ffi.compare_bytes(ptr, off, len, str) —— 裸内存 vs 字符串，纯 memcmp（零分配零拷贝）
+//   返回值口径：0 = 一致 · 1 = 内容不同 · -1 = 长度不一致
+//   为什么要有它：`read_bytes` + `==` 是"malloc + memcpy 一遍 + memcmp 一遍"，
+//   校验大块内存时同一块数据要读两遍（实测 2 GB/s vs 本函数 10 GB/s）
+import ffi
+import strings
+
+main() {
+    print("=== ffi.compare_bytes ===")
+
+    // 1) 一致
+    var buf = ffi.malloc(64)
+    ffi.memset(buf, 0xAA, 64)
+    var s64 = strings.from_bytes([0xAA]).rep(64)
+    assert_eq(ffi.compare_bytes(buf, 0, 64, s64), 0)
+    print("  全一致 => 0: OK")
+
+    // 2) 改一个字节 ⇒ 内容不同
+    ffi.write_byte(buf, 7, 0xAB)
+    assert_eq(ffi.compare_bytes(buf, 0, 64, s64), 1)
+    print("  改 1 字节 => 1: OK")
+
+    // 3) 长度不一致 ⇒ -1（不做逐字节比较；注意第 7 字节已被改成 0xAB）
+    var s32 = strings.from_bytes([0xAA]).rep(32)
+    assert_eq(ffi.compare_bytes(buf, 0, 32, s64), -1)
+    print("  长度不一致 => -1: OK")
+
+    // 4) 偏移：从第 8 字节起 32 字节仍是全 AA
+    assert_eq(ffi.compare_bytes(buf, 8, 32, s32), 0)
+    print("  偏移 + 长度一致 => 0: OK")
+
+    // 5) 空比较（长度 0）恒一致
+    assert_eq(ffi.compare_bytes(buf, 0, 0, strings.from_bytes([])), 0)
+    print("  长度 0 => 0: OK")
+
+    // 6) 越界必须报错（与 read_bytes 同口径：Ptr 的大小已知就查）
+    ffi.memset(buf, 0x11, 64)
+    var s128 = strings.from_bytes([0x11]).rep(128)
+    var thrown = false
+    try {
+        ffi.compare_bytes(buf, 0, 128, s128)
+    } catch e {
+        thrown = true
+    }
+    assert_eq(thrown, true)
+    print("  越界抛错: OK")
+
+    ffi.free(buf)
+    print("=== 所有测试通过 ===")
+}

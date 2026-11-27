@@ -2374,6 +2374,42 @@ static Value ffi_read_bytes_func(int argc, Value* args) {
     return val_obj((Object*)str);
 }
 
+/* ffi.compare_bytes(ptr, off, len, str) - 直接把裸内存和字符串的字节内容比较，**零分配、零拷贝**
+ *
+ * 为什么补它（2026-11-28，内存压力测试的速度瓶颈）：
+ *   校验"这块内存是不是这个图案"的写法一直是
+ *       `var s = ffi.read_bytes(p, off, n)   // malloc + memcpy 一遍
+ *        if s != pat { ... }                 // memcmp 一遍`
+ *   ⇒ 同一块数据要读两遍（冷内存里没有任何缓存收益），4GB 区间实测只有 ~2 GB/s；
+ *   而调用方**根本不需要那个字符串**，只是要一个"是不是一样"的答案。
+ *   本函数直接 memcmp：一遍读数、零分配（同场景实测 ~8 GB/s，见 mem_check_window.leno）。
+ *
+ * 返回：0 = 完全一致；1 = 内容不同；-1 = 长度不一致（str 的字节数 != len ⇒ 直接判"不同"，
+ *       不做逐字节比较 —— 要定位坏字节数目就自己再 read_bytes + 数，那是错误路径，慢无所谓）
+ */
+static Value ffi_compare_bytes_func(int argc, Value* args) {
+    (void)argc;
+    ObjFFIPointer* ptr = val_as_ffi_ptr(args[0]);
+    int offset = val_as_int(args[1]);
+    int length = val_as_int(args[2]);
+
+    CHECK_NULL_PTR(ptr);
+    if (!val_is_string(args[3])) {
+        native_throw_error("compare_bytes: 第 4 个参数必须是字符串");
+        return val_null();
+    }
+    if (length < 0) {
+        native_throw_error("compare_bytes: 长度不能为负数");
+        return val_null();
+    }
+    CHECK_BOUNDS(ptr, offset, (size_t)length);
+
+    ObjString* str = (ObjString*)val_as_obj(args[3]);
+    if (str->len != length) return val_int(-1);
+    if (length == 0) return val_int(0);
+    return val_int(memcmp((char*)ptr->ptr + offset, str->chars, (size_t)length) == 0 ? 0 : 1);
+}
+
 /* ===== 显式字节序读写函数 ===== */
 
 /* 小端 16 位写入 */
@@ -3977,6 +4013,10 @@ void ffi_init_module(void) {
     /* read_bytes: 批量读取，返回字符串 */
     TypeKind read_bytes_params[] = {TYPE_PTR, TYPE_INT, TYPE_INT};  // ptr, offset, length
     native_register_module_method("ffi", "read_bytes", ffi_read_bytes_func, &NATIVE_T_STRING, NATIVE_FIXED(read_bytes_params));
+
+    /* compare_bytes: 裸内存 vs 字符串，纯 memcmp（不造临时串；校验大块内存用） */
+    TypeKind compare_bytes_params[] = {TYPE_PTR, TYPE_INT, TYPE_INT, TYPE_STRING};  // ptr, offset, length, expected
+    native_register_module_method("ffi", "compare_bytes", ffi_compare_bytes_func, &NATIVE_T_INT, NATIVE_FIXED(compare_bytes_params));
 
     /* ===== 显式字节序读写 ===== */
     TypeKind le_be_write_params[] = {TYPE_PTR, TYPE_INT, TYPE_INT};  // ptr, offset, value

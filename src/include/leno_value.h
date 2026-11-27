@@ -420,7 +420,12 @@ typedef struct {
     Object header;
     char* chars;
     int len;          // UTF-8 字节长度
-    int char_len;     // Unicode 字符数（缓存，O(1) 访问）
+    // Unicode 字符数（缓存，O(1) 访问）。**-1 = 还没算**（大块串惰性求值，见 str_char_len_of）
+    //   ⇒ 除了 str_alloc / str_new 这些"产出方"，**读它一律走 str_char_len_of()**；
+    //   直接读字段会拿到 -1，而 -1 会静默变成"长度 -1"（循环不进 / 切片空 / 索引越界）✗
+    int char_len;
+    // FNV-1a 哈希。**0 = 还没算**（同上，见 str_hash_of）
+    //   ⇒ 比较/查表时"hash 为 0"只代表未知，**不能**当成"两串不相等"的判据 ✓
     uint32_t hash;
     // 实际分配的缓冲字节数。全模块**只有一个用途**：`capacity > len + 1` 表示"这块缓冲是
     //   本 VM 为自追加链特意预留的" ⇒ 允许原地追加（见 str_append_copy / OP_STR_APPEND）。
@@ -1356,6 +1361,37 @@ ObjString* str_alloc_cap(int len, int capacity);  // 预留容量分配（自追
 ObjString* str_new(const char* chars, int len);
 ObjString* str_new_nointern(const char* chars, int len);  // 创建非内化字符串（用于长字符串）
 
+// ----------------------------------------------------------------------------
+// 大块字符串的**惰性 char_len / hash**（2026-11-28）
+// ----------------------------------------------------------------------------
+// 为什么：`ffi.read_bytes` / `files.read_bytes` 这类"整块二进制 → Leno 字符串"的路径，
+//   以前在 str_new 里要把正文扫三遍（memcpy 一遍 + utf8_char_len 一遍 + FNV-1a 一遍）。
+//   实测内存压力测试（4MB 块 read_bytes + memcmp 校验）读回只有 **0.6 GB/s**，
+//   而同样的 `ffi.memset` 写能到 10.9 GB/s —— 两遍字节级扫描就是全部差距。
+// 做法：len >= STR_LAZY_SCAN_MIN 时只 memcpy，`char_len = -1` / `hash = 0` 表示"还没算"，
+//   首次真正用到（.len() / 切片 / 当字典键 / 参与 ==）时补算一次并缓存 ⇒ 只扫一遍、按需。
+//   ⚠ 两条不变量，改代码时必须守住（见 ObjString 字段注释）：
+//     ① 读 char_len 一律走 str_char_len_of；② hash == 0 只代表"未知"，不是"不相等"。
+//   短串（< STR_LAZY_SCAN_MIN）仍照旧 eagerly 算好 —— 它们本来就要进内化表，也要频繁比较。
+#define STR_LAZY_SCAN_MIN 1024
+
+static inline int str_char_len_of(ObjString* s) {
+    if (s->char_len >= 0) return s->char_len;
+    int n = utf8_char_len(s->chars, s->len);
+    s->char_len = n;
+    return n;
+}
+
+// 惰性补算并缓存。⚠ 只对**内容不变**的串安全：obj_string.c 的原地追加路径必须在
+//   改内容**之前**调它（见 str_append_inplace），否则算出来的是改后的哈希。
+static inline uint32_t str_hash_of(ObjString* s) {
+    if (s->hash != 0) return s->hash;
+    if (s->len <= 0) return 0;
+    uint32_t h = hash_string(s->chars, s->len);
+    if (h != 0) s->hash = h;   // 恰好算出 0 ⇒ 不缓存（每次重算，但语义正确）
+    return h;
+}
+
 // 字符串复制（static inline 供编译器内联优化）
 static inline ObjString* str_copy(const char* chars, int len) {
     return str_new(chars, len);
@@ -1781,7 +1817,9 @@ static inline int value_shallow_equal_depth(Value a, Value b, int depth) {
             ObjString* sa = (ObjString*)oa;
             ObjString* sb = (ObjString*)ob;
             if (sa->len != sb->len) return 0;
-            if (sa->hash != sb->hash) return 0;
+            // hash 只是"不相等"的快路径：大块串的 hash 可能是 0（惰性未算，见 str_hash_of）
+            //   ⇒ 只有**两侧都已知**时才敢据此判不等，否则一律落到逐字节比 ✓
+            if (sa->hash != 0 && sb->hash != 0 && sa->hash != sb->hash) return 0;
             for (int i = 0; i < sa->len; i++) {
                 if (sa->chars[i] != sb->chars[i]) return 0;
             }

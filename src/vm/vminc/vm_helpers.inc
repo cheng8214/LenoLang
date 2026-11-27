@@ -23,7 +23,9 @@ static inline int dict_ic_key_match(Value a, Value b) {
     if (!val_is_string(a) || !val_is_string(b)) return 0;
     ObjString* sa = (ObjString*)val_as_obj(a);
     ObjString* sb = (ObjString*)val_as_obj(b);
-    return sa->len == sb->len && sa->hash == sb->hash &&
+    // hash 只在**两侧都已知**时才当快路径（大块串的 hash 可能为 0 = 未算，见 leno_value.h）
+    return sa->len == sb->len &&
+           (sa->hash == 0 || sb->hash == 0 || sa->hash == sb->hash) &&
            memcmp(sa->chars, sb->chars, (size_t)sa->len) == 0;
 }
 
@@ -38,7 +40,7 @@ static inline int64_t vm_container_len(Value v) {
     if (!val_is_obj(v)) return 0;
     ObjType t = val_as_obj(v)->type;
     if (t == OBJ_ARRAY)  return (int64_t)((ObjArray*)val_as_obj(v))->count;
-    if (t == OBJ_STRING) return (int64_t)((ObjString*)val_as_obj(v))->char_len;
+    if (t == OBJ_STRING) return (int64_t)str_char_len_of((ObjString*)val_as_obj(v));
     if (t == OBJ_DICT) {
         ObjDict* d = (ObjDict*)val_as_obj(v);
         return (int64_t)d->acount + (int64_t)d->count;

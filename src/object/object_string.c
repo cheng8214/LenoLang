@@ -104,7 +104,10 @@ ObjString* str_alloc(int len) {
     gc_track_memory((Object*)str, sizeof(ObjString), sizeof(ObjString) + (size_t)len + 1);
     str->len = len;
     str->capacity = len + 1;   // 精确大小 ⇒ 不可原地追加（见 ObjString.capacity 说明）
-    str->char_len = 0;  // 调用者需在填充内容后设置
+    // ★ 2026-11-28：留成 **-1（未知）** 而不是 0 —— 读侧一律走 str_char_len_of()，
+    //   谁忘了填也不会静默变成"长度 0"（历史坑见 vm.c string_add 的注释）。
+    //   hash 留 0 = 未算，同理交给 str_hash_of() 按需补算 ✓
+    str->char_len = -1;
     str->hash = 0;
     str->chars[0] = '\0';
     return str;
@@ -127,8 +130,9 @@ ObjString* str_new_nointern(const char* chars, int len) {
     str->chars[len] = '\0';
     str->len = len;
     str->capacity = len + 1;   // 精确大小 ⇒ 不可原地追加（见 ObjString.capacity 说明）
-    str->char_len = utf8_char_len(chars, len);
-    str->hash = hash_string(chars, len);
+    // 大块串只 memcpy、不扫正文（见 leno_value.h 的 STR_LAZY_SCAN_MIN 说明）
+    str->char_len = (len >= STR_LAZY_SCAN_MIN) ? -1 : utf8_char_len(chars, len);
+    str->hash = (len >= STR_LAZY_SCAN_MIN) ? 0 : hash_string(chars, len);
     
     return str;
 }
@@ -170,8 +174,12 @@ ObjString* str_new(const char* chars, int len) {
     str->chars[len] = '\0';
     str->len = len;
     str->capacity = len + 1;   // 精确大小 ⇒ 不可原地追加（见 ObjString.capacity 说明）
-    str->char_len = utf8_char_len(chars, len);
-    str->hash = hash_string(chars, len);
+    // ★ 2026-11-28：≥ STR_LAZY_SCAN_MIN 的串**不扫正文**（char_len=-1 / hash=0 表示未知），
+    //   读侧按需补算（见 leno_value.h）。这是 `ffi.read_bytes` 读回校验 0.6 → GB/s 级的关键：
+    //   原来 4MB 的临时串要额外经历 utf8_char_len + FNV-1a 两遍字节级扫描，而它只被用来比较。
+    //   小于阈值的串照旧 eager 算好（要进内化表、也要频繁比较，惰性反而更贵）。
+    str->char_len = (len >= STR_LAZY_SCAN_MIN) ? -1 : utf8_char_len(chars, len);
+    str->hash = (len >= STR_LAZY_SCAN_MIN) ? 0 : hash_string(chars, len);
     
     // 将短字符串注册到字符串表（弱引用，不阻止 GC 回收）
     if (intern_should_intern(len)) {
@@ -205,7 +213,10 @@ ObjString* str_new(const char* chars, int len) {
 //   ≤ INTERN_MAX_SHORT_LEN 的串）⇒ 长串跳过查找与旧行为完全等价。
 ObjString* str_concat(ObjString* a, ObjString* b) {
     int len = a->len + b->len;
-    uint32_t hash = leno_fnv1a_continue(a->hash, b->chars, b->len);
+    // ⚠ 大块串的 hash / char_len 可能是"惰性未算"（见 leno_value.h）⇒ 必须走 helper 补算：
+    //   FNV-1a 续算建立在 a 的**整串**哈希上，直接从 0 续算会得到一个错误 hash ✗
+    //   （char_len 同理：-1 + n 会把结果串的字符数弄错 ⇒ .len() / slice 全跟着错）
+    uint32_t hash = leno_fnv1a_continue(str_hash_of(a), b->chars, b->len);
 
     if (intern_should_intern(len)) {
         ObjString* existing = intern_find_concat(a, b, hash);
@@ -217,7 +228,7 @@ ObjString* str_concat(ObjString* a, ObjString* b) {
     memcpy(result->chars, a->chars, (size_t)a->len);
     memcpy(result->chars + a->len, b->chars, (size_t)b->len);
     result->chars[len] = '\0';
-    result->char_len = a->char_len + b->char_len;
+    result->char_len = str_char_len_of(a) + str_char_len_of(b);
     result->hash = hash;
 
     // 结果字符串如果短则内化，否则不内化（与旧路径一致）
@@ -255,8 +266,8 @@ ObjString* str_alloc_cap(int len, int capacity) {
     gc_track_memory((Object*)str, sizeof(ObjString), sizeof(ObjString) + (size_t)capacity);
     str->len = len;
     str->capacity = capacity;
-    str->char_len = 0;   // 调用者填充内容后设置
-    str->hash = 0;
+    str->char_len = -1;  // 未知（读侧走 str_char_len_of，见 leno_value.h）；调用者填充内容后设置
+    str->hash = 0;       // 未知（读侧走 str_hash_of）
     str->chars[0] = '\0';
     return str;
 }
@@ -268,7 +279,7 @@ static const char* str_append_bytes(Value v, int* out_len, int* out_chars, int* 
     if (val_is_obj(v) && val_as_obj(v)->type == OBJ_STRING) {
         ObjString* s = (ObjString*)val_as_obj(v);
         *out_len = s->len;
-        *out_chars = s->char_len;
+        *out_chars = str_char_len_of(s);   // 大块串可能未算 ⇒ 走 helper（见 leno_value.h）
         return s->chars;
     }
     char* tmp = value_to_string(v);
@@ -297,8 +308,8 @@ ObjString* str_append_copy(ObjString* a, Value b) {
     memcpy(r->chars, a->chars, (size_t)a->len);
     memcpy(r->chars + a->len, bdata, (size_t)blen);
     r->chars[len] = '\0';
-    r->char_len = a->char_len + bchars;
-    r->hash = leno_fnv1a_continue(a->hash, bdata, blen);
+    r->char_len = str_char_len_of(a) + bchars;
+    r->hash = leno_fnv1a_continue(str_hash_of(a), bdata, blen);
     if (need_free) free((void*)bdata);
     return r;
 }
@@ -309,11 +320,16 @@ ObjString* str_append_inplace(ObjString* a, Value b) {
     // ⚠ `s = s + s`（自引用）：b 就是 a 自己。下面的 realloc 可能搬走 a->chars，
     //   所以先取的 bdata 会悬空 ⇒ 自引用时只取长度，等 realloc 之后再取数据指针。
     int b_is_self = (val_is_obj(b) && val_as_obj(b) == (Object*)a);
+    // ★ 2026-11-28：a 的 char_len/hash 可能是"惰性未算"（大块串）⇒ 必须在**改内容之前**补算，
+    //   否则补算出来的是"追加之后"的哈希（正文已经变了）。这一对调用同时保证下面的
+    //   `+ bchars` / FNV 续算建立在正确的旧值上 ✓
+    int achars = str_char_len_of(a);
+    uint32_t ahash = str_hash_of(a);
     int blen = 0, bchars = 0, need_free = 0;
     const char* bdata = NULL;
     if (b_is_self) {
         blen = a->len;
-        bchars = a->char_len;
+        bchars = achars;
     } else {
         bdata = str_append_bytes(b, &blen, &bchars, &need_free);
     }
@@ -337,8 +353,8 @@ ObjString* str_append_inplace(ObjString* a, Value b) {
     memcpy(a->chars + a->len, bdata, (size_t)blen);
     a->len += blen;
     a->chars[a->len] = '\0';
-    a->char_len += bchars;
-    a->hash = leno_fnv1a_continue(a->hash, bdata, blen);
+    a->char_len = achars + bchars;
+    a->hash = leno_fnv1a_continue(ahash, bdata, blen);
     if (need_free) free((void*)bdata);
     return a;
 }

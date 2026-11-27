@@ -22,7 +22,9 @@ extern uint32_t hash_string(const char* key, int length);
 static Value str_len(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
-    return val_int(str->char_len);
+    // 大块串（≥ STR_LAZY_SCAN_MIN）的 char_len 是**惰性**的（-1 = 未算）⇒ 必须走 helper，
+    //   直接读字段会把 -1 当长度返回（见 leno_value.h）
+    return val_int(str_char_len_of(str));
 }
 
 static Value str_byte_len(int argc, Value* args) {
@@ -45,7 +47,7 @@ static Value str_to_upper(int argc, Value* args) {
         result->chars[i] = (char)toupper((unsigned char)str->chars[i]);
     }
     result->chars[len] = '\0';
-    result->char_len = str->char_len;
+    result->char_len = str_char_len_of(str);   // 惰性串需补算（见 leno_value.h）
     result->hash = hash_string(result->chars, len);
     
     return val_obj((Object*)result);
@@ -63,7 +65,7 @@ static Value str_to_lower(int argc, Value* args) {
         result->chars[i] = (char)tolower((unsigned char)str->chars[i]);
     }
     result->chars[len] = '\0';
-    result->char_len = str->char_len;
+    result->char_len = str_char_len_of(str);   // 惰性串需补算（见 leno_value.h）
     result->hash = hash_string(result->chars, len);
     
     return val_obj((Object*)result);
@@ -282,7 +284,7 @@ static Value str_replace(int argc, Value* args) {
         if (str->len == 0) {
             return val_obj((Object*)new_str);
         }
-        int char_len = str->char_len;
+        int char_len = str_char_len_of(str);
         int new_len = str->len + (char_len + 1) * new_str->len;
         char* result = (char*)malloc(new_len + 1);
         if (!result) {
@@ -373,7 +375,7 @@ static Value str_replace(int argc, Value* args) {
 static Value str_slice(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
-    int char_len = str->char_len;
+    int char_len = str_char_len_of(str);
 
     int start = val_as_int(args[1]);
     int end = val_as_int(args[2]);
@@ -409,7 +411,7 @@ static Value str_slice(int argc, Value* args) {
 static Value str_take(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
-    int char_len = str->char_len;
+    int char_len = str_char_len_of(str);
     
     int start = val_as_int(args[1]);
     int length = val_as_int(args[2]);
@@ -479,7 +481,7 @@ static Value str_reverse(int argc, Value* args) {
     (void)argc;
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     int byte_len = str->len;
-    int char_len = str->char_len;
+    int char_len = str_char_len_of(str);
     
     if (byte_len == 0 || char_len == 0) {
         return val_obj((Object*)str_copy("", 0));
@@ -527,7 +529,7 @@ static Value str_rep(int argc, Value* args) {
         memcpy(result->chars + i * str->len, str->chars, str->len);
     }
     result->chars[(int)total_len] = '\0';
-    result->char_len = str->char_len * n;
+    result->char_len = str_char_len_of(str) * n;
     result->hash = hash_string(result->chars, (int)total_len);
     
     return val_obj((Object*)result);
@@ -603,7 +605,7 @@ static Value str_find(int argc, Value* args) {
     }
     
     // 处理负数起始位置（字符索引）
-    int char_len = str->char_len;
+    int char_len = str_char_len_of(str);
     if (start < 0) start = char_len + start;
     if (start < 0) start = 0;
     
@@ -688,7 +690,7 @@ static Value str_find(int argc, Value* args) {
 static Value str_rfind(int argc, Value* args) {
     ObjString* str = (ObjString*)val_as_obj(args[0]);
     ObjString* pattern = (ObjString*)val_as_obj(args[1]);
-    int char_len = str->char_len;
+    int char_len = str_char_len_of(str);
 
     // 上界（字符索引，**含**）—— 允许的匹配起点不能超过它；默认 = 整串末尾
     int last = char_len;
@@ -1473,7 +1475,7 @@ static Value str_split(int argc, Value* args) {
     //   `"你好".split("")` 得到 6 个非法单字节串（`p[0].len()` = 1、打印乱码）✗；
     //   文档明确写"每个字符作为一个元素" ⇒ 必须走 UTF-8 码点边界。
     if (sep_len == 0) {
-        int clen = str->char_len;
+        int clen = str_char_len_of(str);
         for (int i = 0; i < clen; i++) {
             int off = utf8_char_offset(str_chars, str_len, i);
             int cb = utf8_char_byte_len(str_chars, str_len, off);
@@ -1672,11 +1674,12 @@ static Value str_pad_start(int argc, Value* args) {
     }
 
     // 如果目标长度小于等于当前长度（按字符数），返回原字符串
-    if (target_len <= str->char_len) {
+    int cur_chars = str_char_len_of(str);   // 惰性串需补算（见 leno_value.h）
+    if (target_len <= cur_chars) {
         return val_obj((Object*)str);
     }
 
-    int pad_len = target_len - str->char_len;
+    int pad_len = target_len - cur_chars;
     long long total_bytes = (long long)str->len + (long long)pad_len * pad_bytes;
     if (total_bytes > INT_MAX) {
         native_throw_error("结果字符串太长");
@@ -1719,11 +1722,12 @@ static Value str_pad_end(int argc, Value* args) {
     }
 
     // 如果目标长度小于等于当前长度（按字符数），返回原字符串
-    if (target_len <= str->char_len) {
+    int cur_chars = str_char_len_of(str);   // 惰性串需补算（见 leno_value.h）
+    if (target_len <= cur_chars) {
         return val_obj((Object*)str);
     }
 
-    int pad_len = target_len - str->char_len;
+    int pad_len = target_len - cur_chars;
     long long total_bytes = (long long)str->len + (long long)pad_len * pad_bytes;
     if (total_bytes > INT_MAX) {
         native_throw_error("结果字符串太长");
@@ -2152,7 +2156,7 @@ static Value str_codepoint_at(int argc, Value* args) {
 
     int ci = 0;
     if (argc >= 2 && val_is_int(args[1])) ci = (int)val_as_int(args[1]);
-    int nchars = s->char_len;
+    int nchars = str_char_len_of(s);   // 惰性串需补算（见 leno_value.h）
     if (ci < 0) ci = nchars + ci;
     if (ci < 0 || ci >= nchars) return val_null();
 
@@ -2185,7 +2189,8 @@ static Value str_to_codepoints(int argc, Value* args) {
     (void)argc;
     ObjString* s = (ObjString*)val_as_obj(args[0]);
 
-    ObjArray* result = arr_new(s->char_len > 0 ? s->char_len : 1);
+    int s_chars = str_char_len_of(s);   // 惰性串需补算（见 leno_value.h）
+    ObjArray* result = arr_new(s_chars > 0 ? s_chars : 1);
     if (!result) return val_null();
 
     const unsigned char* p = (const unsigned char*)s->chars;

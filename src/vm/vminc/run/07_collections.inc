@@ -249,9 +249,10 @@
                     DISPATCH();
                 }
                 int i2 = (int)value_to_double(idx);
-                if (unlikely(i2 < 0 || i2 >= s->char_len)) {
+                int s_chars = str_char_len_of(s);   // 大块串的 char_len 可能是惰性未算 ✓
+                if (unlikely(i2 < 0 || i2 >= s_chars)) {
                     char msg[192];
-                    vm_format_index_oob(msg, sizeof(msg), "字符串索引", i2, s->char_len, (Object*)s);
+                    vm_format_index_oob(msg, sizeof(msg), "字符串索引", i2, s_chars, (Object*)s);
                     if (!throw_runtime_error(msg, line)) return -1;
                     frame = &vm.frames[vm.frame_cnt - 1];
                     DISPATCH();

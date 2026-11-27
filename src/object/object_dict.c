@@ -53,7 +53,9 @@ static inline uint32_t dict_hash_value(Value key) {
         Object* obj = val_as_obj(key);
         if (obj->type == OBJ_STRING) {
             ObjString* str = (ObjString*)obj;
-            return str->hash;
+            // 大块串的 hash 可能是"惰性未算"（0）⇒ 走 helper 补算并缓存（见 leno_value.h）。
+            //   直接返回 0 会让**所有**大块串挤进同一个桶 ⇒ 字典退化成链表 ✗
+            return str_hash_of(str);
         }
     }
     if (val_is_null(key)) {

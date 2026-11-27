@@ -1,12 +1,27 @@
-// mem_check_window.leno — 内存完整性/坏块测试的窗口版（分片执行，不阻塞 UI）
+// mem_check_window.leno — MemTest64 式的内存压力测试（Leno 版）
 //
 // 用法:
 //   build\leno.exe "leno_gui\应用\内存监视\mem_check_window.leno"
 //
-// 和 CLI 版（examples\工具\mem_check.leno）测同样的四件事，区别是**按帧分片**：
-//   每帧只处理 8MB，然后回到事件循环更新进度条 —— 否则几 GB 的测试会把窗口卡死。
+// 和 MemTest64 的对应关系（2026-11-28 重写）：
+//   · **压力循环**：分配一块内存，用 14 种模式反复写满 + 读回校验，**一直跑**
+//     直到点「停止」或手动关窗 —— 不是跑一遍就结束（老版跑完 4 项就停）
+//   · **模式集**：全 0 / 全 1 / 棋盘 55 / 反棋盘 AA / 半字节 33、CC / 走步位 01..80
+//     （单字节模式是 `ffi.memset` 能直接写的最快形式，正好覆盖 MemTest 的经典图案）
+//   · **实时统计**：已测数据量 / 速率 / 轮次 / 错误数（含首个错误的偏移与模式）
+//   · **错误只记录不中断**：和 MemTest64 一样，出现坏字节继续测，最后看总数
+//   · **一次性自检**：越界写 / GC 堆 / 碎片化 —— 这三项是 Leno 特有的（MemTest64 没有），
+//     开跑时先花几十毫秒验证一遍运行时本身没问题，再进入压力循环
 //
-// 阶段：0 空闲 → 1 覆盖+块完整性 → 2 越界写 → 3 GC 堆 → 4 碎片化 → 5 完成
+// 为什么分片：每帧只干 30ms 然后回到事件循环（块数由实测速度决定），
+//             否则几 GB 的 memset + 读回校验会把窗口卡死
+//
+// 校验口径（2026-11-28 提速）：`ffi.compare_bytes` 直接 memcmp 裸内存，
+//   **不构造 4MB 临时串**（老写法 malloc + memcpy + memcmp 等于把冷内存读两遍，
+//   整机只剩 ~2 GB/s）；现在同场景 memcmp ~10 GB/s，整机实测 0.4 → ~3 GB/s。
+//
+// 自测钩子：MEMCHK_AUTO=1 启动即开跑 · MEMCHK_EXIT_MS=15000 到点自动退出 ·
+//           MEMCHK_LOG=1 完成时打印摘要
 import "SDL3" as SDL3
 import "Sys" as Sys
 import ffi
@@ -16,10 +31,20 @@ import maths
 use SDL3.(Event, Renderer, Scancode, WindowFlag, Window)
 use Sys.SysInfo
 
-var passed = 0
-var failed = 0
+// 14 种测试图案（单字节重复模式）
+Array[string] PAT_LABEL = ["全 0", "全 1", "棋盘 55", "反棋盘 AA", "半字节 33", "半字节 CC",
+                           "走步 01", "走步 02", "走步 04", "走步 08",
+                           "走步 10", "走步 20", "走步 40", "走步 80"]
+Array[int] PAT_BYTE = [0x00, 0xFF, 0x55, 0xAA, 0x33, 0xCC,
+                       0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80]
 
-// ---------- 校验：快路径 memcmp，失败才逐字节定位 ----------
+// 校验分片大小 = 一个块的大小（4MB）。
+//   ⚠ 原来 256KB：每 4MB 块要调 16 次 `read_bytes`、每次分配一个 256KB string
+//     ⇒ 实测只有 426MB/s（瓶颈在分配与调用次数，不在内存带宽）✗
+//   4MB 一片后每次块校验只要 1 次调用 ✓
+int PAT_CHUNK = 4 * 1024 * 1024
+
+// ---------- 校验：快路径整段比较，不一致才逐字节定位 ----------
 func countBad(string s, int expect): int {
     Array[int] b = s.to_bytes()
     var bad = 0
@@ -29,23 +54,39 @@ func countBad(string s, int expect): int {
     return bad
 }
 
-func verifyBlock(Ptr p, int size, int expect): Dict {
-    int chunk = 262144
-    string pat = strings.from_bytes([expect]).rep(chunk)
+// 用预构造好的 `pat`（4MB 重复图案）做分片比较 ⇒ 走 memcmp，不是逐字节
+//   ★ 2026-11-28：改从 `read_bytes + s != pat` 换成 **`ffi.compare_bytes`** ——
+//   老写法是"malloc 4MB → memcpy 一遍 → memcmp 一遍"，同一块冷内存要读两遍，
+//   4GB 区间实测只有 ~2 GB/s；compare_bytes 直接 memcmp，一遍就够（实测 ~8 GB/s）。
+//   只有**不一致**时才 read_bytes 数坏字节（错误路径，慢无所谓）。
+func verifyBlock(Ptr p, int size, int expect, string pat): int {
     var bad = 0
     var off = 0
     while off < size {
-        var n = chunk
+        var n = PAT_CHUNK
         if off + n > size { n = size - off }
-        var s = ffi.read_bytes(p, off, n)
-        if n == chunk {
-            if s != pat { bad = bad + countBad(s, expect) }
-        } else {
-            if s != strings.byte_slice(pat, 0, n - 1) { bad = bad + countBad(s, expect) }
+        if ffi.compare_bytes(p, off, n, pat) != 0 {
+            bad = bad + countBad(ffi.read_bytes(p, off, n), expect)
         }
         off = off + n
     }
-    return {badCount: bad}
+    return bad
+}
+
+func fmtGb(int mb): string {
+    if mb < 1024 { return _str(mb) + " MB" }
+    return _str(_int(_float(mb) / 102.4) / 10.0) + " GB"
+}
+
+func fmtDur(int ms): string {
+    int s = ms / 1000
+    int h = s / 3600
+    int m = (s % 3600) / 60
+    int ss = s % 60
+    string hh = if h < 10 then "0" + _str(h) else _str(h)
+    string mm = if m < 10 then "0" + _str(m) else _str(m)
+    string st = if ss < 10 then "0" + _str(ss) else _str(ss)
+    return hh + ":" + mm + ":" + st
 }
 
 main() {
@@ -58,12 +99,16 @@ main() {
         if targetMb > cap { targetMb = cap }
     }
 
-    var win = SDL3.createWindow({title: "内存完整性测试", w: 960, h: 620, flags: WindowFlag.RESIZABLE})
+    var win = SDL3.createWindow({title: "内存压力测试（MemTest64 式）", w: 960, h: 620, flags: WindowFlag.RESIZABLE})
     if not win.ok {
         print("窗口创建失败（无显示器 / 视频驱动不可用）")
         return
     }
-    win.addTimer(50, func() { })      // 20fps 叫醒：测试期间靠它推进分片
+    // ★ 2026-11-28：30ms 叫醒（原 50ms）。测试是靠"每帧一个时间片"推进的，
+    //   而帧只在**有重绘请求**时才出（定时器就是那个请求）⇒ 定时器周期直接决定占空比：
+    //   50ms 叫醒 + 40ms 干活 = 只有 80% 的时间在测。30ms 叫醒 + 30ms 干活 ⇒ 约 90%，
+    //   界面仍有 ~30fps 刷新。
+    win.addTimer(30, func() { })
 
     var btn = win.addButton({text: "开始测试", x: 10, y: 10, w: 120, h: 34, type: "primary"})
     var bar = win.addProgressBar({x: 140, y: 14, w: 800, h: 26, value: 0.0, min: 0.0, max: 100.0, show_text: true})
@@ -75,47 +120,272 @@ main() {
         font_size: 14
     })
 
-    // 状态
-    var phase = 0                 // 0 空闲 1 覆盖 2 越界 3 GC 4 碎片 5 完成
-    var doneMb = 0
-    int blockKb = 4096
-    int sliceMb = 8
-    var badBytes = 0
+    // ==================== 状态 ====================
+    var phase = 0                 // 0 空闲 / 1 压力测试中 / 2 已停止
+    int blockMb = 4               // 每个小块 4MB（`ffi.memset` / `read_bytes` 的参数都落在 int 内）
+    Array[Ptr] blocks = []
+    var curBlock = 0
+    var curMode = 0
+    var rounds = 0
+    var totalMb = 0               // 累计已测数据量（MB）—— 用 MB 累计，避免字节数溢出
+    var errCount = 0
+    var firstErrMb = -1
+    var firstErrMode = -1
     var t0 = 0
-    var tPhase = 0
-    Array[string] r1 = ["① 块完整性", "待运行"]
-    Array[string] r2 = ["② 越界写", "待运行"]
-    Array[string] r3 = ["③ GC 堆", "待运行"]
-    Array[string] r4 = ["④ 碎片化", "待运行"]
+    var endMs = 0                 // 停止时刻（0 = 还在跑）⇒ "运行时长"靠它冻结
+    var lastSecMs = 0
+    var lastSecMb = 0
+    var rateMb = 0.0              // MB/s（每秒更新一次）
+    var patCache = ""             // 当前模式的期望串（PAT_CHUNK = 4MB，换模式时重建）
+    var patCacheByte = -1
+    Array[string] selfRows = ["自检", "未运行"]
+    var selfMs = 0
+    var selfOk = 0                // 自检通过项数
+    bool verbose = _env("MEMCHK_LOG") != null
+
+    // ==================== 一次性自检（Leno 特有）====================
+    var runSelfTest = func() {
+        int ts = _int(times.ms())
+        selfOk = 0
+        // ① 越界写：两块相邻，写 A 不该影响 B
+        var ok1 = false
+        int sz = 4 * 1024 * 1024
+        Ptr a = ffi.malloc(sz)
+        Ptr b = ffi.malloc(sz)
+        if a != null and b != null {
+            string p11 = strings.from_bytes([0x11]).rep(PAT_CHUNK)
+            string pee = strings.from_bytes([0xEE]).rep(PAT_CHUNK)
+            ffi.memset(b, 0xEE, sz)
+            ffi.memset(a, 0x11, sz)
+            ok1 = verifyBlock(a, sz, 0x11, p11) == 0 and verifyBlock(b, sz, 0xEE, pee) == 0
+            ffi.free(a)
+            ffi.free(b)
+        }
+        if ok1 { selfOk = selfOk + 1 }
+        // ② GC 堆：制造垃圾后，存活对象内容不变
+        Array[string] keep = []
+        for 0:19999 to i {
+            var s = "obj-" + _str(i) + "-" + _str(i * 7)
+            if i % 2 == 0 { keep.add(s) }
+        }
+        var ok2 = true
+        for 0:keep.len()-1 to i {
+            int idx = i * 2
+            if keep[i] != "obj-" + _str(idx) + "-" + _str(idx * 7) { ok2 = false }
+        }
+        if ok2 { selfOk = selfOk + 1 }
+        // ③ 碎片化：反复小块分配/释放后，仍能拿到 4MB 连续块且可写可读
+        Array[Ptr] live = []
+        var seed = 12345
+        for 0:2999 to i {
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            Ptr p = ffi.malloc(64 + seed % 4096)
+            if p != null {
+                ffi.write_byte(p, 0, 0xA5)
+                live.add(p)
+            }
+            if i % 2 == 0 and live.len() > 0 {
+                int at = seed % live.len()
+                ffi.free(live[at])
+                live.remove(at)
+            }
+        }
+        for live to q { ffi.free(q) }
+        Ptr big = ffi.malloc(4 * 1024 * 1024)
+        var ok3 = big != null
+        if ok3 {
+            string p5a = strings.from_bytes([0x5A]).rep(PAT_CHUNK)
+            ffi.memset(big, 0x5A, 4 * 1024 * 1024)
+            ok3 = verifyBlock(big, 4 * 1024 * 1024, 0x5A, p5a) == 0
+            ffi.free(big)
+        }
+        if ok3 { selfOk = selfOk + 1 }
+        selfMs = _int(times.ms()) - ts
+        selfRows = ["自检", (if selfOk == 3 then "通过" else "未通过（" + _str(selfOk) + "/3）")
+                    // ⚠ 这里**不能用 ✓/✗**：默认字体没有这两个字形，界面上会变成方框"口"
+                    //   （用户截图里"越界 口 · GC 口"就是这么来的）⇒ 用 ASCII
+                    + " · 越界 " + (if ok1 then "OK" else "FAIL")
+                    + " · GC " + (if ok2 then "OK" else "FAIL")
+                    + " · 碎片化 " + (if ok3 then "OK" else "FAIL")
+                    + " · " + _str(selfMs) + "ms"]
+    }
+
+    // ==================== 分配测试区间 ====================
+    var freeAll = func() {
+        for blocks to p { if p != null { ffi.free(p) } }
+        blocks = []
+    }
+
+    var allocPool = func(): bool {
+        freeAll()
+        curBlock = 0; curMode = 0; rounds = 0
+        totalMb = 0; errCount = 0; firstErrMb = -1; firstErrMode = -1
+        int need = targetMb / blockMb
+        for 0:need-1 to i {
+            Ptr p = ffi.malloc(blockMb * 1024 * 1024)
+            if p == null {
+                print("[memchk] 分配失败：已拿到 " + _str(i) + " 块（" + _str(i * blockMb) + "MB）")
+                return false
+            }
+            blocks.add(p)
+        }
+        return true
+    }
+
+    // ==================== 开始 / 停止 ====================
+    var startTest = func() {
+        if phase == 1 { return }             // 正在跑就别重入
+        phase = 1
+        t0 = _int(times.ms())
+        endMs = 0
+        lastSecMs = t0
+        lastSecMb = 0
+        rateMb = 0.0
+        patCache = ""
+        patCacheByte = -1
+        btn.set_text("停止")
+        bar.set_value(0.0)
+        selfRows = ["自检", "运行中…"]
+        runSelfTest()
+        if not allocPool() {
+            phase = 2
+            endMs = _int(times.ms())
+            btn.set_text("开始测试")
+        }
+    }
+
+    var stopTest = func() {
+        if phase != 1 { return }
+        phase = 2
+        endMs = _int(times.ms())             // ★ 冻结运行时长（老版没有这步 ⇒ 停下来数字还在涨 ✗）
+        btn.set_text("开始测试")
+    }
+
+    btn.on_click(func() { if phase == 1 { stopTest() } else { startTest() } })
+
+    // ==================== 每帧推进一个时间片（SLICE_MS） ====================
+    var stepSlice = func() {
+        if phase != 1 { return }
+        if blocks.len() == 0 { return }
+        // 换模式时重建期望串（4MB，14 种模式里只缓存当前这一份）
+        if patCacheByte != PAT_BYTE[curMode] {
+            patCacheByte = PAT_BYTE[curMode]
+            patCache = strings.from_bytes([patCacheByte]).rep(PAT_CHUNK)
+        }
+        // ⚠ 每拍的处理量直接决定**速率上限**。原来写死 "32MB/拍" ⇒ 帧率成了天花板。
+        //   2026-11-28 校验路径提速后（compare_bytes 纯 memcmp，实测 ~10 GB/s），
+        //   这个天花板反而成了主要瓶颈 ⇒ 改成**按时间片**推进：每帧最多干 SLICE_MS 毫秒，
+        //   块数由实测速度决定（快就多干几块），UI 仍有 ~30fps 刷新（定时器 30ms）。
+        int SLICE_MS = 30
+        int frameT0 = _int(times.ms())
+        while _int(times.ms()) - frameT0 < SLICE_MS {
+            if phase != 1 { return }
+            if curBlock >= blocks.len() { return }
+            Ptr p = blocks[curBlock]
+            int expect = PAT_BYTE[curMode]
+            int bytes = blockMb * 1024 * 1024
+            ffi.memset(p, expect, bytes)                      // 写
+            int bad = verifyBlock(p, bytes, expect, patCache)  // 读回校验
+            if bad > 0 {
+                errCount = errCount + bad
+                if firstErrMb < 0 {
+                    firstErrMb = curBlock * blockMb
+                    firstErrMode = curMode
+                }
+            }
+            totalMb = totalMb + blockMb
+            curBlock = curBlock + 1
+            if curBlock >= blocks.len() {
+                curBlock = 0
+                curMode = curMode + 1
+                if curMode >= PAT_BYTE.len() { curMode = 0; rounds = rounds + 1 }
+            }
+        }
+        // 速率：每秒更新一次（滑动窗口太长反而抖）
+        int now = _int(times.ms())
+        if now - lastSecMs >= 1000 {
+            rateMb = _float(totalMb - lastSecMb) * 1000.0 / _float(now - lastSecMs)
+            lastSecMs = now
+            lastSecMb = totalMb
+        }
+    }
+
+    // ==================== 界面刷新 ====================
     Array[Array[string]] lastRows = []
     bool tableInited = false
-    bool verbose = _env("MEMCHK_LOG") != null
-    // 自测钩子：MEMCHK_AUTO=1 启动即开跑（不用点按钮）；MEMCHK_EXIT_MS=15000 到点退出
+
+    var refreshTable = func() {
+        int nowMs = if endMs > 0 then endMs else _int(times.ms())
+        int runMs = nowMs - t0
+        Array[Array[string]] fresh = []
+        fresh.add(["物理内存", _str(physMb) + " MB（可用 " + _str(availMb) + "MB）"])
+        fresh.add(["测试区间", _str(targetMb) + " MB（约 25%，上限为可用的 60%）· "
+                   + _str(blocks.len()) + " 块 × " + _str(blockMb) + "MB"])
+        fresh.add(selfRows)
+        string modeTxt = if phase == 0 then "待运行"
+            else PAT_LABEL[curMode] + "（第 " + _str(rounds + 1) + " 轮 · 模式 "
+                 + _str(curMode + 1) + "/" + _str(PAT_LABEL.len()) + "）"
+        fresh.add(["当前模式", modeTxt])
+        // 进度 = 本轮进度（14 个模式 × 全部块）
+        float prog = 0.0
+        if phase != 0 and blocks.len() > 0 {
+            int per = blocks.len()
+            prog = 100.0 * _float(curMode * per + curBlock) / _float(PAT_LABEL.len() * per)
+        }
+        fresh.add(["本轮进度", _str(_int(prog * 10.0) / 10.0) + " %"])
+        fresh.add(["已测数据", fmtGb(totalMb) + "（" + _str(totalMb) + " MB）"])
+        fresh.add(["速率", _str(_int(rateMb / 10.24) / 100.0) + " GB/s"])
+        fresh.add(["运行时长", if t0 == 0 then "—" else fmtDur(runMs)
+                   + (if endMs > 0 then "（已停止）" else "")])
+        string errTxt = "0"
+        if errCount > 0 {
+            errTxt = _str(errCount) + " 个坏字节 · 首个 @ 块 " + _str(firstErrMb / blockMb)
+                     + "（偏移 " + _str(firstErrMb) + "MB）· 模式 " + PAT_LABEL[firstErrMode]
+        } else if totalMb > 0 {
+            errTxt = "0（已跑 " + _str(rounds) + " 轮）"
+        }
+        fresh.add(["错误", errTxt])
+        string st = if phase == 0 then "空闲 —— 点「开始测试」"
+            else if phase == 1 then "压力测试中…（点「停止」结束；错误不会中断测试）"
+            else "已停止（累计 " + fmtGb(totalMb) + "、" + fmtDur(runMs) + "）"
+        fresh.add(["状态", st])
+
+        var same = tableInited and fresh.len() == lastRows.len()
+        if same {
+            for 0:fresh.len()-1 to i {
+                if fresh[i].len() != lastRows[i].len() { same = false }
+            }
+        }
+        if not same {
+            tbl.set_rows(fresh)
+            lastRows = fresh
+            tableInited = true
+        } else {
+            for 0:fresh.len()-1 to i {
+                for 0:fresh[i].len()-1 to c {
+                    if fresh[i][c] != lastRows[i][c] {
+                        tbl.set_cell(i, c, fresh[i][c])
+                        lastRows[i][c] = fresh[i][c]
+                    }
+                }
+            }
+        }
+        bar.set_value(if phase == 0 then 0.0 else if endMs > 0 then 100.0 else prog)
+    }
+
+    // ==================== 主循环 ====================
     bool autoStart = _env("MEMCHK_AUTO") != null
     var autoExit = -1
     var ae = _env("MEMCHK_EXIT_MS")
     if ae is string => ss { autoExit = _int(ss) }
+    // ★ 2026-11-28：**只有自测模式才允许自动收尾** —— `MEMCHK_AUTO` 与 `MEMCHK_EXIT_MS`
+    //   **同时**给才算。原来只判 `autoExit > 0`，于是只要环境里出现过 EXIT_MS，
+    //   手动跑也会"跑到 2 倍目标量（8096MB ≈ 4040×2）就自己停"✗
+    //   （用户实测："才 19 秒、7.9GB 就停了"）
+    bool autoMode = autoStart and autoExit > 0
     int tAll = _int(times.ms())
     var reported = false
-
-    var startTest = func() {
-        if phase != 0 and phase != 5 { return }        // 正在跑就别重入
-        phase = 1
-        doneMb = 0
-        badBytes = 0
-        passed = 0
-        failed = 0
-        t0 = _int(times.ms())
-        tPhase = t0
-        r1 = ["① 块完整性", "运行中…"]
-        r2 = ["② 越界写", "等待"]
-        r3 = ["③ GC 堆", "等待"]
-        r4 = ["④ 碎片化", "等待"]
-        bar.set_value(0.0)
-        tableInited = false
-        reported = false
-    }
-    btn.on_click(func() { startTest() })
+    var lastLogMs = 0
 
     win.run(
         func(Event e): bool {
@@ -125,162 +395,33 @@ main() {
             return true
         },
         func(Renderer r) {
-            // 自测模式：第一帧自动开跑（等价于点按钮）
             if autoStart and phase == 0 { startTest() }
-
-            // ---------- 阶段推进（每帧一片）----------
-            if phase == 1 {
-                var want = sliceMb
-                if targetMb - doneMb < want { want = targetMb - doneMb }
-                if want <= 0 {
-                    int ms = _int(times.ms()) - tPhase
-                    r1 = ["① 块完整性", "覆盖 " + _str(doneMb) + "MB · 坏字节 " + _str(badBytes)
-                          + " · " + _str(ms) + "ms"]
-                    if badBytes == 0 { passed = passed + 1 } else { failed = failed + 1 }
-                    phase = 2
-                    tPhase = _int(times.ms())
-                } else {
-                    int bsize = blockKb * 1024
-                    int nb = want * 1024 * 1024 / bsize
-                    if nb < 1 { nb = 1 }
-                    Array[Ptr] ps = []
-                    for 0:nb-1 to i {
-                        Ptr p = ffi.malloc(bsize)
-                        if p == null { break }
-                        ps.add(p)
-                    }
-                    for 0:ps.len()-1 to i { ffi.memset(ps[i], 0x30 + ((doneMb + i) % 16), bsize) }
-                    for 0:ps.len()-1 to i {
-                        var got = verifyBlock(ps[i], bsize, 0x30 + ((doneMb + i) % 16))
-                        badBytes = badBytes + (got["badCount"] as int)
-                    }
-                    doneMb = doneMb + ps.len() * bsize / 1024 / 1024
-                    for ps to q { ffi.free(q) }
-                    var pct = 100.0
-                    if targetMb > 0 { pct = 100.0 * doneMb / targetMb }
-                    bar.set_value(pct)
-                    r1 = ["① 块完整性", "已覆盖 " + _str(doneMb) + " / " + _str(targetMb)
-                          + "MB · 坏字节 " + _str(badBytes)]
-                }
-            } else if phase == 2 {
-                // 越界写
-                int sz = 262144
-                Ptr a = ffi.malloc(sz)
-                Ptr b = ffi.malloc(sz)
-                var ok = false
-                if a != null and b != null {
-                    ffi.memset(b, 0xEE, sz)
-                    ffi.memset(a, 0x11, sz)
-                    ok = (verifyBlock(a, sz, 0x11)["badCount"] as int) == 0
-                        and (verifyBlock(b, sz, 0xEE)["badCount"] as int) == 0
-                    ffi.free(a)
-                    ffi.free(b)
-                }
-                int ms = _int(times.ms()) - tPhase
-                r2 = ["② 越界写", (if ok then "通过" else "失败") + " · " + _str(ms) + "ms"]
-                if ok { passed = passed + 1 } else { failed = failed + 1 }
-                phase = 3
-                tPhase = _int(times.ms())
-            } else if phase == 3 {
-                // GC 堆
-                Array[string] keep = []
-                for 0:19999 to i {
-                    var s = "obj-" + _str(i) + "-" + _str(i * 7)
-                    if i % 2 == 0 { keep.add(s) }
-                    else if i % 2000 == 0 {
-                        Array[int] junk = []
-                        for 0:1999 to k { junk.add(k) }
-                    }
-                }
-                var ok = true
-                for 0:keep.len()-1 to i {
-                    int idx = i * 2
-                    if keep[i] != "obj-" + _str(idx) + "-" + _str(idx * 7) { ok = false }
-                }
-                var d = _gc_stats()
-                int ms = _int(times.ms()) - tPhase
-                r3 = ["③ GC 堆", (if ok then "通过" else "失败") + " · 存活 " + _str(keep.len())
-                      + " 个 · minor " + _str(d["minor_count"] as int) + " · " + _str(ms) + "ms"]
-                if ok { passed = passed + 1 } else { failed = failed + 1 }
-                phase = 4
-                tPhase = _int(times.ms())
-            } else if phase == 4 {
-                // 碎片化
-                Array[Ptr] live = []
-                var seed = 12345
-                for 0:2999 to i {
-                    seed = (seed * 1103515245 + 12345) % 2147483648
-                    Ptr p = ffi.malloc(64 + seed % 4096)
-                    if p != null {
-                        ffi.write_byte(p, 0, 0xA5)
-                        live.add(p)
-                    }
-                    if i % 2 == 0 and live.len() > 0 {
-                        int at = seed % live.len()
-                        ffi.free(live[at])
-                        live.remove(at)
-                    }
-                }
-                for live to q { ffi.free(q) }
-                Ptr big = ffi.malloc(4 * 1024 * 1024)
-                var ok = big != null
-                if ok {
-                    ffi.memset(big, 0x5A, 4 * 1024 * 1024)
-                    ok = (verifyBlock(big, 65536, 0x5A)["badCount"] as int) == 0
-                    ffi.free(big)
-                }
-                int ms = _int(times.ms()) - tPhase
-                r4 = ["④ 碎片化", (if ok then "通过" else "失败") + " · 4MB 分配 · " + _str(ms) + "ms"]
-                if ok { passed = passed + 1 } else { failed = failed + 1 }
-                bar.set_value(100.0)
-                phase = 5
-                if verbose and not reported {
-                    reported = true
-                    print("[mem-check] " + r1[1])
-                    print("[mem-check] " + r2[1])
-                    print("[mem-check] " + r3[1])
-                    print("[mem-check] " + r4[1])
-                    print("[mem-check] 总耗时 " + _str((_int(times.ms()) - t0) / 1000.0)
-                          + " 秒，结果 " + _str(passed) + " 通过 / " + _str(failed) + " 失败")
+            stepSlice()
+            // 自测模式下跑够目标量就自动停（方便无人值守验证）—— 手动跑绝不自动停 ✓
+            if autoMode and phase == 1 and totalMb >= targetMb * 2 { stopTest() }
+            // MEMCHK_LOG 时每 5 秒打一行进度：长测时看终端就知道还在动
+            if verbose and phase == 1 {
+                int nowL = _int(times.ms())
+                // ★ 第一帧不要立刻打：那时 rateMb 还没算过（日志里会留一行 "0.0 GB/s" 的噪声）
+                if lastLogMs == 0 { lastLogMs = t0 }
+                if nowL - lastLogMs >= 5000 {
+                    lastLogMs = nowL
+                    print("[memchk] " + _str(totalMb) + "MB · 第 " + _str(rounds + 1) + " 轮 · "
+                          + PAT_LABEL[curMode] + " · 错误 " + _str(errCount) + " · "
+                          + _str(_int(rateMb / 10.24) / 100.0) + " GB/s")
                 }
             }
-
-            // ---------- 表格（差异化更新）----------
-            if phase != 0 {
-                Array[Array[string]] fresh = []
-                fresh.add(["物理内存", _str(physMb) + " MB（可用 " + _str(availMb) + "MB）"])
-                fresh.add(["计划覆盖", _str(targetMb) + " MB（物理内存 25%，上限为可用的 60%）"])
-                fresh.add(r1)
-                fresh.add(r2)
-                fresh.add(r3)
-                fresh.add(r4)
-                fresh.add(["总耗时", _str((_int(times.ms()) - t0) / 1000.0) + " 秒"])
-                fresh.add(["结果", _str(passed) + " 通过 / " + _str(failed) + " 失败"
-                           + (if phase == 5 then "（完成）" else "（运行中…）")])
-
-                var same = tableInited and fresh.len() == lastRows.len()
-                if same {
-                    for 0:fresh.len()-1 to i {
-                        if fresh[i].len() != lastRows[i].len() { same = false }
-                    }
-                }
-                if not same {
-                    tbl.set_rows(fresh)
-                    lastRows = fresh
-                    tableInited = true
-                } else {
-                    for 0:fresh.len()-1 to i {
-                        for 0:fresh[i].len()-1 to c {
-                            if fresh[i][c] != lastRows[i][c] {
-                                tbl.set_cell(i, c, fresh[i][c])
-                                lastRows[i][c] = fresh[i][c]
-                            }
-                        }
-                    }
-                }
+            if verbose and not reported and phase == 2 {
+                reported = true
+                print("[memchk] 已测 " + _str(totalMb) + "MB · " + _str(rounds) + " 轮 · 错误 "
+                      + _str(errCount) + " · 自检 " + _str(selfOk) + "/3 · 用时 "
+                      + _str((endMs - t0) / 1000.0) + "s")
             }
+            refreshTable()
             r.setColor(#101420FF)
             r.clear()
         }
     )
+
+    freeAll()      // 退出前把测试内存还回去
 }
