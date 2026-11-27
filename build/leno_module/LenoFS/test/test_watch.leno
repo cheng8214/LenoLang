@@ -1,0 +1,136 @@
+// test_watch.leno -- LenoFS.watch 自测（Windows 原生引擎 + 轮询引擎各跑一遍）
+//   build\leno.exe build\leno_module\LenoFS\test\test_watch.leno
+import dirs
+import files
+import strings
+import threads
+import "FS" as fs
+
+var passed = 0
+var failed = 0
+
+func check(string name, bool ok) {
+    if ok {
+        print("  [PASS] " + name)
+        passed = passed + 1
+    } else {
+        print("  [FAIL] " + name)
+        failed = failed + 1
+    }
+}
+
+func hasAction(Array[Dict] evs, string act, string part): bool {
+    for evs to e {
+        string a = e["action"] as string
+        string p = e["path"] as string
+        if a == act and strings.has(p, part) { return true }
+    }
+    return false
+}
+
+func dump(string label, Array[Dict] evs) {
+    var s = label + " 事件(" + _str(evs.len()) + ")："
+    for evs to e {
+        s = s + " [" + (e["action"] as string) + "] " + (e["path"] as string)
+    }
+    print("        " + s)
+}
+
+func reset(string root) {
+    if dirs.exists(root) {
+        dirs.delete(root)
+    }
+    dirs.mkdir_p(root)
+}
+
+// 一个引擎跑完整流程：add / mod / 递归子目录 add / del / stop
+func runEngine(string label, string engine, int settleMs): bool {
+    print("")
+    print("== " + label + "（engine=" + engine + "）==")
+    var root = dirs.join(_tmpdir(), "leno_watch_" + engine)
+    reset(root)
+
+    var w = fs.watch(root, true, engine)
+    if not fs.isWatching(w) {
+        print("  [SKIP] 引擎不可用：" + w.err)
+        return false
+    }
+    check("watcher 创建成功", true)
+
+    // ① 新增
+    files.write(dirs.join(root, "a.txt"), "hello")
+    threads.sleep(settleMs)
+    Array[Dict] e1 = w.poll()
+    dump("①", e1)
+    check("新增文件 → add", hasAction(e1, "add", "a.txt"))
+
+    // ② 改内容
+    files.write(dirs.join(root, "a.txt"), "hello leno watch")
+    threads.sleep(settleMs)
+    Array[Dict] e2 = w.poll()
+    dump("②", e2)
+    check("改内容 → mod", hasAction(e2, "mod", "a.txt"))
+
+    // ③ 递归子目录
+    dirs.mkdir(dirs.join(root, "sub"))
+    files.write(dirs.join(root, "sub", "b.txt"), "x")
+    threads.sleep(settleMs)
+    Array[Dict] e3 = w.poll()
+    dump("③", e3)
+    check("递归子目录 → add（含 sub）", hasAction(e3, "add", "sub"))
+
+    // ④ 改名
+    var victim = "a.txt"
+    if engine == "native" {
+        dirs.rename(dirs.join(root, "a.txt"), dirs.join(root, "c.txt"))
+        victim = "c.txt"
+        threads.sleep(settleMs)
+        Array[Dict] e4 = w.poll()
+        dump("④", e4)
+        check("改名 → rename", hasAction(e4, "rename", "c.txt"))
+    }
+
+    // ⑤ 删除
+    files.delete(dirs.join(root, victim))
+    threads.sleep(settleMs)
+    Array[Dict] e5 = w.poll()
+    dump("⑤", e5)
+    check("删除 → del", hasAction(e5, "del", victim))
+
+    // ⑥ 停止
+    w.stop()
+    check("stop 后 poll 返回空", w.poll().len() == 0)
+    check("stop 后 isWatching=false", not fs.isWatching(w))
+
+    dirs.delete(root)
+    return true
+}
+
+main() {
+    print("=== LenoFS.watch 自测 ===")
+
+    bool nativeOk = false
+    if _os() == "windows" {
+        nativeOk = runEngine("Windows 原生引擎", "native", 250)
+    } else {
+        print("")
+        print("== Windows 原生引擎：本机不是 Windows，跳过 ==")
+    }
+
+    bool pollOk = runEngine("轮询引擎", "poll", 450)
+
+    // 非 Windows 上要 native ⇒ 明确报错，不静默退化
+    var w2 = fs.watch(_tmpdir(), true, "native")
+    if _os() != "windows" {
+        check("非 Windows 请求 native ⇒ 报错而非可用", (not fs.isWatching(w2)) and w2.err != "")
+    } else {
+        check("Windows 上 native 可用", fs.isWatching(w2))
+        w2.stop()
+    }
+
+    print("")
+    print("========================================")
+    print("Results: " + _str(passed) + " passed, " + _str(failed) + " failed")
+    if not nativeOk and _os() == "windows" { print("(native 引擎被跳过)") }
+    if not pollOk { print("(轮询引擎被跳过)") }
+}

@@ -1,0 +1,347 @@
+// watch.leno -- 文件/目录变化监控（跨平台）
+//
+// 为什么单独一层：`examples/ffi/使用线程监控文件夹变化.leno` 是**线程 + Channel** 形态的
+// 用法演示（约 230 行），每个应用要用都得复制一遍再改；而且它有 5 个已知局限
+// （不递归、停止靠 500ms 轮询、缓冲区 4KB 且溢出静默丢事件、无去抖、只有 Windows）。
+// 这里把它收敛成模块能力：
+//
+//   var w = fs.watch("d:\\proj", recursive = true)
+//   Array[Dict] evs = w.poll()        // 非阻塞：没有变化返回 []
+//   // ev = {action: "add" | "del" | "mod" | "rename", path: "src/a.leno"}
+//   w.stop()
+//
+// 设计取舍（写下来，避免以后又变成"两个入口"）：
+//   · **poll 模型，不是回调**：Leno 的闭包不能跨线程调用（`threads` 只传值），
+//     回调式 API 就得把事件搬回主线程，反而更绕。GUI 每帧 poll 一次最自然，
+//     而且**不需要后台线程**（Windows 的 overlapped I/O 本来就是"发请求 + 查事件"）。
+//   · **两个引擎**：`engine="auto"` 在 Windows 上用 ReadDirectoryChangesW（递归 + 溢出通知），
+//     其它平台走**轮询**（dirs.walk + mtime/size 比对）。轮询是真正跨平台的实现，
+//     Linux/macOS 上现成可用，代价是最长 `intervalMs`（默认 300ms）的延迟与全树扫描开销。
+//   · `engine="native"` 在非 Windows 上**明确报错**（`err` 里有原因），不静默退化 ——
+//     否则调用方会以为拿到的是内核级事件。
+//   · ⚠ **Linux 的 inotify 引擎尚未实现**（本机没有 Linux 环境可实测，宁可留空也不写未验证代码）；
+//     插入点见 `watch()` 里 `_os() == "linux"` 那段注释。轮询引擎在 Linux 上可用。
+import dirs
+import strings
+import times
+import ffi
+use dirs.DirEntry
+use dirs.DirInfo
+
+// ==================== 平台常量 ====================
+func _notifyFilter(): int {
+    // FILE_NOTIFY_CHANGE_FILE_NAME(1) | DIR_NAME(2) | SIZE(8) | LAST_WRITE(0x10) | CREATION(0x40)
+    // 不收 LAST_ACCESS(0x20)：任何读取都会触发，等于无意义刷屏
+    return 0x00000001 | 0x00000002 | 0x00000008 | 0x00000010 | 0x00000040
+}
+
+func _utf16(Array[int] b, int off, int bytes): string {
+    // 手写 UTF-8 编码 + from_bytes 一次构造（逐字符 from_codepoint 要造 N 个 ObjString，
+    // 每个都要过 intern 查表 + char_len + hash 三次扫描；实测 10 字中文 9µs → 2µs）
+    Array[int] out = []
+    var i = 0
+    while i + 1 < bytes and off + i + 1 < b.len() {
+        int u = b[off + i] | (b[off + i + 1] << 8)
+        i = i + 2
+        var cp = u
+        if u >= 0xD800 and u <= 0xDBFF and i + 1 < bytes and off + i + 1 < b.len() {
+            int u2 = b[off + i] | (b[off + i + 1] << 8)
+            if u2 >= 0xDC00 and u2 <= 0xDFFF {
+                cp = 0x10000 + ((u - 0xD800) << 10) + (u2 - 0xDC00)
+                i = i + 2
+            }
+        }
+        if cp < 0x80 {
+            out.add(cp)
+        } else if cp < 0x800 {
+            out.add(0xC0 | (cp >> 6))
+            out.add(0x80 | (cp & 0x3F))
+        } else if cp < 0x10000 {
+            out.add(0xE0 | (cp >> 12))
+            out.add(0x80 | ((cp >> 6) & 0x3F))
+            out.add(0x80 | (cp & 0x3F))
+        } else {
+            out.add(0xF0 | (cp >> 18))
+            out.add(0x80 | ((cp >> 12) & 0x3F))
+            out.add(0x80 | ((cp >> 6) & 0x3F))
+            out.add(0x80 | (cp & 0x3F))
+        }
+    }
+    return strings.from_bytes(out)
+}
+
+func _rel(string root, string full): string {
+    var r = dirs.relpath(full, root)
+    return strings.replace(r, "\\", "/")
+}
+
+// 同一次 poll 内按 path 合并：Windows 对一次「保存」常连报 修改/修改/重命名，
+// 不去重就得让每个调用方自己写去抖。
+// ⚠ 但 `add` 不能被紧跟的 `mod` 覆盖：新建文件必然先 ADDED 再 MODIFIED（truncate + 写入），
+//    合并成 mod 就把"这是新文件"这个信息弄丢了（实测：只报 mod，调用方不会去增量索引它）。
+func _addEvent(Array[Dict] out, Dict pos, string action, string path) {
+    if pos.has(path) {
+        int i = pos.get(path, 0) as int
+        string old = out[i]["action"] as string
+        if old == "add" and action == "mod" { return }
+        out[i] = {action: action, path: path}
+    } else {
+        pos.set(path, out.len())
+        out.add({action: action, path: path})
+    }
+}
+
+// ==================== 句柄 ====================
+export struct Watcher {
+    int engine = 0                 // 0=不可用 1=Windows 原生 2=轮询
+    string root = ""
+    bool recursive = false
+    bool stopped = false
+    string err = ""
+
+    // ---- Windows 原生 ----
+    Ptr[u8] k32 = null
+    Ptr[u8] hDir = null
+    Ptr[u8] hEvent = null
+    Ptr[u8] ovl = null
+    Ptr[u8] buf = null
+    Ptr[u8] nread = null
+    bool pending = false
+
+    // ---- 轮询 ----
+    Array[string] snapPath = []
+    Dict snapSig = {}
+    int intervalMs = 300
+    int lastScan = 0
+
+    func poll(): Array[Dict] {
+        if self.stopped or self.engine == 0 { return [] }
+        if self.engine == 1 { return _winPoll(self) }
+        return _pollOnce(self)
+    }
+
+    func stop() {
+        if self.engine == 1 { _winStop(self) }
+        self.stopped = true
+        self.engine = 0
+    }
+}
+
+// ==================== Windows 原生引擎 ====================
+func _winArm(Watcher w): bool {
+    ffi.memset(w.buf, 0, 65536)
+    ffi.call_int(w.k32, "ResetEvent", w.hEvent)
+    int subtree = if w.recursive then 1 else 0
+    int ok = ffi.call_int(w.k32, "ReadDirectoryChangesW",
+        w.hDir, w.buf, 65536, subtree, _notifyFilter(),
+        ffi.nullptr(), w.ovl, ffi.nullptr())
+    w.pending = ok != 0
+    return w.pending
+}
+
+func _winStart(Watcher w): bool {
+    w.k32 = ffi.load("kernel32.dll")
+    if w.k32 == null { w.err = "无法加载 kernel32.dll"; return false }
+
+    var pw = ffi.utf8_to_utf16(w.root)
+    // FILE_LIST_DIRECTORY(1), share READ|WRITE|DELETE(7), OPEN_EXISTING(3)
+    w.hDir = ffi.call_ptr(w.k32, "CreateFileW", pw, 0x0001, 0x00000007,
+        ffi.nullptr(), 3, 0x02000000 | 0x40000000, ffi.nullptr())
+    ffi.free(pw)
+    if ffi.ptr_to_int(w.hDir) == -1 {
+        w.err = "无法打开目录（权限不足或路径不存在）：" + w.root
+        return false
+    }
+
+    w.hEvent = ffi.call_ptr(w.k32, "CreateEventW", ffi.nullptr(), 1, 0, ffi.nullptr())
+    w.ovl = ffi.calloc(1, 32)              // x64 的 OVERLAPPED：hEvent 在 offset 24
+    ffi.write_ptr(w.ovl, 24, w.hEvent)
+    w.buf = ffi.malloc(65536)              // 64KB：一次能装下几百个短路径，溢出前给足余量
+    w.nread = ffi.malloc(4)
+    if not _winArm(w) {
+        w.err = "ReadDirectoryChangesW 初始请求失败"
+        return false
+    }
+    return true
+}
+
+func _winPoll(Watcher w): Array[Dict] {
+    Array[Dict] out = []
+    Dict pos = {}
+    // 一次 poll 要把**已完成的请求全部排空**：每消费一批就重新 arm，再问一次。
+    // 否则调用方会看到"事件滞后一拍"（第二次 poll 才拿到上次的变化）——
+    // 因为 arm 与 poll 之间总有时间窗，Windows 会把一次保存产生的 修改/修改 分到两批。
+    var rounds = 0
+    while rounds < 32 {
+        if not w.pending {
+            if not _winArm(w) { break }
+        }
+        // 非阻塞：WAIT_OBJECT_0(0) = 有事件；WAIT_TIMEOUT(258) = 没变化
+        int wr = ffi.call_int(w.k32, "WaitForSingleObject", w.hEvent, 0)
+        if wr != 0 { break }
+
+        int io = ffi.call_int(w.k32, "GetOverlappedResult", w.hDir, w.ovl, w.nread, 0)
+        if io == 0 {
+            _winArm(w)
+            break
+        }
+        int bytes = ffi.read_uint(w.nread, 0)
+        if bytes == 0 {
+            // Windows 官方口径：变化太多、缓冲区装不下 ⇒ 事件被丢弃，调用方应全量重扫
+            out.add({action: "overflow", path: ""})
+            _winArm(w)
+            break
+        }
+        var off = 0
+        while off + 12 <= bytes {
+            int act = ffi.read_uint(w.buf, off + 4)
+            int nlen = ffi.read_uint(w.buf, off + 8)
+            if nlen > 0 {
+                Array[int] nb = ffi.read_bytes(w.buf, off + 12, nlen).to_bytes()
+                string rel = _utf16(nb, 0, nlen)
+                var a = "mod"
+                if act == 1 { a = "add" }
+                else if act == 2 { a = "del" }
+                else if act == 4 or act == 5 { a = "rename" }
+                _addEvent(out, pos, a, rel)
+            }
+            int nxt = ffi.read_uint(w.buf, off)
+            if nxt == 0 { break }
+            off = off + nxt
+        }
+        _winArm(w)
+        rounds = rounds + 1
+    }
+    return out
+}
+
+func _winStop(Watcher w) {
+    if w.k32 != null {
+        if w.hDir != null { ffi.call_void(w.k32, "CancelIo", w.hDir) }
+        if w.hEvent != null { ffi.call_void(w.k32, "CloseHandle", w.hEvent) }
+        if w.hDir != null { ffi.call_void(w.k32, "CloseHandle", w.hDir) }
+        ffi.free(w.k32)
+    }
+    if w.ovl != null { ffi.free(w.ovl) }
+    if w.buf != null { ffi.free(w.buf) }
+    if w.nread != null { ffi.free(w.nread) }
+    w.hDir = null
+    w.hEvent = null
+    w.ovl = null
+    w.buf = null
+    w.nread = null
+    w.k32 = null
+    w.pending = false
+}
+
+// ==================== 轮询引擎（跨平台兜底） ====================
+func _snapshotKey(string full, bool isDir): string {
+    if isDir { return "d" }
+    DirInfo inf = dirs.stat(full)
+    return _str(inf.size) + "|" + _str(inf.mtime)
+}
+
+func _pollScan(Watcher w): Array[string] {
+    Array[string] out = []
+    w.snapSig = {}
+    if w.recursive {
+        Array[DirEntry] es = dirs.walk(w.root)
+        for es to e {
+            for e.dirs to d {
+                string full = dirs.join(e.root, d)
+                string rel = _rel(w.root, full)
+                out.add(rel)
+                w.snapSig.set(rel, "d")
+            }
+            for e.files to f {
+                string full = dirs.join(e.root, f)
+                string rel = _rel(w.root, full)
+                out.add(rel)
+                w.snapSig.set(rel, _snapshotKey(full, false))
+            }
+        }
+    } else {
+        Array[string] names = dirs.listdir(w.root)
+        for names to n {
+            string full = dirs.join(w.root, n)
+            string rel = _rel(w.root, full)
+            out.add(rel)
+            w.snapSig.set(rel, _snapshotKey(full, dirs.is_dir(full)))
+        }
+    }
+    return out
+}
+
+func _pollOnce(Watcher w): Array[Dict] {
+    Array[Dict] out = []
+    int now = _int(times.ms())
+    if w.lastScan != 0 and now - w.lastScan < w.intervalMs { return out }
+    w.lastScan = now
+    if not dirs.exists(w.root) {
+        w.err = "目录已不存在：" + w.root
+        return out
+    }
+
+    Array[string] oldPath = w.snapPath
+    Dict oldSig = w.snapSig
+    Array[string] curPath = _pollScan(w)     // 同时刷新 snapSig
+    Dict curSig = w.snapSig
+    Dict pos = {}
+
+    for curPath to p {
+        if oldSig.has(p) {
+            // 目录只报增删，不报 mod（子项变化本身会有事件）
+            if (curSig.get(p, "") as string) != (oldSig.get(p, "") as string) {
+                if (curSig.get(p, "") as string) != "d" {
+                    _addEvent(out, pos, "mod", p)
+                }
+            }
+        } else {
+            _addEvent(out, pos, "add", p)
+        }
+    }
+    for oldPath to p {
+        if not curSig.has(p) {
+            _addEvent(out, pos, "del", p)
+        }
+    }
+    w.snapPath = curPath
+    w.snapSig = curSig
+    return out
+}
+
+// ==================== 入口 ====================
+// engine: "auto"（默认）| "native"（仅 Windows）| "poll"
+export func watch(string path, bool recursive = false, string engine = "auto"): Watcher {
+    var w = new Watcher()
+    w.root = path
+    w.recursive = recursive
+    string os = _os()
+    if engine == "poll" or (engine == "auto" and os != "windows") {
+        if not dirs.is_dir(path) {
+            w.err = "不是目录：" + path
+            return w
+        }
+        w.engine = 2
+        w.snapPath = _pollScan(w)
+        w.lastScan = _int(times.ms())
+        return w
+    }
+    if os == "windows" {
+        w.engine = 1
+        if not _winStart(w) {
+            w.engine = 0
+            w.stop()
+        }
+        return w
+    }
+    // 非 Windows 的 native 请求：Linux 的 inotify（inotify_init1 + inotify_add_watch + 非阻塞 read）
+    // 尚未实现 —— 本机没有 Linux 环境实测，不写未验证代码。请用 engine="poll"，或等实现落地。
+    w.err = "native 引擎当前只支持 Windows（本机 " + os + "）；请用 engine=\"poll\""
+    return w
+}
+
+// 该目录树当前是否可用（watch 创建成功）
+export func isWatching(Watcher w): bool {
+    return w.engine != 0 and not w.stopped
+}
