@@ -20,6 +20,7 @@
 //   g.set_builder(cb)     // 数据源整体换了（闭包捕获的数组变了）
 //   g.set_scroll_y(0.0)   // 回到顶部
 import "sdl_event.leno" as evt; use evt.Event
+import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ScrollView/Table 共用 ✓）
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_core.leno" as core
 import "sdl_widget.leno" as wgt; use wgt.Widget
@@ -61,6 +62,10 @@ export struct VirtualGrid impl Widget {
     pri func(int):any builder = null
 
     pri float scrollY = 0.0
+    // ★ 2026-11-27：物理滚动（与 ScrollView / Table 共用 `sdl_scrollphys`）
+    //   位置仍是 scrollY（虚拟化的行列计算按它走），内核只持有速度 + 弹性越界量：
+    //   滚轮不再"一格跳 60px"，撞到底会回弹 ✓
+    pri ScrollPhys ph
 
     // ---- 槽位表（真正的"复用"在这里）----
     //   cells[slot]     = 已建好的控件（null 表示空槽）
@@ -122,11 +127,17 @@ export struct VirtualGrid impl Widget {
     }
 
     func set_scroll_y(float v) {
+        ph.kill()          // 程序定位：掐掉残余速度/回弹（否则"设到 0"又被推走 ✗）
         scrollY = v
         clamp_scroll()
         core.markFrameRedraw()
     }
     func get_scroll_y(): float { return scrollY }
+    // ★ 2026-11-27：物理状态只读窗口（自测断言 / 应用做"滚动中"效果）
+    //   速度单位 px/秒；越界量正 = 越过下界、负 = 越过上界
+    func get_scroll_velocity(): float { return ph.velY }
+    func get_overscroll_y(): float { return ph.overY }
+    func is_scrolling(): bool { return ph.is_moving() }
 
     func set_visible(bool v) { visible = v }
     func is_visible(): bool { return visible }
@@ -166,6 +177,18 @@ export struct VirtualGrid impl Widget {
         // ★ 2026-11-01：手写两行夹取 ⇒ maths.clamp（滚动控件统一口径）
         scrollY = maths.clamp(scrollY, 0.0, max_scroll())
     }
+    // ---- 物理滚动：绘制偏移（含弹性越界）+ 每帧推进 ----
+    pri func dispY(): float { return scrollY + ph.overY }
+    //   ⚠ 结尾必须 requestRedraw 续帧，否则事件循环挂起 ⇒ "滚了不动、动鼠标才动"✗
+    //      （ScrollView / Table 踩过同一个坑）
+    pri func pump_scroll() {
+        var[float, float](_nx, ny) = ph.pump(scrollY, scrollY, 0.0, max_scroll())
+        if ny != scrollY { scrollY = ny; core.markFrameRedraw() }
+        if ph.is_moving() {
+            core.markFrameRedraw()
+            core.requestRedraw()
+        }
+    }
 
     // 可见行区间（上下各留 1 行缓冲，滚动时不会露白 ✓）
     pri func row_range(): Array[int] {
@@ -173,8 +196,9 @@ export struct VirtualGrid impl Widget {
         int r = rows_now()
         if r <= 0 or c <= 0 { return [0, -1] }
         float step = itemH + gapY
-        int first = _int((scrollY - padY) / step) - 1
-        int last = _int((scrollY + h - padY) / step) + 1
+        // 用 `dispY()`（含弹性越界）⇒ 回弹时不会露出没建的空槽 ✓
+        int first = _int((dispY() - padY) / step) - 1
+        int last = _int((dispY() + h - padY) / step) + 1
         // ★ 2026-11-01：行列号夹取走 maths.clampi（int 版，比 if 更贴语义）
         first = maths.clampi(first, 0, r - 1)
         last = maths.clampi(last, 0, r - 1)
@@ -187,7 +211,7 @@ export struct VirtualGrid impl Widget {
         int row = item / c
         int col = item - row * c
         float ix = x + padX + _float(col) * (itemW + gapX)
-        float iy = y + padY + _float(row) * (itemH + gapY) - scrollY
+        float iy = y + padY + _float(row) * (itemH + gapY) - dispY()
         return [ix, iy]
     }
 
@@ -308,9 +332,10 @@ export struct VirtualGrid impl Widget {
 
         // 滚轮：只在自己身上生效
         if ev.isMouseWheel() and mx >= x and mx <= x + w and my >= y and my <= y + h {
-            scrollY = scrollY - ev.wheelY() * 60.0
-            clamp_scroll()
+            // ★ 2026-11-27：物理滚动 —— 只叠加速度，推进在 render 的 pump_scroll ✓
+            ph.kick(0.0, -ev.wheelY() * 60.0)
             core.markFrameRedraw()
+            core.requestRedraw()      // 下一帧也得有人要（否则"滚了不动"✗）
             return
         }
         // 其余事件转给**当前可见**的项（避免滚动事件被重复消费 ✓）
@@ -330,6 +355,7 @@ export struct VirtualGrid impl Widget {
 
     func render(Renderer r) {
         if not _loaded or not visible { return }
+        pump_scroll()          // 每帧推进一次物理（含续帧请求，见函数注释 ✓）
         sync_cells()
         // ★ 必须裁剪到自己这块矩形：滚出视口的项会被画到外面
         //   （不裁的话卡片会盖住上面的标题、下面的播放条 —— 实测"滚动后穿模" ✗）
@@ -395,6 +421,7 @@ export struct VirtualGrid impl Widget {
         var t = thumb()
         float m = max_scroll()
         float span = h - t[3]
+        ph.kill()          // 拖滚动条 1:1 跟手 ⇒ 掐掉惯性/回弹（否则"拽不住"✗）
         if span > 1.0 { scrollY = (my - barGrab - y) / span * m }
         clamp_scroll()
     }

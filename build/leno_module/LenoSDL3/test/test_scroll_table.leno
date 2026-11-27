@@ -1,0 +1,121 @@
+// test_scroll_table.leno —— Table / VirtualGrid 接入物理滚动后的回归（2026-11-27）
+//
+// 背景：这两个控件原来也是"滚轮一步跳一行 + clamp 硬夹边界"，和 ScrollView 的老毛病一模一样。
+//   现在它们与 ScrollView 共用 `sdl_scrollphys` 内核，本测试钉住三件事：
+//     ① 滚轮不再**瞬跳一行**（第一帧只走几个像素 ⇒ 起步是加速）
+//     ② 停手后有滑行尾巴，最终**自己收敛**（不会一直请求重绘空转）
+//     ③ 撞到底会**回弹**（overscroll 非 0），之后归零
+//   另外 overlay **不做任何标脏**（不 markFrameRedraw / 不改文本）：
+//     一旦谁的 `pump` 忘了 requestRedraw，测试就会像"滚了不动"那样卡住 ⇒ 直接暴露 ✗
+//
+// ⚠ 两个坑（都踩过）：
+//   ① 控件必须**进窗口**（`win.addTable` / `win.add`）：`createXxx` 只是"交给容器"的控件，
+//      不进窗口就根本不 render ⇒ 物理推进（在 render 里）永不执行 ✗
+//   ② 窗口初始**没有重绘请求**时 overlay 一帧都不会跑 ⇒ 第一次滚轮必须由 `addTimerOnce` 注入，
+//      纯靠 overlay 里的 gFrame 计数会永远等不到 ✗
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_scroll_table.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, Table, VirtualGrid, Label, Widget)
+
+int gFail = 0
+int gFrame = 0
+float gTbMaxOver = 0.0
+bool gTbDone = false
+bool gVgKicked = false
+bool gVgMoved = false
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+func finish() {
+    print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+    SDL3.requestExit()
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "scroll table test", w: 900, h: 620})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+
+    // Table：40 行 × 24 = 960 内容，视口 560 ⇒ 可滚 ~400
+    Table tb = win.addTable({x: 16, y: 16, w: 420, h: 560, headers: ["行", "内容"]})
+    Array[Array[string]] rows = []
+    for 40 to i { rows.add(["行 " + _str(i), "内容 " + _str(i)]) }
+    tb.set_rows(rows)
+
+    // VirtualGrid：40 项 × 80 = 3200 内容，视口 560 ⇒ 可滚 ~2600
+    //   ⚠ 构建器走 `set_builder()`，不是 opts 里的 `build` 键（那个键控件根本不读 ✗）
+    VirtualGrid vg = SDL3.createVirtualGrid({x: 460, y: 16, w: 420, h: 560,
+        item_w: 120, item_h: 80, gap_x: 8, gap_y: 8, count: 40})
+    vg.set_builder(func(int i): Widget { return SDL3.createLabel({text: "格 " + _str(i)}) })
+    win.add(vg)
+
+    // 第一下滚轮由定时器注入（见文件头"坑②"）；顺带把帧计数归零
+    win.addTimerOnce(400, func() {
+        gFrame = 0
+        SDL3.testWheelAt(win.getID(), 200.0, 300.0, -1.0)
+    })
+    // 兜底：20 秒还没结束就判失败（否则测试进程会一直挂着 ✗）
+    win.addTimerOnce(20000, func() {
+        check(false, "20 秒内没跑完（帧循环或收敛有问题 ✗）")
+        finish()
+    })
+
+    win.setOverlay(func(Renderer r) {
+        gFrame = gFrame + 1
+
+        // ---- ① 起步：不是"一步跳一行" ----
+        if gFrame == 3 {
+            check(tb.scroll_y() > 0.5 and tb.scroll_y() < 24.0,
+                "Table 滚轮不是瞬跳一行（两帧后 " + _str(tb.scroll_y()) + " px，行高 24）")
+            check(tb.get_scroll_velocity() > 0.0,
+                "Table 滚轮转成了速度（" + _str(tb.get_scroll_velocity()) + " px/s）")
+        }
+        // 连滚 20 拍 ⇒ 速度累积到上限 ⇒ 一定会撞到底
+        if gFrame >= 5 and gFrame <= 24 {
+            SDL3.testWheelAt(win.getID(), 200.0, 300.0, -1.0)
+        }
+        if maths.abs(tb.get_overscroll_y()) > gTbMaxOver { gTbMaxOver = maths.abs(tb.get_overscroll_y()) }
+
+        // ---- ② Table 收敛判定 ----
+        if not gTbDone and gFrame > 30 and not tb.is_scrolling() {
+            gTbDone = true
+            check(gTbMaxOver > 3.0, "Table 撞到底有弹性越界（峰值 " + _str(gTbMaxOver) + " px）")
+            check(maths.abs(tb.get_overscroll_y()) < 0.01, "Table 越界量最终回中（" + _str(tb.get_overscroll_y()) + "）")
+            check(tb.scroll_y() > 300.0, "Table 停在底部附近（" + _str(tb.scroll_y()) + " px）")
+            // 排一次 VirtualGrid 的注入（同样走定时器：这段时间循环可能已经空闲挂起 ✓）
+            win.addTimerOnce(400, func() {
+                SDL3.testWheelAt(win.getID(), 700.0, 300.0, -1.0)
+                gVgKicked = true
+            })
+        }
+
+        // ---- ③ VirtualGrid：一格滚轮要滑一段再停 ----
+        if gVgKicked {
+            if vg.get_scroll_velocity() > 0.0 { gVgMoved = true }
+            if gVgMoved and not vg.is_scrolling() {
+                gVgMoved = false
+                check(vg.get_scroll_y() > 60.0 and vg.get_scroll_y() < 130.0,
+                    "VirtualGrid 一格滚轮滑行 ≈1.4 项后停稳（" + _str(vg.get_scroll_y()) + " px，一项 60）")
+                finish()
+            }
+        }
+    })
+
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}

@@ -1,0 +1,180 @@
+// sdl_scrollphys.leno — 滚动「物理内核」：速度 + 按 dt 的解析积分 + 弹性越界 + 弹簧回弹
+//
+// 为什么单独抽出来（2026-11-27）：
+//   ScrollView 换成物理滚动之后，`ListBox / ComboBox / Table / TreeView / VirtualGrid`
+//   这五个**各自实现了滚动**的控件还停在"滚轮一步跳一行 + clamp 硬夹边界"的状态
+//   ⇒ 同一个坑要有第六套修法 ✗ ⇒ 抽成这一个结构：
+//     **位置由各控件自己持有**（它们的坐标语义、虚拟化口径都不一样），
+//     内核只管「速度」与「越界量」这两件事 ✓
+//
+// 用法（每个控件三步）：
+//   ScrollPhys ph = new ScrollPhys()        // 字段里放一个（struct 字段默认构造 ✓）
+//   // ① 滚轮：ph.kick(-ev.wheelY() * 一行的像素)      —— 只叠加速度，**不直接改位置**
+//   // ② 每帧：var[float, float](nx, ny) = ph.pump(px, py, maxX, maxY); px = nx; py = ny
+//   //        if ph.isMoving() { core.requestRedraw() }   ← 别漏，漏了就是"滚了不动"✗
+//   // ③ 渲染：ph.renderX(px) / ph.renderY(py)          —— 已含弹性越界量
+//
+// 参数都是实测调出来的（改之前先看注释里的"为什么"）：
+//   · 速度上限 4000px/s ≈ 半屏/秒：再快就看不清滚到哪了
+//   · 弹簧 400 / 阻尼 28 ⇒ ω≈20rad/s、ζ≈0.70（欠阻尼）⇒ 回中最末端有一点点过冲 = "呼吸"
+//     （k=700 时撞界只弹出 8px，看不出来 ✗；400 时 ≈12px ✓）
+//   · 收尾 20px/s ⇒ 剩 20×τ(≈0.13s)≈2.6px 就停，肉眼看不到"最后一下"
+//   · dt 钳到 33ms（而不是"当 1/60"）：20~30fps 下每帧真实 33~50ms，
+//     当一帧会让滚动整体变慢（实测滚一格只走 45.9px 而不是 66px ✗）
+import maths
+import "sdl_core.leno" as core
+
+export struct ScrollPhys {
+    // ---- 状态（**位置不在这里**，见文件头）----
+    float velX = 0.0, velY = 0.0              // px/秒
+    float overX = 0.0, overY = 0.0            // 越界量：正 = 越过下/右界，负 = 越过上/左界
+    float overVelX = 0.0, overVelY = 0.0      // 越界量的速度（px/s，弹簧积分用）
+    int ns = 0                                // 上次积分时刻（getTicksNS），0 = 未初始化
+    bool velDrag = false                      // 当前速度来自"甩动"（衰减慢）还是滚轮（衰减快）
+    float frWheel = 0.88, frDrag = 0.94       // 每帧（60fps 基准）速度保留率
+    float tauWheel = 0.13, tauDrag = 0.27     // ↑ 换算出的时间常数（秒），解析积分用
+
+    // 每帧保留率 ⇒ 时间常数 τ = 1/(60·(−ln fr))。有 τ 才能做**解析积分**：
+    //   一个 dt 内的位移 = v0·τ·(1 − fr^(60dt))，速度 ×= fr^(60dt)
+    //   ⇒ 60Hz 与 144Hz 走出的距离**严格相同**（"每帧 v*=fr 再位移"是一阶欧拉，差 3% ✗）
+    func set_friction(float fw, float fd) {
+        frWheel = maths.clamp(fw, 0.5, 0.99)
+        frDrag = maths.clamp(fd, 0.5, 0.99)
+        tauWheel = 1.0 / (60.0 * (-maths.log(frWheel)))
+        tauDrag = 1.0 / (60.0 * (-maths.log(frDrag)))
+    }
+
+    // 滚轮：**只叠加速度**（连续滚轮累积成"一次飞"），不直接改位置。
+    //   `dx/dy` 是"这一格本该位移多少像素"（ScrollView 传 step=48、表格传 rowH）；
+    //   ×11 之后一格 ⇒ 528px/s，配合 fr 0.88（τ≈0.13s）滑行 ≈1.4 格 ✓
+    func kick(float dx, float dy) {
+        velY = maths.clamp(velY + dy * 11.0, -4000.0, 4000.0)
+        velX = maths.clamp(velX + dx * 11.0, -4000.0, 4000.0)
+        velDrag = false
+        if ns == 0 { ns = core.getTicksNS() }   // 不补这行：第一次滚轮会白等一帧 ✗
+    }
+
+    // 程序化"甩一下"：给一段初速度（px/秒）
+    func fling(float vx, float vy) {
+        velX = maths.clamp(vx, -4000.0, 4000.0)
+        velY = maths.clamp(vy, -4000.0, 4000.0)
+        velDrag = true
+        overX = 0.0; overY = 0.0; overVelX = 0.0; overVelY = 0.0
+        if ns == 0 { ns = core.getTicksNS() }
+    }
+
+    // 手指拖动：内容 **1:1 跟手**，越过边界就记进 over（上限 ±180px 硬顶）。
+    //   为什么不学 iOS 的非线性阻尼：那个函数每帧重算、手指回拉时还会"迟滞"；
+    //   1:1 + 硬顶的可预测性更好，松手后弹簧照样有回弹 ✓
+    func drag(float ddx, float ddy, float px, float py, float maxX, float maxY): [float, float] {
+        float nx = px
+        float ny = py
+        if maxY > 0.0 {
+            ny = py - ddy
+            if ny > maxY { overY = ny - maxY; ny = maxY }
+            else if ny < 0.0 { overY = ny; ny = 0.0 }
+            else { overY = 0.0 }
+        }
+        if maxX > 0.0 {
+            nx = px - ddx
+            if nx > maxX { overX = nx - maxX; nx = maxX }
+            else if nx < 0.0 { overX = nx; nx = 0.0 }
+            else { overX = 0.0 }
+        }
+        overX = maths.clamp(overX, -180.0, 180.0)
+        overY = maths.clamp(overY, -180.0, 180.0)
+        overVelX = 0.0; overVelY = 0.0     // 跟手期间弹簧让位（否则手指和弹簧抢方向盘 ✗）
+        return nx, ny
+    }
+
+    // 按**给定 dt（秒）**推进一次。返回新的 (px, py)；速度/越界量原地更新。
+    func step(float px, float py, float dt, float maxX, float maxY): [float, float] {
+        if dt <= 0.0 { return px, py }
+        if dt > 0.033 { dt = 0.033 }      // 掉帧/空闲挂起：见文件头"dt 钳到 33ms"
+        // ---- ① 越界回弹：半隐式欧拉 + 弹簧/阻尼（与位置积分解耦 ⇒ 回弹不动 px/py ✓）----
+        if overY != 0.0 or overVelY != 0.0 {
+            overVelY = overVelY + (-400.0 * overY - 28.0 * overVelY) * dt
+            overY = overY + overVelY * dt
+            if maths.abs(overY) < 0.15 and maths.abs(overVelY) < 4.0 { overY = 0.0; overVelY = 0.0 }
+        }
+        if overX != 0.0 or overVelX != 0.0 {
+            overVelX = overVelX + (-400.0 * overX - 28.0 * overVelX) * dt
+            overX = overX + overVelX * dt
+            if maths.abs(overX) < 0.15 and maths.abs(overVelX) < 4.0 { overX = 0.0; overVelX = 0.0 }
+        }
+        // ---- ② 速度积分（解析解）----
+        if maths.abs(velY) < 0.02 { velY = 0.0 }
+        if maths.abs(velX) < 0.02 { velX = 0.0 }
+        if velY == 0.0 and velX == 0.0 { return px, py }
+        if maxY <= 0.0 { velY = 0.0 }
+        if maxX <= 0.0 { velX = 0.0 }
+        if velY == 0.0 and velX == 0.0 { return px, py }
+        float fr = if velDrag then frDrag else frWheel
+        float tau = if velDrag then tauDrag else tauWheel
+        float keep = maths.pow(fr, dt * 60.0)
+        float dy = velY * tau * (1.0 - keep)
+        float dx = velX * tau * (1.0 - keep)
+        velY = velY * keep
+        velX = velX * keep
+        float ny = py + dy
+        float nx = px + dx
+        // 撞界：多余位移 **0.55 折减**成越界量，**速度也交给弹簧**（overVel += vel）
+        //   只把 vel 清零的话只剩"一帧位移"那么点回弹（实测峰值 5px，看不见 ✗）；
+        //   传速度后峰值 ≈ 0.46·v/ω（ω=20）⇒ 4000px/s 甩到底弹出 ≈12px（实测 11.6）✓
+        //   传过去的速度上限 1200px/s（峰值 ≈27px）：不限的话极速一甩能弹出半屏 ✗
+        if ny > maxY {
+            overY = overY + (ny - maxY) * 0.55
+            overVelY = maths.clamp(overVelY + velY, -1200.0, 1200.0)
+            ny = maxY; velY = 0.0
+        } else if ny < 0.0 {
+            overY = overY + ny * 0.55
+            overVelY = maths.clamp(overVelY + velY, -1200.0, 1200.0)
+            ny = 0.0; velY = 0.0
+        }
+        if nx > maxX {
+            overX = overX + (nx - maxX) * 0.55
+            overVelX = maths.clamp(overVelX + velX, -1200.0, 1200.0)
+            nx = maxX; velX = 0.0
+        } else if nx < 0.0 {
+            overX = overX + nx * 0.55
+            overVelX = maths.clamp(overVelX + velX, -1200.0, 1200.0)
+            nx = 0.0; velX = 0.0
+        }
+        overY = maths.clamp(overY, -160.0, 160.0)
+        overX = maths.clamp(overX, -160.0, 160.0)
+        // 收尾：衰减到"肉眼看不出来"就掐掉（否则永远差零点几像素 ⇒ 一直请求重绘空转 ✗）
+        if maths.abs(velY) < 20.0 { velY = 0.0 }
+        if maths.abs(velX) < 20.0 { velX = 0.0 }
+        return nx, ny
+    }
+
+    // 真实时钟入口：用 `getTicksNS()` 算 dt 再 step（跟手期间调用方先 `syncClock()` 跳过 ✓）
+    func pump(float px, float py, float maxX, float maxY): [float, float] {
+        int now = core.getTicksNS()
+        if ns == 0 { ns = now; return px, py }
+        int dn = now - ns
+        ns = now
+        if dn <= 0 { return px, py }
+        return step(px, py, _float(dn) / 1000000000.0, maxX, maxY)
+    }
+
+    // 只把时钟对齐到"现在"（跟手期间用：手指 1:1 改位置，不该再叠加惯性 ✓）
+    func syncClock() { ns = core.getTicksNS() }
+
+    // 掐掉一切残余运动：程序化定位 / 拖滚动条 / 键盘翻页都必须调
+    //   （否则"设到 0"之后残余速度还会把内容推走 —— 实测过 8.7px ✗）
+    func kill() {
+        velX = 0.0; velY = 0.0
+        overX = 0.0; overY = 0.0
+        overVelX = 0.0; overVelY = 0.0
+    }
+
+    // 还有没有未收敛的运动（速度 / 回弹任一）—— 调用方据此决定要不要 requestRedraw
+    func is_moving(): bool {
+        return velX != 0.0 or velY != 0.0 or overX != 0.0 or overY != 0.0
+    }
+
+    // ---- 渲染偏移（含弹性越界量：越界时内容跟手移出视口，由裁剪切掉 = 橡皮筋视觉 ✓）----
+    func renderX(float px): float { return px + overX }
+    func renderY(float py): float { return py + overY }
+}
