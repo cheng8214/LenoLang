@@ -27,6 +27,7 @@ import "sdl_core.leno" as core; use core.SDL_Rect
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 import "sdl_gridlayout.leno" as grd; use grd.GridLayout
 import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ListBox/Table/… 共用 ✓）
+import "sdl_animator.leno" as ani; use ani.Tween         // 滚动条折叠/展开渐变 ✓
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_panel.leno" as pnl; use pnl.Panel
 import "sdl_theme.leno" as theme; use theme.Theme
@@ -86,6 +87,9 @@ export struct ScrollView impl Widget, Themeable {
     //     · 撞界 ⇒ 多余位移折减成越界量、速度交给弹簧（欠阻尼 ⇒ 顶到边界有"呼吸" ✓）
     //   ⚠ 单位：内核里的速度是 **px/秒**（不是 px/帧）—— 老实现那个 px/帧 的 `panV` 已删
     pri ScrollPhys phys
+    // ★ 2026-11-27：滚动条**折叠/展开渐变**（0 = 3px 细条、1 = 完整轨道+手柄）
+    //   以前是 3px ↔ barW 硬跳，鼠标扫过滚动条那一下"啪"地变粗 ✗
+    pri Tween barA
 
     pri bool autoW = false, autoH = false      // 自动内容尺寸标志（content_w/h < 0 时启用）
     // ── 内容尺寸「跟随视图」（自适应布局用 ✓）──
@@ -702,7 +706,11 @@ export struct ScrollView impl Widget, Themeable {
     pri func drawScrollbars(Renderer r) {
         // `barHover`：指针停在滚动条槽上（见字段注释）⇒ 与"在内容区里"同样算悬停 ✓
         bool hot = mouseIn or barHover or dragV != 0 or dragH != 0
-        bool fold = barAutoHide and not hot
+        // ★ 2026-11-27：折叠/展开**渐变**（ba：0 = 3px 细条、1 = 完整轨道 + 手柄）
+        //   以前 `fold` 是布尔 ⇒ 鼠标一进就 3px→12px 硬跳，观感"咔"✗
+        barA.set_target(if hot then 1.0 else 0.0)
+        if barA.pump() { core.requestRedraw() }
+        float ba = if barAutoHide then barA.value() else 1.0
         Color track = sbColor
         if hot {
             track = if theme.colorA(barHoverColor) > 0 then barHoverColor
@@ -710,31 +718,43 @@ export struct ScrollView impl Widget, Themeable {
         }
         int faintA = theme.colorA(track) / 2
         Color faint = (faintA << 24) | (track & 0x00FFFFFF)
-        float gw = if fold then 3.0 else barW
-        float gh = if fold then 3.0 else barW
+        float gw = 3.0 + (barW - 3.0) * ba
+        float gh = gw
         if showV() {
             float innerH = h - (if showH() then gh else 0.0)
-            if fold {
-                // 折叠：只留细条（**不画手柄**）——让人知道"这里能滚"，又不抢视线 ✓
-                r.setColor(faint)
-                r.fillRoundedRect(x + w - gw - 2.0, y + 2.0, gw, innerH - 4.0, gw / 2.0)
-            } else {
-                r.setColor(track)
-                r.fillRoundedRect(x + w - gw, y, gw, innerH, gw / 2.0)
-                r.setColor(theme.brighten(track, 40))
-                r.fillRoundedRect(x + w - gw + 2.0, vThumbY, gw - 4.0, vThumbH, (gw - 4.0) / 2.0)
+            // ⚠ 三条（细条 / 轨道 / 手柄）必须**共用同一个左边界**，否则渐变期间会露出两条并排的竖条
+            //   （错位 2px 时肉眼就是"手柄不居中"✗ —— 2026-11-27 用户实测抓到）
+            //   口径：右边缘固定 = `x + w - 2`，宽度 = gw（3 → barW），手柄是轨道内缩 2px ✓
+            float bx = x + w - gw - 2.0
+            // 细条永远画（宽度跟着 ba 长）—— 让人知道"这里能滚"，又不抢视线 ✓
+            r.setColor(faint)
+            r.fillRoundedRect(bx, y + 2.0, gw, innerH - 4.0, gw / 2.0)
+            // 展开的部分（轨道 + 手柄）：靠 alpha 淡入，ba≈0 时完全看不见 ✓
+            if ba > 0.01 {
+                int ta = _int(255.0 * ba)
+                r.setColor(theme.withAlpha(track, ta))
+                r.fillRoundedRect(bx, y, gw, innerH, gw / 2.0)
+                if gw > 6.0 {
+                    r.setColor(theme.withAlpha(theme.brighten(track, 40), ta))
+                    r.fillRoundedRect(bx + 2.0, vThumbY, gw - 4.0, vThumbH, (gw - 4.0) / 2.0)
+                }
             }
         }
         if showH() {
             float innerW = w - (if showV() then gw else 0.0)
-            if fold {
-                r.setColor(faint)
-                r.fillRoundedRect(x + 2.0, y + h - gh - 2.0, innerW - 4.0, gh, gh / 2.0)
-            } else {
-                r.setColor(track)
-                r.fillRoundedRect(x, y + h - gh, innerW, gh, gh / 2.0)
-                r.setColor(theme.brighten(track, 40))
-                r.fillRoundedRect(hThumbX, y + h - gh + 2.0, hThumbW, gh - 4.0, (gh - 4.0) / 2.0)
+            // 同理：底边缘固定 = `y + h - 2`，handle/轨道/细条都从这里算 ✓
+            float by = y + h - gh - 2.0
+            float bw = innerW - 4.0
+            r.setColor(faint)
+            r.fillRoundedRect(x + 2.0, by, bw, gh, gh / 2.0)
+            if ba > 0.01 {
+                int ta2 = _int(255.0 * ba)
+                r.setColor(theme.withAlpha(track, ta2))
+                r.fillRoundedRect(x + 2.0, by, bw, gh, gh / 2.0)
+                if gh > 6.0 {
+                    r.setColor(theme.withAlpha(theme.brighten(track, 40), ta2))
+                    r.fillRoundedRect(hThumbX + 2.0, by + 2.0, hThumbW - 4.0, gh - 4.0, (gh - 4.0) / 2.0)
+                }
             }
         }
     }

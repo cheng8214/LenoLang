@@ -27,7 +27,7 @@ import "sdl_menu.leno" as menu     // 切页时收掉残留的右击菜单（见
 import "sdl_treeview.leno" as tvlib; use tvlib.TreeView
 import "sdl_image.leno" as img     // 标签图标纹理（tab_icons ✓ 2026-10-26）
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
-import "sdl_animator.leno" as ani; use ani.Anim   // 下划线滑动的缓动（与其它控件共用 ✓）
+import "sdl_animator.leno" as ani; use ani.Tween   // 下划线滑动的缓动（与其它控件共用 ✓）
 use theme.Color
 
 
@@ -81,8 +81,8 @@ export struct TabControl impl Widget, Themeable {
     // ★ 2026-11-27：下划线**滑过去**而不是"跳"过去（切页时 ~150ms 缓动）
     //   以前是直接画在激活标签下方 ⇒ 切页那一下位置瞬变，观感"咔"✗
     //   `usW.value() <= 0` 当作"还没初始化"⇒ 首帧直接落位，不从 0 滑进来 ✓
-    pri Anim usX          // 内嵌 struct 字段（默认构造）—— 不能写 `= new Anim()`（字段默认值必须是常量 ✗）
-    pri Anim usW
+    pri Tween usX          // 内嵌 struct 字段（默认构造）—— 不能写 `= new Tween()`（字段默认值必须是常量 ✗）
+    pri Tween usW
     float _usSpeed = 12.0        // 每秒收敛比例（12 ⇒ ~150ms 到位；调小更飘）
     pri Color actColor = #3C96EBFF     // 激活标签
     pri Color txtColor = #78808CFF     // 文字色（非激活）
@@ -565,7 +565,7 @@ export struct TabControl impl Widget, Themeable {
         }
 
         // 激活标签下划线（隐藏表头时同样不画 ✓）—— 圆角端点，配胶囊底不突兀
-        //   ★ 2026-11-27：现在由 `Anim` 驱动 x/宽度**滑动过去**（以前直接画在激活标签下 ⇒ 切页瞬跳 ✗）
+        //   ★ 2026-11-27：现在由 `Tween` 驱动 x/宽度**滑动过去**（以前直接画在激活标签下 ⇒ 切页瞬跳 ✗）
         if showHeader and showUnderline and actX >= 0.0 {
             usX.set_speed(_usSpeed)
             usW.set_speed(_usSpeed)

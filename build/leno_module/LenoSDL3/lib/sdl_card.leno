@@ -44,7 +44,7 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 import "sdl_menu.leno" as menu; use menu.MenuBar   // 右键上下文菜单（菜单本体共用 sdl_menu ✓）
 import strings
-import "sdl_animator.leno" as ani; use ani.Anim   // hover 抬起/底色渐变（与 Tab/ComboBox 共用 ✓）
+import "sdl_animator.leno" as ani; use ani.Tween   // hover 抬起/底色渐变（与 Tab/ComboBox 共用 ✓）
 
 
 // 角标规格（多角标 ✓）：opts 里用 Dict 描述，进控件时**只转一次**成结构体（不是每帧转 ✗）
@@ -204,7 +204,7 @@ export struct Card impl Widget, Themeable {
     pri float hoverLift = 0.0         // 悬停时**视觉**上移像素（不改 x/y ✓）
     // ★ 2026-11-27：hover 抬起/底色**渐变**（0..1，约 150ms）——
     //   以前 `hover` 一变就瞬移 `hoverLift` 像素、底色也瞬换 ⇒ 鼠标扫过一排卡片时"啪啪"跳 ✗
-    pri Anim hoverA
+    pri Tween hoverA
     pri func():void onClick
     bool hover = false
     pri bool pressed = false

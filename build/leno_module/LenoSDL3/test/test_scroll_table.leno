@@ -22,6 +22,7 @@ use SDL3.(Event, Renderer, Window, Table, VirtualGrid, Label, Widget)
 
 int gFail = 0
 int gFrame = 0
+int gAfter = -1        // 从"注入第一次滚轮"起的帧数（-1 = 还没注入）
 float gTbMaxOver = 0.0
 bool gTbDone = false
 bool gVgKicked = false
@@ -67,7 +68,7 @@ main() {
 
     // 第一下滚轮由定时器注入（见文件头"坑②"）；顺带把帧计数归零
     win.addTimerOnce(400, func() {
-        gFrame = 0
+        gAfter = 0
         SDL3.testWheelAt(win.getID(), 200.0, 300.0, -1.0)
     })
     // 兜底：20 秒还没结束就判失败（否则测试进程会一直挂着 ✗）
@@ -78,22 +79,28 @@ main() {
 
     win.setOverlay(func(Renderer r) {
         gFrame = gFrame + 1
+        // ⚠ 用「注入之后的帧数」`gAfter` 判断时机，而不是绝对帧号 `gFrame`：
+        //   窗口一起来就会渲染几帧，timer 400ms 可能落在 gFrame 已经 >3 之后 ⇒
+        //   按 gFrame==3 检查会在**注入之前**先跑一次（读到 0.0）⇒ 偶发 FAIL ✗（实测踩到）
+        if gAfter >= 0 { gAfter = gAfter + 1 }
 
         // ---- ① 起步：不是"一步跳一行" ----
-        if gFrame == 3 {
-            check(tb.scroll_y() > 0.5 and tb.scroll_y() < 24.0,
+        if gAfter == 2 {
+            //   ⚠ 下限给 0.05 而不是 0.5：两帧的实际间隔可能只有 2ms（位置才走 0.49px），
+            //     重点是"动了但远没到一整行"，不是具体多少像素
+            check(tb.scroll_y() > 0.05 and tb.scroll_y() < 24.0,
                 "Table 滚轮不是瞬跳一行（两帧后 " + _str(tb.scroll_y()) + " px，行高 24）")
             check(tb.get_scroll_velocity() > 0.0,
                 "Table 滚轮转成了速度（" + _str(tb.get_scroll_velocity()) + " px/s）")
         }
         // 连滚 20 拍 ⇒ 速度累积到上限 ⇒ 一定会撞到底
-        if gFrame >= 5 and gFrame <= 24 {
+        if gAfter >= 4 and gAfter <= 23 {
             SDL3.testWheelAt(win.getID(), 200.0, 300.0, -1.0)
         }
         if maths.abs(tb.get_overscroll_y()) > gTbMaxOver { gTbMaxOver = maths.abs(tb.get_overscroll_y()) }
 
         // ---- ② Table 收敛判定 ----
-        if not gTbDone and gFrame > 30 and not tb.is_scrolling() {
+        if not gTbDone and gAfter > 30 and not tb.is_scrolling() {
             gTbDone = true
             check(gTbMaxOver > 3.0, "Table 撞到底有弹性越界（峰值 " + _str(gTbMaxOver) + " px）")
             check(maths.abs(tb.get_overscroll_y()) < 0.01, "Table 越界量最终回中（" + _str(tb.get_overscroll_y()) + "）")

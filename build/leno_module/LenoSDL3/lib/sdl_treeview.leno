@@ -25,7 +25,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect; use core.sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ScrollView/Table 共用 ✓）
-import "sdl_animator.leno" as ani; use ani.Anim         // 悬停行渐变 ✓
+import "sdl_animator.leno" as ani; use ani.Tween         // 悬停行渐变 ✓
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
@@ -102,7 +102,7 @@ export struct TreeView impl Widget, Themeable {
     pri float scroll = 0.0
     pri ScrollPhys phys             // ★ 2026-11-27 物理滚动：滚轮加速 + 撞界回弹（见 dispY/pump_scroll）
     // ★ 2026-11-27：悬停行底色渐入/渐出（`hovIdA` = 正在渐变的节点 id，鼠标离开后它自己淡出）
-    pri Anim hovA
+    pri Tween hovA
     pri int hovIdA = -1
     pri int hover = -1
     pri int sel = -1

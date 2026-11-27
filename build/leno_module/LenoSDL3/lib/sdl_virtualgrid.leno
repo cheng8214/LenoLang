@@ -21,6 +21,7 @@
 //   g.set_scroll_y(0.0)   // 回到顶部
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ScrollView/Table 共用 ✓）
+import "sdl_animator.leno" as ani; use ani.Tween         // 滚动条折叠/展开渐变 ✓
 import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_core.leno" as core
 import "sdl_widget.leno" as wgt; use wgt.Widget
@@ -66,6 +67,7 @@ export struct VirtualGrid impl Widget {
     //   位置仍是 scrollY（虚拟化的行列计算按它走），内核只持有速度 + 弹性越界量：
     //   滚轮不再"一格跳 60px"，撞到底会回弹 ✓
     pri ScrollPhys phys
+    pri Tween barA          // 滚动条折叠/展开渐变（3px ↔ barW）
     // ★ 2026-11-27：**触摸拖动滚动**（手机上唯一能滚卡片墙的手势）
     //   只对"手指"生效（`ev.isTouchLike()`）：桌面鼠标左键要留给卡片的点击/拖拽 ✓
     //   panSt：0 空闲 / 1 按下但未过阈值（卡片点击照常）/ 2 拖动中
@@ -488,28 +490,33 @@ export struct VirtualGrid impl Widget {
         var t = thumb()
         if t[2] <= 0.0 { return }
 
-        // ① 自动隐藏态：只留一根细提示条
-        if barAutoHide and not barHover and not dragging {
-            float hw = 3.0
-            int ha = theme.colorA(sbColor) / 2
-            r.setColor((ha << 24) | (sbColor & 0x00FFFFFF))
-            r.fillRoundedRect(x + w - hw - 2.0, y + 2.0, hw, h - 4.0, hw / 2.0)
-            return
-        }
+        // ★ 2026-11-27：折叠/展开**渐变**（ba：0 = 3px 细条、1 = 完整轨道+手柄）
+        //   以前是布尔 fold ⇒ 鼠标一进 3px↔barW 硬跳 ✗（与 ScrollView/Table 同一套）
+        bool hot = barHover or dragging
+        barA.set_target(if hot then 1.0 else 0.0)
+        if barA.pump() { core.requestRedraw() }
+        float ba = if barAutoHide then barA.value() else 1.0
 
-        // ② 展开态：颜色分「平时 / 悬停」两档
+        // ① 细提示条（永远画，宽度跟着 ba 长）
+        float hw = 3.0 + (t[2] - 3.0) * ba
+        int ha = theme.colorA(sbColor) / 2
+        r.setColor((ha << 24) | (sbColor & 0x00FFFFFF))
+        r.fillRoundedRect(x + w - hw - 2.0, y + 2.0, hw, h - 4.0, hw / 2.0)
+        if ba <= 0.01 { return }
+
+        // ② 展开部分（轨道 + 手柄）：靠 alpha 淡入
         Color bar = sbColor
-        if barHover or dragging {
+        if hot {
             bar = if theme.colorA(barHoverColor) > 0 then barHoverColor
                   else theme.darken(sbColor, 45)
         }
         // 轨道（1/4 透明度）：让人一眼看出"这里有一条滚动条" ✓
         //   只画手柄时，浅色背景上很容易被当成装饰线看不见 ✗
-        int ta = theme.colorA(bar) / 4
+        int ta = _int(_float(theme.colorA(bar)) / 4.0 * ba)
         r.setColor((ta << 24) | (bar & 0x00FFFFFF))
         r.fillRoundedRect(t[0], y + 2.0, t[2], h - 4.0, t[2] / 2.0)
-        // 手柄（满透明度）
-        r.setColor(bar)
+        // 手柄（满透明度，按 ba 淡入）
+        r.setColor(theme.withAlpha(bar, _int(255.0 * ba)))
         r.fillRoundedRect(t[0], t[1], t[2], t[3], t[2] / 2.0)
     }
 

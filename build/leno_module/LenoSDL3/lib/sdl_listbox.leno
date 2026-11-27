@@ -9,7 +9,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect; use core.sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ScrollView/Table 共用 ✓）
-import "sdl_animator.leno" as ani; use ani.Anim         // 悬停渐变 ✓
+import "sdl_animator.leno" as ani; use ani.Tween         // 悬停渐变 ✓
 import "sdl_tooltip.leno" as tip
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
@@ -36,8 +36,9 @@ export struct ListBox impl Widget, Themeable {
     pri ScrollPhys phys             // ★ 2026-11-27 物理滚动：滚轮加速 + 撞界回弹（见 dispY/pump_scroll）
     // ★ 2026-11-27：悬停行底色**渐入/渐出**（0..1）。`hovRowA` 是"当前正在渐变的行"，
     //   鼠标离开时它保留旧行号 ⇒ 那一行自己淡出（不是硬切）✓
-    pri Anim hovA
+    pri Tween hovA
     pri int hovRowA = -1
+    pri Tween barA          // 滚动条折叠/展开渐变（3px ↔ 8px）
     pri int hover = -1              // 当前悬停行索引（-1 无）
     float _fontSize = 15.0; pri string fontPath = ""; pri int fontStyle = 0; Font? _font
     int _mode = MODE_SINGLE       // 选择模式（MODE_SINGLE/MODE_MULTI）
@@ -725,25 +726,31 @@ export struct ListBox impl Widget, Themeable {
         float maxs = max_scroll()
         if maxs > 0.0 {
             bool hot = barHover or draggingScroll
-            bool fold = barAutoHide and not hot
+            // ★ 2026-11-27：折叠/展开渐变（与 ScrollView/Table 同一套）
+            barA.set_target(if hot then 1.0 else 0.0)
+            if barA.pump() { core.requestRedraw() }
+            float ba = if barAutoHide then barA.value() else 1.0
             Color track = sbColor
             if hot {
                 track = if theme.colorA(barHoverColor) > 0 then barHoverColor
                         else theme.darken(sbColor, 45)
             }
-            float sw = if fold then 3.0 else 8.0
+            float sw = 3.0 + 5.0 * ba
             float sx = x + w - sw - 2.0
-            if fold {
-                r.setColor(theme.withAlpha(track, 90))
+            // 细条永远画（宽度跟着 ba 长）
+            r.setColor(theme.withAlpha(track, 90))
+            r.fillRoundedRect(sx, y + 2.0, sw, h - 4.0, sw / 2.0)
+            // 展开部分靠 alpha 淡入
+            if ba > 0.01 {
+                r.setColor(theme.withAlpha(track, _int(230.0 * ba)))
                 r.fillRoundedRect(sx, y + 2.0, sw, h - 4.0, sw / 2.0)
-            } else {
-                r.setColor(theme.withAlpha(track, 230))
-                r.fillRoundedRect(sx, y + 2.0, sw, h - 4.0, sw / 2.0)
-                float ratio = scroll / maxs
-                float thH = maths.max(20.0, maths.min(h * h / total_h(), h - 4.0))
-                float thy = y + 2.0 + ratio * (h - 4.0 - thH)
-                r.setColor(theme.brighten(track, 60))
-                r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
+                if sw > 5.0 {
+                    float ratio = scroll / maxs
+                    float thH = maths.max(20.0, maths.min(h * h / total_h(), h - 4.0))
+                    float thy = y + 2.0 + ratio * (h - 4.0 - thH)
+                    r.setColor(theme.withAlpha(theme.brighten(track, 60), _int(255.0 * ba)))
+                    r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
+                }
             }
         }
     }

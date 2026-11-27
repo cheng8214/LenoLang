@@ -23,7 +23,7 @@ import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 use core.sdl3        // 2026-10-13：图标缓存回收要调 SDL_DestroyTexture ⇒ 得先能命名 clib ✓
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ScrollView 共用 ✓）
-import "sdl_animator.leno" as ani; use ani.Anim         // 悬停行渐变 ✓
+import "sdl_animator.leno" as ani; use ani.Tween         // 悬停行渐变 ✓
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_tooltip.leno" as tip
 import "sdl_progress.leno" as prgb    // 进度单元格复用它的观感 + 取值规则（同源 ✓）
@@ -61,8 +61,9 @@ export struct Table impl Widget, Themeable {
     pri ScrollPhys phys
     // ★ 2026-11-27：悬停行底色**渐入/渐出**（0..1）。`hovRowA` 是"正在渐变的行"——
     //   鼠标离开后它保留旧行号，那一行自己淡出（不是硬切）✓
-    pri Anim hovA
+    pri Tween hovA
     pri int hovRowA = -1
+    pri Tween barA          // 滚动条折叠/展开渐变（3px ↔ 8px）
     // ★ 2026-11-27：**触摸拖动滚动**（手机上唯一能滚 Table 的手势 —— 滚轮不存在、滚动条太细）
     //   只对"手指"生效（`ev.isTouchLike()`）：桌面鼠标左键拖动是"拖行/拖列/选文字"，不能抢 ✓
     //   panSt：0 空闲 / 1 按下但还没超过阈值（子控件的点击照常生效）/ 2 拖动中
@@ -2859,10 +2860,19 @@ export struct Table impl Widget, Themeable {
     pri func bar_folded(): bool {
         return barAutoHide and not (barHover or draggingV or draggingH)
     }
+    // ★ 2026-11-27：折叠/展开**渐变**（0 = 3px 细条、1 = 完整轨道+手柄）。
+    //   以前 `bar_folded()` 是布尔 ⇒ 鼠标扫过滚动条那一下 3px↔8px 硬跳 ✗
+    //   返回当前展开程度（barAutoHide 关掉时恒 1）
+    pri func bar_fold_anim(): float {
+        bool hot = barHover or draggingV or draggingH
+        barA.set_target(if hot then 1.0 else 0.0)
+        if barA.pump() { core.requestRedraw() }
+        return if barAutoHide then barA.value() else 1.0
+    }
 
     pri func draw_vscroll(Renderer r, Array[float] sb) {
-        float fold = bar_folded()
-        float vw = if fold then 3.0 else 8.0
+        float ba = bar_fold_anim()
+        float vw = 3.0 + 5.0 * ba
         float sx = x + w - vw - 2.0
         float bodyH = h - headerH - sb[1]
         float maxY = max_scroll_y(); if maxY <= 0 { maxY = 1 }
@@ -2871,20 +2881,22 @@ export struct Table impl Widget, Themeable {
         float thumbH = maths.max(18.0, maths.min(bodyH * bodyH / contentH, bodyH))
         float thy = y + headerH + 2.0 + (scrollY / maxY) * (track - thumbH)
         var cs = bar_colors()
-        if fold {
-            // 折叠：只留细条（不画手柄）
-            r.setColor(theme.withAlpha(cs[0], 90))
-            r.fillRoundedRect(sx, y + headerH + 2.0, vw, bodyH - 4.0, vw / 2.0)
-            return
-        }
-        r.setColor(theme.withAlpha(cs[0], 230))
+        // 细条永远画（宽度跟着 ba 长）
+        r.setColor(theme.withAlpha(cs[0], 90))
         r.fillRoundedRect(sx, y + headerH + 2.0, vw, bodyH - 4.0, vw / 2.0)
-        r.setColor(cs[1])
-        r.fillRoundedRect(sx, thy, vw, thumbH, vw / 2.0)
+        // 展开部分靠 alpha 淡入（ba≈0 时看不见 = 折叠态 ✓）
+        if ba > 0.01 {
+            r.setColor(theme.withAlpha(cs[0], _int(230.0 * ba)))
+            r.fillRoundedRect(sx, y + headerH + 2.0, vw, bodyH - 4.0, vw / 2.0)
+            if vw > 5.0 {
+                r.setColor(theme.withAlpha(cs[1], _int(255.0 * ba)))
+                r.fillRoundedRect(sx, thy, vw, thumbH, vw / 2.0)
+            }
+        }
     }
     pri func draw_hscroll(Renderer r, Array[float] sb) {
-        float fold = bar_folded()
-        float hh = if fold then 3.0 else 8.0
+        float ba = bar_fold_anim()
+        float hh = 3.0 + 5.0 * ba
         float sy = y + h - hh - 2.0
         float maxX = max_scroll_x(); if maxX <= 0 { maxX = 1 }
         float bodyW = w - sb[0]
@@ -2893,15 +2905,16 @@ export struct Table impl Widget, Themeable {
         float thumbW = maths.max(18.0, maths.min(bodyW * bodyW / tw, bodyW))
         float thx = x + 2.0 + (scrollX / maxX) * (track - thumbW)
         var cs = bar_colors()
-        if fold {
-            r.setColor(theme.withAlpha(cs[0], 90))
-            r.fillRoundedRect(x + 2.0, sy, bodyW - 4.0, hh, hh / 2.0)
-            return
-        }
-        r.setColor(theme.withAlpha(cs[0], 230))
+        r.setColor(theme.withAlpha(cs[0], 90))
         r.fillRoundedRect(x + 2.0, sy, bodyW - 4.0, hh, hh / 2.0)
-        r.setColor(cs[1])
-        r.fillRoundedRect(thx, sy, thumbW, hh, hh / 2.0)
+        if ba > 0.01 {
+            r.setColor(theme.withAlpha(cs[0], _int(230.0 * ba)))
+            r.fillRoundedRect(x + 2.0, sy, bodyW - 4.0, hh, hh / 2.0)
+            if hh > 5.0 {
+                r.setColor(theme.withAlpha(cs[1], _int(255.0 * ba)))
+                r.fillRoundedRect(thx, sy, thumbW, hh, hh / 2.0)
+            }
+        }
     }
 
     func dispose() {

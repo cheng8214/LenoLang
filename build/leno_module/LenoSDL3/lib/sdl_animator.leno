@@ -12,14 +12,18 @@
 //     —— 适合"弹一下"的反馈（按钮按下的回弹之类）；默认参数 ω≈20、ζ≈0.7
 //
 // 用法（每帧一次 + 变了才续帧）：
-//   Anim a = new Anim()          // 字段里放一个（struct 字段默认构造 ✓）
+//   Tween a = new Tween()        // 字段里放一个（struct 字段默认构造 ✓）
 //   a.set_target(1.0)            // 目标变了才启动
 //   if a.pump() { core.requestRedraw() }    // pump 返回"还在动" ⇒ 续帧
 //   float t = a.value()          // 0..1 插值用
 import maths
 import "sdl_core.leno" as core
 
-export struct Anim {
+// ⚠ 结构体名必须**不叫 `Anim`**：`sdl_anim.leno`（帧动画播放器）已经占用了这个名字，
+//   而运行期四张类型表**全局按名字索引** ⇒ 两个同名 struct 只能留一份，
+//   字段索引/方法体按各自定义编好 ⇒ 混用会静默读到同序号的错误字段 ✗
+//   （编译器会报"跨模块同名 struct 'Anim'"；2026-11-27 实测踩到，改名 `Tween` 解决）
+export struct Tween {
     float v = 0.0                  // 当前值
     float target = 0.0
     float vel = 0.0                // 弹簧模式下的速度（单位/秒）

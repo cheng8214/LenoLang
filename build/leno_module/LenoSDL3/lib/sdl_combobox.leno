@@ -13,7 +13,7 @@ import "sdl_image.leno" as img
 import "sdl_edit.leno" as edt; use edt.Edit
 import "Containers" as ct          // 图标纹理缓存用 ct.ClockLRU（O(1) 命中 + 容量封顶 + 淘汰即销毁）
 import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（下拉弹层用，与 ScrollView/Table 共用 ✓）
-import "sdl_animator.leno" as ani; use ani.Anim         // 弹层展开动画的缓动 ✓
+import "sdl_animator.leno" as ani; use ani.Tween         // 弹层展开动画的缓动 ✓
 
 // 图标纹理淘汰回调（给 ct.ClockLRU 的 on_evict 用）—— 同 sdl_menu / sdl_popmenu 的做法
 func cbTexEvict(string path, Ptr[u8] t) {
@@ -32,8 +32,9 @@ export struct ComboBox impl Widget, Themeable {
     //   同名会让 `float px = pr[0], ..., ph = pr[3]` 那句被解析成字段 ⇒ 类型全乱 ✗（踩过）
     pri ScrollPhys phys           // ★ 2026-11-27 下拉弹层的物理滚动（滚轮加速 + 撞界回弹）
     // ★ 2026-11-27：弹层**展开动画**（0→1，高度从 0 长到目标）—— 以前是"啪"一下出现 ✗
-    //   只用 Anim 做"打开"；收起仍是瞬时（收起时焦点/命中状态已变，延迟绘制容易点穿 ✗）
-    pri Anim openA
+    //   只用 Tween 做"打开"；收起仍是瞬时（收起时焦点/命中状态已变，延迟绘制容易点穿 ✗）
+    pri Tween openA
+    pri Tween barA          // 弹层滚动条折叠/展开渐变
     pri int hover = -1
     pri float popupMax = 200.0    // 弹出列表最大高度
     float _fontSize = 15.0; pri string fontPath = ""; pri int fontStyle = 0; Font? _font
@@ -749,25 +750,29 @@ export struct ComboBox impl Widget, Themeable {
         float maxs = max_scroll()
         if maxs > 0.0 {
             bool hot = barHover or draggingScroll
-            bool fold = barAutoHide and not hot
+            // ★ 2026-11-27：折叠/展开渐变（与 ScrollView/Table 同一套）
+            barA.set_target(if hot then 1.0 else 0.0)
+            if barA.pump() { core.requestRedraw() }
+            float ba = if barAutoHide then barA.value() else 1.0
             Color track = sbColor
             if hot {
                 track = if theme.colorA(barHoverColor) > 0 then barHoverColor
                         else theme.darken(sbColor, 45)
             }
-            float sw = if fold then 3.0 else 8.0
+            float sw = 3.0 + 5.0 * ba
             float sx = px + pw - sw - 2.0
-            if fold {
-                r.setColor(theme.withAlpha(track, 90))
+            r.setColor(theme.withAlpha(track, 90))
+            r.fillRoundedRect(sx, py + 2.0, sw, ah - 4.0, sw / 2.0)
+            if ba > 0.01 {
+                r.setColor(theme.withAlpha(track, _int(230.0 * ba)))
                 r.fillRoundedRect(sx, py + 2.0, sw, ah - 4.0, sw / 2.0)
-            } else {
-                r.setColor(theme.withAlpha(track, 230))
-                r.fillRoundedRect(sx, py + 2.0, sw, ah - 4.0, sw / 2.0)
-                float ratio = scroll / maxs
-                float thH = maths.max(20.0, maths.min(ah * ah / (items.len() * itemH), ah - 4.0))
-                float thy = py + 2.0 + ratio * (ah - 4.0 - thH)
-                r.setColor(theme.brighten(track, 60))
-                r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
+                if sw > 5.0 {
+                    float ratio = scroll / maxs
+                    float thH = maths.max(20.0, maths.min(ah * ah / (items.len() * itemH), ah - 4.0))
+                    float thy = py + 2.0 + ratio * (ah - 4.0 - thH)
+                    r.setColor(theme.withAlpha(theme.brighten(track, 60), _int(255.0 * ba)))
+                    r.fillRoundedRect(sx, thy, sw, thH, sw / 2.0)
+                }
             }
         }
     }
