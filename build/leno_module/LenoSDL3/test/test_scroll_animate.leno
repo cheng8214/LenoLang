@@ -1,0 +1,72 @@
+// test_scroll_animate.leno —— 「滚轮之后，没人碰鼠标画面也要继续动」回归
+//
+// 为什么单独一个测试（2026-11-27 用户实测抓到）：
+//   滚轮加速发生在 `process → sync()` **之后** ⇒「那一帧」的物理推进已经跑完了（那时速度还是 0），
+//   同一帧的 render 阶段再 sync 又被 `firstThisFrame` 挡住 ⇒ **没人 requestRedraw()**
+//   ⇒ 事件循环空闲挂起（500ms）⇒ 表现"滚轮滚了画面不动、动一下鼠标才动" ✗
+//   修法：`sync()` **去重之前**加一句"有速度/越界就 requestRedraw()" ✓
+//
+// ⚠ 本测试的 overlay **故意什么都不做**（不 set_text、不 markFrameRedraw）：
+//   只要它每帧自己标脏，就会把事件循环叫醒，从而**掩盖**这个 bug
+//   —— 其它滚动测试（test_scroll_physics 的 B 段）就是这样漏掉的 ✗
+//   ⇒ 已反证：把 `sync()` 那句 requestRedraw 注掉再跑，本测试**必 FAIL**（2 帧 / y=0），
+//     和用户看到的现象一模一样（滚了轮子画面一动不动）✓
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_scroll_animate.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, ScrollView, Label)
+
+int gFail = 0
+int gFrame = 0
+int gWheelAt = 0
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "scroll animate test", w: 400, h: 300})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    // 内容高自动量（30 行 ≈ 1272px）⇒ 可滚 ~972
+    var sv = SDL3.createScrollView({x: 0, y: 0, w: 400, h: 300, content_w: 400})
+    var box = SDL3.createVBox({x: 0, y: 0, w: 400, spacing: 4})
+    for 30 to i {
+        box.add(SDL3.createLabel({text: "行 " + _str(i)}), {grow: 0, shrink: 0, basis: 38})
+    }
+    sv.set_content(box)
+    win.setRootAt(sv, 0, 0)
+
+    // 1.2s：注入一格滚轮（之后**不再有任何输入**）
+    win.addTimerOnce(1200, func() {
+        SDL3.testWheelAt(win.getID(), 200.0, 150.0, -1.0)
+        gWheelAt = gFrame
+    })
+    // 6s：检查"这段无人交互的时间里到底出了多少帧"
+    win.addTimerOnce(6000, func() {
+        int during = gFrame - gWheelAt
+        check(during > 15, "滚轮之后无人交互也持续出帧（" + _str(during) + " 帧）")
+        check(maths.abs(sv.get_scroll_y() - 66.0) < 20.0, "滑行到位（y=" + _str(sv.get_scroll_y()) + "，期望 ≈66）")
+        check(not sv.is_animating(), "最终收敛（不会一直空转请求重绘）")
+        print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+        SDL3.requestExit()
+    })
+
+    // ⚠ 这里**只能**数帧，绝不能标脏/改文本（见文件头注释）
+    win.setOverlay(func(Renderer r) { gFrame = gFrame + 1 })
+
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}

@@ -4,6 +4,12 @@
 // ScrollView 持有一个「内容控件」（通常为 VBox/Panel/HBox），内容坐标 (0,0) 映射到
 // 可滚动区左上角；视口自动裁剪，悬停滚轮滚动，可拖动右侧/底部滚动条，点击槽翻页。
 //
+// 滚动是**物理**的（2026-11-27 起是唯一实现，没有开关）：
+//   滚轮叠加速度 ⇒ 起步是加速、停下是滑行、撞到边界是弹簧回弹（越界量 ±180px）
+//   可调：friction（滚轮每帧保留率，默认 0.88，越小停得越快）/ drag_friction（甩动，默认 0.94）
+//   `smooth:true` 已废弃（no-op）：滚轮本来就平滑了，这个键只为兼容老调用方保留 ✓
+//   `scroll_by` / `set_scroll` / `ensure_visible` 仍是**精确位移**（程序语义可预期 ✓）
+//
 // 用法：
 //   var sv = win.addScrollView({x:20, y:20, w:300, h:200, content_w:300, content_h:800})
 //   var box = SDL3.createVBox({pad_x:10, pad_y:10, spacing:8})   // 用 createXxx，不要 win.add
@@ -37,12 +43,9 @@ export struct ScrollView impl Widget, Themeable {
     // 每格滚轮滚动像素（`step` 选项可调）。默认 48 ≈ Windows「3 行」惯例（~16px/行 ✓）；
     // 早先的 24px 明显偏小 ⇒ 用户体感"滚了轮子只走一点点、得使劲滚" ✗
     pri float step = 48.0
-    // 平滑滚动（opt-in：`smooth:true`）：滚轮不再瞬间跳一格，而是设一个目标位置、逐帧逼近 ✓
-    // 动机：瞬间跳 24px + 帧节流 ⇒ 观感"一顿一顿"✗；逐帧插值后是连续移动 ✓
-    pri bool smooth = false
-    pri bool smoothAnim = false              // 平滑动画进行中
+    // ★ 2026-11-27：`smooth` 选项**已废弃**（no-op）——滚轮现在一律走速度物理，本来就是平滑的 ✓
+    //   键名保留只为不让下游（Aria 8 处 / leno_gui 4 处）因"不认识键"刷警告；新代码别传了 ✓
     pri float syncedX = 0.0, syncedY = 0.0  // 上次 `_sync` 应用过的位置（位置变了要重做 ⇒ 见 _sync 注释）
-    pri float targetY = 0.0, targetX = 0.0  // 平滑目标（仅动画中有效；非动画时跟随当前值 ✓）
 
     // 外观
     pri Color bgColor = #262830FF
@@ -71,8 +74,26 @@ export struct ScrollView impl Widget, Themeable {
     pri int panSt = 0
     pri float panX0 = 0.0, panY0 = 0.0          // 按下点（判阈值用）
     pri float panLastX = 0.0, panLastY = 0.0    // 上一拍位置（算增量）
-    pri float panV = 0.0, panH = 0.0            // 抬起瞬间速度（px/帧，带符号）
     pri float panThr = 6.0                      // 起拖阈值：小于它算点击（否则子按钮点不动 ✗）
+    pri int panNs = 0                           // 上一次 move 的时刻（算拖动速度 px/s 用）
+
+    // ★ 2026-11-27：**物理滚动** —— 唯一实现（老路径已删，见文件末尾的迁移记录）
+    //   状态 = 位置 + **速度(px/s)** + 越界位移(overX/overY) + 越界速度，与 Flutter 的 ScrollPhysics 同构：
+    //     · 每帧按 **dt** 积分（`core.getTicksNS()`），位移用**解析解** v0·τ·(1−fr^(60dt))
+    //       ⇒ 60Hz 与 144Hz 走同样远（一阶欧拉会差 3% ✗）
+    //     · 滚轮/甩动只**叠加速度**、不直接改位置 ⇒ 连续滚轮累积成"一次飞" ✓
+    //     · 撞界 ⇒ 多余位移折减成越界量、**速度也交给弹簧**，欠阻尼 ⇒ 顶到边界有一点点过冲的"呼吸" ✓
+    //     · 收尾 = 「|速度| < 20px/s」或「越界量回中」⇒ 尾巴渐隐，不是 0.4px/帧硬断 ✓
+    //   ⚠ 单位：`velX/velY` 是 **px/秒**（不是 px/帧）—— 老实现那个 px/帧 的 `panV` 已删
+    pri float velX = 0.0, velY = 0.0
+    pri bool velDrag = false              // 当前速度来自"甩动"（衰减慢）还是滚轮（衰减快）
+    pri int physNs = 0                    // 上次积分时刻（getTicksNS），0 = 未初始化
+    pri float overX = 0.0, overY = 0.0    // 弹性越界位移：正 = 越过下/右界，负 = 越过上/左界
+    pri float overVelX = 0.0, overVelY = 0.0   // 越界量的速度（px/s，弹簧积分用）
+    pri float frWheel = 0.88              // 滚轮速度每帧保留率（60fps 基准，实际按 dt 换算）
+    pri float frDrag = 0.94               // 甩动惯性每帧保留率（比滚轮更"滑" ⇒ 一甩飘得更远）
+    pri float tauWheel = 0.13             // ↑ 换算出的时间常数（秒），`set()` 里算好（解析积分用）
+    pri float tauDrag = 0.27
 
     pri bool autoW = false, autoH = false      // 自动内容尺寸标志（content_w/h < 0 时启用）
     // ── 内容尺寸「跟随视图」（自适应布局用 ✓）──
@@ -127,13 +148,31 @@ export struct ScrollView impl Widget, Themeable {
         if opts.get("bar_color") is Color => t { sbColor = t }
         brdA = opts.get("border_alpha", 200)
         _drawBorder = opts.get("border", true)
+        // ⚠ `content_h` 必须 **≥ 内容的自然高**，否则底部那一截**永远滚不到**：
+        //   实测（test_scroll_physics）：30 行共 1272px、却写了 content_h:1200
+        //   ⇒ vmax = 1200 − 300 = 900 ⇒ 最后一行只能"冒头"，怎么滚都看不全 ✗
+        //   （不是控件 bug：滚动上限就是按你给的 content_h 算的）
+        //   ⇒ 内容高不确定时**别传 content_h**，交给它第一帧自动量 ✓（content_w 同理）
         _contentW = opts.get("content_w", -1.0)
         _contentH = opts.get("content_h", -1.0)
         fitW = opts.get("fit_w", false)
         fitH = opts.get("fit_h", false)
         if fitW { _contentW = w - barW }       // 立即可用（不必等首帧 _sync ✓）
         step = opts.get("step", 48.0)          // 每格滚轮步长（默认 48 ≈ 平台惯例 ✓）
-        smooth = opts.get("smooth", false)    // 平滑滚动（默认关 = 老行为 ✓)
+        // ★ 2026-11-27：`smooth` **不再读取**（物理滚动是唯一行为 ⇒ 本来就平滑，见字段注释）。
+        //   键仍在白名单里 ⇒ 老调用方不会因为"不认识键"刷警告，但传了也不起作用 ✓
+        // `friction`/`drag_friction` 是**每帧**（60fps 基准）速度保留率：
+        //   越小停得越快（0.85 很"黏"、0.96 很"飘"）
+        frWheel = opts.get("friction", 0.88)
+        frDrag = opts.get("drag_friction", 0.94)
+        // 每帧保留率 ⇒ 时间常数 τ = 1/(60·(−ln fr))。有了 τ 就能做**解析积分**：
+        //   一个 dt 内的位移 = v0·τ·(1 − fr^(60dt))，速度 ×= fr^(60dt)
+        //   ⇒ 60Hz 与 144Hz 走出的距离**严格相同**（"每帧 v*=fr 再位移"是一阶欧拉，
+        //     帧率一变就差 3%，够不上"帧率无关"✗）
+        frWheel = maths.clamp(frWheel, 0.5, 0.99)
+        frDrag = maths.clamp(frDrag, 0.5, 0.99)
+        tauWheel = 1.0 / (60.0 * (-maths.log(frWheel)))
+        tauDrag = 1.0 / (60.0 * (-maths.log(frDrag)))
         barAutoHide = opts.get("bar_auto_hide", true)
         // 滚动条宽度（默认 12）：浮层/小面板里 12 太粗，可调到 6~8 ✓
         barW = opts.get("bar_w", 12.0)
@@ -212,70 +251,186 @@ export struct ScrollView impl Widget, Themeable {
             scrollX = 0.0
         }
     }
-    // 平滑目标也要夹在可滚范围内（否则会一路滑到无效位置又弹回来 ✗）
-    pri func clampTarget() {
-        targetX = maths.clamp(targetX, 0.0, hmax())
-        targetY = maths.clamp(targetY, 0.0, vmax())
+    // ==================== 物理滚动内核（唯一实现） ====================
+    //   调参只改这几个数，理由都写在旁边（要的是"呼吸感"，不是随便挑的数字）：
+    //     · 速度上限 4000px/s ≈ 半屏/秒：再快就看不清滚到哪了
+    //     · 弹簧 400 / 阻尼 28 ⇒ ω ≈ 20rad/s、ζ ≈ 0.70（**欠阻尼**）⇒ 回中最末端有一点点
+    //       过冲，这就是"吸住再弹回"的余味；ζ=1（临界阻尼）会"啪"地贴回去、没有呼吸。
+    //       k 从 700 降到 400 是实测调的：700 时撞界只弹出 8px（看不出来 ✗），400 时 ≈15px ✓
+    //     · 收尾 20px/s ⇒ 剩 20×τ(≈0.13s)≈2.6px 就停，肉眼看不到"最后一下"
+    pri func kill_motion() {
+        velX = 0.0; velY = 0.0
+        overX = 0.0; overY = 0.0
+        overVelX = 0.0; overVelY = 0.0
     }
 
-    // 程序化滚动：立即到位（并取消进行中的平滑动画，否则会被旧目标拽回去 ✗ = "来回跳"）
+    // 手指拖动：内容**1:1 跟手**，越过边界就记进 overX/overY（上限 ±180px 硬顶）。
+    //   为什么不学 iOS 的非线性阻尼：那个函数每帧都要重算、手指回拉时还会"迟滞"；
+    //   1:1 + 硬顶的可预测性更好，松手后弹簧照样有回弹 ✓
+    pri func drag_by(float ddx, float ddy) {
+        if showV() {
+            float maxY = vmax()
+            float ny = scrollY - ddy
+            if ny > maxY { overY = ny - maxY; ny = maxY }
+            else if ny < 0.0 { overY = ny; ny = 0.0 }
+            else { overY = 0.0 }
+            scrollY = ny
+        }
+        if showH() {
+            float maxX = hmax()
+            float nx = scrollX - ddx
+            if nx > maxX { overX = nx - maxX; nx = maxX }
+            else if nx < 0.0 { overX = nx; nx = 0.0 }
+            else { overX = 0.0 }
+            scrollX = nx
+        }
+        overX = maths.clamp(overX, -180.0, 180.0)
+        overY = maths.clamp(overY, -180.0, 180.0)
+        overVelX = 0.0; overVelY = 0.0     // 跟手期间弹簧让位（否则手指和弹簧抢方向盘 ✗）
+    }
+
+    // 滚轮入口：只**叠加速度**（连续滚轮累积成"一次飞"），不直接改位置 ✓
+    pri func wheel_scroll(float dx, float dy) {
+        // 单格 delta = step(48px) ⇒ 速度 48×11 = 528px/s，配合 friction 0.88（τ≈0.13s）
+        //   实际滑行 ≈ 528×0.13 ≈ 69px（1.4 格、约 0.25s 停住）⇒ "滚一格走一格半"
+        //   再大就滑太远不好停；再小就没有"飞"的感觉
+        velY = maths.clamp(velY + dy * 11.0, -4000.0, 4000.0)
+        velX = maths.clamp(velX + dx * 11.0, -4000.0, 4000.0)
+        velDrag = false
+        // 时钟起点：`physNs == 0` 时 `pump_physics` 只会记时间、不推进 ⇒
+        //   不补这一行的话**第一次**滚轮会白等一帧（体感"轮子先没反应、再动"✗）
+        if physNs == 0 { physNs = core.getTicksNS() }
+        core.markFrameRedraw()
+        core.requestRedraw()   // 本帧会画，但**下一帧**也得有人要（见 `sync` 顶部那段注释 ✓）
+    }
+
+    // 按 **给定 dt（秒）** 推进一次物理。生产路径由 `pump_physics()` 用真实 dt 调用；
+    //   单独暴露成方法是为了能验证「帧率无关性」——同一段模拟分别用 1/60、1/144 推进，
+    //   最终位置必须一致，靠真实时钟是测不出这一点的 ✓
+    func step_physics(float dt) {
+        if dt <= 0.0 { return }
+        // 掉帧（GC / 拖窗口 / 首帧初始化）或空闲挂起（事件循环 500ms 超时）⇒ **钳到 30fps 一帧**
+        //   ⚠ 不能"当一帧（1/60）"处理：20~30fps 的机器上每帧真实 33~50ms 却只推进 16.7ms
+        //     ⇒ 滚动整体变慢（实测：同样滚一格只走了 45.9px 而不是 66px ✗）
+        //   钳到 33ms 最多让卡顿后"跳"一小段（4000px/s × 33ms ≈ 132px），比一直慢可接受 ✓
+        if dt > 0.033 { dt = 0.033 }
+        // ---- ① 越界回弹：半隐式欧拉 + 弹簧/阻尼（与位置积分解耦 ⇒ 回弹不动 scrollY ✓）----
+        if overY != 0.0 or overVelY != 0.0 {
+            overVelY = overVelY + (-400.0 * overY - 28.0 * overVelY) * dt
+            overY = overY + overVelY * dt
+            if maths.abs(overY) < 0.15 and maths.abs(overVelY) < 4.0 { overY = 0.0; overVelY = 0.0 }
+            core.requestRedraw()
+        }
+        if overX != 0.0 or overVelX != 0.0 {
+            overVelX = overVelX + (-400.0 * overX - 28.0 * overVelX) * dt
+            overX = overX + overVelX * dt
+            if maths.abs(overX) < 0.15 and maths.abs(overVelX) < 4.0 { overX = 0.0; overVelX = 0.0 }
+            core.requestRedraw()
+        }
+        // ---- ② 速度积分（**解析解**）：dt 内的位移 = v0·τ·(1 − keep)，速度 ×= keep ----
+        //   ⇒ 60Hz 与 144Hz 走同样远（一阶欧拉会差 3% ⇒ 测不出"帧率无关" ✗）
+        if maths.abs(velY) < 0.02 { velY = 0.0 }
+        if maths.abs(velX) < 0.02 { velX = 0.0 }
+        if velY == 0.0 and velX == 0.0 { return }
+        if not showV() { velY = 0.0 }
+        if not showH() { velX = 0.0 }
+        if velY == 0.0 and velX == 0.0 { return }
+        float fr = if velDrag then frDrag else frWheel
+        float tau = if velDrag then tauDrag else tauWheel
+        float keep = maths.pow(fr, dt * 60.0)
+        float adv = 1.0 - keep
+        float dy = velY * tau * adv
+        float dx = velX * tau * adv
+        velY = velY * keep
+        velX = velX * keep
+        float maxY = vmax()
+        float maxX = hmax()
+        float ny = scrollY + dy
+        float nx = scrollX + dx
+        // 撞界：位移的多余部分 **0.55 折减**成越界量，**速度也交给弹簧**（overVel += vel）
+        //   ⚠ 为什么不能只把 vel 清零：那样只剩"一帧位移"那么点回弹（实测峰值 5px，看不见 ✗）；
+        //     把速度传过去后越界峰值 ≈ 0.46·v/ω（ω = √400 = 20rad/s）⇒ 4000px/s 甩到底会弹出
+        //     ≈15px（实测 11.6px），再被欠阻尼弹簧拉回 ⇒ 这才是"吸住—呼气"的那一下 ✓
+        //   ⚠ 传过去的速度有上限 1200px/s（峰值 ≈27px）：不限的话极速一甩能弹出半屏 ✗
+        if ny > maxY {
+            overY = overY + (ny - maxY) * 0.55
+            overVelY = maths.clamp(overVelY + velY, -1200.0, 1200.0)
+            ny = maxY; velY = 0.0
+        } else if ny < 0.0 {
+            overY = overY + ny * 0.55
+            overVelY = maths.clamp(overVelY + velY, -1200.0, 1200.0)
+            ny = 0.0; velY = 0.0
+        }
+        if nx > maxX {
+            overX = overX + (nx - maxX) * 0.55
+            overVelX = maths.clamp(overVelX + velX, -1200.0, 1200.0)
+            nx = maxX; velX = 0.0
+        } else if nx < 0.0 {
+            overX = overX + nx * 0.55
+            overVelX = maths.clamp(overVelX + velX, -1200.0, 1200.0)
+            nx = 0.0; velX = 0.0
+        }
+        overY = maths.clamp(overY, -160.0, 160.0)
+        overX = maths.clamp(overX, -160.0, 160.0)
+        scrollY = ny
+        scrollX = nx
+        // 收尾：速度衰减到"肉眼看不出来"就掐掉（否则永远差零点几像素 ⇒ 一直请求重绘空转 ✗）
+        if maths.abs(velY) < 20.0 { velY = 0.0 }
+        if maths.abs(velX) < 20.0 { velX = 0.0 }
+        core.requestRedraw()
+    }
+
+    // 真实时钟入口：跟手期间只刷新时间戳（1:1 由 `process` 直接改位置），其余按 dt 积分 ✓
+    pri func pump_physics() {
+        int now = core.getTicksNS()
+        if panSt == 2 { physNs = now; return }
+        if physNs == 0 { physNs = now; return }
+        int dn = now - physNs
+        physNs = now
+        if dn <= 0 { return }
+        step_physics(_float(dn) / 1000000000.0)
+    }
+
+    // 程序化滚动：立即到位。**必须掐掉速度与越界量**，否则"设到 0"之后残余速度
+    //   还会把内容又推走（实测：老实现里 set_scroll(0,0) 后一帧变成 8.7 ✗；
+    //   物理模式的速度是 px/s，残留一拍就是几十像素 ⇒ 统一走 kill_motion() ✓）
     func set_scroll(float sx, float sy) {
-        smoothAnim = false
-        // ★ 2026-11-21：程序化定位同时**掐掉触摸惯性** —— 否则"设到 0"之后残余速度
-        //   还会把内容又推走 8px（实测：测试里 set_scroll(0,0) 后一帧变成 8.7 ✗）
-        panV = 0.0; panH = 0.0; panSt = 0
+        kill_motion()
+        panSt = 0
         scrollX = sx; scrollY = sy
-        targetX = sx; targetY = sy
         clampScroll()
     }
     func scroll_to(float sx, float sy) { set_scroll(sx, sy) }
 
-    // 按"滚轮语义"滚动一段相对距离 ⇒ 与滚轮**同一条路径**（平滑功能只有一处定义 ✓）
-    // `smooth:false`（默认）时立即跳；`smooth:true` 时设目标、由 `_sync` 逐帧逼近 ✓
+    // 按"滚轮语义"滚动一段相对距离 ⇒ **精确位移**（程序调用的语义必须可预期）。
+    //   "飞"只属于滚轮 / 甩动：它们叠加速度，由 `_sync` 的物理积分推进 ✓
+    //   （2026-11-27 删掉了 `smooth` 的目标逼近分支：滚轮不再走这里，那套已无入口）
     func scroll_by(float dx, float dy) {
-        if smooth {
-            // 首次滚动时用当前位置作为起点（否则 _target 还是 0 ⇒ 一下跳到顶部 ✗）
-            if not smoothAnim {
-                targetX = scrollX; targetY = scrollY; smoothAnim = true
-            } else {
-                // ★ 方向反转 ⇒ 先**立即到位**再继续平滑：
-                //   指数逼近只看"位置"，用户一反向就变成"目标在抖、位置在追"，
-                //   实测会形成**永久极限环**（±200 来回滚时 y 在 53↔147 之间来回 ✗ = "抽搐"）
-                float remX = targetX - scrollX
-                float remY = targetY - scrollY
-                bool revX = (dx > 0.0 and remX < 0.0) or (dx < 0.0 and remX > 0.0)
-                bool revY = (dy > 0.0 and remY < 0.0) or (dy < 0.0 and remY > 0.0)
-                if revX or revY {
-                    scrollX = targetX; scrollY = targetY   // 反向立刻到位（取消追赶 ✓）
-                    clampScroll()
-                    targetX = scrollX; targetY = scrollY   // 目标对齐"现在"，从这里重新平滑 ✓
-                }
-            }
-            targetX = targetX + dx
-            targetY = targetY + dy
-            clampTarget()
-            // ★ 落后太多（快速连滚）⇒ **直接到位**，不要让它慢慢追：
-            //   指数逼近在小步长时是"顺滑"，在快速连滚时会变成"位置远远落后于手指"
-            //   ⇒ 体感"滚了半天只走一点点"✗。超过 2.5 格就整段立即生效 ✓
-            float lagX = targetX - scrollX
-            float lagY = targetY - scrollY
-            if maths.abs(lagX) > 2.5 * step or maths.abs(lagY) > 2.5 * step {
-                scrollX = targetX; scrollY = targetY
-                clampScroll()
-            }
-        } else {
-            scrollX = scrollX + dx
-            scrollY = scrollY + dy
-            clampScroll()
-        }
+        kill_motion()
+        scrollX = scrollX + dx
+        scrollY = scrollY + dy
+        clampScroll()
         core.markFrameRedraw()
+    }
+
+    // 程序化"甩一下"：给一段初速度（px/秒），交给物理积分 ⇒ 自然滑行 + 撞界回弹 ✓
+    //   典型用法：点一下"回顶部"按钮给一个负速度，看着像被推回去的（而不是瞬间跳 ✗）
+    func fling(float vx, float vy) {
+        velX = maths.clamp(vx, -4000.0, 4000.0)
+        velY = maths.clamp(vy, -4000.0, 4000.0)
+        velDrag = true
+        overX = 0.0; overY = 0.0; overVelX = 0.0; overVelY = 0.0
+        if physNs == 0 { physNs = core.getTicksNS() }   // 同上：别白等一帧
+        core.markFrameRedraw()
+        core.requestRedraw()   // 同上：把"下一帧"预约上 ✓
     }
 
     // 滚动使内容坐标系中的指定矩形区域可见（常用于「滚动到某控件」）
     // tx/ty 为目标在内容坐标系中的左上角，tw/th 为目标尺寸
     // 若目标已完全在视口内则不动；否则最小幅度滚动使其可见
     func ensure_visible(float tx, float ty, float tw, float th) {
-        smoothAnim = false        // 立即到位：取消平滑动画（否则会被旧目标拽回去 ✗）
+        // 立即到位：取消平滑动画（否则会被旧目标拽回去 ✗）；物理模式下连速度/越界一起掐掉 ✓
+        kill_motion()
         float left = scrollX
         float right = scrollX + w
         float top = scrollY
@@ -292,6 +447,18 @@ export struct ScrollView impl Widget, Themeable {
     func get_scroll_y(): float { return scrollY }
     func get_max_scroll_x(): float { return hmax() }
     func get_max_scroll_y(): float { return vmax() }
+    // ★ 2026-11-27：物理状态原来外面完全看不到 ⇒ 自测断言不了、应用也做不了
+    //   "滚动中淡出标题栏"这类效果（只能自己再记一份状态 ✗）。补齐：
+    //     get_velocity_*  —— px/秒（静止恒 0）
+    //     get_overscroll_* —— 弹性越界量（正 = 越过下/右界，负 = 越过上/左界）
+    //     is_animating    —— 有没有未收敛的运动（速度 / 回弹任一）
+    func get_velocity_x(): float { return velX }
+    func get_velocity_y(): float { return velY }
+    func get_overscroll_x(): float { return overX }
+    func get_overscroll_y(): float { return overY }
+    func is_animating(): bool {
+        return velX != 0.0 or velY != 0.0 or overX != 0.0 or overY != 0.0
+    }
 
     // 每帧把内容定位到（视口 - 偏移），设定内容尺寸，并刷新滚动条几何
     // 自动内容尺寸模式下，每帧重新测算（子控件可能动态增减）
@@ -299,14 +466,15 @@ export struct ScrollView impl Widget, Themeable {
     pri func sync() {
         int cur = core.frameId()
         bool firstThisFrame = (frameSynced != cur)
-        // ★ 平滑动画进行中：**每次 `_sync` 都补一次"下一帧"请求**（含下面提前 return 的那条路径 ✓）
-        //   为什么必须放在去重之前：滚轮事件那一帧的顺序是「process → render」——
-        //   process 里的 `_sync` 是"本帧首次"⇒ 推进一步 + 请求一帧 ✓；但同一帧的**渲染阶段**
-        //   再调 `_sync` 时 `firstThisFrame` 已是 false ✗ ⇒ 动画块被跳过 ⇒
-        //   **这一帧渲染完就再没人请求下一帧** ✗ ⇒ 事件循环随即挂起（500ms 空闲超时）✗✗
-        //   ⇒ 表现："滚轮滚了画面不动、鼠标一动才跟着动"（用户实测抓到 ✓）
-        //   ⇒ 只要动画没结束，就每帧再要一帧（与 Label 横向滚动的每帧请求同一手法 ✓）
-        if smoothAnim { core.requestRedraw() }
+        // ★ 2026-11-27：**只要还在运动，就每帧再要一帧**（必须放在去重**之前**）
+        //   ⚠ 少这一句就是一个真实 bug（用户实测："滚轮动了画面不动、动一下鼠标才动"）：
+        //     滚轮加速发生在 `process → sync()` **之后** ——「那一帧」的 `pump_physics` 里速度
+        //     还是 0（早退，没请求下一帧）；而同一帧的 render 阶段再调 `_sync` 时
+        //     `firstThisFrame` 已是 false ⇒ 推进块被跳过 ⇒ **没有任何人再要下一帧** ✗
+        //     ⇒ 事件循环空闲挂起（500ms 超时）⇒ 画面停住，直到鼠标事件把它叫醒 ✗
+        //   ⇒ `step_physics` 末尾的 requestRedraw 只在"**已经推进过**"的帧里补请求，
+        //     接不上"刚被加速的那一帧" —— 必须在这里（去重之前、每帧都过）兜底 ✓
+        if velX != 0.0 or velY != 0.0 or overX != 0.0 or overY != 0.0 { core.requestRedraw() }
         // ⚠ 去重**不能只看帧号**：同一帧内可能来多个滚轮事件（快速滚 ✗），位置变了就必须重做，
         //   否则渲染用的还是"第一个事件"留下的旧位置 ⇒ 视觉滞后/一顿一顿 ✗（"抽搐"的第二个成因）
         // ⚠ 去重**必须连自身尺寸一起比**：窗口缩放（最大化/还原）时滚动位置没变，但 `fit_w/fit_h`
@@ -315,31 +483,10 @@ export struct ScrollView impl Widget, Themeable {
         //   看起来就是"还原后布局没变、要动一下鼠标才恢复" ✗ —— 用户实测抓到 ✓）
         if not firstThisFrame and scrollX == syncedX and scrollY == syncedY and w == syncedW and h == syncedH { return }
         frameSynced = cur
-        // ★ 2026-11-21：触摸惯性 —— 手指抬起后按最后一拍的速度继续滑，每帧衰减 10%
-        //   只在 panSt==0（已松手）时推进；速度低于阈值即停（否则永远差零点几像素 ⇒ 一直重绘空转 ✗）
-        if firstThisFrame and panSt == 0 and (maths.abs(panV) > 0.4 or maths.abs(panH) > 0.4) {
-            float iy = panV
-            float ix = panH
-            if not showV() { panV = 0.0; iy = 0.0 }
-            if not showH() { panH = 0.0; ix = 0.0 }
-            float y0 = scrollY
-            float x0 = scrollX
-            scrollY = scrollY + iy
-            scrollX = scrollX + ix
-            clampScroll()
-            // 撞到边界：夹取后没走到预期位置 ⇒ 立刻归零（否则会"顶着"边界无限请求重绘 ✗）
-            if maths.abs(scrollY - (y0 + iy)) > 0.5 { panV = 0.0 }
-            if maths.abs(scrollX - (x0 + ix)) > 0.5 { panH = 0.0 }
-            // 衰减 0.86/帧 ⇒ 一甩大约再滑"初始速度 × 7"的距离、约 0.4s 停住
-            //   （0.90 衰减在 60fps 下要 40 帧才停，手感"滑不完"，实测偏拖沓 ✗）
-            panV = panV * 0.86
-            panH = panH * 0.86
-            if maths.abs(panV) < 0.4 { panV = 0.0 }
-            if maths.abs(panH) < 0.4 { panH = 0.0 }
-            smoothAnim = false
-            targetX = scrollX; targetY = scrollY
-            core.requestRedraw()
-        }
+        // ★ 2026-11-27：物理滚动 —— 每帧**按真实 dt** 推进一次（速度/弹簧都在内核里）✓
+        //   ⚠ 必须 `firstThisFrame`：同一帧 process + render 各调一次 `_sync`，
+        //     推两次就等于 2 倍速度 ✗
+        if firstThisFrame { pump_physics() }
         syncedX = scrollX; syncedY = scrollY
         syncedW = w; syncedH = h
         if fitW { _contentW = w - barW }
@@ -349,27 +496,11 @@ export struct ScrollView impl Widget, Themeable {
         //   ⚠ 必须放在**测量之后**：先拿真实自然高，再决定要不要顶到视图高 ✓
         if fitH and _contentH < h { _contentH = h }
         clampScroll()
-        // ★ 平滑滚动（`smooth:true`）：每帧向目标插值一步，到位即停 ✓
-        //   `firstThisFrame` 保证"每帧只推进一步"（同一帧内多次 _sync 不会重复推进 ✗）
-        if smoothAnim and firstThisFrame {
-            float dx = targetX - scrollX
-            float dy = targetY - scrollY
-            if maths.abs(dx) <= 0.5 and maths.abs(dy) <= 0.5 {
-                scrollX = targetX; scrollY = targetY      // 收尾对齐（否则永远差 0.x px ✓）
-                smoothAnim = false
-            } else {
-                scrollX = scrollX + dx * 0.4
-                scrollY = scrollY + dy * 0.4
-                core.requestRedraw()      // 动画期间持续请求下一帧（模块的动画机制 ✓）
-            }
-            clampScroll()
-        } else {
-            // 非动画期间：目标跟随当前位置 ⇒ 拖动滚动条/翻页/程序 set_scroll 都自动同步，不会漂移 ✓
-            targetX = scrollX; targetY = scrollY
-        }
         computeThumbs()
         // ⚠ 内容定位**取整**：分数偏移会让文字落在半像素上 ⇒ 边缘发虚/闪 ✗（与"裁剪闪烁"同源）
-        _content?.set_pos(x - _int(scrollX), y - _int(scrollY))
+        //   `overX/overY` 是弹性越界量，越界时内容跟手移出视口，
+        //   由 render 的裁剪矩形切掉 ⇒ 露出的就是 ScrollView 自己的底色 = 橡皮筋的视觉 ✓
+        _content?.set_pos(x - _int(scrollX + overX), y - _int(scrollY + overY))
         _content?.set_size(_contentW, _contentH)
     }
 
@@ -426,7 +557,12 @@ export struct ScrollView impl Widget, Themeable {
         // 布局每帧都会重复调用（值没变），只有**真变化**才推进版本号 ✓
         //   ⚠ 必须在这里判、不能延到 `_sync`：`_sync` 自己去重时会提前 return，且它拿不到
         //     "布局前"的旧尺寸 ⇒ 版本号会漏拍（虚拟列表就还是看不到"视口变高了"✗）
-        if sw != w or sh != h { layoutEpoch = layoutEpoch + 1 }
+        if sw != w or sh != h {
+            layoutEpoch = layoutEpoch + 1
+            // 视口尺寸变了 ⇒ 可滚范围也变了，残留的弹性越界量没有意义（还会把内容顶出视口 ✗）
+            //   ⚠ 只在**真的变了**时清：布局每帧都调 set_size（值相同），无条件清会把回弹打断 ✗
+            overX = 0.0; overY = 0.0; overVelX = 0.0; overVelY = 0.0
+        }
         w = sw; h = sh
         // 视图尺寸变了 ⇒ `fit_w` 的内容宽立刻跟着变（不必等下一帧 `_sync` ✓）
         if fitW { _contentW = w - barW }
@@ -470,6 +606,7 @@ export struct ScrollView impl Widget, Themeable {
                 } else {
                     float gh = if showH() then barW else 0.0
                     float page = (h - gh) * 0.9
+                    kill_motion()          // 翻页是"立即到位"⇒ 先把惯性/平滑掐掉（否则翻完又被拽走 ✗）
                     if my < vThumbY { scrollY = scrollY - page } else { scrollY = scrollY + page }
                     clampScroll()
                 }
@@ -484,6 +621,7 @@ export struct ScrollView impl Widget, Themeable {
                 } else {
                     float gw = if showV() then barW else 0.0
                     float page = (w - gw) * 0.9
+                    kill_motion()          // 同上：翻页立即到位
                     if mx < hThumbX { scrollX = scrollX - page } else { scrollX = scrollX + page }
                     clampScroll()
                 }
@@ -493,7 +631,7 @@ export struct ScrollView impl Widget, Themeable {
     }
 
     pri func scrollbarDrag(float mx, float my) {
-        smoothAnim = false        // 拖动滚动条必须 1:1 跟手 ⇒ 取消平滑动画 ✓
+        kill_motion()             // 拖动滚动条必须 1:1 跟手 ⇒ 平滑动画与惯性速度一起取消 ✓
         if dragV == 1 {
             float gh = if showH() then barW else 0.0
             float trackH = h - gh
@@ -515,7 +653,7 @@ export struct ScrollView impl Widget, Themeable {
         // 失焦兜底：拖拽中途 Alt+Tab / 切走窗口会**丢掉 up 事件** ⇒ 捕获状态必须归零，
         //   否则 `innerDown` 永远为真、闸门永久敞开（= 这篇修复白做 ✗）
         if ev.isWindowFocusLost() { innerDown = false; mouseIn = false; barHover = false
-            panSt = 0; panV = 0.0; panH = 0.0 }   // ★ 丢 up 事件 ⇒ 拖动状态也要归零（否则"粘手" ✗）
+            panSt = 0; velX = 0.0; velY = 0.0 }   // ★ 丢 up 事件 ⇒ 拖动状态也要归零（否则"粘手" ✗）
         sync()
         // 滚动条交互优先于内容
         if ev.isMouseButtonDown() and ev.mouseButton() == 1 {
@@ -548,8 +686,8 @@ export struct ScrollView impl Widget, Themeable {
                 if px0 >= x and px0 <= x + w and py0 >= y and py0 <= y + h {
                     panSt = 1; panX0 = px0; panY0 = py0
                     panLastX = px0; panLastY = py0
-                    panV = 0.0; panH = 0.0
-                    smoothAnim = false       // 手指 1:1 跟手，不能有平滑插值抢方向盘 ✓
+                    // 按下就接管方向盘 ⇒ 残余速度必须掐掉（越界量留着，手指从当前位置接手 ✓）
+                    velX = 0.0; velY = 0.0; panNs = 0
                     return
                 }
             } else if ev.isMouseMotion() and panSt != 0 {
@@ -564,17 +702,24 @@ export struct ScrollView impl Widget, Themeable {
                     float ddy = pmy - panLastY
                     panLastX = pmx; panLastY = pmy
                     // 手指上移（ddy<0）⇒ 内容跟着上移 ⇒ 偏移增大 ✓（与滚轮同号约定）
-                    if showV() { scrollY = scrollY - ddy }
-                    if showH() { scrollX = scrollX - ddx }
-                    clampScroll()
-                    panV = -ddy; panH = -ddx        // 这一拍的位移即"抬起时的速度"
-                    // 夹一下：极快的一甩（或掉帧后的大位移）不该变成"飞出去"✗
-                    if panV > 60.0 { panV = 60.0 }
-                    if panV < -60.0 { panV = -60.0 }
-                    if panH > 60.0 { panH = 60.0 }
-                    if panH < -60.0 { panH = -60.0 }
-                    smoothAnim = false
-                    targetX = scrollX; targetY = scrollY
+                    // 位移**1:1 跟手 + 越界弹性**（drag_by），速度按 move 事件的
+                    //   **真实时间差**算成 px/s（不是 px/帧）⇒ 帧率无关 ✓
+                    //   ⚠ 松手后由 `pump_physics` 按 dt 积分（不是每帧乘固定系数 ✗）
+                    int nowNs = core.getTicksNS()
+                    float dts = 0.0166667
+                    if panNs != 0 {
+                        int dn = nowNs - panNs
+                        if dn > 0 {
+                            dts = _float(dn) / 1000000000.0
+                            if dts < 0.002 { dts = 0.002 }     // 同一毫秒多个 move：别除出天量速度 ✗
+                            if dts > 0.1 { dts = 0.1 }
+                        }
+                    }
+                    panNs = nowNs
+                    velY = maths.clamp(-ddy / dts, -4000.0, 4000.0)
+                    velX = maths.clamp(-ddx / dts, -4000.0, 4000.0)
+                    velDrag = true
+                    drag_by(ddx, ddy)
                     core.markFrameRedraw()
                     return
                 }
@@ -593,16 +738,16 @@ export struct ScrollView impl Widget, Themeable {
             float wx = ev.wheelMouseX(), wy = ev.wheelMouseY()
             if wx >= x and wx <= x + w and wy >= y and wy <= y + h {
                 if showH() and maths.abs(ev.wheelX()) > maths.abs(ev.wheelY()) {
-                    scroll_by(-ev.wheelX() * step, 0.0)
+                    wheel_scroll(-ev.wheelX() * step, 0.0)
                 } else if showV() {
                     // 滚轮语义：wheelY > 0 = 向上/远离用户 ⇒ 内容往下看 ⇒ 偏移减小 ✓
-                    // 走 `scroll_by` ⇒ 平滑开关、目标夹取、请求重绘都在那里面统一处理 ✓
-                    scroll_by(0.0, -ev.wheelY() * step)
+                    // 走 `wheel_scroll` ⇒ 物理模式叠加速度（"飞"）、老模式精确位移 ✓
+                    wheel_scroll(0.0, -ev.wheelY() * step)
                 } else if showH() {
                     // ★ 2026-10-13：只有**横向**能滚时（横向列表 / 推荐位 / 时间轴），把普通鼠标的
                     //   纵向滚轮也拿来横滚 —— 否则用户滚轮下去**毫无反应**，看着像"这一行坏了" ✗
                     //   （纵向能滚 ⇒ 仍走上面那支 ⇒ 老的纵向优先行为**逐位不变** ✓）
-                    scroll_by(-ev.wheelY() * step, 0.0)
+                    wheel_scroll(-ev.wheelY() * step, 0.0)
                 }
             }
         }
@@ -611,20 +756,21 @@ export struct ScrollView impl Widget, Themeable {
             var[float, float](kx, ky) = ev.mousePos()
             if kx >= x and kx <= x + w and ky >= y and ky <= y + h {
                 int sc = ev.scancode()
+                // 键盘翻页一律**立即到位** ⇒ 先掐掉一切运动（物理模式的速度不掐会接着飘 ✗）
                 if sc == 78 {  // PageDown
-                    smoothAnim = false
+                    kill_motion()
                     scrollY = scrollY + h * 0.9; clampScroll(); core.markFrameRedraw(); return
                 }
                 if sc == 75 {  // PageUp
-                    smoothAnim = false
+                    kill_motion()
                     scrollY = scrollY - h * 0.9; clampScroll(); core.markFrameRedraw(); return
                 }
                 if sc == 74 {  // Home
-                    smoothAnim = false
+                    kill_motion()
                     scrollY = 0.0; scrollX = 0.0; core.markFrameRedraw(); return
                 }
                 if sc == 77 {  // End
-                    smoothAnim = false
+                    kill_motion()
                     scrollY = vmax(); scrollX = hmax(); core.markFrameRedraw(); return
                 }
             }
@@ -776,5 +922,17 @@ export struct ScrollView impl Widget, Themeable {
 export func createScrollView(Dict opts): ScrollView {
     ScrollView s = new ScrollView(); s.set(opts); return s
 }
+
+// ==================== 迁移记录 ====================
+// 2026-11-27：删除"老滚动行为"，物理滚动成为唯一实现。删掉的东西（别再从历史版本搬回来）：
+//   · `panV/panH`（px/帧）+ `sync()` 里每帧 ×0.86、`|v| < 0.4` 硬停的触摸惯性块
+//   · `smooth` 的"目标位置 + 每帧 ×0.4 指数逼近"（连带 `targetX/targetY`、`clampTarget()`）
+//   · 给指数逼近打补丁的三处特判：方向反转就立即到位、落后 2.5 格就立即到位、撞边把速度归零
+//   · `physics` / `usePhysics` 开关本身（不再有两套行为可切）
+// 为什么可以删：新模型里"反向"只是速度相消、"撞边"由弹簧接管，那些特判在结构上就不存在了 ✓
+// 兼容面：
+//   · `smooth` 键保留为 **no-op**（下游 Aria 8 处 / leno_gui 4 处不用改，也不会刷"不认识键"）
+//   · 变的是三处**观感**：滚轮一格从 48px 变成约 66px、惯性与尾巴更长、撞界会回弹
+//   · 不变的是**程序语义**：`scroll_by` / `set_scroll` / `ensure_visible` 仍是精确位移 ✓
 
 

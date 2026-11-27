@@ -208,7 +208,10 @@ export func createTable(Dict opts): Table      { return tbl.createTable(opts) }
 export func closeContextMenus(Ptr[u8] hwnd) { menu.closeContextMenus(hwnd) }
 @optkeys(["bar_color:color", "bg_color:color", "border:bool", "border_alpha:int", "border_color:color", "content_h:float",
           "content_w:float", "enabled:bool", "fit_h:bool", "fit_w:bool", "h:num", "radius:num", "smooth:bool", "step:float", "visible:bool",
-          "w:num", "x:num", "y:num", "bar_auto_hide:bool", "bar_hover_color:color", "bar_w:float"])
+          "w:num", "x:num", "y:num", "bar_auto_hide:bool", "bar_hover_color:color", "bar_w:float",
+          // ★ 2026-11-27：物理滚动是**唯一行为**（`physics` 开关已删）；`smooth` 保留但已废弃（no-op）
+          //   friction / drag_friction = 每帧速度保留率，详见 sdl_scrollview.leno 字段区注释
+          "friction:float", "drag_friction:float"])
 export func createScrollView(Dict opts): ScrollView { return scv.createScrollView(opts) }
 // 虚拟网格：只构建可见项（长列表 / 卡片墙用它，成千上万条也不卡 ✓）
 @optkeys(["x:num", "y:num", "w:num", "h:num", "item_w:num", "item_h:num", "gap_x:num", "gap_y:num", "pad_x:num", "pad_y:num", "cols:int",

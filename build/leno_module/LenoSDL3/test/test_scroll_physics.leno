@@ -1,0 +1,208 @@
+// test_scroll_physics.leno —— ScrollView 物理滚动回归（2026-11-27 起**唯一**滚动实现）
+//
+// 背景：旧实现只有"位置 + 目标位置"，没有**速度**这个状态 ⇒
+//   ① 起步是跳不是加速（滚轮每格 `scroll_by(±48)` 直接改位置）；
+//   ② 停下是咔不是滑行（触点惯性 `panV *= 0.86`/帧 + `|panV| < 0.4` 硬停）；
+//   ③ 边缘是墙不是弹簧（`clampScroll()` 硬夹、撞边 `panV = 0`）。
+//   现在全部换成：速度 px/s + 按 dt 解析积分 + 弹性越界 + 弹簧回弹 + 速度阈值收尾。
+//   老路径已删（见 sdl_scrollview.leno 末尾"迁移记录"），所以本测试**没有开关**要切。
+//
+// 断言：
+//   A（纯手动推进，不加入窗口 ⇒ sync 不会被真实时钟干扰）
+//     ① 帧率无关：同一段模拟用 1/60 与 1/120 的 dt 推进 1 秒，位移必须一致
+//     ② 速度上限：fling 给 99999px/s ⇒ 实际被夹到 4000px/s
+//     ③ 边界弹性：撞底时出现**越界量**（橡皮筋），最终回中、停在 vmax、并收敛（不再动画）
+//     ④ set_scroll 之后残余速度/越界量必须归零（否则"设到 0 又被推走"）
+//   B（真窗口 + 注入事件）
+//     ⑤ 滚轮一格 ⇒ **不是**瞬跳 48px（第一帧只走几个像素 = 起步是加速），最终约 1.4 格后停稳
+//     ⑥ 手指拖出边界 ⇒ 越界量 > 0（橡皮筋），松手后回弹归零
+//     ⑦ 滚到底时视口必须盖住内容底部（最后一行能看全）
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_scroll_physics.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, ScrollView, Label)
+
+int gFail = 0
+int gFrame = 0
+float gY1 = 0.0
+float gWheelStop = 0.0
+bool gWheelDone = false
+bool gBounceDone = false
+bool gInertiaNote = false
+ScrollView? gSV = null
+// 录帧开关：默认关（测试跑一次就往 build\ 里写 PNG 会污染工作区 ✗）
+//   要人工核对手感/布局时：`$env:SCROLL_PHYS_SHOT=1` 再跑，图落在 build\shot_phys_*.png ✓
+bool gShot = false
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+// 视口 400x300、内容 400x1200 ⇒ 可滚 0..900（A 部分没有内容控件，只能显式给 content_h）
+func mkSV(): ScrollView {
+    return SDL3.createScrollView({x: 0, y: 0, w: 400, h: 300, content_w: 400, content_h: 1200})
+}
+
+// B 部分专用：**不传 content_h**，让 ScrollView 自己量内容的自然高。
+//   ⚠ 这就是上一版"滚到底只看到 28 冒头"的根因：显式给了 1200，而 30 行实际是 1272 ⇒
+//     vmax = 1200 − 300 = 900 ⇒ 内容 900..1272 那段**永远滚不到**（最后一行被自己的
+//     content_h 挡住了）✗。凡是"内容高度不确定"的场景都别手填 content_h，交给它量 ✓
+func mkSVFit(): ScrollView {
+    return SDL3.createScrollView({x: 0, y: 0, w: 400, h: 300, content_w: 400})
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    gShot = _env_or("SCROLL_PHYS_SHOT", "") != ""
+
+    // ==================== A：纯手动推进 ====================
+    //   这些 ScrollView **不加入窗口** ⇒ 没有 process/render 调 sync ⇒ 时间完全由测试掌控，
+    //   否则真实帧率会把物理推进一步，断言就没法复现（同一次运行两次结果不同 ✗）
+    var a = mkSV()
+
+    // ---- ① 帧率无关性（解析积分：位移 = v0·τ·(1 − keep) ⇒ 60Hz 与 120Hz 严格一致）----
+    //   `fling` 走 drag 摩擦（τ ≈ 0.27s）⇒ 1200px/s 的理论滑行 = 1200×0.27 ≈ 324px
+    a.fling(0.0, 1200.0)
+    for 0 : 59 to i { a.step_physics(1.0 / 60.0) }
+    float y60 = a.get_scroll_y()
+    a.set_scroll(0.0, 0.0)
+    a.fling(0.0, 1200.0)
+    for 0 : 119 to i { a.step_physics(1.0 / 120.0) }
+    float y120 = a.get_scroll_y()
+    check(y60 > 250.0 and y60 < 400.0, "fling 1200px/s 一秒滑行量合理（" + _str(y60) + " px，期望 ≈324）")
+    check(maths.abs(y60 - y120) < 0.5, "帧率无关：1/60 与 1/120 位移一致（" + _str(y60) + " / " + _str(y120) + "）")
+
+    // ---- ② 速度上限 ----
+    a.set_scroll(0.0, 0.0)
+    a.fling(0.0, 99999.0)
+    check(a.get_velocity_y() == 4000.0, "速度被夹到上限 4000px/s（实际 " + _str(a.get_velocity_y()) + "）")
+
+    // ---- ③ 边界弹性：撞底 ⇒ 越界（橡皮筋）⇒ 回中 ⇒ 收敛 ----
+    //   速度得够大才撞得到底：可滚 900px、τ≈0.27s ⇒ 初速要 > 900/0.27 ≈ 3345px/s
+    a.set_scroll(0.0, 0.0)
+    a.fling(0.0, 4000.0)
+    float maxOver = 0.0
+    for 0 : 599 to i {
+        a.step_physics(1.0 / 60.0)
+        if maths.abs(a.get_overscroll_y()) > maxOver { maxOver = maths.abs(a.get_overscroll_y()) }
+    }
+    check(maxOver > 10.0, "撞底有弹性越界（峰值 " + _str(maxOver) + " px，不是硬墙）")
+    check(maths.abs(a.get_overscroll_y()) < 0.01, "越界量最终回中（" + _str(a.get_overscroll_y()) + "）")
+    check(maths.abs(a.get_scroll_y() - 900.0) < 0.01, "停在 vmax（实际 " + _str(a.get_scroll_y()) + "）")
+    check(not a.is_animating(), "彻底收敛：is_animating() = false（不会空转请求重绘）")
+
+    // ---- ④ set_scroll 掐掉速度/越界 ----
+    a.set_scroll(0.0, 0.0)
+    a.fling(0.0, 2000.0)
+    a.step_physics(1.0 / 60.0)
+    a.set_scroll(0.0, 100.0)
+    check(a.get_velocity_y() == 0.0 and a.get_overscroll_y() == 0.0 and not a.is_animating(),
+        "set_scroll 后速度/越界/动画全部归零")
+    a.step_physics(1.0 / 60.0)
+    check(maths.abs(a.get_scroll_y() - 100.0) < 0.01, "set_scroll 后不会被残余速度推走（" + _str(a.get_scroll_y()) + "）")
+
+    // ---- ⑤ scroll_by 仍是**精确位移**（程序语义不因物理滚动而变）----
+    a.set_scroll(0.0, 0.0)
+    a.scroll_by(0.0, 250.0)
+    check(maths.abs(a.get_scroll_y() - 250.0) < 0.01 and not a.is_animating(),
+        "scroll_by 立即到 250 且不产生速度（精确位移 ✓）")
+
+    // ==================== B：真窗口 + 注入事件 ====================
+    var win = SDL3.createWindow({title: "scroll physics test", w: 400, h: 300})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var sv = mkSVFit()
+    // 30 行 × 38 + 29×4 = 1256px（自然高由 VBox 量出来 ⇒ vmax = 1256 − 300 = 956）
+    //   滚到底时视口正好是 956..1256 ⇒ **行 29 完整可见** ✓
+    var content = SDL3.createVBox({x: 0, y: 0, w: 400, spacing: 4})
+    for 30 to i {
+        Label lb = SDL3.createLabel({text: "行 " + _str(i)})
+        content.add(lb, {grow: 0, shrink: 0, align: 0, basis: 38})
+    }
+    sv.set_content(content)
+    gSV = sv
+    win.setRootAt(sv, 0, 0)
+
+    win.setOverlay(func(Renderer r) {
+        gFrame = gFrame + 1
+        // ---- ⑥ 滚轮一格：起步是加速（第一帧只走几个像素），不是瞬跳 48px ----
+        if gFrame == 3 {
+            SDL3.testWheelAt(win.getID(), 200.0, 150.0, -1.0)   // wheelY = -1 ⇒ 内容往下看 ⇒ 偏移增大
+        }
+        if gFrame == 6 {
+            gY1 = sv.get_scroll_y()
+            check(gY1 > 0.5 and gY1 < 48.0, "滚轮不是瞬跳 48px（两帧后只走了 " + _str(gY1) + " px）")
+            check(sv.get_velocity_y() > 0.0, "滚轮转成了速度（" + _str(sv.get_velocity_y()) + " px/s）")
+        }
+        // ---- 录帧核对（`SCROLL_PHYS_SHOT=1` 才开）：滚轮后第 2/5/8 帧各存一张 ——
+        //   三张里内容位置**逐帧不同**就是"滑行"，瞬跳的话第 2 帧就停在终点、后两张完全一样 ✗
+        if gShot and gFrame == 5 { SDL3.saveImagePNG(r.readPixelsAt(0, 0, 400, 300), "build\\shot_phys_f1.png") }
+        if gShot and gFrame == 8 { SDL3.saveImagePNG(r.readPixelsAt(0, 0, 400, 300), "build\\shot_phys_f2.png") }
+        if gShot and gFrame == 12 { SDL3.saveImagePNG(r.readPixelsAt(0, 0, 400, 300), "build\\shot_phys_f3.png") }
+        // ---- 滑行停稳：**等速度归零**，不写死帧号 ----
+        //   ⚠ 原来卡在 gFrame==40 看位置：帧率一低（首帧初始化 / 机器忙）每帧 dt 变大，
+        //     40 帧内可能还没滑完 ⇒ 位置偏小（实测 45.9px 而不是 66px ✗）⇒ 等收敛才稳
+        if gFrame >= 8 and not gWheelDone {
+            if sv.get_velocity_y() == 0.0 {
+                gWheelDone = true
+                gWheelStop = sv.get_scroll_y()
+                check(gWheelStop > 55.0 and gWheelStop < 95.0,
+                    "一格滚轮滑行 ≈1.4 格后停稳（" + _str(gWheelStop) + " px）")
+            } else if gFrame > 200 {
+                gWheelDone = true
+                check(false, "滚轮滑行 200 帧内没停（速度 " + _str(sv.get_velocity_y()) + " px/s✗）")
+            }
+        }
+        // ---- ⑥ 拖出边界 ⇒ 橡皮筋，松手回弹 ----
+        if gFrame == 205 {
+            sv.set_scroll(0.0, sv.get_max_scroll_y() - 20.0)
+            SDL3.markFrameRedraw()
+        }
+        if gFrame == 207 { SDL3.testTouchDown(win.getID(), 200.0, 250.0) }
+        if gFrame == 208 { SDL3.testTouchMove(win.getID(), 200.0, 230.0) }   // 先走 20px 过阈值
+        if gFrame == 209 { SDL3.testTouchMove(win.getID(), 200.0, 30.0) }    // 再上移 200 ⇒ 越界
+        if gFrame == 211 {
+            check(maths.abs(sv.get_scroll_y() - sv.get_max_scroll_y()) < 0.01,
+                "拖动时位置停在 vmax（" + _str(sv.get_scroll_y()) + " / " + _str(sv.get_max_scroll_y()) + "）")
+            check(sv.get_overscroll_y() > 5.0, "超出边界的部分变成弹性越界（" + _str(sv.get_overscroll_y()) + " px）")
+            SDL3.testTouchUp(win.getID(), 200.0, 30.0)
+        }
+        // ---- 回弹停稳：同样等它自己收敛 ----
+        if gFrame >= 213 and not gBounceDone {
+            if maths.abs(sv.get_overscroll_y()) < 0.01 and sv.get_velocity_y() == 0.0 {
+                gBounceDone = true
+                check(maths.abs(sv.get_scroll_y() - sv.get_max_scroll_y()) < 0.01,
+                    "回弹后仍停在底部（" + _str(sv.get_scroll_y()) + "）")
+                // ★ 关键：到底时**视口必须盖住内容底部** —— 否则最后一行永远滚不全
+                check(sv.get_scroll_y() + sv.get_h() >= sv.get_content_h() - 0.01,
+                    "滚到底时视口盖住内容底部（" + _str(sv.get_scroll_y() + sv.get_h()) + " ≥ " + _str(sv.get_content_h()) + "）")
+                if gShot { SDL3.saveImagePNG(r.readPixelsAt(0, 0, 400, 300), "build\\shot_phys_bottom.png") }
+            } else if gFrame > 400 {
+                gBounceDone = true
+                check(false, "回弹 200 帧内没收敛（越界 " + _str(sv.get_overscroll_y()) + " ✗）")
+            }
+        }
+        if gWheelDone and gBounceDone {
+            if not gInertiaNote {
+                gInertiaNote = true
+                print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+            }
+            SDL3.requestExit()
+        }
+        SDL3.markFrameRedraw()
+    })
+
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}

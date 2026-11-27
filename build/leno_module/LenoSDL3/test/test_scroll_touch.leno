@@ -9,7 +9,9 @@
 // 断言：
 //   ① 手指拖动 ⇒ scrollY 跟着变（位移与手指等量）
 //   ② 抬手后惯性继续滑（松手那一帧之后 scrollY 还会涨）
-//   ③ 惯性会停（不会一直滑到边界再空转）—— 等足够多帧后数值稳定
+//   ③ 惯性会停（不会一直滑到边界再空转）—— 连续 3 帧位置不变即判停
+//      ★ 2026-11-27：惯性从"每帧 ×0.86"换成按 dt 的解析积分（τ≈0.27s）⇒ 尾巴长了一倍，
+//        原来看死帧号 44→48 会误报，改成"看它什么时候真的不动"（对 friction 调参免疫 ✓）
 //   ④ **鼠标**拖动（非触摸）⇒ scrollY 保持 0（桌面行为零变化）
 //   ⑤ 手指轻点（位移小于阈值）⇒ 不滚动（否则子控件永远点不中）
 //
@@ -24,6 +26,9 @@ int gFrame = 0
 float gY0 = 0.0
 float gY1 = 0.0
 float gYStop1 = 0.0
+float gLastY = 0.0
+int gStill = 0
+bool gInertiaDone = false
 ScrollView? gSV = null
 
 func check(bool cond, string what) {
@@ -80,55 +85,63 @@ main() {
         // ---- 抬手 ----
         if gFrame == 10 {
             SDL3.testTouchUp(win.getID(), 200.0, 20.0)
+            gLastY = sv_y()
         }
         // ---- 惯性若干帧后应继续前进 ----
         if gFrame == 14 {
             gY1 = sv_y()
             check(gY1 > gY0 + 5.0, "抬手后惯性继续滑（" + _str(gY0) + " → " + _str(gY1) + "）")
         }
-        // ---- 等惯性自然停下：连续两帧位置相同才算停（原来是拿变量跟自己比 = 白过 ✗）----
-        if gFrame == 44 {
-            gYStop1 = sv_y()
-        }
-        if gFrame == 48 {
+        // ---- 惯性自然停下：**看它什么时候不动**，而不是写死帧号 ----
+        //   ⚠ 原来写"44→48 帧位置一致"，那是按 0.86/帧 的老模型算的；
+        //     现在惯性按 friction(0.94)/τ≈0.27s 解析积分 ⇒ 停下要 ~1.2s（~80 帧），
+        //     写死窗口必误报 ✗ ⇒ 改成"连续 3 帧位置不变即判停"，对 friction 调参免疫 ✓
+        if gFrame >= 12 and not gInertiaDone {
             float a = sv_y()
-            check(maths.abs(a - gYStop1) < 0.01, "惯性最终停下（44→48 帧位置一致：" + _str(gYStop1) + " / " + _str(a) + "）")
-            check(a > gY1, "惯性是**往前**滑的，不是回弹（" + _str(gY1) + " → " + _str(a) + "）")
+            if maths.abs(a - gLastY) < 0.01 { gStill = gStill + 1 } else { gStill = 0 }
+            gLastY = a
+            if gStill >= 3 {
+                gInertiaDone = true
+                gYStop1 = a
+                check(gFrame < 240, "惯性自然停下（第 " + _str(gFrame) + " 帧，" + _str(gYStop1) + "）")
+                check(a > gY1 + 5.0, "惯性是**往前**滑的，不是回弹（" + _str(gY1) + " → " + _str(a) + "）")
+            }
         }
         // ---- ④ 鼠标拖动（非触摸）⇒ 不许滚 ----
-        if gFrame == 49 {
+        if gFrame == 180 {
             sv.set_scroll(0.0, 0.0)
             SDL3.markFrameRedraw()
         }
-        if gFrame == 50 {
+        if gFrame == 182 {
             SDL3.testMouseAt(win.getID(), 200.0, 200.0, true)
         }
-        if gFrame >= 51 and gFrame <= 54 {
-            float k2 = _float(gFrame - 50)
+        if gFrame >= 183 and gFrame <= 186 {
+            float k2 = _float(gFrame - 182)
             SDL3.testMoveAt(win.getID(), 200.0, 200.0 - k2 * 30.0)
         }
-        if gFrame == 55 {
+        if gFrame == 187 {
             SDL3.testMouseAt(win.getID(), 200.0, 20.0, false)
         }
-        if gFrame == 58 {
+        if gFrame == 190 {
             check(maths.abs(sv_y()) < 0.01, "鼠标拖动**不**滚动（桌面左键语义零变化，实际 " + _str(sv_y()) + "）")
         }
         // ---- ⑤ 手指轻点（位移 < 阈值 6px）⇒ 不滚 ----
-        if gFrame == 59 {
+        if gFrame == 192 {
             SDL3.testTouchDown(win.getID(), 200.0, 200.0)
         }
-        if gFrame == 60 {
+        if gFrame == 193 {
             SDL3.testTouchMove(win.getID(), 200.0, 197.0)
         }
-        if gFrame == 61 {
+        if gFrame == 194 {
             SDL3.testTouchUp(win.getID(), 200.0, 197.0)
         }
-        if gFrame == 64 {
+        if gFrame == 198 {
             check(maths.abs(sv_y()) < 0.01, "手指轻点（位移<阈值）不滚动（子控件仍可点）")
+            if not gInertiaDone { check(false, "惯性在 180 帧内没停下（一直滑 = 空转 ✗）") }
             print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
             SDL3.requestExit()
         }
-        if gFrame < 64 { SDL3.markFrameRedraw() }
+        if gFrame < 198 { SDL3.markFrameRedraw() }
     })
 
     win.run(func(Event ev): bool { return true }, func(Renderer r) {})
