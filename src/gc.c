@@ -461,6 +461,13 @@ const char* gc_freelog_kind_name(int kind) {
 // 释放对象内存：池化对象归还 free-list，否则系统 free
 // （sweep_young / sweep_old / gc_free_all 共用；free_object_resources 已先行调用）
 static void gc_free_object(Object* obj) {
+    // ★ 2026-11-27：frozen 对象只能由引用计数归零释放（frozen_unref → frozen_free_graph）。
+    //   进了这里就是路径错了：池化路径会 memset 32B 再挂回 free_list，等于把活的图
+    //   塞回池子 ⇒ 之后任何一次分配都拿到它 ⇒ 双重所有权。宁可当场响亮地报错。
+    if (obj->flags & OBJ_FLAG_FROZEN) {
+        fprintf(stderr, "[GC] 内部错误：frozen 对象走了 gc_free_object（应由引用计数释放）\n");
+        return;
+    }
     if ((obj->flags & OBJ_FLAG_POOLED) != 0) {
         uint32_t idx = obj->flags & GC_POOL_CLASS_MASK;
         size_t slot_size = (size_t)(idx + 1) * GC_POOL_ALIGN;
@@ -1008,6 +1015,9 @@ static void mark_stack_push(Object* obj) {
 // 扫描对象的子引用（原 gc_mark_object 的 switch 主体）
 // 对每个子引用调用 gc_mark_object / gc_mark_value（标记 + 压栈）
 void gc_scan_children(Object* obj) {
+    // ★ 2026-11-27：frozen 的子引用由 frozen 自己的引用计数负责（同 gc_mark_object 的理由）。
+    //   正常路径根本到不了这里（标记阶段就早退），这是兜底。
+    if (obj->flags & OBJ_FLAG_FROZEN) return;
     switch (obj->type) {
         // Atomic（2026-11-26）：**没有子引用** —— 它只装一个 int64，
         //   而且是 malloc 的（不进任何堆链表）⇒ 扫到它什么都不用做。
@@ -1643,6 +1653,13 @@ void gc_set_stress(int every) {
 // 标记对象：标记 + 压入显式栈（不递归，由 gc_drain_mark_stack 负责扫描子引用）
 void gc_mark_object(Object* obj) {
     if (!obj) return;
+
+    // ★ 2026-11-27：**frozen 图不归任何堆管**（见 LenoDocsSrc/大对象零拷贝共享设计.md §7）
+    //   它靠引用计数存活、从不进 young/old 链 ⇒ 一旦被标记，就会**整图**压进标记栈、
+    //   每轮 GC 白扫一遍（10 万元素 = 每轮多 10 万次）。而且它的 marked 位没有任何人清，
+    //   留着还会让"一个堆对象持有 frozen 子对象"被误判成可达（其实本来就该活着，无害但不必要）。
+    //   ⇒ 见到就停，边界之外一律不碰。
+    if (obj->flags & OBJ_FLAG_FROZEN) return;
 
     // 验图**进行中**：只查引用合法性，不参与标记（见 gc_verify_mark_complete）
     if (gc_verify_pass_active) { gc_verify_ref(obj); return; }

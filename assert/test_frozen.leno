@@ -112,5 +112,29 @@ main() {
     assert_has(out2, "不能冻结", "_freeze 的不支持类型在编译期拦")
     assert_has(out2, "Channel", "要点名 Channel")
 
+    // ================= ⑨ GC：frozen 不归堆管，扫不到、也不会被回收 =================
+    //   ① 冻结图在**大量 GC** 下仍是同一份（引用计数 + 堆外内存）
+    //   ② 可变容器里夹 frozen 子对象：GC 跳过冻结子图，容器自己的元素仍可读
+    var keep = []
+    for 0 : 999 to i { keep.add(i) }
+    Frozen[Array[int]] big = _freeze(keep)
+
+    var holder = []
+    holder.add(_freeze([7, 8, 9]))
+    for 0 : 199 to i {
+        var garbage = []
+        for 0 : 49 to j { garbage.add(j) }   // 制造垃圾触发 GC
+        _gc(true)
+    }
+    assert_eq(big.len(), 1000, "⑨GC 之后冻结图完整")
+    assert_eq(big[999], 999, "⑨GC 之后冻结图元素仍可读")
+
+    var inner2 = holder[0] as Array[int]
+    assert_eq(inner2[1], 8, "⑨GC 跳过冻结子图，容器里的 frozen 元素仍可读")
+
+    var st = _gc_stats()
+    assert_eq(_int(st["frozen_objs"]) >= 1, true, "⑨_gc_stats 要能看到 frozen 对象数")
+    assert_eq(_int(st["frozen_bytes"]) > 0, true, "⑨_gc_stats 要能看到 frozen 字节数")
+
     print("test_frozen 全部通过")
 }
