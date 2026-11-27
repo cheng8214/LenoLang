@@ -269,6 +269,22 @@ strings.lines(s)                      // 按行切（认 \r\n）
 > 同理，`split` / `fmt_size` / `lines` / `format` 都**已经在标准库里**，
 > 写之前先 `strings.` 看一眼可用列表（编译器报"未找到方法"时会直接列出全部可用项）。
 
+### 6.0 大块内存：只判断"是否相同"就别造字符串
+
+```leno
+// ✅ 纯 memcmp、零分配（实测 ~10 GB/s）
+if ffi.compare_bytes(p, 0, n, pat) == 0 { /* 校验通过 */ }
+
+// ❌ memcpy 一份临时串再 memcmp —— 同一块冷内存读两遍（实测 ~2 GB/s）
+if ffi.read_bytes(p, 0, n) != pat { /* … */ }
+```
+
+- `ffi.compare_bytes(ptr, off, len, str)` 返回 `0` 一致 / `1` 内容不同 / `-1` 长度不一致
+- 真要**数坏字节**才回落到 `read_bytes`（错误路径，慢无所谓）
+- 适用于：内存校验、下载/资源完整性检查、缓存命中判断、大块去重
+- `read_bytes` 造 ≥1KB 的串现在只 `memcpy`（UTF-8 字符数 / hash 首次用到才补算）
+  ⇒ 读回 0.6 → 2.7~3.0 GB/s，就算紧接着调 `.len()` 也有 1.5 GB/s
+
 ---
 
 ## 6.1 数值：先查 `maths`，别手写
