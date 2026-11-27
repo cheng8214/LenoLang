@@ -650,3 +650,39 @@ http.mount(app, [ new Route(method="GET", path="/api/search", auth=true, handler
 3. **保留**：`leno.exe` / `leno_vm.exe` / `leno_vm_gui.exe` / `leno_icon.*` /
    `leno_module/` / `.lenocache`（缓存，删了只是下次编译慢一点）；
 4. 需要长期保留的脚本放 `bench/`（入库），不要留在 `build/_`。
+
+---
+
+## 13. 结构体命名：运行期**按名字**索引，通用名会撞（2026-11-27 的教训）
+
+四张类型表（struct / face / enum / 别名）在运行期**全局按名字索引**。两个模块各定义一个同名
+`export struct` 时，编译器只能证明"等价"才放行，否则报：
+
+```
+跨模块同名 struct 'X'：a.leno 与 b.leno 各定义了一份且无法证明等价
+  ⇒ 四张类型表全局只按名字索引、运行期只能保留一份。
+    字段索引、方法体在编译期都按各自模块的定义确定，混用会**静默读到同序号字段**或跑到另一份方法体
+```
+
+它不是"重名了改一下"那么轻：报错只在**同时加载两者**时出现，很容易先跑通一半测试、上线后
+在某个组合路径上炸，而且症状是"读到错字段"，不是崩溃。
+
+真实案例：新写的过渡动画内核叫 `Anim`，和框架原有的帧动画播放器（`sdl_anim.leno`，
+`SDL3.loadAnim()` 返回它）撞了。改叫 `Tween` 才解决。
+
+**约定**：
+
+1. `export struct` 一律带**模块语义的前缀/后缀**，别用通用词 ——
+   `Anim` / `Node` / `State` / `Item` / `Config` / `Info` / `Result` 这类都会撞；
+   写 `ScrollPhys` / `Tween` / `TreeViewNode` / `Vec2` 这种能看出归属的名字 ✓
+2. 新增 `export struct` 前先跑一次全量重名检查（在 `build/leno_module/LenoSDL3` 下）：
+
+   ```
+   Select-String -Path lib\*.leno -Pattern "^export struct (\w+)" |
+     ForEach-Object { $_.Matches[0].Groups[1].Value + "|" + $_.Filename } |
+     Group-Object { $_.Split("|")[0] } | Where-Object { $_.Count -gt 1 }
+   ```
+
+   有输出就是撞了，先改名。当前 68 个 `export struct`，无重名。
+3. 只在**本文件内部**用的结构体不要 `export`（不导出就不进全局限定，随便叫 `Item` 都行）。
+4. 同理适用于 `face` / `enum` 的名字。
