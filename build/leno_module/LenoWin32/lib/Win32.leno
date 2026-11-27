@@ -314,6 +314,13 @@ export func uptimeSec(): int {
     return sysinfo.uptimeSec()
 }
 
+// CPU 累计时间（毫秒，开机以来）：{ok, idle, total}；kernel 含 idle，total = kernel + user
+//   ⇒ 调用方两次采样求差算使用率（本函数不保存状态 ✓）
+export func cpuTimes(): Dict {
+    if not _is_supported() { return {ok: false, idle: 0, total: 0} }
+    return sysinfo.cpuTimes()
+}
+
 // 主机名（系统 API 的答案，不是环境变量 ✓）；取不到 ⇒ ""
 export func computerName(): string {
     if not _is_supported() { return "" }

@@ -410,6 +410,63 @@ export func listVolumes(): Array[VolumeInfo] {
     return out
 }
 
+// ==================== 实时资源（2026-11-27）====================
+
+// 内存用量（KB；`percent` = 已用/总量，0..100）
+export struct MemUsage {
+    int totalKb = 0
+    int availKb = 0
+    int usedKb = 0
+    int percent = 0
+}
+
+// 当前内存用量。取不到 ⇒ **全 0**（调用方判 `totalKb == 0` 即"未知"，
+// 别把它当成"内存 100% 占满"—— 那会让告警页在无权限的机器上疯狂报警）
+export func memoryUsage(): MemUsage {
+    var d = if _isW() then w.memInfo() else l.memInfo()
+    if not jsons.get_bool(d, "ok", false) { return new MemUsage() }
+    int total = jsons.get_int(d, "totalKb", 0)
+    int avail = jsons.get_int(d, "availKb", 0)
+    if total <= 0 { return new MemUsage() }
+    var used = total - avail
+    if used < 0 { used = 0 }
+    return new MemUsage(totalKb = total, availKb = avail, usedKb = used,
+                        percent = _int(100 * used / total))
+}
+
+// cpuUsage 的采样基准（模块级：CPU 是全系统指标，多线程共用一份最多"多算一拍"，不会算错）
+int _cpuLastIdle = -1
+int _cpuLastTotal = -1
+int _cpuPct = -1
+
+// 当前 CPU 使用率（0..100）。
+//   ⚠ **第一次调用返回 -1**（没有基准算不出来），之后每次用"距上次采样的差值"计算。
+//   ⚠ 采样间隔太短（同一毫秒内连调，差值算不出来）时**返回上一次的结果**，而不是 -1——
+//      否则"每帧调一次"的调用方会看到结果在数字与 -1 之间反复横跳。
+//   ⚠ 建议 0.5~1 秒调一次：间隔太短时单次差值里的时间片噪声会被放大（与 `top` 刷新频率同一取舍）。
+export func cpuUsage(): int {
+    var d = if _isW() then w.cpuTimes() else l.cpuTimes()
+    if not jsons.get_bool(d, "ok", false) { return _cpuPct }
+    int idle = jsons.get_int(d, "idle", 0)
+    int total = jsons.get_int(d, "total", 0)
+    if _cpuLastTotal >= 0 and total > _cpuLastTotal {
+        int dt = total - _cpuLastTotal
+        int di = idle - _cpuLastIdle
+        if di < 0 { di = 0 }
+        int pct = _int(100 * (dt - di) / dt)
+        if pct < 0 { pct = 0 }
+        if pct > 100 { pct = 100 }
+        _cpuPct = pct
+        _cpuLastIdle = idle
+        _cpuLastTotal = total
+    } else if _cpuLastTotal < 0 {
+        // 首次：只记基准，不产出结果
+        _cpuLastIdle = idle
+        _cpuLastTotal = total
+    }
+    return _cpuPct
+}
+
 // ==================== 桌面集成 ====================
 
 // 用**系统默认程序**打开一个文件 / 目录 / URI（`https://…` 也认 ✓）

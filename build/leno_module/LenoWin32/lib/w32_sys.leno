@@ -37,7 +37,10 @@ clib kernel32 {
 
     // UTF-16 串长（不含结尾 null）——写 NOTIFYICONDATAW 里的 szInfo/szInfoTitle 用 ✓
     i32 lstrlenW(Ptr[u16] s)
-}
+
+    // CPU 累计时间（出参均为 FILETIME = 8 字节，100ns 单位；kernel 时间**含** idle ✓）
+    i32 GetSystemTimes(Ptr idleTime, Ptr kernelTime, Ptr userTime)
+    }
 
 kernel32 _krnl = null
 func _krnlLib(): kernel32 {
@@ -173,6 +176,30 @@ export func uptimeSec(): int {
     int ms = _krnlLib().GetTickCount64()
     if ms <= 0 { return -1 }
     return ms / 1000
+}
+
+// CPU 累计时间（cpuUsage 采样用）。返回 {ok, idle, total}，**都是毫秒、开机以来累计**
+//   · ⚠ `kernelTime` **包含** idleTime（Windows 的老坑）⇒ total = kernel + user，idle 只算 idle 那份
+//   · ⚠ 转成毫秒再返回：FILETIME 是 100ns 单位，开机 162 天就会超过 int48（2^47）；
+//     毫秒则 5.7 万年才到 —— 存累计值必须降精度
+//   · 本函数只负责"读当前累计"，**差值/百分比由调用方算**（这样一次采样可以喂多个用点）
+export func cpuTimes(): Dict {
+    Ptr pIdle = ffi.malloc(8)
+    Ptr pKernel = ffi.malloc(8)
+    Ptr pUser = ffi.malloc(8)
+    try {
+        if _krnlLib().GetSystemTimes(pIdle, pKernel, pUser) == 0 {
+            return {ok: false, idle: 0, total: 0}
+        }
+        int idle = _int(ffi.read_int64(pIdle, 0) / 10000)
+        int kernel = _int(ffi.read_int64(pKernel, 0) / 10000)
+        int user = _int(ffi.read_int64(pUser, 0) / 10000)
+        return {ok: true, idle: idle, total: kernel + user}
+    } finally {
+        ffi.free(pIdle)
+        ffi.free(pKernel)
+        ffi.free(pUser)
+    }
 }
 
 // ==================== 主机名 / 用户名 ====================

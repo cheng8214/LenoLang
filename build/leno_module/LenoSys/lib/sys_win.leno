@@ -215,6 +215,21 @@ export func listVolumes(): Array[Dict] {
     return out
 }
 
+// ==================== 实时资源（2026-11-27）====================
+
+// 物理内存（KB）：{ok, totalKb, availKb} —— 取不到就是 ok=false，别当成 0 内存
+export func memInfo(): Dict {
+    var m = Win32.memoryKb()
+    return {ok: jsons.get_bool(m, "ok", false),
+            totalKb: jsons.get_int(m, "totalKb", 0),
+            availKb: jsons.get_int(m, "availKb", 0)}
+}
+
+// CPU 累计时间（毫秒，开机以来）：{ok, idle, total} —— 差值/百分比由门面算
+export func cpuTimes(): Dict {
+    return Win32.cpuTimes()
+}
+
 // 取 path 所在盘的根（`C:\Users\x` ⇒ `C:\`）✓ 认不出 ⇒ SystemDrive 兜底 ✓
 export func driveRootOf(string path): string {
     string p = strings.trim(path)

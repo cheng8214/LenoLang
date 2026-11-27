@@ -1,0 +1,54 @@
+// test_sys_resources.leno -- Sys.memoryUsage / cpuUsage 自测
+//   build\leno.exe build\leno_module\LenoSys\test\test_sys_resources.leno
+import "Sys" as s
+import maths
+import threads
+use s.MemUsage
+
+var passed = 0
+var failed = 0
+
+func check(string name, bool ok) {
+    if ok {
+        print("  [PASS] " + name)
+        passed = passed + 1
+    } else {
+        print("  [FAIL] " + name)
+        failed = failed + 1
+    }
+}
+
+main() {
+    print("=== Sys 实时资源自测 ===")
+
+    // ---------- 内存 ----------
+    MemUsage m = s.memoryUsage()
+    print("内存 total=" + _str(m.totalKb) + "KB  avail=" + _str(m.availKb)
+          + "KB  used=" + _str(m.usedKb) + "KB  (" + _str(m.percent) + "%)")
+    check("totalKb > 0", m.totalKb > 0)
+    check("availKb > 0", m.availKb > 0)
+    check("usedKb == totalKb - availKb", m.usedKb == m.totalKb - m.availKb)
+    check("percent 在 0..100", m.percent >= 0 and m.percent <= 100)
+    int expect = 0
+    if m.totalKb > 0 { expect = _int(100 * m.usedKb / m.totalKb) }
+    check("percent 与 used/total 一致（±1）", maths.abs(m.percent - expect) <= 1)
+
+    // ---------- CPU ----------
+    int c1 = s.cpuUsage()
+    print("cpuUsage 第 1 次 = " + _str(c1) + "（-1 = 无基准，符合契约）")
+    check("首次 cpuUsage 返回 -1", c1 == -1)
+
+    threads.sleep(400)
+    int c2 = s.cpuUsage()
+    print("cpuUsage 第 2 次 = " + _str(c2))
+    check("第二次在 0..100", c2 >= 0 and c2 <= 100)
+
+    // 采样间隔很短时也不应崩、不应越界
+    int c3 = s.cpuUsage()
+    print("cpuUsage 第 3 次（间隔极短）= " + _str(c3))
+    check("连续调用仍在 0..100", c3 >= 0 and c3 <= 100)
+
+    print("")
+    print("========================================")
+    print("Results: " + _str(passed) + " passed, " + _str(failed) + " failed")
+}

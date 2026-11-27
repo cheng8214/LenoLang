@@ -228,6 +228,21 @@ func _isVirtualFs(string fs): bool {
     return false
 }
 
+// ==================== 实时资源（2026-11-27）====================
+
+// 物理内存（KB）：{ok, totalKb, availKb} —— /proc/meminfo（老内核缺 MemAvailable ⇒ 解析层降级到 MemFree ✓）
+export func memInfo(): Dict {
+    var mi = sp.parse_meminfo(_read_text("/proc/meminfo"))
+    int total = jsons.get_int(mi, "totalKb", 0)
+    return {ok: total > 0, totalKb: total, availKb: jsons.get_int(mi, "availKb", 0)}
+}
+
+// CPU 累计时间（jiffies，开机以来）：{ok, idle, total} —— /proc/stat 第一行
+//   ⚠ 与 Windows 侧单位不同（毫秒 vs jiffies）⇒ **只在同一平台内做差**，不要跨平台比较绝对值
+export func cpuTimes(): Dict {
+    return sp.parse_cpu_stat(_read_text("/proc/stat"))
+}
+
 // 该路径所在的**卷/分区根**（判不出 ⇒ `""`，绝不猜 ✓）
 //   Linux = 挂载点（`/` 或 `/media/u/U盘` …）；Windows 侧的门面对等物是盘符根（`C:\` ✓）
 //   ⚠ `dirs.abspath` 走 `realpath`（POSIX 语义）⇒ **符号链接会被解析到真实位置**，
