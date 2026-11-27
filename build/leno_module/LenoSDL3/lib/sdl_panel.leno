@@ -5,7 +5,7 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SDL_Rect
-import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_widget.leno" as wgt; use wgt.(Widget, Tickable)
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 import "sdl_table.leno" as tbl; use tbl.Table
@@ -14,7 +14,18 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 
 
-export struct Panel impl Widget, Themeable {
+export struct Panel impl Widget, Themeable, Tickable {
+    // ★ 2026-11-27：转发每帧推进给子控件（含 _layoutChild）
+    func tick(float dt): bool {
+        bool m = false
+        for children to c {
+            if c is Tickable => tk { if tk.tick(dt) { m = true } }
+        }
+        var lc = _layoutChild
+        if lc is Tickable => lk { if lk.tick(dt) { m = true } }
+        return m
+    }
+
     float x = 0.0, y = 0.0, w = 200.0, h = 150.0
     Array[Widget] children = []
     Widget? _layoutChild          // 自动布局子控件：每帧自动同步到 Panel 内部区域（减去 padding）

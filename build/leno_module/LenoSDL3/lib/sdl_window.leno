@@ -220,6 +220,9 @@ Array[MenuBar]          _runCtxBar  = []   // 各窗口级右击上下文菜单�
 Array[int]             _runCtxIdx  = []   // 对应的上下文菜单索引
 Array[Widget?]          _runRoots  = []     // 各窗口的根布局控件（setRoot 设置，可空）
 Array[float]           _runRootX = []     // 各窗口根布局 X 偏移（如 MenuBar 高度）
+// ★ 2026-11-27：Tickable 用 —— 每窗口"上一帧时刻"（按 window id 存 ⇒ 窗口增删不会错位）
+Array[int]             _tickWids = []
+Array[int]             _tickNss  = []
 Array[float]           _runRootY = []
 Array[int]             _runW     = []     // 各窗口逻辑宽（背景填充 + Tooltip 夹紧用）
 Array[int]             _runH     = []     // 各窗口逻辑高
@@ -2098,7 +2101,25 @@ export struct Window {
         if t != null { _lib.SDL_DestroyTexture(t); _virtSetTex(i, null) }
     }
 
-    // ==================== 控件树绘制（2026-11-21 从 run() 抽出）====================
+    // ★ 2026-11-27：每窗口的 dt（Tickable 统一推进用）。首帧返回 0（没有"上一帧"可算）。
+//   钳到 33ms，与滚动/补间内核同口径（掉帧或空闲唤醒时不会一帧跳几百像素）。
+pri func _tickDt(int wid): float {
+    int now = core.getTicksNS()
+    int idx = -1
+    for _tickWids.len() to k { if _tickWids[k] == wid { idx = k; break } }
+    if idx < 0 {
+        _tickWids.add(wid); _tickNss.add(now)
+        return 0.0
+    }
+    int dn = now - _tickNss[idx]
+    _tickNss[idx] = now
+    if dn <= 0 { return 0.0 }
+    float dt = _float(dn) / 1000000000.0
+    if dt > 0.033 { dt = 0.033 }
+    return dt
+}
+
+// ==================== 控件树绘制（2026-11-21 从 run() 抽出）====================
     // 为什么抽出来：虚拟子窗口要复用**同一套**绘制顺序（根 → 控件按 z → 弹层 → toast/tip → 叠加层）。
     // 复制一份必然漂移（弹层/焦点环/toast 以后还会加东西），所以只能抽 ☑
     //   opac：控件级不透明度数组（主循环传 self.widgetOpac，行为与抽取前逐字一致 ✓）
@@ -2108,8 +2129,25 @@ export struct Window {
         //   ★ 按窗口隔离：设上下文 ⇒ 只清/只登记**本窗口**那一块（别的窗口不受影响 ✓ 见 sdl_core ✓）
         core.setDispatchWindow(_runWids[i])
         core.clearPopupCapture()
-        // 先渲染根布局控件（背景层），再渲染 _widgets（按 z 值排序后层叠）
         var rootWid = _runRoots[i]
+
+        // ★ 2026-11-27：**统一每帧推进**（Tickable）—— 必须在绘制**之前**
+        //   控件只实现 `tick(dt): bool`（返回"还在动"），这里汇总后请求下一帧。
+        //   ⚠ 控件侧**仍然自己 requestRedraw**（双保险）：万一这里的续帧被节流/漏掉，
+        //     还有控件那条兜底 —— 上一版删掉控件侧续帧、全靠这里，结果 Aria 滚不动 ✗
+        float tdt = _tickDt(_runWids[i])
+        if tdt > 0.0 {
+            bool moving = false
+            var tws = _runWidgets[i]
+            for tws to twi {
+                if rootWid != null and twi == rootWid { continue }   // 根控件单独 tick，别推两次 ✗
+                if twi is wgt.Tickable => tk { if tk.tick(tdt) { moving = true } }
+            }
+            if rootWid is wgt.Tickable => rk { if rk.tick(tdt) { moving = true } }
+            if moving { core.requestRedraw() }
+        }
+
+        // 先渲染根布局控件（背景层），再渲染 _widgets（按 z 值排序后层叠）
         rootWid?.render(ren)
         // 自动渲染该窗口的所有控件（z 值小的先画，大的后画；同 z 值保持添加顺序）
         // ★ 跳过已作为 root 渲染的控件，避免双重渲染导致闪烁

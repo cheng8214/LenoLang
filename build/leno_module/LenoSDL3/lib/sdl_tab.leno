@@ -17,7 +17,7 @@ import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_core.leno" as core; use core.(SystemCursor, SDL_Rect, sdl3)
-import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_widget.leno" as wgt; use wgt.(Widget, Tickable)
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_layout.leno" as lay; use lay.HBox; use lay.VBox; use lay.AnchorBox
 import "sdl_combobox.leno" as cbx; use cbx.ComboBox
@@ -31,7 +31,28 @@ import "sdl_animator.leno" as ani; use ani.Tween   // 下划线滑动的缓动�
 use theme.Color
 
 
-export struct TabControl impl Widget, Themeable {
+export struct TabControl impl Widget, Themeable, Tickable {
+    // ★ 2026-11-27：把每帧推进转发给**当前页**的子控件
+    //   （页里的 Table/Card 不在窗口 `_widgets` 里，不转发就永远不 tick ✗）
+    //   ⚠ 两条装载路径**都要转**，和 `process` 的口径一致：
+    //     · `setPageLayout()` ⇒ 控件在 `_pageLayouts[_active]` 里（Aria 发现页就是这条）
+    //     · `addToPage()`     ⇒ 控件在 `pages[_active]` 里
+    //     只转 `pages` 的后果：用 page layout 的页"滚轮有速度、画面不动"✗（实测踩到）
+    func tick(float dt): bool {
+        bool m = false
+        if _active >= 0 and _active < _pageLayouts.len() and _hasLayout[_active] {
+            var pl = _pageLayouts[_active]
+            if pl is Tickable => tk { if tk.tick(dt) { m = true } }
+        }
+        if _active >= 0 and _active < pages.len() {
+            var pg = pages[_active]
+            for pg to c {
+                if c is Tickable => tk { if tk.tick(dt) { m = true } }
+            }
+        }
+        return m
+    }
+
     float x = 0.0, y = 0.0, w = 400.0, h = 300.0
     pri float tabH = 32.0         // 标签栏高度
     pri bool showHeader = true    // 是否绘制标签栏：false = 只当「纯页面容器」用，靠外部按钮 set_active 切页 ✓

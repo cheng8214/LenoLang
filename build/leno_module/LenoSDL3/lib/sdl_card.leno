@@ -36,7 +36,7 @@ import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.(SystemCursor, SDL_Rect, SDL_FRect, sdl3)
-import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_widget.leno" as wgt; use wgt.(Widget, Tickable)
 import "sdl_layout.leno" as lay    // 内容控件的窗口句柄下发（passWindowHandle ✓）
 import "sdl_image.leno" as img
 import "sdl_tooltip.leno" as tip
@@ -63,7 +63,14 @@ struct BadgeSpec {
     float fSize = 0.0           // 上面那个字体对应的字号
 }
 
-export struct Card impl Widget, Themeable {
+export struct Card impl Widget, Themeable, Tickable {
+    // ★ 2026-11-27：转发每帧推进给内容控件（卡片里可能放表格/列表）
+    func tick(float dt): bool {
+        var c = _content
+        if c is Tickable => tk { return tk.tick(dt) }
+        return false
+    }
+
     // ==================== 关联常量 ====================
     const MODE_ASPECT_FIT  = 0   // 保持比例，完整显示（可能留边）
     const MODE_STRETCH     = 1   // 拉伸填满

@@ -4,6 +4,14 @@
 import "sdl_event.leno" as evt; use evt.Event
 import "sdl_renderer.leno" as ren; use ren.Renderer
 
+// ★ 2026-11-27：**可选**的"每帧推进"能力（不是所有控件都要实现）
+//   控件只返回"还在动"，续帧由窗口负责 ⇒ 不用在每个控件的 render 里手写 pump + requestRedraw。
+//   ⚠ 必须**自己**也 `core.requestRedraw()`（双保险）：万一窗口那边的续帧被节流/漏掉，
+//     还有这一条兜底 —— 之前就有一次"删掉控件侧续帧、全靠窗口"结果 Aria 滚不动 ✗
+export face Tickable {
+    func tick(float dt): bool
+}
+
 export face Widget {
     // 布局所需：返回控件的自然尺寸（用于自动排版）
     func get_w(): float

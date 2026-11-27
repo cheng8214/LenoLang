@@ -28,7 +28,7 @@
 //       只把布局容器注册进窗口。容器会把窗口句柄自动下发给需要它的子控件（如 Edit 的 IME）。
 // 注意：放进布局的控件用 SDL3.createXxx 创建（不注册进窗口，避免被窗口与布局双重绘制），
 //       只把布局容器注册进窗口。容器会把窗口句柄自动下发给需要它的子控件（如 Edit 的 IME）。
-import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_widget.leno" as wgt; use wgt.(Widget, Tickable)
 import maths          // 内边界负值归零（2026-11-01：maths.max 取代手写 if）
 import "sdl_opts.leno" as dochk    // 选项对账（见 sdl_opts.leno 头部的来龙去脉 ✓）
 import "sdl_event.leno" as evt; use evt.Event
@@ -79,7 +79,18 @@ export const LAYOUT_STRETCH = 3   // 撑满交叉轴
 // ============================================================
 // HBox — 子控件沿水平方向依次排列
 // ============================================================
-export struct HBox impl Widget {
+export struct HBox impl Widget, Tickable {
+    // ★ 2026-11-27：把"每帧推进"转发给子控件
+    //   ⚠ 容器里的控件不在窗口 `_widgets` 里 ⇒ 不转发它们**永远不会 tick**
+    //     （Aria 主界面全挂在 setRoot 的 VBox 下，漏了这条就是"整页滚不动"✗）
+    func tick(float dt): bool {
+        bool m = false
+        for _c to c {
+            if c is Tickable => tk { if tk.tick(dt) { m = true } }
+        }
+        return m
+    }
+
     // ==================== 关联常量 ====================
     const JUSTIFY_START        = 0   // 靠起始边
     const JUSTIFY_CENTER       = 1   // 居中
@@ -326,7 +337,16 @@ export struct HBox impl Widget {
 // ============================================================
 // VBox — 子控件沿垂直方向依次排列（主轴为竖直）
 // ============================================================
-export struct VBox impl Widget {
+export struct VBox impl Widget, Tickable {
+    // ★ 2026-11-27：转发每帧推进（同 HBox）
+    func tick(float dt): bool {
+        bool m = false
+        for _c to c {
+            if c is Tickable => tk { if tk.tick(dt) { m = true } }
+        }
+        return m
+    }
+
     // ==================== 关联常量 ====================
     const JUSTIFY_START        = 0   // 靠起始边
     const JUSTIFY_CENTER       = 1   // 居中
@@ -579,7 +599,16 @@ export struct VBox impl Widget {
     // opts 支持：left, top, right, bottom（像素偏移，-1 表示不约束）、
 //            centerX, centerY（bool）、w, h（显式尺寸，覆盖自然尺寸）
 // ============================================================
-export struct AnchorBox impl Widget {
+export struct AnchorBox impl Widget, Tickable {
+    // ★ 2026-11-27：转发每帧推进（同 HBox）
+    func tick(float dt): bool {
+        bool m = false
+        for _c to c {
+            if c is Tickable => tk { if tk.tick(dt) { m = true } }
+        }
+        return m
+    }
+
     float x = 0.0; float y = 0.0; float w = 300.0; float h = 200.0
     float padX = 0.0; float padY = 0.0
     Array[Widget] _c = []

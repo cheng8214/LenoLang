@@ -18,7 +18,7 @@
 //
 // 注意：内容控件不要单独 win.add，否则会被窗口与 ScrollView 双重处理。
 //       content_w/h 不传时，自动取内容控件的自然尺寸（即内容多大就滚多远）。
-import "sdl_widget.leno" as wgt; use wgt.Widget
+import "sdl_widget.leno" as wgt; use wgt.(Widget, Tickable)
 import "sdl_opts.leno" as dochk    // 选项对账：不认识的键会报一行警告（见 sdl_opts.leno ✓）
 import maths          // clamp / max / abs（2026-11-01 起不再手写，私有 fabs 已删 ✓）
 import "sdl_event.leno" as evt; use evt.Event
@@ -37,7 +37,7 @@ use theme.Color
 // ★ 2026-10-13：补 `Themeable` —— 本控件以前**只有 `impl Widget`** ✗，
 //   于是 `Window.applyThemeAll` 那条类型表里没有它，**切主题时滚动区完全不响应** ✗
 //   （底色/边框/滚动条全停在建时的旧主题色 ✓）；内容控件靠 `lay.applyThemeChild` 继续下钻 ✓
-export struct ScrollView impl Widget, Themeable {
+export struct ScrollView impl Widget, Themeable, Tickable {
     float x = 0.0, y = 0.0, w = 300.0, h = 200.0
     float _contentW = -1.0, _contentH = -1.0   // 可滚动内容虚拟尺寸
     Widget? _content                       // 内部内容控件（通常 VBox/Panel）
@@ -87,6 +87,10 @@ export struct ScrollView impl Widget, Themeable {
     //     · 撞界 ⇒ 多余位移折减成越界量、速度交给弹簧（欠阻尼 ⇒ 顶到边界有"呼吸" ✓）
     //   ⚠ 单位：内核里的速度是 **px/秒**（不是 px/帧）—— 老实现那个 px/帧 的 `panV` 已删
     pri ScrollPhys phys
+    // ★ 2026-11-27：**纵向滚轮是否允许被横向条"劫持"**（拿去做横滚）
+    //   默认 false：鼠标停在横滑条上时，普通滚轮**穿过**给外层的纵向滚动 —— 否则整页滚不动 ✗
+    //   需要"横滑条也能用滚轮横滚"的地方（卡片墙单独一屏、没有纵向可滚）显式传 `wheel_cross: true`
+    pri bool wheelCross = false
     // ★ 2026-11-27：滚动条**折叠/展开渐变**（0 = 3px 细条、1 = 完整轨道+手柄）
     //   以前是 3px ↔ barW 硬跳，鼠标扫过滚动条那一下"啪"地变粗 ✗
     pri Tween barA
@@ -155,6 +159,7 @@ export struct ScrollView impl Widget, Themeable {
         fitH = opts.get("fit_h", false)
         if fitW { _contentW = w - barW }       // 立即可用（不必等首帧 _sync ✓）
         step = opts.get("step", 48.0)          // 每格滚轮步长（默认 48 ≈ 平台惯例 ✓）
+        wheelCross = opts.get("wheel_cross", false)   // 纵向滚轮是否允许横滚（默认否，见字段注释 ✓）
         // ★ 2026-11-27：`smooth` **不再读取**（物理滚动是唯一行为 ⇒ 本来就平滑，见字段注释）。
         //   键仍在白名单里 ⇒ 老调用方不会因为"不认识键"刷警告，但传了也不起作用 ✓
         // `friction`/`drag_friction` 是**每帧**（60fps 基准）速度保留率：
@@ -266,11 +271,25 @@ export struct ScrollView impl Widget, Themeable {
         core.requestRedraw()
     }
 
-    // 真实时钟入口：跟手期间只对齐时钟（1:1 由 `process` 直接改位置，不能再叠惯性 ✓）
-    pri func pump_physics() {
-        if panSt == 2 { phys.syncClock(); return }
-        var[float, float](nx, ny) = phys.pump(scrollX, scrollY, hmax(), vmax())
+    // ★ 2026-11-27：**每帧推进交给窗口**（Tickable）—— 但**自己仍然请求下一帧**（双保险）：
+    //   ⚠ 上一版把这条续帧删掉、全靠窗口，结果 Aria 滚不动 ✗
+    //     （窗口那边的 `requestRedraw` 在某些主循环配置下不可靠，控件侧必须自己兜底）
+    func tick(float dt): bool {
+        if dt <= 0.0 { return false }
+        // 先转发给内容控件（视口里放的列表/卡片也可能要推进）
+        bool cm = false
+        var cc = _content
+        if cc is Tickable => tk { if tk.tick(dt) { cm = true } }
+        // 跟手期间不积分：位置由 `process` 1:1 改，再叠惯性就"抢方向盘" ✗
+        if panSt == 2 { return cm }
+        var[float, float](nx, ny) = phys.step(scrollX, scrollY, dt, hmax(), vmax())
         scrollX = nx; scrollY = ny
+        bool m = phys.is_moving()
+        if m {
+            core.markFrameRedraw()
+            core.requestRedraw()      // ★ 兜底：不依赖窗口那次汇总请求
+        }
+        return m or cm
     }
 
     // 程序化滚动：立即到位。**必须掐掉速度与越界量**，否则"设到 0"之后残余速度
@@ -351,6 +370,9 @@ export struct ScrollView impl Widget, Themeable {
         //   ⇒ `step_physics` 末尾的 requestRedraw 只在"**已经推进过**"的帧里补请求，
         //     接不上"刚被加速的那一帧" —— 必须在这里（去重之前、每帧都过）兜底 ✓
         if phys.is_moving() { core.requestRedraw() }
+        // ⚠ 内容高度**不能**在这里每帧测：虚拟滚动的控件（Aria 发现页）会自己
+        //   `set_content_size(虚拟总高)`，每帧 autoH 会把它覆盖成"可见行高度" ⇒ 越测越不能滚 ✗
+        //   （实测：改成每帧测之后，发现页 vmax 从 309 掉回 0）
         // ⚠ 去重**不能只看帧号**：同一帧内可能来多个滚轮事件（快速滚 ✗），位置变了就必须重做，
         //   否则渲染用的还是"第一个事件"留下的旧位置 ⇒ 视觉滞后/一顿一顿 ✗（"抽搐"的第二个成因）
         // ⚠ 去重**必须连自身尺寸一起比**：窗口缩放（最大化/还原）时滚动位置没变，但 `fit_w/fit_h`
@@ -362,7 +384,7 @@ export struct ScrollView impl Widget, Themeable {
         // ★ 2026-11-27：物理滚动 —— 每帧**按真实 dt** 推进一次（速度/弹簧都在内核里）✓
         //   ⚠ 必须 `firstThisFrame`：同一帧 process + render 各调一次 `_sync`，
         //     推两次就等于 2 倍速度 ✗
-        if firstThisFrame { pump_physics() }
+        // 推进在 `tick(dt)` 里（窗口每帧调一次）⇒ 这里不再 pump，避免"一帧推两次"✗
         syncedX = scrollX; syncedY = scrollY
         syncedW = w; syncedH = h
         if fitW { _contentW = w - barW }
@@ -612,6 +634,7 @@ export struct ScrollView impl Widget, Themeable {
         // 滚轮：悬停视口内才滚动
         if ev.isMouseWheel() {
             float wx = ev.wheelMouseX(), wy = ev.wheelMouseY()
+
             if wx >= x and wx <= x + w and wy >= y and wy <= y + h {
                 if showH() and maths.abs(ev.wheelX()) > maths.abs(ev.wheelY()) {
                     wheel_scroll(-ev.wheelX() * step, 0.0)
@@ -619,10 +642,16 @@ export struct ScrollView impl Widget, Themeable {
                     // 滚轮语义：wheelY > 0 = 向上/远离用户 ⇒ 内容往下看 ⇒ 偏移减小 ✓
                     // 走 `wheel_scroll` ⇒ 物理模式叠加速度（"飞"）、老模式精确位移 ✓
                     wheel_scroll(0.0, -ev.wheelY() * step)
-                } else if showH() {
-                    // ★ 2026-10-13：只有**横向**能滚时（横向列表 / 推荐位 / 时间轴），把普通鼠标的
-                    //   纵向滚轮也拿来横滚 —— 否则用户滚轮下去**毫无反应**，看着像"这一行坏了" ✗
-                    //   （纵向能滚 ⇒ 仍走上面那支 ⇒ 老的纵向优先行为**逐位不变** ✓）
+                } else if showH() and ev.wheelX() != 0.0 {
+                    // ★ 2026-11-27：**纵向滚轮不再被横向条劫持**
+                    //   原来（2026-10-13）这里无条件把纵向滚轮拿去横滚 —— 于是鼠标只要停在
+                    //   某个横滑条（首页"继续听"、歌单横滑）上，**整页滚轮就没反应** ✗
+                    //   （Aria 用户实测：首页怎么滚都不动，拖滚动条却正常）
+                    //   现在只有**真的横向滚轮**（触摸板横滑 / Shift+滚轮）才横滚 ✓
+                    //   ⚠ 代价：只放了一个横滑条、周围没有纵向滚动时，普通滚轮不再横滚 ——
+                    //     需要那种行为的地方显式传 `wheel_cross: true`（走下面的兜底分支）
+                    wheel_scroll(-ev.wheelX() * step, 0.0)
+                } else if showH() and wheelCross {
                     wheel_scroll(-ev.wheelY() * step, 0.0)
                 }
             }
