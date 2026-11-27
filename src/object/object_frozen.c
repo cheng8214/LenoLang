@@ -399,7 +399,11 @@ int frozen_reg_acquire(VM* vm, Object* o) {
             int slot = (first_tomb >= 0) ? first_tomb : (int)h;
             vm->frozen_keys[slot] = o;
             vm->frozen_counts[slot] = 1;
-            vm->frozen_epochs[slot] = vm->frozen_epoch;
+            // ★ 每次 acquire 都推进 epoch（不能只在 mark 时推）：
+            //   release_since 用 "epoch > mark" 判"本任务新增"，若 acquire 不推进，
+            //   同一批里登记的所有条目都等于 mark+1，而快路径又会提前返回 ⇒ 一条都放不掉
+            //   （实测：200 个池任务各冻一份，frozen_objs 一条不降）。
+            vm->frozen_epochs[slot] = ++vm->frozen_epoch;
             vm->frozen_cnt++;
             frozen_ref(o);
             return 1;
@@ -410,7 +414,7 @@ int frozen_reg_acquire(VM* vm, Object* o) {
     if (first_tomb >= 0) {
         vm->frozen_keys[first_tomb] = o;
         vm->frozen_counts[first_tomb] = 1;
-        vm->frozen_epochs[first_tomb] = vm->frozen_epoch;
+        vm->frozen_epochs[first_tomb] = ++vm->frozen_epoch;
         vm->frozen_cnt++;
         frozen_ref(o);
         return 1;
@@ -438,11 +442,15 @@ void frozen_reg_release_all(VM* vm) {
 
 int frozen_reg_mark(VM* vm) {
     if (!vm) return 0;
-    return vm->frozen_epoch++;
+    return vm->frozen_epoch;   // 只取当前刻度；推进由 acquire 负责（见上面的说明）
 }
 
 void frozen_reg_release_since(VM* vm, int mark) {
     if (!vm || !vm->frozen_keys) return;
+    // 快路径：mark 之后一次 acquire 都没发生（epoch 只被 mark 自己 +1）⇒ 整表扫都不用扫。
+    //   为什么必须有：`threads.map` 1 万个任务里，绝大多数任务根本不碰 frozen，
+    //   每个任务白扫一遍 cap（可达 1024）就是 1000 万次空转。
+    if (vm->frozen_epoch <= mark) return;
     for (int i = 0; i < vm->frozen_cap; i++) {
         Object* k = vm->frozen_keys[i];
         if (!k || k == FZ_REG_TOMBSTONE) continue;
@@ -451,6 +459,92 @@ void frozen_reg_release_since(VM* vm, int mark) {
         vm->frozen_cnt--;
         frozen_unref(k);
     }
+}
+
+// ---------------------------------------------------------------- 槽位 pin
+// 见 leno_frozen.h 的说明：把一个值里出现的**所有冻结节点**收集成表，
+// 由 Channel 槽位持有，出槽时逐个放掉。
+// 规则与 §6.1 的克隆规则完全一致：**进 frozen 就停**（冻结图的子节点由它自己计数），
+// 可变容器（Array/Dict/struct）才继续下降。深度上限与克隆一致（64）。
+static void fz_pin_walk(Value v, int depth, FrozenPinSet* set, int* oom);
+
+static int fz_pin_add(FrozenPinSet* set, Object* o) {
+    if (set->count >= set->cap) {
+        int nc = set->cap ? set->cap * 2 : 8;
+        Object** no = (Object**)realloc(set->objs, sizeof(Object*) * (size_t)nc);
+        if (!no) return 0;
+        set->objs = no;
+        set->cap = nc;
+    }
+    set->objs[set->count++] = o;
+    frozen_ref(o);
+    return 1;
+}
+
+static void fz_pin_walk(Value v, int depth, FrozenPinSet* set, int* oom) {
+    if (*oom || depth >= FZ_MAX_DEPTH) return;
+    if (!val_is_obj(v)) return;
+    Object* o = val_as_obj(v);
+    if (o->flags & OBJ_FLAG_FROZEN) {
+        if (!fz_pin_add(set, o)) *oom = 1;
+        return;
+    }
+    switch (o->type) {
+        case OBJ_ARRAY: {
+            ObjArray* a = (ObjArray*)o;
+            for (int i = 0; i < a->count; i++) fz_pin_walk(a->elements[i], depth + 1, set, oom);
+            break;
+        }
+        case OBJ_DICT: {
+            ObjDict* d = (ObjDict*)o;
+            if (d->array) {
+                for (int i = 0; i < d->asize; i++) fz_pin_walk(d->array[i], depth + 1, set, oom);
+            }
+            if (d->entries) {
+                for (int i = 0; i < d->capacity; i++) {
+                    Value k = d->entries[i].key;
+                    if (val_is_obj(k) && k != DICT_TOMBSTONE_VAL) {
+                        fz_pin_walk(k, depth + 1, set, oom);
+                    }
+                    fz_pin_walk(d->entries[i].value, depth + 1, set, oom);
+                }
+            }
+            break;
+        }
+        case OBJ_STRUCT: {
+            ObjStruct* s = (ObjStruct*)o;
+            if (s->def && s->field_values) {
+                for (int i = 0; i < s->def->field_count; i++) {
+                    fz_pin_walk(s->field_values[i], depth + 1, set, oom);
+                }
+            }
+            break;
+        }
+        default:
+            break;   // string / 其它：没有子引用（或本来就不能出现在冻结图里）
+    }
+}
+
+FrozenPinSet* frozen_pin_collect(Value v) {
+    FrozenPinSet* set = (FrozenPinSet*)calloc(1, sizeof(FrozenPinSet));
+    // 连表都建不出来 ⇒ 只能不 pin（进程大概率也活不下去）；不 pin 比"pin 了没法放"安全
+    if (!set) return NULL;
+    int oom = 0;
+    fz_pin_walk(v, 0, set, &oom);
+    if (oom || set->count == 0) {
+        frozen_pin_set_release(set);
+        return NULL;
+    }
+    return set;
+}
+
+void frozen_pin_set_release(FrozenPinSet* set) {
+    if (!set) return;
+    for (int i = 0; i < set->count; i++) {
+        if (set->objs[i]) frozen_unref(set->objs[i]);
+    }
+    free(set->objs);
+    free(set);
 }
 
 // ---------------------------------------------------------------- 语义入口

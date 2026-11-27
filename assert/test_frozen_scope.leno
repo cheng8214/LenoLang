@@ -1,0 +1,71 @@
+// test_frozen_scope.leno —— S5：池任务级 frozen 作用域 + 半冻结值的槽位 pin
+//   设计：LenoDocsSrc/大对象零拷贝共享设计.md §5.5 / §14.3
+//
+// 判据：
+//   ① **半冻结值**（可变数组夹冻结子数组）经池任务 send 出去，任务结束（注册表收敛）后
+//      主线程再收，子数组仍可读 —— 靠 Channel 槽位的**逐节点 pin**，不靠 worker 注册表
+//   ② 大批量任务各自 `_freeze` 一份数据、谁也不发出去 ⇒ 任务结束就收敛，
+//      `_gc_stats()["frozen_objs"]` 不随任务数线性上涨
+import threads
+
+var ch = threads.channel(64)
+
+main() {
+    // ================= ① 半冻结值跨池任务 =================
+    //   任务里：冻结一个小组（子图）→ 塞进**可变**数组 → send 出去。
+    //   map 返回时任务已结束、worker 的注册表已经收敛；主线程这时才收。
+    //   ⚠ threads.map 的回调是 (元素, 下标) 两个参数（map 把两者都传进去）
+    var out = threads.map([0, 1, 2, 3], func(int i, int idx) {
+        Frozen[Array[int]] f = _freeze([i, i + 10, i + 20])
+        Array[any] outer = []   // 元素类型要显式 any：否则第一次 add(f) 会把元素锁成 Frozen[...]
+        outer.add(f)          // 半冻结：外层可变、内层冻结
+        outer.add(i)
+        ch.send(outer)
+        return i
+    })
+    assert_eq(out.len(), 4, "①map 结果数量")
+
+    threads.sleep(30)
+    //   ⚠ 不假设顺序：池任务的完成顺序与提交顺序无关 ⇒ 按"内层自洽"校验
+    var seen = []
+    for 0 : 3 to k {
+        var got = ch.receive() as Array[any]
+        assert_eq(got.len(), 2, "①收到的外层长度")
+        var inner = got[0] as Array[int]
+        assert_eq(inner.len(), 3, "①内层冻结数组仍可读（槽位 pin 生效）")
+        var base = inner[0]
+        assert_eq(inner[1], base + 10, "①内层元素正确")
+        assert_eq(inner[2], base + 20, "①内层元素正确（第三个）")
+        assert_eq(_int(got[1]), base, "①外层可变部分正确")
+        seen.add(base)
+    }
+    seen.sort(func(int a, int b) {
+        if a < b { return -1 }
+        if a > b { return 1 }
+        return 0
+    })
+    assert_eq(seen.join(","), "0,1,2,3", "①四个任务的结果都到齐")
+
+    // ================= ② 任务作用域收敛 =================
+    var before = _gc_stats()
+    var base = _int(before["frozen_objs"])
+
+    var tasks = []
+    for 0 : 199 to i { tasks.add(i) }
+    var r = threads.map(tasks, func(int i, int idx) {
+        var src = []
+        for 0 : 999 to j { src.add(j + i) }
+        var f = _freeze(src)      // 任务内冻结 1000 元素，不发给任何人
+        var n = f.len()
+        return n
+    })
+    assert_eq(r.len(), 200, "②每个任务都有结果")
+
+    var after = _gc_stats()
+    var grew = _int(after["frozen_objs"]) - base
+    // 200 个任务各冻 1000 元素：若按 worker 生命周期持有，这里会是 ~200；
+    // 按任务收敛后应当接近 0（允许 worker 自己留极少数）
+    assert_eq(grew <= 8, true, "②frozen 对象数必须按任务收敛（实际增长 " + _str(grew) + "）")
+
+    print("test_frozen_scope passed")
+}

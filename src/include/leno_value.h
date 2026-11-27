@@ -1049,6 +1049,14 @@ typedef struct ObjAtomic {
     struct ObjAtomic* all_next;   // 全局登记链（收尾统一释放）
 } ObjAtomic;
 
+// ★ 2026-11-27：一个值里的**冻结节点集合**（Channel 槽位用；见 leno_frozen.h 的说明）
+//   为什么不是单个指针：`ch.send([frozenA, frozenB])` 送的是可变数组，元素各指一张冻结图。
+typedef struct FrozenPinSet {
+    int count;
+    int cap;
+    struct Object** objs;
+} FrozenPinSet;
+
 // Channel 对象
 typedef struct ObjChannel {
     Object header;
@@ -1059,13 +1067,14 @@ typedef struct ObjChannel {
     //   子线程堆（GCDeadHeap），取走槽位时由 gc_dead_heap_unref 递减引用计数，
     //   减到 0 的人才负责整堆释放（见 gc.c 顶部那段说明 ✓）
     void** buffer_owner;
-    // ★ 2026-11-27：与 buffer 平行的「冻结图 pin」数组（可空）。
-    //   槽位里放的是**冻结图**（堆外、引用计数存活）时必须由槽位自己持一份引用：
-    //   发送方线程退出会放掉它的注册表，而这里还指着那张图 ⇒ 没有 pin 就是 UAF。
-    //   ⚠ 为什么要单独存 Object*、而不是收尾时直接 `obj_is_frozen(buffer[i])`：
-    //     进程收尾时 gc_free_all() 可能**先**把堆释放掉，此时 buffer 里的 Value 已经悬空 ⇒
-    //     解引用就是 0xC0000005（实测 test_channel_struct 30 次里崩 3 次）。存指针则不碰堆。
-    struct Object** frozen_slots;
+    // ★ 2026-11-27：与 buffer 平行的「冻结节点 pin 表」数组（可空）。
+    //   槽位里放的值只要**含**冻结节点（顶层是 frozen，或可变容器夹着 frozen 元素），
+    //   槽位就必须自己持这些节点的引用：发送方线程退出 / 池任务 scope 结束都会放掉
+    //   注册表，而这里还指着那张图 ⇒ 没有 pin 就是 UAF。
+    //   ⚠ 表里只存 Object*、收尾时**不解引用** buffer 里的 Value：
+    //     进程收尾时 gc_free_all() 可能**先**把堆释放掉，那些 Value 早已悬空 ⇒
+    //     解引用就是 0xC0000005（实测 test_channel_struct 30 次里崩 3 次）。
+    struct FrozenPinSet** slot_pins;
     int capacity;
     int head;
     int tail;

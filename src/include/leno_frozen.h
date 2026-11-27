@@ -47,6 +47,19 @@ void frozen_reg_release_all(VM* vm);
 int  frozen_reg_mark(VM* vm);
 void frozen_reg_release_since(VM* vm, int mark);
 
+// ---- 半冻结值的**逐节点 pin**（Channel 槽位用） -----------------------------
+// 问题：`ch.send([frozenA, 1, 2])` 送的是一个**可变数组**，它的元素指着冻结图。
+//   槽位 pin 只护住"顶层就是 frozen"那种；可变容器的元素要靠发送方注册表活着，
+//   而注册表会在线程退出（移交死堆）或池任务结束（scope 释放）时被放掉 ⇒ 悬空。
+// 做法：进槽时把 v 里出现的**所有 frozen 节点**收集成一张 pin 表（进 frozen 就停，不下降），
+//   出槽时按表逐个 unref。表里存的是 Object*，收尾阶段也不解引用 Value（见 S2 的坑）。
+//   ⚠ 结构体定义在 leno_value.h（ObjChannel 字段要用它）
+
+// 收集 v 里的 frozen 节点（顶层或容器内）；没有 frozen 节点 ⇒ 返回 NULL（不分配）
+FrozenPinSet* frozen_pin_collect(Value v);
+// 逐个 unref 并释放表（NULL 安全）
+void frozen_pin_set_release(FrozenPinSet* set);
+
 // ---- 统计（`_mem()` / `_gc_stats()` 用；不进 GC 阈值） ---------------------
 void frozen_stats_add(long bytes, long objs);
 void frozen_get_stats(size_t* out_bytes, size_t* out_objs);

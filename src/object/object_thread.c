@@ -1453,18 +1453,22 @@ static void channel_slot_put(ObjChannel* ch, int idx, Value v) {
     //   只认引用计数 ⇒ 发送方线程一退出，它的注册表就会放下冻结图，而槽里还压着这个指针 ✗
     //   ⚠ 只 pin 顶层：顶层就是冻结图时 O(1)。"可变容器里夹着冻结子对象"这种半冻结值，
     //     子对象靠发送方注册表活着（池 worker 长期存活时会多持一段时间）—— 已知边界。
-    if (obj_is_frozen(v)) {
-        frozen_ref(val_as_obj(v));
-        if (ch->frozen_slots) ch->frozen_slots[idx] = val_as_obj(v);
+    // ★ 2026-11-27（S5）：把值里**所有**冻结节点收集成 pin 表（顶层 frozen ⇒ 只有 1 项）。
+    //   为什么不能只 pin 顶层：`send([frozenA, 1])` 送的是可变数组，元素指着冻结图 ——
+    //   发送方注册表一放（线程退出 / 池任务 scope 结束），那个元素就悬空。
+    if (ch->slot_pins) {
+        if (ch->slot_pins[idx]) frozen_pin_set_release(ch->slot_pins[idx]);
+        ch->slot_pins[idx] = frozen_pin_collect(v);
     }
 }
 
 static void* channel_slot_take(ObjChannel* ch, int idx) {
     void* rec = ch->buffer_owner ? ch->buffer_owner[idx] : NULL;
     // 调用点都是"先克隆再取槽" ⇒ 此刻放开 pin 是安全的（接收方已经登记了自己的引用）
-    if (ch->frozen_slots && ch->frozen_slots[idx]) {
-        frozen_unref(ch->frozen_slots[idx]);
-        ch->frozen_slots[idx] = NULL;
+    // 调用点都是"先克隆再取槽" ⇒ 此刻放 pin 是安全的（接收方已登记自己的引用）
+    if (ch->slot_pins && ch->slot_pins[idx]) {
+        frozen_pin_set_release(ch->slot_pins[idx]);
+        ch->slot_pins[idx] = NULL;
     }
     ch->buffer[idx] = val_null();
     if (ch->buffer_owner) ch->buffer_owner[idx] = NULL;
@@ -1479,15 +1483,15 @@ void channel_free_all(void) {
             // ★ 2026-11-27：还剩着的 frozen 槽位要放开 pin（channel 结构本身要 free 了）。
             //   ⚠ 只读 frozen_slots（自存的 Object*），**绝不**去解引用 buffer 里的 Value ——
             //     收尾阶段可能已经 gc_free_all() 过，那些 Value 指向的堆内存早就没了（实测崩溃）。
-            if (ch->frozen_slots) {
+            if (ch->slot_pins) {
                 for (int i = 0; i < ch->capacity; i++) {
-                    if (ch->frozen_slots[i]) {
-                        frozen_unref(ch->frozen_slots[i]);
-                        ch->frozen_slots[i] = NULL;
+                    if (ch->slot_pins[i]) {
+                        frozen_pin_set_release(ch->slot_pins[i]);
+                        ch->slot_pins[i] = NULL;
                     }
                 }
-                free(ch->frozen_slots);
-                ch->frozen_slots = NULL;
+                free(ch->slot_pins);
+                ch->slot_pins = NULL;
             }
             if (ch->buffer) free(ch->buffer);
             if (ch->buffer_owner) free(ch->buffer_owner);
@@ -1516,10 +1520,10 @@ ObjChannel* channel_new(int capacity) {
     channel->buffer = (Value*)calloc(channel->capacity, sizeof(Value));
     channel->buffer_owner = (void**)calloc(channel->capacity, sizeof(void*));
     // ★ 冻结图 pin 表（与 buffer 平行）；分配失败只是"不能零拷贝"之外的退化 ⇒ 整条 channel 算失败
-    channel->frozen_slots = (Object**)calloc(channel->capacity, sizeof(Object*));
-    if (!channel->buffer || !channel->frozen_slots) {
-        free(channel->frozen_slots);
-        channel->frozen_slots = NULL;
+    channel->slot_pins = (FrozenPinSet**)calloc(channel->capacity, sizeof(FrozenPinSet*));
+    if (!channel->buffer || !channel->slot_pins) {
+        free(channel->slot_pins);
+        channel->slot_pins = NULL;
         free(channel->buffer);
         channel->buffer = NULL;
         free(channel->buffer_owner);
@@ -1572,9 +1576,9 @@ void channel_unref(ObjChannel* channel) {
             } else {
                 for (int i = 0; i < channel->capacity; i++) {
                     // ★ frozen 槽位的 pin 也要在这里放开（channel 已没人用，值随 buffer 一起丢）
-                    if (channel->frozen_slots && channel->frozen_slots[i]) {
-                        frozen_unref(channel->frozen_slots[i]);
-                        channel->frozen_slots[i] = NULL;
+                    if (channel->slot_pins && channel->slot_pins[i]) {
+                        frozen_pin_set_release(channel->slot_pins[i]);
+                        channel->slot_pins[i] = NULL;
                     }
                     if (channel->buffer_owner[i]) {
                         owners[n++] = channel->buffer_owner[i];
@@ -1592,9 +1596,9 @@ void channel_unref(ObjChannel* channel) {
             free(channel->buffer_owner);
             channel->buffer_owner = NULL;
         }
-        if (channel->frozen_slots) {
-            free(channel->frozen_slots);
-            channel->frozen_slots = NULL;
+        if (channel->slot_pins) {
+            free(channel->slot_pins);
+            channel->slot_pins = NULL;
         }
         platform_mutex_destroy(&channel->mutex);
         platform_cond_destroy(&channel->not_empty);
@@ -2015,6 +2019,12 @@ static void* pool_worker_main(void* arg) {
         ObjClosure* closure = it->closure;
         free(it);
 
+        // ★ 2026-11-27（S5）：**任务级 frozen 作用域**。
+        //   worker VM 长期存活，若只按 VM 记账，注册表会涨成"所有历史任务的并集"。
+        //   这里记一个起点，任务被调用方 reap 之后（结果已克隆进调用方堆）释放**本任务期间新增**的
+        //   frozen 引用。安全性靠 Channel 槽位的 pin 表兜底（槽里含冻结节点时由槽自己持引用）。
+        int fz_mark = frozen_reg_mark(&vm);
+
         // 执行体与 threads.start 完全相同（克隆闭包/参数、协程、结果、最终 GC）
         thread_exec_task(&vm, task, closure, NULL, 0);
 
@@ -2022,6 +2032,8 @@ static void* pool_worker_main(void* arg) {
         platform_mutex_lock(&task->mutex);
         while (!task->reaped) platform_cond_wait(&task->reap_cond, &task->mutex);
         platform_mutex_unlock(&task->mutex);
+
+        frozen_reg_release_since(&vm, fz_mark);
 
         platform_mutex_lock(&g_pool_mu);
         g_pool_busy--;
