@@ -1,0 +1,106 @@
+// test_frozen_thread.leno —— frozen 跨线程零拷贝（S2）
+//   设计：LenoDocsSrc/大对象零拷贝共享设计.md §5/§6
+//
+// 判据：
+//   ① 冻结图过 Channel：子线程拿到的是**同一个对象**（仍 frozen），数据正确
+//   ② 反复传递：不再深拷贝（引用计数 O(1)），值不变
+//   ③ 冻结图在子线程里写 ⇒ 运行期报 frozen 文案（编译期只看静态类型，any 路径靠它兜底）
+//   ④ 普通（可变）数组过 Channel 仍是**深拷贝**：子线程改了不影响父
+import threads
+
+var req = threads.channel(1)
+var res = threads.channel(1)
+
+// 小工具：输出里是否含某段（不额外依赖 strings 模块）
+func has_sub(string text, string needle): bool {
+    if text.len() < needle.len() { return false }
+    for 0 : text.len() - needle.len() to i {
+        if text[i : i + needle.len() - 1] == needle { return true }
+    }
+    return false
+}
+
+func echo_worker(any c) {
+    if c is Channel {
+        var n = _int(c.receive())
+        for 0 : n - 1 to i {
+            var got = req.receive()
+            if got is Array[int] => a {
+                res.send([a.len(), a[3], _is_frozen(a)])
+            } else {
+                res.send([-1, -1, false])
+            }
+        }
+    }
+}
+
+// 子线程拿到 frozen 后"试着写"：必须报 frozen 文案（运行期兜底）
+func write_worker(any c) {
+    if c is Channel {
+        var got = c.receive()
+        if got is Array[int] => a {
+            try { a.add(1) } catch e { res.send(_str(e)) }
+        }
+    }
+}
+
+// 可变数组：子线程改自己的副本
+//   ⚠ 收/发必须走**两条**通道：同一条 channel(capacity 1) 上"主线程发完立刻收"会
+//     把自己的那份克隆收回来（子线程永远等不到）⇒ 测试自己死锁（本用例踩过一次）
+func mutate_worker(any c) {
+    if c is Channel {
+        var got = c.receive()
+        if got is Array[int] => a {
+            a.add(99)
+            res.send(a.len())
+        }
+    }
+}
+
+main() {
+    // ================= ① 传递 + 读取 =================
+    var big = []
+    for 0 : 99999 to i { big.add(i) }
+    Frozen[Array[int]] snap = _freeze(big)
+
+    var t = threads.start(echo_worker, req)
+    req.send(3)
+    for 0 : 2 to i {
+        req.send(snap)
+        var r = res.receive() as Array[any]
+        assert_eq(_int(r[0]), 100000, "①子线程看到的长度")
+        assert_eq(_int(r[1]), 3, "①子线程读到的元素")
+        assert_eq(_bool(r[2]), true, "①子线程拿到的仍是 frozen")
+    }
+    t.join()
+
+    // ================= ② 反复传递（引用计数） =================
+    var t2 = threads.start(echo_worker, req)
+    req.send(50)
+    for 0 : 49 to i {
+        req.send(snap)
+        var r2 = res.receive() as Array[any]
+        assert_eq(_int(r2[0]), 100000, "②第 N 次传递后长度仍对")
+    }
+    t2.join()
+    assert_eq(snap.len(), 100000, "②冻结图本体不受影响")
+
+    // ================= ③ 子线程写 frozen ⇒ 运行期报错 =================
+    var t3 = threads.start(write_worker, req)
+    req.send(snap)
+    var err = _str(res.receive())
+    t3.join()
+    assert_eq(has_sub(err, "冻结对象（frozen）不可修改"), true,
+              "③子线程写 frozen 必须报 frozen 文案（实际：" + err + "）")
+
+    // ================= ④ 可变数组仍是深拷贝 =================
+    var mutable = [1, 2, 3]
+    var t5 = threads.start(mutate_worker, req)
+    req.send(mutable)
+    var child_len = _int(res.receive())
+    t5.join()
+    assert_eq(child_len, 4, "④子线程改的是自己的副本")
+    assert_eq(mutable.len(), 3, "④父线程的数组不受影响")
+
+    print("test_frozen_thread passed")
+}

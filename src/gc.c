@@ -522,6 +522,15 @@ typedef struct GCDeadHeap {
     size_t bytes;               // 摘下来时的堆大小（young+old+pool；供 _gc_stats 观测 ✓）
     int refs;                   // 持有者数（原子）：channel 槽 + 线程自己 + ObjThread（result 是对象时）
     int attached;               // 堆头已填进来（摘堆完成）⇒ 1；0 时绝不释放 ✓
+    // ★ 2026-11-27：**frozen 注册表的移交**（见 LenoDocsSrc/大对象零拷贝共享设计.md §5）
+    //   为什么冻结引用必须跟着堆走：线程退出时它的注册表会被释放，但 channel 槽里可能
+    //   还压着指向这些冻结图的指针（值已克隆进本堆，owner 记录让**堆**继续活着）⇒
+    //   若堆活着而冻结图被放掉，等接收方来克隆时读的就是已释放内存。
+    //   ⇒ 摘堆时把注册表整份**转交**给本记录，堆真正 free 时再一起放下。
+    Object** frozen_keys;
+    int*     frozen_counts;
+    int*     frozen_epochs;
+    int      frozen_cap;
     struct GCDeadHeap* next_free;
 } GCDeadHeap;
 
@@ -658,6 +667,21 @@ void* gc_detach_heap(void) {
     pool_block_list = NULL;
     pool_total = 0;
     for (int i = 0; i < GC_POOL_CLASSES; i++) { pool_free_list[i] = NULL; }
+    // ★ 2026-11-27：把本线程的 frozen 注册表**整份转交**给这条死堆记录。
+    //   为什么不能在这里直接放掉：槽位里可能还压着"本堆克隆出来的值 → 冻结子图"的指针，
+    //   堆还活着（被 channel 槽引用）而冻结图被放掉 ⇒ 接收方克隆时 UAF。
+    //   堆真正 free 时由 gc_free_detached 一起放下 ⇒ 生命周期重新对齐。
+    if (gc.vm && gc.vm->frozen_keys) {
+        d->frozen_keys = gc.vm->frozen_keys;
+        d->frozen_counts = gc.vm->frozen_counts;
+        d->frozen_epochs = gc.vm->frozen_epochs;
+        d->frozen_cap = gc.vm->frozen_cap;
+        gc.vm->frozen_keys = NULL;
+        gc.vm->frozen_counts = NULL;
+        gc.vm->frozen_epochs = NULL;
+        gc.vm->frozen_cap = 0;
+        gc.vm->frozen_cnt = 0;
+    }
     // ★ 顺带把子线程的 GC 辅助结构也释放掉（它们同样是 THREAD_LOCAL，退出后没人回收）
     //   走 gc_release_thread_aux：与"没 detach 的线程"共用同一份实现，口径不会漂 ✓
     gc_release_thread_aux();
@@ -688,6 +712,18 @@ void gc_free_detached(void* p) {
         PoolBlockHdr* next = blk->next;
         free(blk);
         blk = next;
+    }
+    // ★ 2026-11-27：堆真正死了 ⇒ 放掉随堆移交过来的 frozen 引用（见 gc_detach_heap）
+    if (d->frozen_keys) {
+        // 墓碑槽位在注册表里用 (Object*)1 表示 ⇒ 跳过
+        for (int i = 0; i < d->frozen_cap; i++) {
+            Object* k = d->frozen_keys[i];
+            if (!k || k == (Object*)(uintptr_t)1) continue;
+            frozen_unref(k);
+        }
+        free(d->frozen_keys);
+        free(d->frozen_counts);
+        free(d->frozen_epochs);
     }
     free(d);
 }

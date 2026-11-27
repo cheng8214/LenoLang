@@ -392,6 +392,24 @@ static Value channel_clone_value(Value val, int depth, int mode) {
             return val;
         case VAL_OBJ: {
             Object* obj = val_as_obj(val);
+            // ★ 2026-11-27：**frozen 的零拷贝闸门**（设计文档 §6）。
+            //   冻结图在堆外、不可变 ⇒ 不再深拷贝，只给当前 VM 的注册表加一份引用。
+            //   这条分支覆盖全部 6 个克隆点（send/receive/try_*/send_for + 线程入口/join/池参数），
+            //   因为它们在**发起方线程**上跑 ⇒ 各自登记到自己的注册表，谁用谁持有。
+            if (mode == LENO_CLONE_CHANNEL && (obj->flags & OBJ_FLAG_FROZEN)) {
+                // ⚠ 用 `gc.vm` 而**不是** current_exec_vm：后者在 thread_vm_init 结束时会被
+                //   还原成父线程的 VM（`object_thread.c:1007`）⇒ 子线程收 frozen 时会登记进
+                //   **主线程**的注册表，两条线程并发改同一张表 ⇒ 实测死循环/卡死 ✗
+                //   gc.vm 是 THREAD_LOCAL、gc_init 时就指向本线程 VM（`gc.c:916`）✓
+                VM* tvm = gc.vm;
+                if (!tvm) {
+                    extern THREAD_LOCAL VM* current_exec_vm;
+                    extern VM vm;
+                    tvm = current_exec_vm ? current_exec_vm : &vm;
+                }
+                frozen_reg_acquire(tvm, obj);
+                return val;
+            }
             switch (obj->type) {
                 case OBJ_STRING: {
                     ObjString* str = (ObjString*)obj;
@@ -1106,6 +1124,12 @@ static void* thread_entry_point(void* arg) {
             if (keep) thread_obj->dead_heap = detached;
             gc_detach_heap_finish(detached, keep);
         }
+    } else {
+        // ★ 2026-11-27：摘不了堆（还有未 join 的子线程 ⇒ 整堆遗弃）⇒ frozen 注册表无处转交，
+        //   只能当场放掉。安全性前提：channel 槽位对"顶层 frozen 值"另有 pin（见 channel_slot_put），
+        //   所以槽里不会剩悬空指针；只有"可变容器里夹着 frozen 子对象"这种半冻结用法
+        //   在"堆被遗弃 + 该线程发过半冻结值"时会漏 —— 已写进设计文档的已知边界。
+        frozen_reg_release_all(&child_vm);
     }
     // 子线程都 join 过 ⇒ 本 VM 的活动线程表没人再用了（原来每条线程漏一份 malloc 数组）
     if (child_vm.active_thread_count == 0 && child_vm.active_threads) {
@@ -1424,10 +1448,24 @@ static void channel_slot_put(ObjChannel* ch, int idx, Value v) {
     ch->buffer[idx] = v;
     if (ch->buffer_owner) ch->buffer_owner[idx] = rec;
     if (rec) gc_dead_heap_ref(rec);
+    // ★ 2026-11-27：frozen 值由**槽位自己**持一份引用。
+    //   为什么 owner 记录救不了它：owner 保护的是"发送方堆"，而冻结图在堆外、
+    //   只认引用计数 ⇒ 发送方线程一退出，它的注册表就会放下冻结图，而槽里还压着这个指针 ✗
+    //   ⚠ 只 pin 顶层：顶层就是冻结图时 O(1)。"可变容器里夹着冻结子对象"这种半冻结值，
+    //     子对象靠发送方注册表活着（池 worker 长期存活时会多持一段时间）—— 已知边界。
+    if (obj_is_frozen(v)) {
+        frozen_ref(val_as_obj(v));
+        if (ch->frozen_slots) ch->frozen_slots[idx] = val_as_obj(v);
+    }
 }
 
 static void* channel_slot_take(ObjChannel* ch, int idx) {
     void* rec = ch->buffer_owner ? ch->buffer_owner[idx] : NULL;
+    // 调用点都是"先克隆再取槽" ⇒ 此刻放开 pin 是安全的（接收方已经登记了自己的引用）
+    if (ch->frozen_slots && ch->frozen_slots[idx]) {
+        frozen_unref(ch->frozen_slots[idx]);
+        ch->frozen_slots[idx] = NULL;
+    }
     ch->buffer[idx] = val_null();
     if (ch->buffer_owner) ch->buffer_owner[idx] = NULL;
     return rec;
@@ -1438,6 +1476,19 @@ void channel_free_all(void) {
     while (ch) {
         ObjChannel* next = ch->all_next;
         if (!ch->released) {
+            // ★ 2026-11-27：还剩着的 frozen 槽位要放开 pin（channel 结构本身要 free 了）。
+            //   ⚠ 只读 frozen_slots（自存的 Object*），**绝不**去解引用 buffer 里的 Value ——
+            //     收尾阶段可能已经 gc_free_all() 过，那些 Value 指向的堆内存早就没了（实测崩溃）。
+            if (ch->frozen_slots) {
+                for (int i = 0; i < ch->capacity; i++) {
+                    if (ch->frozen_slots[i]) {
+                        frozen_unref(ch->frozen_slots[i]);
+                        ch->frozen_slots[i] = NULL;
+                    }
+                }
+                free(ch->frozen_slots);
+                ch->frozen_slots = NULL;
+            }
             if (ch->buffer) free(ch->buffer);
             if (ch->buffer_owner) free(ch->buffer_owner);
             platform_mutex_destroy(&ch->mutex);
@@ -1464,7 +1515,13 @@ ObjChannel* channel_new(int capacity) {
 
     channel->buffer = (Value*)calloc(channel->capacity, sizeof(Value));
     channel->buffer_owner = (void**)calloc(channel->capacity, sizeof(void*));
-    if (!channel->buffer) {
+    // ★ 冻结图 pin 表（与 buffer 平行）；分配失败只是"不能零拷贝"之外的退化 ⇒ 整条 channel 算失败
+    channel->frozen_slots = (Object**)calloc(channel->capacity, sizeof(Object*));
+    if (!channel->buffer || !channel->frozen_slots) {
+        free(channel->frozen_slots);
+        channel->frozen_slots = NULL;
+        free(channel->buffer);
+        channel->buffer = NULL;
         free(channel->buffer_owner);
         free(channel);
         return NULL;
@@ -1514,6 +1571,11 @@ void channel_unref(ObjChannel* channel) {
                 // malloc 失败：宁可不减计数（漏这几个堆）也不能让 owner 悬空 ✓
             } else {
                 for (int i = 0; i < channel->capacity; i++) {
+                    // ★ frozen 槽位的 pin 也要在这里放开（channel 已没人用，值随 buffer 一起丢）
+                    if (channel->frozen_slots && channel->frozen_slots[i]) {
+                        frozen_unref(channel->frozen_slots[i]);
+                        channel->frozen_slots[i] = NULL;
+                    }
                     if (channel->buffer_owner[i]) {
                         owners[n++] = channel->buffer_owner[i];
                         channel->buffer_owner[i] = NULL;
@@ -1529,6 +1591,10 @@ void channel_unref(ObjChannel* channel) {
         if (channel->buffer_owner) {
             free(channel->buffer_owner);
             channel->buffer_owner = NULL;
+        }
+        if (channel->frozen_slots) {
+            free(channel->frozen_slots);
+            channel->frozen_slots = NULL;
         }
         platform_mutex_destroy(&channel->mutex);
         platform_cond_destroy(&channel->not_empty);
