@@ -139,14 +139,16 @@ export func count(string path): Result[FsCount] {
 }
 
 // ==================== 变化监控（2026-11-27） ====================
-//   var w = fs.watch("d:\\proj", recursive = true)
+//   var w = fs.watch("d:\\proj", recursive = true, exclude = ["$RECYCLE.BIN", ".git"])
 //   Array[Dict] evs = w.poll()      // 非阻塞，没有变化返回 []
-//   // ev = {action: "add"|"del"|"mod"|"rename", path: "src/a.leno"}
+//   // ev = {action: "add"|"del"|"mod"|"rename"|"overflow", path: "src/a.leno"}
+//   // rename 额外带 ev["old_path"]（同一批里配好对，不再给两条孤立事件）
 //   w.stop()
 // 引擎：Windows 走 ReadDirectoryChangesW（内核事件，递归 + 溢出通知）；
 //       其它平台走轮询（默认 300ms 一次全树 mtime/size 比对）。详见 watch.leno 顶部注释。
-export func watch(string path, bool recursive = false, string engine = "auto"): Watcher {
-    return wch.watch(path, recursive, engine)
+export func watch(string path, bool recursive = false, string engine = "auto",
+                  Array[string]? exclude = null): Watcher {
+    return wch.watch(path, recursive, engine, exclude)
 }
 
 export func isWatching(Watcher w): bool {

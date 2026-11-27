@@ -28,6 +28,16 @@ func hasAction(Array[Dict] evs, string act, string part): bool {
     return false
 }
 
+// 取某条 rename 的 old_path（没有就返回空）
+func renameOld(Array[Dict] evs, string newPart): string {
+    for evs to e {
+        if (e["action"] as string) == "rename" and strings.has(e["path"] as string, newPart) {
+            if e.has("old_path") { return e["old_path"] as string }
+        }
+    }
+    return ""
+}
+
 func dump(string label, Array[Dict] evs) {
     var s = label + " 事件(" + _str(evs.len()) + ")："
     for evs to e {
@@ -87,7 +97,8 @@ func runEngine(string label, string engine, int settleMs): bool {
         threads.sleep(settleMs)
         Array[Dict] e4 = w.poll()
         dump("④", e4)
-        check("改名 → rename", hasAction(e4, "rename", "c.txt"))
+        check("改名 → rename（一条，path=新名）", hasAction(e4, "rename", "c.txt"))
+        check("rename 带 old_path=a.txt", renameOld(e4, "c.txt") == "a.txt")
     }
 
     // ⑤ 删除
@@ -103,6 +114,26 @@ func runEngine(string label, string engine, int settleMs): bool {
     check("stop 后 isWatching=false", not fs.isWatching(w))
 
     dirs.delete(root)
+
+    // ⑦ exclude：命中前缀的路径不报（`$RECYCLE.BIN` 这类噪声靠它挡）
+    var root2 = dirs.join(_tmpdir(), "leno_watch_excl_" + engine)
+    reset(root2)
+    dirs.mkdir_p(dirs.join(root2, "skipme"))
+    dirs.mkdir_p(dirs.join(root2, "deep", ".git"))
+    var w2 = fs.watch(root2, true, engine, ["skipme", ".git"])
+    if fs.isWatching(w2) {
+        files.write(dirs.join(root2, "keep.txt"), "k")
+        files.write(dirs.join(root2, "skipme", "hidden.txt"), "h")
+        files.write(dirs.join(root2, "deep", ".git", "HEAD"), "ref: main")
+        threads.sleep(settleMs)
+        Array[Dict] e6 = w2.poll()
+        dump("⑦", e6)
+        check("exclude：keep.txt 报 add", hasAction(e6, "add", "keep.txt"))
+        check("exclude：根下 skipme 不报", not hasAction(e6, "add", "skipme"))
+        check("exclude：子目录里的 .git 也不报（按路径段匹配）", not hasAction(e6, "add", ".git"))
+        w2.stop()
+    }
+    dirs.delete(root2)
     return true
 }
 

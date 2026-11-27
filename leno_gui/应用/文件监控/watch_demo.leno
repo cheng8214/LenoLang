@@ -1,0 +1,157 @@
+// watch_demo.leno — 目录变化监控窗口（LenoFS.watch + LenoSDL3）
+//
+// 用法:
+//   build\leno.exe "leno_gui\应用\文件监控\watch_demo.leno"              :: 监控当前目录
+//   build\leno.exe "leno_gui\应用\文件监控\watch_demo.leno" D:\some\dir :: 指定目录
+//
+// 界面：一行「路径输入框 + 监控 + 浏览… + 清空」，下面是事件表格（新事件在最上面）。
+// 说明：
+//   · 每帧 `w.poll()` 一次（非阻塞、一次排空），新事件插到表格顶部
+//   · 窗口静止时 SDL3 **不重绘**（onRender 不跑）⇒ 必须挂短定时器把窗口叫醒
+//   · 切换目录 = 先 stop 旧 watcher 再 watch 新的（表格同时清空，避免两次监控混在一起）
+//   · ESC 退出；只保留最近 800 条
+import "SDL3" as SDL3
+import "FS" as fs
+import dirs
+import strings
+import times
+use SDL3.(Event, Renderer, Scancode, WindowFlag)
+
+func shortPath(string p): string {
+    if p.len() > 52 { return "…" + strings.slice(p, p.len() - 50, p.len() - 1) }
+    return p
+}
+
+main() {
+    var args = _args()
+    var curRoot = dirs.cwd()
+    if args.len() >= 1 { curRoot = dirs.abspath(args[0]) }
+
+    // 噪声目录：删文件进回收站会在 `$RECYCLE.BIN` 里产生 add；版本库/依赖目录刷屏
+    Array[string] noise = ["$RECYCLE.BIN", "System Volume Information", ".git", "node_modules"]
+
+    var w = fs.watch(curRoot, true, "auto", noise)
+    if not fs.isWatching(w) {
+        print("监控启动失败：" + w.err)
+        return
+    }
+    string engine = if _os() == "windows" then "内核事件" else "轮询 300ms"
+
+    var win = SDL3.createWindow({title: "文件监控", w: 960, h: 640, flags: WindowFlag.RESIZABLE})
+    if not win.ok {
+        w.stop()
+        print("窗口创建失败")
+        return
+    }
+    // ⚠ 静止窗口不重绘 ⇒ onRender 不跑 ⇒ 不会去 poll。150ms 叫醒一次。
+    win.addTimer(150, func() { })
+
+    var edt = win.addEdit({
+        x: 10, y: 10, w: 600, h: 32,
+        text: curRoot, font_size: 14,
+        placeholder: "要监控的目录（可直接粘贴路径）"
+    })
+    var btnGo = win.addButton({text: "监控", x: 620, y: 10, w: 80, h: 32, type: "primary"})
+    var btnPick = win.addButton({text: "浏览…", x: 708, y: 10, w: 80, h: 32})
+    var btnClear = win.addButton({text: "清空", x: 796, y: 10, w: 80, h: 32})
+
+    var tbl = win.addTable({
+        x: 10, y: 52, w: 920, h: 578,
+        headers: ["时间", "动作", "路径"],
+        col_widths: [86.0, 76.0, 758.0],
+        item_h: 22.0,
+        font_size: 14
+    })
+
+    Array[Array[string]] rows = []
+    var dirty = false
+    var total = 0
+    bool verbose = _env("WATCH_DEMO_LOG") != null
+    var autoExit = -1
+    var envExit = _env("WATCH_DEMO_EXIT_MS")
+    if envExit is string => es { autoExit = _int(es) }
+    int t0 = _int(times.ms())
+
+    // 切换监控目标（输入框 / 浏览… / 命令行都走这里）
+    var apply = func(string raw) {
+        string abs = dirs.abspath(strings.trim(raw))
+        if not dirs.is_dir(abs) {
+            win.setTitle("路径无效（不是目录）：" + shortPath(abs))
+            return
+        }
+        w.stop()
+        w = fs.watch(abs, true, "auto", noise)
+        if not fs.isWatching(w) {
+            win.setTitle("监控失败：" + w.err)
+            return
+        }
+        curRoot = abs
+        edt.set_text(abs)
+        rows.clear()
+        total = 0
+        dirty = true
+        win.setTitle("文件监控 — " + shortPath(abs) + "（" + engine + "）")
+    }
+
+    btnGo.on_click(func() { apply(edt.get_text()) })
+    btnClear.on_click(func() {
+        rows.clear()
+        total = 0
+        dirty = true
+        win.setTitle("文件监控 — " + shortPath(curRoot) + "（" + engine + "）")
+    })
+    btnPick.on_click(func() {
+        if SDL3.isDialogActive() { return }        // 上一个对话框还没结束
+        SDL3.showOpenFolderDialog(win,
+            func(Array[string] paths, int filter) {
+                if paths.len() > 0 { apply(paths[0]) }
+            },
+            {default_location: curRoot})
+    })
+
+    win.setTitle("文件监控 — " + shortPath(curRoot) + "（" + engine + "）")
+
+    win.run(
+        func(Event e): bool {
+            if e.isQuit() or e.isWindowClose() { return false }
+            if e.isKeyDown() and e.scancode() == Scancode.ESCAPE { return false }
+            if autoExit > 0 and _int(times.ms()) - t0 > autoExit { return false }
+            return true
+        },
+        func(Renderer r) {
+            Array[Dict] evs = w.poll()
+            if evs.len() > 0 {
+                string ts = times.format(times.now(), "%H:%M:%S")
+                for evs to ev {
+                    string act = ev["action"] as string
+                    string p = ev["path"] as string
+                    if act == "overflow" {
+                        rows.insert(0, [ts, "overflow", "（变化过多，事件可能丢失，请全量刷新）"])
+                    } else if act == "rename" {
+                        // Windows 原型给的是「旧名」「新名」两条；模块已配好对 ⇒ 这里一条显示成 old → new
+                        var old = ""
+                        if ev.has("old_path") { old = ev["old_path"] as string }
+                        if old == "" { rows.insert(0, [ts, "rename", p]) }
+                        else { rows.insert(0, [ts, "rename", old + "  →  " + p]) }
+                    } else {
+                        rows.insert(0, [ts, act, p])
+                    }
+                    if verbose { print("[ev] " + ts + "  " + act + "  " + p) }
+                    total = total + 1
+                }
+                if rows.len() > 800 { rows = rows[0 : 799] }
+                dirty = true
+                win.setTitle("文件监控 — " + shortPath(curRoot) + "（" + engine + "，共 " + _str(total) + " 条）")
+            }
+            if dirty {
+                tbl.set_rows(rows)
+                dirty = false
+            }
+            r.setColor(#101420FF)
+            r.clear()
+        }
+    )
+
+    w.stop()
+    print("退出，共收到 " + _str(total) + " 条事件")
+}

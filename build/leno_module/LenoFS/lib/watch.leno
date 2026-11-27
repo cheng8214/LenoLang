@@ -75,6 +75,25 @@ func _rel(string root, string full): string {
     return strings.replace(r, "\\", "/")
 }
 
+// 相对路径是否命中 exclude。
+// 匹配规则（按**路径段**边界，避免 `.git` 误伤 `.gitignore`）：
+//   命中 = rel 等于 p、或以 `p/` 开头、或中间出现 `/p/`、或以 `/p` 结尾
+//   ⇒ 既支持"根下固定目录"（`$RECYCLE.BIN/…`），也支持"任意层级同名目录"（`a/b/.git`）
+func _segMatch(string rel, string p): bool {
+    if rel == p { return true }
+    if strings.starts_with(rel, p + "/") { return true }
+    if strings.has(rel, "/" + p + "/") { return true }
+    if strings.ends_with(rel, "/" + p) { return true }
+    return false
+}
+
+func _excluded(Watcher w, string rel): bool {
+    for w.exclude to p {
+        if p != "" and _segMatch(rel, p) { return true }
+    }
+    return false
+}
+
 // 同一次 poll 内按 path 合并：Windows 对一次「保存」常连报 修改/修改/重命名，
 // 不去重就得让每个调用方自己写去抖。
 // ⚠ 但 `add` 不能被紧跟的 `mod` 覆盖：新建文件必然先 ADDED 再 MODIFIED（truncate + 写入），
@@ -98,6 +117,9 @@ export struct Watcher {
     bool recursive = false
     bool stopped = false
     string err = ""
+    // 前缀排除（相对路径，'/' 分隔）。典型噪声：`$RECYCLE.BIN`（删除进回收站会在里面产生 add）、
+    // `.git`、`node_modules`。**默认不过滤**，要不要屏蔽由调用方决定（监控回收站也是合法需求）。
+    Array[string] exclude = []
 
     // ---- Windows 原生 ----
     Ptr[u8] k32 = null
@@ -192,23 +214,42 @@ func _winPoll(Watcher w): Array[Dict] {
             _winArm(w)
             break
         }
+        string oldName = ""
         var off = 0
         while off + 12 <= bytes {
             int act = ffi.read_uint(w.buf, off + 4)
             int nlen = ffi.read_uint(w.buf, off + 8)
             if nlen > 0 {
                 Array[int] nb = ffi.read_bytes(w.buf, off + 12, nlen).to_bytes()
-                string rel = _utf16(nb, 0, nlen)
-                var a = "mod"
-                if act == 1 { a = "add" }
-                else if act == 2 { a = "del" }
-                else if act == 4 or act == 5 { a = "rename" }
-                _addEvent(out, pos, a, rel)
+                // Windows 给的是 `子目录\文件`，统一成 `/` —— 与轮询引擎、与文档口径一致；
+                // 否则 `exclude` 的前缀匹配（按 `/` 分段）在 Windows 上永远不命中（实测踩到）
+                string rel = strings.replace(_utf16(nb, 0, nlen), "\\", "/")
+                if not _excluded(w, rel) {
+                    if act == 4 {
+                        // RENAMED_OLD_NAME：先记下，等下一条 NEW_NAME 配成一对
+                        oldName = rel
+                    } else if act == 5 {
+                        // RENAMED_NEW_NAME ⇒ 一条带 old_path 的 rename。
+                        // 原来两条孤立的 "rename" 没法判断"改名/移动"，上层只能猜。
+                        out.add({action: "rename", path: rel, old_path: oldName})
+                        oldName = ""
+                    } else {
+                        var a = "mod"
+                        if act == 1 { a = "add" }
+                        else if act == 2 { a = "del" }
+                        // 目录自身的 mod 是噪声：里面增删文件时 Windows 会同时把父目录标脏，
+                        // 而子项的 add/del 事件已经覆盖了这件事（轮询引擎同样不报目录 mod）。
+                        if a == "mod" and dirs.is_dir(dirs.join(w.root, rel)) { a = "" }
+                        if a != "" { _addEvent(out, pos, a, rel) }
+                    }
+                }
             }
             int nxt = ffi.read_uint(w.buf, off)
             if nxt == 0 { break }
             off = off + nxt
         }
+        // 旧名后没跟到新名（跨批 / 被 buffer 边界切开）：仍然报出来，别丢事件
+        if oldName != "" { out.add({action: "rename", path: "", old_path: oldName}) }
         _winArm(w)
         rounds = rounds + 1
     }
@@ -245,28 +286,46 @@ func _pollScan(Watcher w): Array[string] {
     Array[string] out = []
     w.snapSig = {}
     if w.recursive {
-        Array[DirEntry] es = dirs.walk(w.root)
+        Array[DirEntry] es = []
+        try {
+            es = dirs.walk(w.root)
+        } catch ex {
+            // 竞态：exists() 之后、walk() 之前目录被删/被改名 ⇒ 本轮当作空，不炸整个程序
+            w.err = "扫描失败：" + _str(ex.msg)
+            return out
+        }
         for es to e {
             for e.dirs to d {
-                string full = dirs.join(e.root, d)
-                string rel = _rel(w.root, full)
-                out.add(rel)
-                w.snapSig.set(rel, "d")
+                string rel = _rel(w.root, dirs.join(e.root, d))
+                if not _excluded(w, rel) {
+                    out.add(rel)
+                    w.snapSig.set(rel, "d")
+                }
             }
             for e.files to f {
                 string full = dirs.join(e.root, f)
                 string rel = _rel(w.root, full)
-                out.add(rel)
-                w.snapSig.set(rel, _snapshotKey(full, false))
+                if not _excluded(w, rel) {
+                    out.add(rel)
+                    w.snapSig.set(rel, _snapshotKey(full, false))
+                }
             }
         }
     } else {
-        Array[string] names = dirs.listdir(w.root)
+        Array[string] names = []
+        try {
+            names = dirs.listdir(w.root)
+        } catch ex {
+            w.err = "扫描失败：" + _str(ex.msg)
+            return out
+        }
         for names to n {
             string full = dirs.join(w.root, n)
             string rel = _rel(w.root, full)
-            out.add(rel)
-            w.snapSig.set(rel, _snapshotKey(full, dirs.is_dir(full)))
+            if not _excluded(w, rel) {
+                out.add(rel)
+                w.snapSig.set(rel, _snapshotKey(full, dirs.is_dir(full)))
+            }
         }
     }
     return out
@@ -311,11 +370,16 @@ func _pollOnce(Watcher w): Array[Dict] {
 }
 
 // ==================== 入口 ====================
-// engine: "auto"（默认）| "native"（仅 Windows）| "poll"
-export func watch(string path, bool recursive = false, string engine = "auto"): Watcher {
+// engine : "auto"（默认）| "native"（仅 Windows）| "poll"
+// exclude: 相对路径前缀，命中的不报事件（如 ["$RECYCLE.BIN", ".git"]）。
+//          ⚠ 只过滤**事件**，轮询引擎仍会走进去扫（dirs.walk 没有剪枝能力）⇒ 大目录想省扫描
+//          得自己从监控根上排除（分开 watch 子目录）。
+export func watch(string path, bool recursive = false, string engine = "auto",
+                  Array[string]? exclude = null): Watcher {
     var w = new Watcher()
     w.root = path
     w.recursive = recursive
+    if exclude != null { w.exclude = exclude }
     string os = _os()
     if engine == "poll" or (engine == "auto" and os != "windows") {
         if not dirs.is_dir(path) {
