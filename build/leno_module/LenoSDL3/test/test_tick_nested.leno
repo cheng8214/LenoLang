@@ -1,0 +1,100 @@
+// test_tick_nested.leno —— "容器里的控件也能每帧推进"回归（2026-11-27）
+//
+// 背景：`Tickable` 统一推进后，窗口只遍历**顶层** `_widgets` 和 `setRoot` 的根控件，
+//   容器里的控件**不在**那个列表里 ⇒ 容器不转发 tick，它们就永远不推进。
+//
+// ⚠ 本测试专门钉住 `TabControl` 的**两条装载路径**——这是 Aria「发现页滚轮不动」的根因：
+//     · `addToPage(idx, w, dx, dy)`   ⇒ 控件在 `pages[idx]`
+//     · `setPageLayout(idx, layout)`  ⇒ 控件在 `_pageLayouts[idx]`（Aria 发现页走这条）
+//   `process()`（事件）两条都转发，而 `tick()` 一度只写了 `pages` 那条
+//   ⇒ 用 setPageLayout 装载的页"滚轮有速度（vel=704）、画面一步不动" ✗
+//   ⇒ 只测一条路径是不够的：另一条会静默失效（当时 `test_tick_nested` 就只测了 addToPage）
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_tick_nested.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, TabControl, Table, ScrollView, VBox, Label)
+
+int gFail = 0
+float gTableY0 = 0.0
+float gSvY0 = 0.0
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "tick nested test", w: 620, h: 460})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    TabControl tab = win.addTabControl({x: 0, y: 0, w: 600, h: 440, tabs: ["addToPage", "setPageLayout"], tab_h: 36})
+
+    // ---- 路径 A：addToPage（控件直接进 pages[0]）----
+    Table tb = SDL3.createTable({x: 0, y: 0, w: 560, h: 320, item_h: 24, headers: ["行"]})
+    Array[Array[string]] rows = []
+    for 40 to i { rows.add(["行 " + _str(i)]) }
+    tb.set_rows(rows)
+    tab.addToPage(0, tb, 0, 0)
+
+    // ---- 路径 B：setPageLayout（整块布局作一页，控件在那棵子树里）----
+    //   ⚠ 第 2 个参数必须是 **VBox**（不是任意 Widget）—— Aria 的 `scroll_wrap()` 也是
+    //     把 ScrollView 包进 VBox 再交进来 ✓
+    ScrollView sv = SDL3.createScrollView({x: 0, y: 0, w: 560, h: 340})
+    VBox inner = SDL3.createVBox({x: 0, y: 0, w: 560, spacing: 4})
+    for 30 to i { inner.add(SDL3.createLabel({text: "行 " + _str(i)}), {grow: 0, shrink: 0, basis: 38}) }
+    sv.set_content(inner)
+    VBox wrap = SDL3.createVBox({x: 0, y: 0, w: 560, h: 340, pad_x: 0, pad_y: 0, spacing: 0})
+    wrap.add(sv, {grow: 1, shrink: 1, align: 3})
+    tab.setPageLayout(1, wrap)
+
+    // ==================== 路径 A ====================
+    win.addTimerOnce(300, func() {
+        gTableY0 = tb.scroll_y()
+        SDL3.testWheelAt(win.getID(), 200.0, 160.0, -1.0)   // 打在 Tab 内容区的 Table 上
+    })
+    win.addTimerOnce(500, func() {
+        check(tb.scroll_y() > gTableY0 + 0.05,
+            "addToPage 页里的 Table 被推进（" + _str(tb.scroll_y()) + " px）")
+        check(tb.get_scroll_velocity() > 0.0 or tb.scroll_y() > 1.0,
+            "addToPage 页里的 Table 拿到了速度（" + _str(tb.get_scroll_velocity()) + " px/s）")
+        // 切到第二条装载路径
+        tab.set_active(1)
+    })
+
+    // ==================== 路径 B ====================
+    win.addTimerOnce(900, func() {
+        gSvY0 = sv.get_scroll_y()
+        SDL3.testWheelAt(win.getID(), 200.0, 200.0, -1.0)   // 打在 setPageLayout 页里的 ScrollView 上
+    })
+    win.addTimerOnce(1200, func() {
+        check(sv.get_scroll_y() > gSvY0 + 0.05,
+            "setPageLayout 页里的 ScrollView 被推进（" + _str(sv.get_scroll_y()) + " px）")
+        check(sv.get_velocity_y() > 0.0 or sv.get_scroll_y() > 1.0,
+            "setPageLayout 页里的 ScrollView 拿到了速度（" + _str(sv.get_velocity_y()) + " px/s）")
+    })
+
+    win.addTimerOnce(2600, func() {
+        // ⚠ 只检查**当前页**收敛：切走之后 `Tab.tick` 只转发当前页 ⇒ 旧页的速度会**冻结**
+        //   （切回来才继续滑）。这是刻意的（不可见的页不该继续推进），不是 bug ✓
+        check(not sv.is_animating(), "当前页收敛（SV " + _str(sv.get_scroll_y()) + " px，速度归零）")
+        check(tb.scroll_y() > 1.0, "已切走的页保留它自己的位置（Table " + _str(tb.scroll_y()) + " px）")
+        print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+        SDL3.requestExit()
+    })
+    win.addTimerOnce(9000, func() { check(false, "9 秒内没跑完 ✗"); SDL3.requestExit() })
+
+    win.setOverlay(func(Renderer r) { })
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}
