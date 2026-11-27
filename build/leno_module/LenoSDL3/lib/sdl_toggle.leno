@@ -75,8 +75,10 @@ export struct Toggle impl Widget, Themeable {
         // hover/_wasHover/_pressed 默认见字段声明
         _tip = opts.get("tip", "")
 
-        // 动画选项：anim=true 开启平滑滑动动画，anim_speed 控制速度
-        animate = opts.get("anim", false)
+        // 动画选项：**默认开**（2026-11-27）—— 滑块与轨道颜色平滑过渡；`anim: false` 关掉
+        //   以前默认关 ⇒ 点开关是"啪"地跳过去，和新的滚动/悬停/弹层渐变放在一起显得很生硬 ✗
+        //   `anim_speed` 控制速度（12 ≈ 150ms，越大越快）
+        animate = opts.get("anim", true)
         animSpeed = opts.get("anim_speed", 12.0)
         animPos = if on then 1.0 else 0.0
         animTarget = animPos

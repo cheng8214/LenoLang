@@ -1,0 +1,81 @@
+// demo_scroll_physics.leno —— 手动感受 ScrollView 的物理滚动（2026-11-27 起是唯一行为）
+//
+// 跑法（在仓库根 d:\CLeno\Leno 下）：
+//     build\leno.exe leno_gui\控件\复合控件\容器类\demo_scroll_physics.leno
+//
+// 两边用的是**同一套**物理滚动，只有 `friction`（每帧速度保留率）不同 —— 它决定"滑多远"：
+//   左 friction:0.88（默认，τ≈0.13s，滚一格滑约 1.4 格）
+//   右 friction:0.96（很飘，τ≈0.40s，滚一格能滑 3 格多）
+//
+// 重点看：
+//   ① 滚一格不是瞬跳：先慢后快再滑一段
+//   ② 连续快滚会累积成"一次飞"（速度叠加）
+//   ③ 滚到底：内容顶一下（越界）再被弹簧拉回，顶栏"越界"数字会闪一下非 0
+//   ④ 拖右侧滚动条：1:1 跟手，速度/弹簧都不抢方向盘
+//   ⑤ 滚动条折叠/展开是**渐变**的（鼠标移进/移出视口时宽度 3px ↔ 12px 慢慢长）
+import "SDL3" as SDL3
+import strings
+use SDL3.(Event, Renderer, Window, ScrollView, Label, Button)
+
+ScrollView? gL = null
+ScrollView? gR = null
+Label? gInfoL = null
+Label? gInfoR = null
+
+// 40 行 × 42 + 间距 6 ⇒ 内容 ~1950px，视口 576 ⇒ 够滚一大段
+func fill(ScrollView sv, string tag) {
+    var box = SDL3.createVBox({pad_x: 8, pad_y: 8, spacing: 6})
+    for 40 to i {
+        string mark = if i % 10 == 0 then "   ◆" else ""
+        Button b = SDL3.createButton({text: "行 " + strings.pad_start(_str(i), 2, "0") + "  ·  " + tag + mark,
+                                      w: 384, h: 42})
+        box.add(b, {grow: 0, shrink: 0, basis: 42})
+    }
+    sv.set_content(box)
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "ScrollView 物理滚动 —— 左：默认 friction 0.88    右：friction 0.96", w: 900, h: 660})
+    if not win.ok {
+        print("建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+
+    win.addLabel({x: 16, y: 10, text: "滚轮在哪个框里就滚哪个 —— 起步是加速、停下是滑行、撞到底会弹回来；右边 friction 更大所以滑得更远", font_size: 15, text_color: #C8D2E0FF})
+    Label il = win.addLabel({x: 16, y: 38, text: "…", font_size: 14, text_color: #8FB3FFFF})
+    Label ir = win.addLabel({x: 464, y: 38, text: "…", font_size: 14, text_color: #8FB3FFFF})
+
+    ScrollView sl = win.addScrollView({x: 16, y: 68, w: 420, h: 576})
+    ScrollView sr = win.addScrollView({x: 464, y: 68, w: 420, h: 576, friction: 0.96})
+    fill(sl, "friction 0.88")
+    fill(sr, "friction 0.96")
+
+    gL = sl; gR = sr; gInfoL = il; gInfoR = ir
+
+    win.setOverlay(func(Renderer r) {
+        var a = gL
+        var b = gR
+        var la = gInfoL
+        var lb = gInfoR
+        if a is ScrollView {
+            if la is Label {
+                la.set_text("y " + _str(_int(a.get_scroll_y())) + " / " + _str(_int(a.get_max_scroll_y()))
+                    + "    速度 " + _str(_int(a.get_velocity_y())) + " px/s"
+                    + "    越界 " + _str(_int(a.get_overscroll_y())) + " px")
+            }
+        }
+        if b is ScrollView {
+            if lb is Label {
+                lb.set_text("y " + _str(_int(b.get_scroll_y())) + " / " + _str(_int(b.get_max_scroll_y()))
+                    + "    速度 " + _str(_int(b.get_velocity_y())) + " px/s"
+                    + "    越界 " + _str(_int(b.get_overscroll_y())) + " px")
+            }
+        }
+    })
+
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}

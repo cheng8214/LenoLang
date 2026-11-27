@@ -1,8 +1,8 @@
 // test_toggle_anim.leno — 开关动画演示
-// 演示：为开关开启 anim=true 后，点击时滑块与轨道颜色会像进度条一样平滑过渡，
-// 而非瞬间跳变；anim_speed 控制动画速度（越大越快）。
-//   · 上面两个开关：anim=true（带动画），分别用不同速度对比
-//   · 最下方开关：不传 anim（默认关闭动画，保持原瞬时切换行为，作为对照）
+// 演示：点击开关时滑块与轨道颜色像进度条一样平滑过渡（默认就是开的，2026-11-27），
+// anim_speed 控制动画速度（越大越快）。
+//   · 上面两个开关：显式给 anim_speed，分别用不同速度对比
+//   · 最下方开关：anim: false（关掉动画，瞬时切换，作为对照）
 import "SDL3" as SDL3
 use SDL3.Event
 use SDL3.Renderer
@@ -24,8 +24,8 @@ main() {
     var tB = win.addToggle({ text: "动画·慢", x: 40, y: 140, on: true, anim: true, anim_speed: 5.0 })
     tB.on_change(func(bool v) { print("B -> " + v) })
 
-    // 开关 C：对照——不开启动画（默认），点击瞬间切换
-    var tC = win.addToggle({ text: "无动画(对照)", x: 40, y: 200, on: false })
+    // 开关 C：对照——显式关掉动画，点击瞬间切换
+    var tC = win.addToggle({ text: "无动画(对照)", x: 40, y: 200, on: false, anim: false })
     tC.on_change(func(bool v) { print("C -> " + v) })
 
     win.run(

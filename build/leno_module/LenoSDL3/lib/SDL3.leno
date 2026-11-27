@@ -338,6 +338,7 @@ export func tipClearEx(string owner)                { tip.tipClearEx(owner) }
 export func tipOwner(): string                       { return tip.tipOwner() }
 // 诊断：提示气泡当前是否已显示 / 当前文本（排障"没弹出来"用 ✓）
 export func tipVisible(): bool                      { return tip.tipVisible() }
+export func tipFade(): float                        { return tip.tipFade() }
 export func tipText(): string                       { return tip.tipCurrent() }
 
 // ==================== 轻提示 Toast（应用内，2026-10-30）====================

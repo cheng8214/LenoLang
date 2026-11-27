@@ -86,7 +86,9 @@ main() {
         // ---- Table：移进去看渐变（到 1 即可，不重复验中间态）----
         SDL3.testMoveAt(win.getID(), 100.0, 430.0)
     })
-    win.addTimerOnce(2350, func() { gShot = true })   // 抓一帧，人工核对 hover 行到底有没有底色
+    // 录帧是 opt-in（`HOVER_ANIM_SHOT=1`）：默认跑测试不该往 build\ 里丢 PNG 污染工作区 ✗
+    bool shotOn = _env_or("HOVER_ANIM_SHOT", "") != ""
+    win.addTimerOnce(2350, func() { if shotOn { gShot = true } })
     win.addTimerOnce(2560, func() {
         check(maths.abs(tb.get_hover_anim() - 1.0) < 0.02, "Table 悬停到位（" + _str(tb.get_hover_anim()) + "）")
         print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")

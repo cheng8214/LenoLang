@@ -1,0 +1,56 @@
+// test_scrim_fade.leno —— 模态遮罩 Scrim 打开时**渐显**回归（2026-11-27）
+//
+// 以前 `show()` 一调，`render` 直接用满 alpha 铺一层 ⇒ 背景"啪"地变暗 ✗
+// 现在由 `Tween` 驱动 0→1（约 150ms）：遮罩颜色的 alpha 按进度乘。
+// 本测试钉住：
+//   ① show() 后头几十毫秒，进度在 (0,1) 之间（是在渐显，不是瞬现）
+//   ② ~300ms 后到 1
+//   ③ hide() 立刻归零（下次重新从透明开始）
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_scrim_fade.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, Scrim)
+
+int gFail = 0
+float gMid = 0.0
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "scrim fade test", w: 480, h: 300})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    Scrim sc = win.addScrim({alpha: 120})
+
+    win.addTimerOnce(300, func() { sc.show() })
+    win.addTimerOnce(360, func() { gMid = sc.get_fade() })
+    win.addTimerOnce(700, func() {
+        check(gMid > 0.02 and gMid < 0.99, "打开时有渐显中间态（进度 " + _str(gMid) + "）")
+        check(maths.abs(sc.get_fade() - 1.0) < 0.02, "最终完全遮住（" + _str(sc.get_fade()) + "）")
+        sc.hide()
+    })
+    win.addTimerOnce(900, func() {
+        check(sc.get_fade() < 0.01, "hide() 后进度归零（" + _str(sc.get_fade()) + "）")
+        print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+        SDL3.requestExit()
+    })
+    win.addTimerOnce(8000, func() { check(false, "8 秒内没跑完 ✗"); SDL3.requestExit() })
+
+    win.setOverlay(func(Renderer r) { })
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}

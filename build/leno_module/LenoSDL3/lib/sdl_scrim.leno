@@ -14,6 +14,8 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_theme.leno" as theme
 use theme.Color
+import "sdl_core.leno" as core
+import "sdl_animator.leno" as ani; use ani.Tween   // 打开时渐显（与 Tab/Card/Tooltip 共用 ✓）
 
 
 export struct Scrim impl Widget {
@@ -26,6 +28,10 @@ export struct Scrim impl Widget {
     //   只能 hide() 再 show()（闪烁 ✗）。补成与其它控件一致 ✓
     bool enabled = true
     pri bool hover = false         // ★ 2026-10-29 反哺：见 is_hover()
+    // ★ 2026-11-27：打开时**渐显**（0→1，约 150ms）—— 以前 `show()` 一调背景"啪"地变暗 ✗
+    //   只做淡入：关闭时 `hide()` 把进度 snap 回 0（想画淡出就得让"不可见控件继续绘制"，
+    //   窗口的 `_drawTree` 不会这么做，硬做要动绘制循环，不划算）
+    pri Tween _fade
     bool _loaded = true
 
 
@@ -38,12 +44,18 @@ export struct Scrim impl Widget {
     }
 
     // ==================== 控制方法 ====================
-    func show() { visible = true }
-    func hide() { visible = false }
+    func show() {
+        if not visible { _fade.snap(0.0) }     // 每次"从隐藏到显示"都重新从透明开始 ✓
+        visible = true
+        _fade.set_target(1.0)
+    }
+    func hide() { visible = false; _fade.snap(0.0) }
     func set_alpha(int a) { alpha = a }
     func set_color(Color color) { _color = color }
     // ★ 2026-10-29 反哺：补成与 Button/Card/Panel 同一套叫法（show/hide 保留，两者等价 ✓）
-    func set_visible(bool v) { visible = v }
+    func set_visible(bool v) { if v then show() else hide() }
+    // 渐显进度（0~1）—— 自测断言用
+    func get_fade(): float { return _fade.value() }
     func set_enabled(bool v) { enabled = v }
 
     // ==================== Widget 接口 ====================
@@ -81,7 +93,11 @@ export struct Scrim impl Widget {
 
     func render(Renderer r) {
         if not _loaded or not visible { return }
-        r.setColor(theme.withAlpha(_color, alpha))
+        // ★ 2026-11-27：渐显 —— 进度没走完就续帧（漏了 requestRedraw 会"卡在中间透明度"✗）
+        if _fade.pump() { core.requestRedraw() }
+        float f = _fade.value()
+        if f < 0.01 { return }
+        r.setColor(theme.withAlpha(_color, _int(_float(alpha) * f)))
         r.fillRect(x, y, _w, _h)
     }
 

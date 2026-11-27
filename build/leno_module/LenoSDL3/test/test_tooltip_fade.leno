@@ -1,0 +1,62 @@
+// test_tooltip_fade.leno —— Tooltip 弹出**淡入**回归（2026-11-27）
+//
+// 以前 `tipTick` 一到延迟点就把 `_tipVisible = true` ⇒ 气泡"啪"一下整块出现 ✗
+// 现在由 `Tween`（lib/sdl_animator.leno）驱动 0→1（~120ms），所有颜色按进度乘 alpha。
+// 本测试钉住：
+//   ① 到点后的头几十毫秒，进度在 (0, 1) 之间（说明是在淡入，不是瞬现）
+//   ② ~300ms 后到 1
+//   ③ 移开鼠标 ⇒ 立刻消失（tipClear 把进度 snap 回 0，不做淡出）
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_tooltip_fade.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, Button)
+
+int gFail = 0
+float gMid = 0.0
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "tooltip fade test", w: 480, h: 260})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    SDL3.setTipDelay(300)      // 缩短延迟，别让测试等 500ms
+    win.addButton({x: 60, y: 60, w: 200, h: 44, text: "悬停我", tip: "这是一个提示"})
+
+    // 320ms 把鼠标移上去 ⇒ tipReport 开始计时；300ms 后（≈620ms）才到点
+    win.addTimerOnce(320, func() { SDL3.testMoveAt(win.getID(), 160.0, 82.0) })
+    // 到点后 ~30ms：中间态
+    win.addTimerOnce(660, func() { gMid = SDL3.tipFade() })
+    win.addTimerOnce(950, func() {
+        check(SDL3.tipVisible(), "延迟到点后气泡可见")
+        check(gMid > 0.02 and gMid < 0.99, "弹出时有淡入中间态（进度 " + _str(gMid) + "）")
+        check(maths.abs(SDL3.tipFade() - 1.0) < 0.02, "最终完全显示（" + _str(SDL3.tipFade()) + "）")
+        // 移开 ⇒ 立刻清掉（无淡出）
+        SDL3.testMoveAt(win.getID(), 440.0, 220.0)
+    })
+    win.addTimerOnce(1150, func() {
+        check(not SDL3.tipVisible(), "移开鼠标后立刻消失")
+        check(SDL3.tipFade() < 0.01, "进度归零（下次从透明重新开始）")
+        print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+        SDL3.requestExit()
+    })
+    win.addTimerOnce(8000, func() { check(false, "8 秒内没跑完 ✗"); SDL3.requestExit() })
+
+    win.setOverlay(func(Renderer r) { })
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}

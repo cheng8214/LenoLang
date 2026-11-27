@@ -12,6 +12,7 @@ import "sdl_renderer.leno" as ren; use ren.Renderer
 import "sdl_font.leno" as fnt; use fnt.Font
 import "sdl_core.leno" as core
 import "sdl_theme.leno" as theme; use theme.Theme
+import "sdl_animator.leno" as ani; use ani.Tween   // 弹出淡入（与 Tab/Card/滚动条共用 ✓）
 
 // ==================== 全局状态 ====================
 string _tipText  = ""          // 当前要显示的提示文本（空 = 无）
@@ -24,6 +25,11 @@ bool _fontDirty = true
 float _fontSize  = 12.0
 bool _tipReported = false   // 本帧 mouse motion 事件中是否有控件上报了 tip
 int _tipWindowId = -1       // 当前上报 tip 的窗口 ID（确保 tip 只画在该窗口上）
+// ★ 2026-11-27：弹出**淡入**（0→1，约 120ms）。以前是"到点啪一下出现" ✗
+//   只做淡入；消失仍是瞬时（文本一清就不再绘制，见 tipClear 的 snap）✓
+//   ⚠ 这是**模块级**变量 ⇒ 默认是 `null`，必须 `new` 一份（struct 字段才会默认构造 ✗，
+//     不 new 就会在 tipTick 里崩"对 null 调用方法 set_target"，实测踩过）
+Tween _tipFade = new Tween()
 // 当前气泡的**归属者**（"" = 无主，由 hover 仲裁机制管；非空 = 有主，只有主人能清）
 //   为什么要归属者（2026-10-27）：全局只有一个气泡，`tipClear()` 谁调都能清。
 //   进度条/图表这类**在 on_hover 回调里额外弹气泡**的控件不属于 motion 上报体系，
@@ -92,6 +98,7 @@ export func tipClear() {
     _tipVisible = false
     _tipWindowId = -1
     _tipOwner = ""
+    _tipFade.snap(0.0)      // 下次弹出重新从透明开始（消失是瞬时的，不做淡出 ✓）
 }
 
 // 只清"自己的"气泡：当前气泡的 owner 不是它 ⇒ 什么都不做 ✓
@@ -109,12 +116,19 @@ export func tipOwner(): string { return _tipOwner }
 export func tipTick() {
     if _tipText == "" {
         _tipVisible = false
+        _tipFade.set_target(0.0)
+        if _tipFade.pump() { core.requestRedraw() }   // 淡入没走完就要续帧 ✓
         return
     }
     int now = core.getTicks()
     if now - _tipStart >= _tipDelay {
-        if not _tipVisible { _tipVisible = true }
+        if not _tipVisible {
+            _tipVisible = true
+            _tipFade.snap(0.0)                 // 每次弹出都从全透明开始 ✓
+            _tipFade.set_target(1.0)
+        }
     } else { _tipVisible = false }
+    if _tipFade.pump() { core.requestRedraw() }
 }
 
 // tooltip 是否正在等待延迟显示（Window 用来判断是否需要持续重绘）
@@ -123,6 +137,8 @@ export func tipWaiting(): bool { return _tipText != "" and not _tipVisible }
 // 诊断用（自测/排障）：当前是否已显示、当前文本是什么
 //   为什么要暴露：应用侧只看到"没弹出来"，分不清是"没上报"还是"上报了但被清掉/没画" ✓
 export func tipVisible(): bool { return _tipVisible }
+// 淡入进度（0 = 刚弹出、1 = 完全显示）—— 自测断言用（2026-11-27）
+export func tipFade(): float { return _tipFade.value() }
 export func tipCurrent(): string { return _tipText }
 
 // 返回 tooltip 距离显示还需多少毫秒。
@@ -152,6 +168,9 @@ func _ensureFont(Renderer r) {
 export func tipRender(Renderer r, float vw, float vh, int wid) {
     if not _tipVisible or _tipText == "" { return }
     if wid != _tipWindowId { return }
+    // ★ 2026-11-27：淡入（0→1，~120ms）。所有颜色按 fade 乘 alpha ⇒ 从透明渐显 ✓
+    float fade = _tipFade.value()
+    if fade < 0.01 { return }
     _ensureFont(r)
     if not _font.ok { return }
 
@@ -185,15 +204,16 @@ export func tipRender(Renderer r, float vw, float vh, int wid) {
 
     // 背景
     Theme tm = theme.getTheme()
-    r.setColor(theme.withAlpha(tm.tipBg, 240))
+    r.setColor(theme.withAlpha(tm.tipBg, _int(240.0 * fade)))
     r.fillRoundedRect(bx, by, bw, bh, 5.0)
     // 边框
-    r.setColor(theme.withAlpha(tm.tipBrd, 220))
+    r.setColor(theme.withAlpha(tm.tipBrd, _int(220.0 * fade)))
     r.drawRoundedRect(bx, by, bw, bh, 5.0)
-    // 文字逐行绘制
+    // 文字逐行绘制（alpha 同样乘 fade）
+    Color tc = theme.withAlpha(tm.tipTxt, _int(_float(theme.colorA(tm.tipTxt)) * fade))
     float ty = by + padY
     for lines.len() to i {
-        r.drawText(_font, lines[i], r.snapX(bx + padX), r.snapY(ty), tm.tipTxt)
+        r.drawText(_font, lines[i], r.snapX(bx + padX), r.snapY(ty), tc)
         ty = ty + lineH + gapY
     }
 }
