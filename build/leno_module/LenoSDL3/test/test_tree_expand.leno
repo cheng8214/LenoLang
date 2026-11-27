@@ -1,0 +1,63 @@
+// test_tree_expand.leno —— TreeView 展开**滑入**回归（2026-11-27）
+//
+// 以前 `expand()` 之后子行直接出现在最终位置，展开那一下"唰"地整块跳出 ✗
+// 现在新出现的**直接子行**从上方 12px 滑到位、文字同时淡入（~150ms）。
+//   ⚠ 只动**绘制**，不动布局：`max_scroll()` / 命中 / 虚拟化仍按 `flatIds.len() * rowH`
+//     算（做高度插值会让"行索引"和屏幕 y 脱钩，风险远大于收益 —— 见字段注释）
+//
+// 本测试钉住：
+//   ① 展开后头几十毫秒，进度在 (0, 1) 之间（说明在滑入，不是瞬现）
+//   ② ~300ms 后到 1
+//   ③ 收起不做动画（行已从拍平表里消失），进度保持 1，不报错
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_tree_expand.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, TreeView)
+
+int gFail = 0
+float gMid = 0.0
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "tree expand test", w: 420, h: 340})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+    TreeView tv = win.addTreeView({x: 20, y: 20, w: 320, h: 300,
+        items: [{text: "根", id: 1, expanded: false, children: [
+            {text: "子 A", id: 2}, {text: "子 B", id: 3}, {text: "子 C", id: 4}
+        ]}]})
+
+    win.addTimerOnce(300, func() { tv.expand(1, true) })
+    win.addTimerOnce(360, func() { gMid = tv.get_expand_anim() })
+    win.addTimerOnce(700, func() {
+        check(gMid > 0.02 and gMid < 0.99, "展开时有滑入中间态（进度 " + _str(gMid) + "）")
+        check(maths.abs(tv.get_expand_anim() - 1.0) < 0.02, "最终就位（" + _str(tv.get_expand_anim()) + "）")
+        check(tv.get_visible_count() == 4, "四个节点都可见（" + _str(tv.get_visible_count()) + "）")
+        tv.expand(1, false)      // 收起：不做动画
+    })
+    win.addTimerOnce(900, func() {
+        check(tv.get_visible_count() == 1, "收起后只剩根（" + _str(tv.get_visible_count()) + "）")
+        print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+        SDL3.requestExit()
+    })
+    win.addTimerOnce(8000, func() { check(false, "8 秒内没跑完 ✗"); SDL3.requestExit() })
+
+    win.setOverlay(func(Renderer r) { })
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}

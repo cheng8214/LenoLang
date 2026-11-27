@@ -104,6 +104,13 @@ export struct TreeView impl Widget, Themeable {
     // ★ 2026-11-27：悬停行底色渐入/渐出（`hovIdA` = 正在渐变的节点 id，鼠标离开后它自己淡出）
     pri Tween hovA
     pri int hovIdA = -1
+    // ★ 2026-11-27：**展开动画** —— 新出现的直接子行从上方 12px 滑到位、文字同时淡入（~150ms）
+    //   ⚠ 为什么不做"高度插值"（Flutter AnimatedSize 那种）：`max_scroll()` / 命中判定 /
+    //     虚拟化的可见区间全按 `flatIds.len() * rowH` 算，插值等于让"行索引"和"屏幕 y"脱钩
+    //     ⇒ 滚动上限、`row_at()`、`startRow` 全得重写（风险远大于那点收益 ✗）
+    //   现在这套只动**绘制**：布局立即生效，子行在最后 150ms 内滑入 ✓
+    pri Tween expA
+    pri int expId = -1
     pri int hover = -1
     pri int sel = -1
     pri Array[int] sel2 = []
@@ -470,6 +477,8 @@ export struct TreeView impl Widget, Themeable {
     func is_scrolling(): bool { return phys.is_moving() }
     // 悬停行渐变进度（0~1）—— 自测断言用
     func get_hover_anim(): float { return hovA.value() }
+    // 展开滑入进度（0~1，1 = 已就位）—— 自测断言用
+    func get_expand_anim(): float { return expA.value() }
     // 层级连接线
     func set_show_lines(bool v) { showLines = v }
     func get_show_lines(): bool { return showLines }
@@ -494,8 +503,15 @@ export struct TreeView impl Widget, Themeable {
         if cur != e {
             set_expanded_r(roots, id, e)
             flatDirty = true; flatten(); clamp_scroll()
+            if e { start_expand_anim(id) }
             if onToggle != null { onToggle(id, e) }
         }
+    }
+    // 展开动画起点：`expId` 的直接子行会从上方 12px 滑入（收起不做，行已经从 flatIds 里消失了）
+    pri func start_expand_anim(int id) {
+        expId = id
+        expA.snap(0.0)
+        expA.set_target(1.0)
     }
     pri func set_expanded_r(Array[TreeViewNode] list, int id, bool v): bool {
         for list.len() to i {
@@ -520,6 +536,7 @@ export struct TreeView impl Widget, Themeable {
         bool e = not get_expanded(id)
         set_expanded_r(roots, id, e)
         flatDirty = true; flatten(); clamp_scroll()
+        if e { start_expand_anim(id) }
         if onToggle != null { onToggle(id, e) }
     }
     func toggle(int id) { toggle_node(id) }
@@ -850,6 +867,7 @@ export struct TreeView impl Widget, Themeable {
         if not visible { return }
         pump_scroll()          // 每帧推进一次物理（含续帧请求，见函数注释 ✓）
         if hovA.pump() { core.requestRedraw() }   // 悬停渐入/渐出也要续帧 ✓
+        if expA.pump() { core.requestRedraw() }   // 展开滑入同理 ✓
         ensure_font()
         if _font == null or not _font.ok { return }   // 字体无效时跳过渲染，避免"有背景无文字"的闪烁
         flatten()
@@ -872,6 +890,12 @@ export struct TreeView impl Widget, Themeable {
         for startRow : endRow - 1 to i {
             int id = flatIds[i]
             float rowY = r.snapY(y - dispY() + i * rowH)
+            // ★ 展开动画：**刚展开那个节点的直接子行**从上方 12px 滑到位（只动绘制，布局已生效）
+            float et = 1.0
+            if expId >= 0 and flatParent[i] == expId {
+                et = expA.value()
+                rowY = r.snapY(rowY - (1.0 - et) * 12.0)
+            }
             if rowY + rowH < y or rowY > y + h { continue }
             float checkOff = if showCheck then 18.0 else 0.0
 
@@ -981,6 +1005,8 @@ export struct TreeView impl Widget, Themeable {
                 float th = textH
                 Color tcR = txtColor
                 if not enabled { tcR = theme.darken(txtColor, 60) }
+                // 展开滑入期间文字跟着淡入（et=1 时完全不变 ✓）
+                if et < 0.999 { tcR = theme.withAlpha(tcR, _int(_float(theme.colorA(tcR)) * et)) }
                 float ty = r.snapY(rowY + (rowH - th) / 2.0)
                 r.drawText(_font, flatText[i], r.snapX(tx), ty, tcR)
             }
