@@ -512,6 +512,20 @@ print(_str(sum))                                                   // 60
 > `parallel_for` 的闭包**只**捕获 `ch`，而 Channel 是引用共享 ⇒ 安全。
 > 它捕获别的可变状态一样是副本 —— 规则没变。等一组线程用 `threads.join_all(Array[Thread])`。
 
+**大只读数据反复跨线程 → `_freeze`（零拷贝）**：默认传值都是深拷贝，同一份数据每个任务拷一遍最亏。
+
+```leno
+Frozen[Array[int]] snap = _freeze(big)    // 一次性 O(n)；之后只读
+ch.send(snap)                             // O(1)，不再拷贝
+var hits = threads.map(idx, func(int i, int no) { return snap[i % snap.len()] })
+Array[int] copy = _thaw(snap)             // 要改就解冻出副本（O(n)）
+```
+
+- 写 frozen 是**编译错误**（`Frozen[T]` 与 `T` 双向不兼容）；形参写成 `Frozen[Array[int]]` 才能接收。
+- 判"是不是冻结"用 `_is_frozen(x)`；`x is Frozen[...]` / `as Frozen[...]` 被**禁用**（运行期只有对象标签）。
+- 只冻**数据**：`Ptr` / `cstruct` / `File` / `Channel` / `Atomic` / 闭包编译期就拒；含环的数据运行期拒。
+- 用法与坑：`LenoDocsSrc/site/frozen使用指南.html`（原理：`大对象零拷贝共享设计.html`）。
+
 ---
 
 ## 8. 写之前先跑一遍
