@@ -276,6 +276,13 @@ export func diskSpace(string root): Dict {
     return shell.diskSpace(root)
 }
 
+// 卷信息（卷标 / 文件系统 / 驱动器类型 / 序列号）；不返回容量（那是 diskSpace 的事）
+//   ⇒ {ok, root, label, fsType, serial, driveType, kind}，kind ∈ removable/fixed/network/cdrom/ram/unknown
+export func volumeInfo(string root): Dict {
+    if not _is_supported() { return {ok: false, root: root, label: "", fsType: "", serial: 0, driveType: 0, kind: "unknown"} }
+    return shell.volumeInfo(root)
+}
+
 // 清空回收站（默认无确认/无进度/无声；空回收站也返回 true）
 export func emptyRecycleBin(int flags = 7): bool {
     if not _is_supported() { return false }

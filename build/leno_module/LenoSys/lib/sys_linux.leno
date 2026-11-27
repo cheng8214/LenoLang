@@ -183,6 +183,51 @@ export func listDrives(): Array[string] {
     return out
 }
 
+// 所有挂载卷的详细信息（2026-11-27）
+//   · 挂载点/fstype 来自 `/proc/mounts`（字段边界无歧义：空格是 `\040` ✓，见 parse_proc_mounts 的注释）
+//   · 容量仍走 `diskSpace`（`df -B1`）—— 每个卷起一个子进程，所以**先过滤虚拟文件系统**，
+//     否则容器里能列出几十个 proc/sysfs/tmpfs 条目，白跑几十次 df
+//   · `label` 给设备名（`/dev/sda1`）；Linux 没有统一的"卷标"概念（ext 卷标要 tune2fs 才写）
+//   · ⚠ 本函数**未在真实 Linux 上实测**（本机只有 Windows）：按 /proc/mounts 与 df 的标准输出写的；
+//     格式解析本身有 parse_mounts_detail / parse_df 的单测覆盖
+export func listVolumes(): Array[Dict] {
+    Array[Dict] out = []
+    var ms = sp.parse_mounts_detail(_read_text("/proc/mounts"))
+    for ms to m {
+        string mp = m["mount"] as string
+        string fs = m["fstype"] as string
+        if _isVirtualFs(fs) { continue }
+        var cap = diskSpace(mp)
+        var kind = "fixed"
+        if strings.starts_with(mp, "/media/") or strings.starts_with(mp, "/mnt/")
+            or strings.starts_with(mp, "/run/media/") { kind = "removable" }
+        out.add({
+            root: mp,
+            label: m["device"] as string,
+            fsType: fs,
+            serial: 0,
+            driveType: 0,
+            kind: kind,
+            total: jsons.get_int(cap, "total", 0),
+            free: jsons.get_int(cap, "free", 0),
+            ready: jsons.get_bool(cap, "ok", false)
+        })
+    }
+    return out
+}
+
+// 虚拟/伪文件系统：列出来对"哪个盘还有空间"没有任何意义，只会白起 df 子进程
+func _isVirtualFs(string fs): bool {
+    Array[string] virt = ["proc", "sysfs", "tmpfs", "devtmpfs", "devpts", "cgroup", "cgroup2",
+                          "securityfs", "debugfs", "tracefs", "pstore", "bpf", "configfs",
+                          "fusectl", "mqueue", "hugetlbfs", "autofs", "binfmt_misc", "nsfs",
+                          "ramfs", "rpc_pipefs", "squashfs", "efivarfs"]
+    for virt to v {
+        if fs == v { return true }
+    }
+    return false
+}
+
 // 该路径所在的**卷/分区根**（判不出 ⇒ `""`，绝不猜 ✓）
 //   Linux = 挂载点（`/` 或 `/media/u/U盘` …）；Windows 侧的门面对等物是盘符根（`C:\` ✓）
 //   ⚠ `dirs.abspath` 走 `realpath`（POSIX 语义）⇒ **符号链接会被解析到真实位置**，

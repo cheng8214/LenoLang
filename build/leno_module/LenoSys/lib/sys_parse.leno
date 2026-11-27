@@ -152,6 +152,27 @@ export func parse_proc_mounts(string text): Array[string] {
     return res
 }
 
+// `/proc/mounts` 的**带类型**版本：每项 {device, mount, fstype}（2026-11-27，listVolumes 用）
+//   · 只认以 `/` 开头的挂载点（排除 swap 之类）；同一挂载点只留第一条（bind mount 会重复 ✓）
+//   · device 也走 unescape_mount（设备名里同样可能有 `\040` ✓）
+export func parse_mounts_detail(string text): Array[Dict] {
+    Array[Dict] res = []
+    var ls = split_lines(text)
+    for ls to l {
+        var t = tokens(l)
+        if t.len() < 3 { continue }
+        string mp = unescape_mount(at(t, 1))
+        if not strings.starts_with(mp, "/") { continue }
+        bool dup = false
+        for res to r {
+            if (r["mount"] as string) == mp { dup = true }
+        }
+        if dup { continue }
+        res.add({device: unescape_mount(at(t, 0)), mount: mp, fstype: at(t, 2)})
+    }
+    return res
+}
+
 // `/proc/mounts` 字段里的八进制转义还原：`\040`→空格、`\011`→Tab、`\012`→换行、`\134`→`\`
 //   ⚠ 按**字节**处理（不是码点）：转义本身就是字节级规则，而挂载点里的中文是多字节 UTF-8
 //     ⇒ 逐码点处理会把"从字节流里拣出来的某个字节"变成非法码点 ✗（`from_bytes` 才严格互逆 ✓）

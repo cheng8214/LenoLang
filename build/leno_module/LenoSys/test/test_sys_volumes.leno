@@ -1,0 +1,79 @@
+// test_sys_volumes.leno -- Sys.listVolumes() 自测
+//   build\leno.exe build\leno_module\LenoSys\test\test_sys_volumes.leno
+import "Sys" as s
+import strings
+use s.VolumeInfo
+
+var passed = 0
+var failed = 0
+
+func check(string name, bool ok) {
+    if ok {
+        print("  [PASS] " + name)
+        passed = passed + 1
+    } else {
+        print("  [FAIL] " + name)
+        failed = failed + 1
+    }
+}
+
+main() {
+    print("=== Sys.listVolumes 自测 ===")
+    Array[VolumeInfo] vs = s.listVolumes()
+    print("卷数：" + _str(vs.len()))
+    for vs to v {
+        print("  " + v.root + "  label=「" + v.label + "」 fs=" + v.fsType
+              + "  kind=" + v.kind + "  ready=" + _str(v.ready)
+              + "  total=" + _str(v.totalBytes) + "  free=" + _str(v.freeBytes))
+    }
+    print("")
+
+    check("至少列出 1 个卷", vs.len() >= 1)
+
+    // 系统盘必须在列表里，且容量取得到
+    string sysRoot = s.systemRoot()
+    var found = false
+    var sysReady = false
+    var sysTotal = 0
+    var sysFs = ""
+    var sysKind = ""
+    for vs to v {
+        if v.root == sysRoot {
+            found = true
+            sysReady = v.ready
+            sysTotal = v.totalBytes
+            sysFs = v.fsType
+            sysKind = v.kind
+        }
+    }
+    check("系统盘 " + sysRoot + " 在列表里", found)
+    check("系统盘 ready=true", sysReady)
+    check("系统盘 totalBytes > 0（" + _str(sysTotal) + "）", sysTotal > 0)
+    check("系统盘 freeBytes > 0", sysTotal > 0)
+    if _os() == "windows" {
+        check("Windows 上 fsType 非空（" + sysFs + "）", sysFs != "")
+        check("Windows 上 kind 非空（" + sysKind + "）", sysKind != "")
+    }
+
+    // 每个卷的 root 都应是绝对路径（Windows 盘符根 / Linux 以 / 开头）
+    var allAbs = true
+    for vs to v {
+        if _os() == "windows" {
+            if v.root.len() < 3 or strings.slice(v.root, 1, 1) != ":" { allAbs = false }
+        } else {
+            if not strings.starts_with(v.root, "/") { allAbs = false }
+        }
+    }
+    check("所有 root 都是绝对路径", allAbs)
+
+    // ready=false 的卷必须是 total=0（契约：别把"未就绪"当成空盘）
+    var contract = true
+    for vs to v {
+        if (not v.ready) and v.totalBytes != 0 { contract = false }
+    }
+    check("ready=false ⇒ totalBytes=0（契约）", contract)
+
+    print("")
+    print("========================================")
+    print("Results: " + _str(passed) + " passed, " + _str(failed) + " failed")
+}

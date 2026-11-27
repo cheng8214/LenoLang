@@ -192,6 +192,29 @@ export func listDrives(): Array[string] {
     return out
 }
 
+// 所有卷的详细信息：卷标 / 文件系统 / 类型 / 容量 一次取齐（2026-11-27）
+//   ⚠ 取不到**不编**：字段留 ""/0；`ready=false` 表示容量都拿不到（空的 DVD 驱动器、
+//     已拔出的 U 盘、无权限的网络盘）—— 上层应据此显示"未就绪"而不是 0 字节
+export func listVolumes(): Array[Dict] {
+    Array[Dict] out = []
+    for listDrives() to x {
+        var v = Win32.volumeInfo(x)
+        var cap = diskSpace(x)
+        out.add({
+            root: x,
+            label: jsons.get_str(v, "label", ""),
+            fsType: jsons.get_str(v, "fsType", ""),
+            serial: jsons.get_int(v, "serial", 0),
+            driveType: jsons.get_int(v, "driveType", 0),
+            kind: jsons.get_str(v, "kind", "unknown"),
+            total: jsons.get_int(cap, "total", 0),
+            free: jsons.get_int(cap, "free", 0),
+            ready: jsons.get_bool(cap, "ok", false)
+        })
+    }
+    return out
+}
+
 // 取 path 所在盘的根（`C:\Users\x` ⇒ `C:\`）✓ 认不出 ⇒ SystemDrive 兜底 ✓
 export func driveRootOf(string path): string {
     string p = strings.trim(path)

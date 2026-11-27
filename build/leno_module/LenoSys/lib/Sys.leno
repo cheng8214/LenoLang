@@ -371,6 +371,45 @@ export func listDrives(): Array[string] {
     return l.listDrives()
 }
 
+// ==================== 卷的详细信息（2026-11-27）====================
+// 比 `listDrives()`（只有路径）多的东西：卷标 / 文件系统 / 类型 / 容量。
+//   · `ready=false` ⇒ 容量取不到（空的 DVD 驱动器、已拔出的 U 盘、无权限的网络盘），
+//     此时 totalBytes/freeBytes 都是 0 —— 上层应显示"未就绪"，**别当成空盘**
+//   · `kind`：removable / fixed / network / cdrom / ram / unknown
+//     （Windows 来自 GetDriveTypeW；Linux 按挂载点前缀推断 `/media/`、`/mnt/`、`/run/media/` ⇒ removable）
+//   · Linux 侧 `serial` 恒 0、`label` 给设备名（`/dev/sda1`）：Linux 没有统一的卷标概念
+export struct VolumeInfo {
+    string root = ""
+    string label = ""
+    string fsType = ""
+    int serial = 0
+    int driveType = 0
+    string kind = ""
+    int totalBytes = 0
+    int freeBytes = 0
+    bool ready = false
+}
+
+export func listVolumes(): Array[VolumeInfo] {
+    Array[Dict] rs = []
+    if _isW() { rs = w.listVolumes() } else { rs = l.listVolumes() }
+    Array[VolumeInfo] out = []
+    for rs to d {
+        out.add(new VolumeInfo(
+            root = jsons.get_str(d, "root", ""),
+            label = jsons.get_str(d, "label", ""),
+            fsType = jsons.get_str(d, "fsType", ""),
+            serial = jsons.get_int(d, "serial", 0),
+            driveType = jsons.get_int(d, "driveType", 0),
+            kind = jsons.get_str(d, "kind", "unknown"),
+            totalBytes = jsons.get_int(d, "total", 0),
+            freeBytes = jsons.get_int(d, "free", 0),
+            ready = jsons.get_bool(d, "ready", false)
+        ))
+    }
+    return out
+}
+
 // ==================== 桌面集成 ====================
 
 // 用**系统默认程序**打开一个文件 / 目录 / URI（`https://…` 也认 ✓）

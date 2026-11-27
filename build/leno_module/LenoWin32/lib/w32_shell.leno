@@ -21,6 +21,14 @@ clib kernel32 {
 
     // UTF-16 串长（不含结尾 null）——给 SHFileOperationW 拼「双 null 结尾」pFrom 用
     i32 lstrlenW(Ptr[u16] s)
+
+    // 驱动器类型：2=可移动 3=固定 4=网络 5=光驱 6=RAM 0/1=未知
+    u32 GetDriveTypeW(Ptr[u16] lpRootPathName)
+
+    // 卷信息：卷标 / 序列号 / 最大组件长度 / 文件系统标志 / 文件系统名（NTFS、FAT32…）
+    i32 GetVolumeInformationW(Ptr[u16] root, Ptr[u16] volName, u32 volNameSize,
+                              Ptr volSerial, Ptr maxCompLen, Ptr fsFlags,
+                              Ptr[u16] fsName, u32 fsNameSize)
 }
 
 shell32 _shell = null
@@ -64,6 +72,50 @@ export func diskSpace(string root): Dict {
         ffi.free(pFree)
         ffi.free(pTotal)
         ffi.free(pFreeAll)
+    }
+}
+
+// ==================== 卷信息（卷标 / 文件系统 / 类型 / 序列号）====================
+// root 形如 "C:\\"。返回
+//   {ok, root, label, fsType, serial, driveType, kind}
+//   · `ok=false` ⇒ 这个根取不到卷信息（光驱空、U 盘已拔出、权限不足）
+//   · `kind`：removable / fixed / network / cdrom / ram / unknown（由 GetDriveTypeW 映射）
+//   · **容量不在这里**（那是 diskSpace 的事，门面再合并 —— 与既有分层一致）
+export func volumeInfo(string root): Dict {
+    Ptr[u16] w = ffi.utf8_to_utf16(root)
+    Ptr pVolName = ffi.malloc(512)     // 最多 128 个宽字符
+    Ptr pFsName = ffi.malloc(512)      // 文件系统名（NTFS/FAT32/…），64 个宽字符够
+    Ptr pSerial = ffi.malloc(4)
+    Ptr pMaxComp = ffi.malloc(4)
+    Ptr pFsFlags = ffi.malloc(4)
+    try {
+        int dt = _krnlLib().GetDriveTypeW(w)
+        ffi.memset(pVolName, 0, 512)
+        ffi.memset(pFsName, 0, 512)
+        int okv = _krnlLib().GetVolumeInformationW(w, pVolName, 128, pSerial, pMaxComp, pFsFlags, pFsName, 64)
+        string label = ""
+        string fstype = ""
+        int sn = 0
+        if okv != 0 {
+            label = ffi.utf16_to_utf8(pVolName)
+            fstype = ffi.utf16_to_utf8(pFsName)
+            sn = ffi.read_uint(pSerial, 0)
+        }
+        var kind = "unknown"
+        if dt == 2 { kind = "removable" }
+        else if dt == 3 { kind = "fixed" }
+        else if dt == 4 { kind = "network" }
+        else if dt == 5 { kind = "cdrom" }
+        else if dt == 6 { kind = "ram" }
+        return {ok: okv != 0, root: root, label: label, fsType: fstype,
+                serial: sn, driveType: dt, kind: kind}
+    } finally {
+        ffi.free(w)
+        ffi.free(pVolName)
+        ffi.free(pFsName)
+        ffi.free(pSerial)
+        ffi.free(pMaxComp)
+        ffi.free(pFsFlags)
     }
 }
 
