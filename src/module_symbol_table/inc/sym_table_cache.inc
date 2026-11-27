@@ -6,7 +6,11 @@
 // ⚠ 版本号登记表：LenoDocsSrc/site/单一事实来源与重复实现收敛.html 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x0000002C  // v44 (2026-11-10): enum 成员追加「载荷参数个数 + 参数类型」（P4 enum 载荷跨模块）
+#define LENOSYMC_VERSION 0x0000002D  // v45 (2026-11-26): struct 方法段在 `is_private` 后追加
+                                     //   **`mut` 位**（"会改结构"，WARN_ITER_MUTATE 跨模块要用）。
+                                     //   旧缓存缺这一位 ⇒ 读到的是 param_text 的首字节 ⇒
+                                     //   必须作废旧缓存（版本号不改就会静默错位）。
+#define LENOSYMC_VERSION_V44_NOTE 0x0000002C  // v44 (2026-11-10): enum 成员追加「载荷参数个数 + 参数类型」（P4 enum 载荷跨模块）
                                      //   （has_psn + 每参数名）—— 调用方需要区分"目标 struct
                                      //   的类型参数 T"与真 struct，否则 `wrap(T x)` 的跨模块
                                      //   调用被误判成「期望 struct, 实际 int」✗
@@ -418,6 +422,9 @@ sym_cache_write_string(f, table->funcs[i].optkeys);
             // v32: pri 私有位（同字段侧 ✓）
             uint8_t mpri = (uint8_t)(sm->is_private ? 1 : 0);
             fwrite(&mpri, 1, 1, f);
+            // v45: mut 位（"会改结构"，WARN_ITER_MUTATE 跨模块要用）
+            uint8_t mmut = (uint8_t)(sm->is_mut ? 1 : 0);
+            fwrite(&mmut, 1, 1, f);
             // v38: 参数列表文本（悬停/参数提示用；方法段**末尾**，与 read 端同序 ✓）
             sym_cache_write_string(f, sm->param_text);
         }
@@ -950,6 +957,9 @@ static int sym_cache_deserialize(const char* cache_path, ModuleSymbolTable* tabl
             // v32: pri 私有位（顺序必须与写入一致 ✓：is_async → 私有位）
             uint8_t mpri2; if (fread(&mpri2, 1, 1, f) != 1) goto fail;
             sm->is_private = mpri2 ? 1 : 0;
+            // v45: mut 位（顺序必须与写入一致 ✓：私有位 → mut 位 → 参数文本）
+            uint8_t mmut2; if (fread(&mmut2, 1, 1, f) != 1) goto fail;
+            sm->is_mut = mmut2 ? 1 : 0;
             // v38: 参数列表文本（顺序必须与写入一致 ✓：方法段末尾）
             sm->param_text = sym_cache_read_string(f);
         }

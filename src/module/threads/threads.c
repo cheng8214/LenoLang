@@ -6,7 +6,16 @@
 #include <string.h>
 
 extern ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_arg_count);
+// ★ 2026-11-26（线程池）：池任务没有自己的 OS 线程，由常驻 worker 代跑（见 object_thread.c 末尾）
+extern ObjThread* thread_new_pool_task(ObjClosure* closure, Value* call_args, int call_arg_count);
+extern int pool_submit(ObjThread* task, ObjClosure* closure);
+extern int pool_size(void);
+extern int pool_set_size(int n);   // 1=生效 / 0=池已启动 / -1=越界（都不静默）
+extern int pool_worker_count(void);
+extern int pool_ready(void);
 extern Value thread_join(ObjThread* thread);
+// 收结果但**不抛异常**（批量接口要在排空整批之后再统一抛第一个错误）
+extern int thread_reap_quiet(ObjThread* thread, Value* out, char* err, int err_cap);
 extern int thread_join_for(ObjThread* thread, int timeout_ms);   // TH9：带超时的等待
 extern ThreadState thread_get_state(ObjThread* thread);
 extern ObjChannel* channel_new(int capacity);
@@ -353,6 +362,32 @@ static Value threads_channel(int argc, Value* args) {
     return val_obj((Object*)channel);
 }
 
+// ★ 2026-11-26（线程池）：`threads.pool_size()` / `threads.set_pool_size(n)`
+static Value threads_pool_size(int argc, Value* args) {
+    (void)argc; (void)args;
+    return val_int(pool_size());
+}
+
+static Value threads_set_pool_size(int argc, Value* args) {
+    if (argc < 1 || !val_is_int(args[0])) {
+        native_throw_error("threads.set_pool_size(n) 需要一个整数（1~64）");
+        return val_null();
+    }
+    int n = (int)val_as_num(args[0]);
+    int rc = pool_set_size(n);
+    if (rc == -1) {
+        native_throw_error("threads.set_pool_size(n)：n 必须在 1~64 之间");
+        return val_null();
+    }
+    if (rc == 0) {
+        // ★ 2026-11-26：此前是**静默忽略**（调用方以为改了，其实没改）
+        native_throw_error("threads.set_pool_size(n)：线程池已经启动，大小不能再改 —— "
+                           "请在**第一次** parallel_for / map 之前调用（可用 pool_size() 查当前值）");
+        return val_null();
+    }
+    return val_null();
+}
+
 static Value threads_sleep(int argc, Value* args) {
     if (argc < 1 || !val_is_int(args[0])) {
         native_throw_error("threads.sleep() 需要一个整数毫秒参数");
@@ -419,14 +454,32 @@ static Value threads_parallel_for(int argc, Value* args) {
     int started = 0;
     for (int i = 0; i < n; i++) {
         Value idx = val_int(i);
-        ObjThread* t = thread_new_with_args(closure, &idx, 1);
-        if (!t) break;                  // 起不来就停手，把已起来的等完
+        // ★ 2026-11-26（线程池）：优先走池（线程数 = 池大小，不再是 n）；
+        //   池起不来（比如系统资源不足）才回退到"一任务一线程"的老路径。
+        ObjThread* t = NULL;
+        if (pool_ready()) {
+            ObjThread* pt = thread_new_pool_task(closure, &idx, 1);
+            if (pt && pool_submit(pt, closure)) t = pt;
+        }
+        if (!t) t = thread_new_with_args(closure, &idx, 1);   // 池不可用 ⇒ 老路径
+        if (!t) break;                  // 起不来就停手，把已起的等完
         threads[started++] = t;
     }
+    // ★ 2026-11-26（线程池）：同 map —— 整批排空后再抛第一个错误（否则 worker 会卡住）
+    char first_err[256];
+    first_err[0] = '\0';
+    int failed = 0;
     for (int i = 0; i < started; i++) {
-        thread_join(threads[i]);
+        char e[256];
+        if (thread_reap_quiet(threads[i], NULL, e, (int)sizeof(e))) {
+            if (!failed) { failed = 1; snprintf(first_err, sizeof(first_err), "%s", e); }
+        }
     }
     free(threads);
+    if (failed) {
+        native_throw_error(first_err);
+        return val_null();
+    }
     return val_int(started);
 }
 
@@ -464,15 +517,36 @@ static Value threads_map(int argc, Value* args) {
         Value a[2];
         a[0] = arr->elements[i];
         a[1] = val_int(i);
-        ObjThread* t = thread_new_with_args(closure, a, 2);
+        // ★ 2026-11-26（线程池）：线程数 = 池大小（原来是元素数 ⇒ 1 万元素 1 万条线程）
+        ObjThread* t = NULL;
+        if (pool_ready()) {
+            ObjThread* pt = thread_new_pool_task(closure, a, 2);
+            if (pt && pool_submit(pt, closure)) t = pt;
+        }
+        if (!t) t = thread_new_with_args(closure, a, 2);      // 池不可用 ⇒ 老路径
         if (!t) break;
         threads[started++] = t;
     }
-    // 按输入顺序 join 并收集（`thread_join` 已把结果克隆到本线程堆 ✓）
+    // 按输入顺序收结果（reap 已把结果克隆到本线程堆 ✓）。
+    // ★ 2026-11-26（线程池）：**先把整批排空再抛错** —— 若中途 return/抛异常，
+    //   剩下没 reap 的任务会让 worker 永远卡在"等 reap"（池越用越少 → 死锁）。
+    char first_err[256];
+    first_err[0] = '\0';
+    int failed = 0;
     for (int i = 0; i < started; i++) {
-        arr_write(result, i, thread_join(threads[i]));
+        Value r;
+        char e[256];
+        if (thread_reap_quiet(threads[i], &r, e, (int)sizeof(e))) {
+            if (!failed) { failed = 1; snprintf(first_err, sizeof(first_err), "%s", e); }
+        } else if (!failed) {
+            arr_write(result, i, r);
+        }
     }
     free(threads);
+    if (failed) {
+        native_throw_error(first_err);
+        return val_null();
+    }
     return val_obj((Object*)result);
 }
 
@@ -546,13 +620,134 @@ static Value threads_local_set(int argc, Value* args) {
     return val_null();
 }
 
+// ==================== 原子整数（2026-11-26）====================
+// 为什么只有这几个操作：见 leno_value.h 的 ObjAtomic 说明 —— 提供**封闭操作集**，
+//   不用锁、也就没有"忘了解锁 = 静默死锁"这条路。
+static int64_t atomic_add_impl(ObjAtomic* a, int64_t d) {
+#ifdef _WIN32
+    return (int64_t)InterlockedExchangeAdd64((volatile LONG64*)&a->value, (LONG64)d) + d;
+#else
+    return __atomic_add_fetch(&a->value, d, __ATOMIC_SEQ_CST);
+#endif
+}
+
+static int64_t atomic_sub_impl(ObjAtomic* a, int64_t d) { return atomic_add_impl(a, -d); }
+
+static int64_t atomic_load_impl(ObjAtomic* a) {
+#ifdef _WIN32
+    return (int64_t)InterlockedCompareExchange64((volatile LONG64*)&a->value, 0, 0);
+#else
+    return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST);
+#endif
+}
+
+static void atomic_store_impl(ObjAtomic* a, int64_t v) {
+#ifdef _WIN32
+    InterlockedExchange64((volatile LONG64*)&a->value, (LONG64)v);
+#else
+    __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST);
+#endif
+}
+
+static int64_t atomic_swap_impl(ObjAtomic* a, int64_t v) {
+#ifdef _WIN32
+    return (int64_t)InterlockedExchange64((volatile LONG64*)&a->value, (LONG64)v);
+#else
+    return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST);
+#endif
+}
+
+static bool atomic_cas_impl(ObjAtomic* a, int64_t expect, int64_t want) {
+#ifdef _WIN32
+    return InterlockedCompareExchange64((volatile LONG64*)&a->value,
+                                        (LONG64)want, (LONG64)expect) == (LONG64)expect;
+#else
+    return __atomic_compare_exchange_n(&a->value, &expect, want, false,
+                                       __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+#endif
+}
+
+// `threads.atomic(init)` -> Atomic（构造函数）
+static Value threads_atomic(int argc, Value* args) {
+    int64_t init = 0;
+    if (argc > 0 && val_is_int(args[0])) init = (int64_t)val_as_num(args[0]);
+    ObjAtomic* a = atomic_new(init);
+    if (!a) {
+        native_throw_error("创建 Atomic 失败（内存不足）");
+        return val_null();
+    }
+    return val_obj((Object*)a);
+}
+
+static ObjAtomic* atomic_self(int argc, Value* args, const char* who) {
+    if (argc < 1 || !val_is_obj(args[0]) || val_as_obj(args[0])->type != OBJ_ATOMIC) {
+        char msg[96];
+        snprintf(msg, sizeof(msg), "%s 需要 Atomic 接收者", who);
+        native_throw_error(msg);
+        return NULL;
+    }
+    return (ObjAtomic*)val_as_obj(args[0]);
+}
+
+static Value atomic_method_add(int argc, Value* args) {
+    ObjAtomic* a = atomic_self(argc, args, "Atomic.add");
+    if (!a || argc < 2 || !val_is_int(args[1])) { native_throw_error("Atomic.add 需要一个整数"); return val_null(); }
+    return val_int((double)atomic_add_impl(a, (int64_t)val_as_num(args[1])));
+}
+
+static Value atomic_method_sub(int argc, Value* args) {
+    ObjAtomic* a = atomic_self(argc, args, "Atomic.sub");
+    if (!a || argc < 2 || !val_is_int(args[1])) { native_throw_error("Atomic.sub 需要一个整数"); return val_null(); }
+    return val_int((double)atomic_sub_impl(a, (int64_t)val_as_num(args[1])));
+}
+
+static Value atomic_method_load(int argc, Value* args) {
+    ObjAtomic* a = atomic_self(argc, args, "Atomic.load");
+    if (!a) return val_null();
+    return val_int((double)atomic_load_impl(a));
+}
+
+static Value atomic_method_store(int argc, Value* args) {
+    ObjAtomic* a = atomic_self(argc, args, "Atomic.store");
+    if (!a || argc < 2 || !val_is_int(args[1])) { native_throw_error("Atomic.store 需要一个整数"); return val_null(); }
+    atomic_store_impl(a, (int64_t)val_as_num(args[1]));
+    return val_null();
+}
+
+static Value atomic_method_swap(int argc, Value* args) {
+    ObjAtomic* a = atomic_self(argc, args, "Atomic.swap");
+    if (!a || argc < 2 || !val_is_int(args[1])) { native_throw_error("Atomic.swap 需要一个整数"); return val_null(); }
+    return val_int((double)atomic_swap_impl(a, (int64_t)val_as_num(args[1])));
+}
+
+static Value atomic_method_cas(int argc, Value* args) {
+    ObjAtomic* a = atomic_self(argc, args, "Atomic.cas");
+    if (!a || argc < 3 || !val_is_int(args[1]) || !val_is_int(args[2])) {
+        native_throw_error("Atomic.cas(期望值, 新值) 需要两个整数");
+        return val_null();
+    }
+    bool ok = atomic_cas_impl(a, (int64_t)val_as_num(args[1]), (int64_t)val_as_num(args[2]));
+    return val_bool(ok);
+}
+
 // ==================== 实例方法初始化 ====================
 
 void threads_init_instance_methods(void) {
     thread_init_methods();
     channel_init_methods();
+    atomic_init_methods();
 
     TypeKind any_params[] = {TYPE_ANY};
+
+    // Atomic 实例方法（封闭操作集：add / sub / load / store / swap / cas）
+    TypeKind atomic_one[] = {TYPE_INT};
+    TypeKind atomic_two[] = {TYPE_INT, TYPE_INT};
+    atomic_register_method("add", make_native(atomic_method_add, 2, "add"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(atomic_one));
+    atomic_register_method("sub", make_native(atomic_method_sub, 2, "sub"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(atomic_one));
+    atomic_register_method("load", make_native(atomic_method_load, 1, "load"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
+    atomic_register_method("store", make_native(atomic_method_store, 2, "store"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED(atomic_one));
+    atomic_register_method("swap", make_native(atomic_method_swap, 2, "swap"), TYPE_INT, TYPE_UNKNOWN, NATIVE_FIXED(atomic_one));
+    atomic_register_method("cas", make_native(atomic_method_cas, 3, "cas"), TYPE_BOOL, TYPE_UNKNOWN, NATIVE_FIXED(atomic_two));
 
     // Thread 实例方法
     thread_register_method("join", make_native(thread_method_join, 1, "join"), TYPE_ANY, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));
@@ -604,7 +799,38 @@ void threads_init_module(void) {
     native_register_module_method("threads", "start", threads_start, &NATIVE_T_THREAD_CB_RET0, NATIVE_VARARG(1, NATIVE_ARITY_ANY, 1, start_params, TYPE_ANY));
 
     TypeKind channel_params[] = {TYPE_INT};
-    native_register_module_method("threads", "channel", threads_channel, &NATIVE_T_CHANNEL, NATIVE_FIXED(channel_params));
+native_register_module_method("threads", "channel", threads_channel, &NATIVE_T_CHANNEL, NATIVE_FIXED(channel_params));
+
+    // ★ 2026-11-26（线程池）：查看/设置 worker 数量。
+    //   池是**懒启动**的（第一次 parallel_for / map 时按当时的设置建 worker），
+    //   启动后再调 set_pool_size 只改"期望值"、不动态增删 worker（避免退出顺序复杂化）。
+    native_register_module_method("threads", "pool_size", threads_pool_size, &NATIVE_T_INT,
+                                  NATIVE_FIXED_NONE(0));
+    {
+        TypeKind pool_params[] = {TYPE_INT};
+        native_register_module_method("threads", "set_pool_size", threads_set_pool_size,
+                                      &NATIVE_T_NULL, NATIVE_FIXED(pool_params));
+    }
+
+    // ★ 2026-11-26：跨线程共享的原子整数。
+    //   形态是**模块函数**（不是实例方法）：`threads.atomic(0)` 造一个句柄（`any`），
+    //   之后用 `threads.atomic_add(h, n)` 等操作。
+    //   为什么不做成方法：那需要一个新 TypeKind + 解析器类型名 + 语义期方法解析
+    //   （`Atomic? a` 这类标注、`a.add()` 的静态解析链），是另一件独立的事。
+    //   现在这条路径与 `arrays.xxx(...)` 同形，够用且不欠债（操作集封闭，无法绕过原子性）。
+    TypeKind atomic_params[] = {TYPE_INT};
+    native_register_module_method("threads", "atomic", threads_atomic, &NATIVE_T_ATOMIC,
+                                  NATIVE_FIXED(atomic_params));
+
+    TypeKind atom1[] = {TYPE_ANY};
+    TypeKind atom2[] = {TYPE_ANY, TYPE_INT};
+    TypeKind atom3[] = {TYPE_ANY, TYPE_INT, TYPE_INT};
+    native_register_module_method("threads", "atomic_add", atomic_method_add, &NATIVE_T_INT, NATIVE_FIXED(atom2));
+    native_register_module_method("threads", "atomic_sub", atomic_method_sub, &NATIVE_T_INT, NATIVE_FIXED(atom2));
+    native_register_module_method("threads", "atomic_load", atomic_method_load, &NATIVE_T_INT, NATIVE_FIXED(atom1));
+    native_register_module_method("threads", "atomic_store", atomic_method_store, &NATIVE_T_NULL, NATIVE_FIXED(atom2));
+    native_register_module_method("threads", "atomic_swap", atomic_method_swap, &NATIVE_T_INT, NATIVE_FIXED(atom2));
+    native_register_module_method("threads", "atomic_cas", atomic_method_cas, &NATIVE_T_BOOL, NATIVE_FIXED(atom3));
 
     TypeKind sleep_params[] = {TYPE_INT};
     // 返回 `null`（v3.2.6）：实现就是 `return val_null()`（睡完不产生值）⇒ 别再说它是 any。

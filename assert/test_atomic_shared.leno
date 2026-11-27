@@ -1,0 +1,72 @@
+// test_atomic_shared.leno —— Atomic：**唯一**跨线程共享的可变状态（2026-11-26）
+//
+// 背景：Leno 的并发模型是 shared-nothing（参数 / 闭包 / Channel 载荷一律深克隆），
+//   所以"多个线程累加同一个计数器"用普通 int/struct 表达不出来（每个线程改的是副本）。
+//   Atomic 是唯一的例外：跨线程**共享同一份**，所有访问都走原子指令。
+//   形态是模块函数（`threads.atomic(0)` 造句柄，`threads.atomic_add(h, n)` 等操作），
+//   刻意不做实例方法 —— 那需要新 TypeKind + 解析器类型名 + 语义期方法解析。
+import threads
+
+func addMany(any a, int n) {
+    for 0 : n - 1 to i { threads.atomic_add(a, 1) }
+}
+
+func subMany(any a, int n) {
+    for 0 : n - 1 to i { threads.atomic_sub(a, 1) }
+}
+
+main() {
+    // ==================== ① 单线程语义 ====================
+    var a = threads.atomic(0)
+    assert_eq(threads.atomic_load(a), 0, "① 初值")
+    assert_eq(threads.atomic_add(a, 5), 5, "① add 返回新值")
+    assert_eq(threads.atomic_load(a), 5, "① add 之后")
+    assert_eq(threads.atomic_sub(a, 2), 3, "① sub 返回新值")
+    assert_eq(threads.atomic_swap(a, 100), 3, "① swap 返回旧值")
+    assert_eq(threads.atomic_load(a), 100, "① swap 之后")
+    assert_true(threads.atomic_cas(a, 100, 7), "① cas 命中返回 true")
+    assert_eq(threads.atomic_load(a), 7, "① cas 命中后值变了")
+    assert_true(not threads.atomic_cas(a, 999, 1), "① cas 不命中返回 false")
+    assert_eq(threads.atomic_load(a), 7, "① cas 不命中不改值")
+    threads.atomic_store(a, 42)
+    assert_eq(threads.atomic_load(a), 42, "① store")
+
+    // ==================== ② 跨线程**共享**（这是关键） ====================
+    // 如果是普通 int/struct，线程里加完主线程看不到（深克隆）；Atomic 必须看得到。
+    var shared = threads.atomic(0)
+    Array[Thread] ts = []
+    for 0 : 5 to i { ts.add(threads.start(addMany, shared, 1000)) }
+    threads.join_all(ts)
+    assert_eq(threads.atomic_load(shared), 6000, "② 6 线程 × 1000 次 = 6000（共享生效）")
+
+    // ==================== ③ 加与减并发：净变化必须精确为 0 ====================
+    var net = threads.atomic(0)
+    Array[Thread] ts2 = []
+    for 0 : 3 to i {
+        ts2.add(threads.start(addMany, net, 2000))
+        ts2.add(threads.start(subMany, net, 2000))
+    }
+    threads.join_all(ts2)
+    assert_eq(threads.atomic_load(net), 0, "③ 4 加 4 减各 2000 ⇒ 净 0（没有丢更新）")
+
+    // ==================== ④ 传错东西：必须报错，不能静默 ====================
+    int caught = 0
+    try {
+        threads.atomic_add(null, 1)
+    } catch e {
+        caught = 1
+        assert_true(_str(e).has("Atomic"), "④ 非 Atomic 句柄要报错并点名；实际：" + _str(e))
+    }
+    assert_eq(caught, 1, "④ 传 null 必须报错")
+
+    caught = 0
+    try {
+        threads.atomic_add("not a handle", 1)
+    } catch e2 {
+        caught = 1
+        assert_true(_str(e2).has("Atomic"), "④ 传字符串也要点名；实际：" + _str(e2))
+    }
+    assert_eq(caught, 1, "④ 传非 Atomic 必须报错")
+
+    print("test_atomic_shared passed（单线程语义 + 跨线程共享 6000/净 0 + 误用报错）")
+}

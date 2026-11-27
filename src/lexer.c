@@ -109,6 +109,7 @@ static void init_keyword_table(void) {
         {"face", TOK_FACE},
         {"alias", TOK_ALIAS},
         {"impl", TOK_IMPL},
+        {"mut", TOK_MUT},
     {"extend", TOK_EXTEND},
         {"new", TOK_NEW},
         {"int", TOK_INT_TYPE},
@@ -123,6 +124,7 @@ static void init_keyword_table(void) {
 
         {"Socket", TOK_SOCKET_TYPE},
         {"Channel", TOK_CHANNEL_TYPE},
+        {"Atomic", TOK_ATOMIC_TYPE},
         {"Thread", TOK_THREAD_TYPE},
         {"Future", TOK_FUTURE_TYPE},
         {"Ptr", TOK_PTR_TYPE},

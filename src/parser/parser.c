@@ -502,6 +502,26 @@ static Ast* parse_statement_impl(Parser* p) {
             return NULL;
         }
 
+        // `mut` 只能写在 **struct 方法** 前面：★ 2026-11-26
+        //   顶层 `mut func foo() { }` 此前落到表达式解析 ⇒ 只报「期望表达式」，
+        //   看不出该写在哪 ⇒ 定向报错并整块跳过（与上面 impl 同一套做法）。
+        case TOK_MUT: {
+            int bad_line = p->lex.current.line;
+            error_add_at_fmt(ERR_SYNTAX, bad_line, p->lex.current.column,
+                "`mut` 只能标在 **struct 的方法** 前面（`struct S { mut func push(…) { … } }`）；"
+                "顶层裸函数不存在\"改结构\"这回事 ✗");
+            while (p->lex.current.type != TOK_EOF &&
+                   p->lex.current.line == bad_line &&
+                   p->lex.current.type != TOK_LBRACE) {
+                lexer_next(&p->lex);
+            }
+            if (p->lex.current.type == TOK_LBRACE) {
+                Ast* skipped_body = parse_block_internal(p);
+                if (skipped_body) ast_free(skipped_body);
+            }
+            return NULL;
+        }
+
         // catch / finally 落在 try 之外：★ 2026-11-08
         //   此前掉进 default ⇒ 报「期望表达式」（catch 还会连报两次），看不出
         //   "这两个子句只能跟在 try 后面" ✗。定向报错并整块跳过，避免级联。
@@ -623,6 +643,7 @@ static Ast* parse_statement_impl(Parser* p) {
         // case TOK_BINT:  // 已移除：对外统一用 int
         case TOK_FILE_TYPE:
         case TOK_SOCKET_TYPE:
+        case TOK_ATOMIC_TYPE:
         case TOK_CHANNEL_TYPE:
         case TOK_THREAD_TYPE:
         case TOK_FUTURE_TYPE:

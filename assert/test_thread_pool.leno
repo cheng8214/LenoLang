@@ -1,0 +1,132 @@
+// test_thread_pool.leno —— 线程池：正确性 / 顺序 / 吞吐 / 不泄漏（2026-11-26）
+//
+// 背景：`threads.map` / `parallel_for` 原来是"每个任务一条 OS 线程"
+//   （实测 203~227 us/线程，1 万元素光启动就 2 秒级）。现在改走常驻 worker 池：
+//   worker 只初始化一次 VM，任务通过队列分发。
+//
+// 这个文件钉四件事：
+//   ① `map` 结果必须**按输入顺序**（池是并发执行的，顺序不能乱）；
+//   ② `parallel_for(n, f)` 的每个下标**恰好执行一次**；
+//   ③ 连续多批不泄漏（`thread_pending_bytes` 归零、堆不线性涨）；
+//   ④ 池大小可查可设，且不影响正确性。
+import threads
+import times
+
+func sq(int x, int i): int { return x * x }
+func inc(Atomic a, int i) { threads.atomic_add(a, 1) }
+
+main() {
+    // ---------- ① 池参数 ----------
+    //   默认 = CPU 核数（探测失败才退回 4）；越界/已启动后再改**必须报错**，不许静默忽略。
+    int base = threads.pool_size()
+    assert_true(base >= 1 and base <= 64, "① pool_size 应在 1..64；实际 " + _str(base))
+
+    int badArg = 0
+    try { threads.set_pool_size(0) } catch e0 { badArg = badArg + 1 }
+    try { threads.set_pool_size(999) } catch e1 { badArg = badArg + 1 }
+    assert_eq(badArg, 2, "① 越界的池大小必须报错（0 / 999）")
+
+    threads.set_pool_size(3)
+    assert_eq(threads.pool_size(), 3, "① set_pool_size(3) 在启动前生效")
+
+    // ---------- ② map 顺序 + 内容 ----------
+    Array[int] xs = []
+    for 0 : 199 to i { xs.add(i) }
+    var ys = threads.map(xs, sq)
+    assert_eq(ys.len(), 200, "② map 结果长度")
+    int bad = 0
+    for 0 : 199 to i {
+        if _int(ys[i]) != i * i { bad = bad + 1 }
+    }
+    assert_eq(bad, 0, "② map 结果必须按输入顺序、内容正确（错误数应为 0）")
+
+    // ②b 池已启动 ⇒ 再改大小必须**报错**（此前是静默忽略，调用方以为改了）
+    int late = 0
+    try { threads.set_pool_size(8) } catch e2 { late = 1 }
+    assert_eq(late, 1, "②b 池启动后再改大小必须报错，不能静默忽略")
+
+    // ---------- ③ parallel_for 不多不少 ----------
+    Atomic seen = threads.atomic(0)
+    int declared = threads.parallel_for(300, func(int i) {
+        threads.atomic_add(seen, 1)
+    })
+    assert_eq(declared, 300, "③ parallel_for 返回已启动的任务数")
+    assert_eq(seen.load(), 300, "③ 每个下标恰好执行一次")
+
+    // ---------- ④ 连续 30 批：不崩、不泄漏 ----------
+    var before = _gc_stats()
+    int baseKb = (_int(before["young_bytes"]) + _int(before["old_bytes"]) + _int(before["pooled_bytes"])) / 1024
+    Array[int] small = []
+    for 0 : 49 to i { small.add(i) }
+    int sum = 0
+    for 0 : 29 to b {
+        var r = threads.map(small, sq)
+        sum = sum + _int(r[49])
+    }
+    assert_eq(sum, 30 * 2401, "④ 30 批 map 结果正确")
+    var after = _gc_stats()
+    assert_eq(_int(after["thread_pending_bytes"]), 0, "④ 池任务不残留 pending_args")
+    int afterKb = (_int(after["young_bytes"]) + _int(after["old_bytes"]) + _int(after["pooled_bytes"])) / 1024
+    assert_true(afterKb - baseKb < 4096,
+                "④ 30 批后堆增长应受限；实际增长 " + _str(afterKb - baseKb) + " KB")
+
+    // ---------- ⑤ 吞吐：1 万元素 map 应在毫秒级 ----------
+    Array[int] big = []
+    for 0 : 9999 to i { big.add(i) }
+    int t0 = _int(times.us())
+    var rs = threads.map(big, sq)
+    int ms = (_int(times.us()) - t0) / 1000
+    assert_eq(_int(rs[9999]), 9999 * 9999, "⑤ map 大数组最后一个元素正确")
+    assert_true(ms < 1500, "⑤ map(10000) 应在毫秒级（原一任务一线程是秒级）；实际 " + _str(ms) + " ms")
+
+    // ---------- ⑥ 批任务中途失败：整批排空后再抛错，池子不能被打死 ----------
+    //   背景：若第一个失败就中断循环，剩下没 reap 的任务会让 worker 永远等 reap，
+    //   池会越用越少直至死锁。这里钉住"出错后池仍然可用"。
+    int caught = 0
+    string msg = ""
+    try {
+        var r = threads.map(xs, func(int x, int i): int {
+            if i == 3 { throw "第 3 个任务故意失败" }
+            return x
+        })
+        if r.len() >= 0 { msg = "没抛错" }
+    } catch e {
+        caught = 1
+        msg = _str(e)
+    }
+    assert_eq(caught, 1, "⑥ 中途失败必须抛错")
+    assert_true(msg.has("第 3 个"), "⑥ 抛出的应是第一个错误；实际：" + msg)
+
+    var again = threads.map(xs, sq)
+    assert_eq(again.len(), 200, "⑥ 出错后池仍可用（map 正常返回）")
+    assert_eq(_int(again[199]), 199 * 199, "⑥ 出错后结果仍正确")
+
+    int ran2 = threads.parallel_for(20, func(int i) { })
+    assert_eq(ran2, 20, "⑥ 出错后 parallel_for 仍可用")
+
+    // ---------- ⑦ 嵌套批次：池任务内部再调 map 不能饿死 ----------
+    //   池只有 N 个 worker，若 N 个外层任务各自在里面等内层任务、而内层任务排在队列里
+    //   没人跑 ⇒ 死锁（实测 set_pool_size(2) + 嵌套 map 时 8 秒不返回）。
+    //   修法：worker 线程带 THREAD_LOCAL 标记，嵌套批次回退到"独立线程"老路径。
+    //   （池已启动，不能再改大小；这里只验证嵌套本身）
+    Array[int] outerIn = []
+    for 0 : 3 to i { outerIn.add(i) }
+    var nested = threads.map(outerIn, func(int x, int i): int {
+        Array[int] inner = [x, x + 1]
+        var r = threads.map(inner, sq)
+        return _int(r[0]) + _int(r[1])
+    })
+    assert_eq(nested.len(), 4, "⑦ 嵌套 map 能返回（不死锁）")
+    assert_eq(_int(nested[0]), 1, "⑦ 嵌套 map 结果正确（0²+1²=1）")
+    assert_eq(_int(nested[3]), 3 * 3 + 4 * 4, "⑦ 嵌套 map 末项正确（9+16=25）")
+
+    // ---------- ⑧ 池跨过一次显式 GC 仍然可用 ----------
+    //   池 worker 的 VM 持有指向主线程堆的只读对象（结构体定义 / 函数对象），
+    //   而任务对象在调用方堆。显式 `_gc()` 会扫/清调用方堆 —— 之后池必须照常工作。
+    _gc()
+    var afterGc = threads.map(outerIn, sq)
+    assert_eq(afterGc.len(), 4, "⑧ 显式 GC 之后池仍可用")
+    assert_eq(_int(afterGc[3]), 9, "⑧ GC 之后结果仍正确")
+
+    print("test_thread_pool passed（顺序正确 + 300 任务不多不少 + 30 批不泄漏 + 中途失败不打死池 + 嵌套不死锁 + GC 后可用 + 1 万元素 " + _str(ms) + " ms）")
+}

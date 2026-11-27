@@ -108,6 +108,9 @@ void module_symbol_table_add_struct(ModuleSymbolTable* table, const char* name, 
             st->methods[i].name = strdup(methods[i].name);
             st->methods[i].is_async = methods[i].is_async;
         st->methods[i].is_private = methods[i].is_private; // ★ pri：与字段侧同一个坑 ✗（漏了它=写入 1 读出 0）   // C2：漏掉它就是上面那个坑
+        st->methods[i].is_mut = methods[i].is_mut;         // ★ 2026-11-26（v45）：同一个坑的第三次 ——
+                                                           //   漏了它，`mut` 方法跨模块永远是 0（实测：
+                                                           //   导出端打印 mut=1、消费端打印 mut=0）。
             st->methods[i].return_type = methods[i].return_type;
             st->methods[i].return_type_info = methods[i].return_type_info ? type_copy(methods[i].return_type_info) : NULL;
             st->methods[i].return_struct_name = methods[i].return_struct_name ? strdup(methods[i].return_struct_name) : NULL;

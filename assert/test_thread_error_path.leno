@@ -1,0 +1,63 @@
+// test_thread_error_path.leno —— 线程**出错路径**不许漏资源、不许吞异常（2026-11-26）
+//
+// 为什么单独钉：`thread_entry_point` 被拆成 init / exec_task / fini 三段时，
+//   两个"分配失败"错误分支里的 `free(...) + return NULL` 改成了 `return`，
+//   资源统一由 entry point 的收尾段释放 —— 这类改动最容易变成**双重释放**或**泄漏**，
+//   而且都不会立刻炸。所以用"连续 200 条出错线程"把两个方向都压一遍：
+//     · 不崩（双重释放会崩）
+//     · `thread_pending_bytes` 归零、堆不随条数线性增长（泄漏会涨）
+//   顺带钉住"异常必须传播到 join、且保留原始消息"。
+import threads
+
+func boom() { throw "故意的错误消息" }
+func ok() { }
+
+main() {
+    // ---------- ① 异常传播 + 消息保真 ----------
+    int caught = 0
+    string msg = ""
+    try {
+        Array[Thread] ts = []
+        ts.add(threads.start(boom))
+        threads.join_all(ts)
+    } catch e {
+        caught = 1
+        msg = _str(e)
+    }
+    assert_eq(caught, 1, "① 线程体抛异常必须传播到 join")
+    assert_true(msg.has("故意的错误消息"), "① 异常消息要保真；实际：" + msg)
+
+    // ---------- ② 200 条出错线程：不崩、不泄漏 ----------
+    var before = _gc_stats()
+    int baseKb = (_int(before["young_bytes"]) + _int(before["old_bytes"]) + _int(before["pooled_bytes"])) / 1024
+
+    int failures = 0
+    for 0 : 199 to i {
+        try {
+            Array[Thread] t1 = []
+            t1.add(threads.start(boom))
+            threads.join_all(t1)
+        } catch e2 {
+            failures = failures + 1
+        }
+    }
+    assert_eq(failures, 200, "② 200 条出错线程都要报错")
+
+    var after = _gc_stats()
+    assert_eq(_int(after["thread_pending_bytes"]), 0, "② 出错线程的 pending_args 必须清空")
+    int afterKb = (_int(after["young_bytes"]) + _int(after["old_bytes"]) + _int(after["pooled_bytes"])) / 1024
+    assert_true(afterKb - baseKb < 2048,
+                "② 200 条出错线程后堆增长应受限（实测约 400 KB）；实际增长 " + _str(afterKb - baseKb) + " KB")
+
+    // ---------- ③ 正常线程不受影响 ----------
+    int done = 0
+    for 0 : 99 to i {
+        Array[Thread] t2 = []
+        t2.add(threads.start(ok))
+        threads.join_all(t2)
+        done = done + 1
+    }
+    assert_eq(done, 100, "③ 连续 100 条正常线程仍可用")
+
+    print("test_thread_error_path passed（异常传播 + 200 条出错线程不泄漏 + 正常线程可用）")
+}

@@ -1,0 +1,35 @@
+// atomic_mod.leno —— Atomic 跨模块夹具（2026-11-26）
+// 钉三件事：
+//   ① `Atomic` 能作为**返回值 / 形参 / struct 字段**跨模块传递（类型在符号表里）；
+//   ② 模块内造的 Atomic 与调用方拿到的是**同一份**（共享，不克隆）；
+//   ③ struct 里的 Atomic 字段跨模块读写都成立。
+import threads
+
+export func makeCounter(int init): Atomic {
+    return threads.atomic(init)
+}
+
+export func bump(Atomic a, int n) {
+    for 0 : n - 1 to i { a.add(1) }
+}
+
+export func doubleIt(Atomic a) {
+    a.add(a.load())
+}
+
+export struct Tally {
+    Atomic hits
+    string name = ""
+
+    func record(int n) {
+        for 0 : n - 1 to i { hits.add(1) }
+    }
+    func value(): int { return hits.load() }
+}
+
+export func makeTally(string name, int init): Tally {
+    var t = new Tally()
+    t.name = name
+    t.hits = threads.atomic(init)
+    return t
+}

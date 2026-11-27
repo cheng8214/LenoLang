@@ -196,7 +196,12 @@
                     R(a) = arr->elements[index];
                     DISPATCH();
                 }
-                if (!throw_runtime_error("数组迭代索引越界", line)) return -1;
+                // ★ 2026-11-26：`for` 的边界在进入时固定（见 codegen_stmt.c），
+                //   所以走到这里几乎只有一个原因：**循环体里把容器改短了**
+                //   （pop/remove/clear，含通过别名、闭包、线程改的）。把这条说出来，
+                //   而不是只报"索引越界"让人反推。
+                if (!throw_runtime_error("数组迭代索引越界（遍历中容器被改短了？"
+                                         "for 的边界在进入时已确定；请先收集再统一删除）", line)) return -1;
                 frame = &vm.frames[vm.frame_cnt - 1];
                 DISPATCH();
             }

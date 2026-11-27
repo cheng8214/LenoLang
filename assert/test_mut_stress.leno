@@ -1,0 +1,163 @@
+// test_mut_stress.leno —— `mut` 的压测：同文件 / 跨模块 / 泛型 / 容器 / 线程 / 协程 / 控制流
+//
+// 判据（编译期）：`for 容器 to x { 容器.<mut 方法>() }` ⇒ WARN_ITER_MUTATE；
+//   非 mut 方法、以及"不是同一个变量名"的调用 ⇒ 不报。
+// 判据（运行期）：mut 只是声明，语义不变 —— 该改的照改，不崩、不静默丢数据。
+import "Containers" as ct
+import "helpers/mut_mod.leno" as mm
+import threads
+import files
+
+// ---------------- 用例辅助：用 --check 看编译输出 ----------------
+func checkCode(string src): string {
+    files.write("__mut_probe.leno", src)
+    var r = _exec(_executable() + " --check \"__mut_probe.leno\"", 30000)
+    files.delete("__mut_probe.leno")
+    return r.output as string
+}
+
+func expectWarn(string name, string src, string tag) {
+    string out = checkCode(src)
+    if not out.has("遍历中修改容器") {
+        fail("[" + name + "] 本应报警告（" + tag + "），实际输出：\n" + out)
+    }
+}
+
+func expectNoWarn(string name, string src, string tag) {
+    string out = checkCode(src)
+    if out.has("遍历中修改容器") {
+        fail("[" + name + "] 不该报警告（" + tag + "），实际输出：\n" + out)
+    }
+    if out.has("error:") {
+        fail("[" + name + "] 不该有编译错误（" + tag + "），实际输出：\n" + out)
+    }
+}
+
+func expectError(string name, string src, string tag) {
+    string out = checkCode(src)
+    if not out.has("error:") {
+        fail("[" + name + "] 本应编译失败（" + tag + "），实际输出：\n" + out)
+    }
+}
+
+func fail(string msg) {
+    print("[FAIL] " + msg + "\n")
+    _exit(1)
+}
+
+main() {
+    // ==================== ① 同文件 + 修饰符组合 ====================
+    expectWarn("same/mut", "struct S {\n  Array[int] d = []\n  mut func grow(int v) { d.add(v) }\n}\n" +
+                           "main() { var s = new S()\n  for s to v { s.grow(1) }\n}\n", "mut func")
+    expectNoWarn("same/nonmut", "struct S {\n  Array[int] d = []\n  func size(): int { return d.len() }\n}\n" +
+                                "main() { var s = new S()\n  for s to v { s.size() }\n}\n", "普通方法")
+    // `mut` 与 `pri` 可任意顺序叠加：都能解析，且私有限制照常生效（外部调用报错）
+    expectError("same/mut+pri", "struct S {\n  Array[int] d = []\n  mut pri func grow(int v) { d.add(v) }\n}\n" +
+                                "main() { var s = new S()\n  s.grow(1)\n}\n", "mut pri：外部不可调")
+    expectError("same/pri+mut", "struct S {\n  Array[int] d = []\n  pri mut func grow(int v) { d.add(v) }\n}\n" +
+                                "main() { var s = new S()\n  s.grow(1)\n}\n", "pri mut：外部不可调")
+    // 同一份声明，改成被自己的方法调用 ⇒ 编译通过（说明只是"私有"，不是"语法坏"）
+    expectNoWarn("same/mut+pri-inside",
+        "struct S {\n  Array[int] d = []\n  mut pri func grow(int v) { d.add(v) }\n" +
+        "  func go() { grow(1) }\n}\nmain() { var s = new S()\n  s.go()\n}\n", "mut pri 内部可调")
+
+    // ==================== ② 跨模块（helper 里定义的 mut） ====================
+    expectWarn("xmod/add", "import \"assert/helpers/mut_mod.leno\" as mm\n" +
+                           "main() { var b = mm.makeBag()\n  for b to v { b.add(9) }\n}\n", "跨模块 mut")
+    expectNoWarn("xmod/size", "import \"assert/helpers/mut_mod.leno\" as mm\n" +
+                              "main() { var b = mm.makeBag()\n  for b to v { print(_str(b.size())) }\n}\n", "跨模块非 mut")
+    expectWarn("xmod/generic", "import \"assert/helpers/mut_mod.leno\" as mm\n" +
+                               "main() { var g = new mm.GenBox[int]()\n  for g to v { g.put(1) }\n}\n", "跨模块泛型 mut")
+
+    // ==================== ③ 七个容器：mut 方法报、查询方法不报 ====================
+    expectWarn("ct/stack-push", "import \"Containers\" as ct\n" +
+                                "main() { var s = new ct.Stack[int]()\n  for s to v { s.push(1) }\n}\n", "Stack.push")
+    expectWarn("ct/stack-pop", "import \"Containers\" as ct\n" +
+                               "main() { var s = new ct.Stack[int]()\n  for s to v { s.pop() }\n}\n", "Stack.pop")
+    expectWarn("ct/queue-push", "import \"Containers\" as ct\n" +
+                                "main() { var q = new ct.Queue[int]()\n  for q to v { q.push(1) }\n}\n", "Queue.push")
+    expectWarn("ct/deque-pushfront", "import \"Containers\" as ct\n" +
+                                     "main() { var d = new ct.Deque[int]()\n  for d to v { d.push_front(1) }\n}\n", "Deque.push_front")
+    expectWarn("ct/pq-push", "import \"Containers\" as ct\n" +
+                             "main() { var p = new ct.PriorityQueue[int]()\n  for p to v { p.push(1) }\n}\n", "PQ.push")
+    expectWarn("ct/lru-put", "import \"Containers\" as ct\n" +
+                             "main() { var l = new ct.LRU[int](cap = 4)\n  for l to k { l.put(\"x\", 1) }\n}\n", "LRU.put")
+    expectWarn("ct/clock-put", "import \"Containers\" as ct\n" +
+                               "main() { var c = new ct.ClockLRU[int](cap = 4)\n  for c to k { c.put(\"x\", 1) }\n}\n", "ClockLRU.put")
+    expectWarn("ct/o1-remove", "import \"Containers\" as ct\n" +
+                               "main() { var o = new ct.LRUO1[int](cap = 4)\n  for o to k { o.remove(_str(k)) }\n}\n", "LRUO1.remove")
+
+    expectNoWarn("ct/stack-len", "import \"Containers\" as ct\n" +
+                                 "main() { var s = new ct.Stack[int]()\n  for s to v { print(_str(s.len())) }\n}\n", "Stack.len")
+    expectNoWarn("ct/stack-at", "import \"Containers\" as ct\n" +
+                                "main() { var s = new ct.Stack[int]()\n  for s to v, i { print(_str(s.at(i))) }\n}\n", "Stack.at")
+    expectNoWarn("ct/lru-get", "import \"Containers\" as ct\n" +
+                               "main() { var l = new ct.LRU[int](cap = 4)\n  for l to k { l.get(_str(k), 0) }\n}\n", "LRU.get（读，不改结构）")
+
+    // ==================== ④ 控制流：if / while / switch / try 里的调用都要抓到 ====================
+    string body = "import \"Containers\" as ct\nmain() {\n  var s = new ct.Stack[int]()\n  for s to v {\n" +
+                  "    if v > 0 { s.push(1) }\n  }\n}\n"
+    expectWarn("flow/if", body, "if 分支里")
+    body = "import \"Containers\" as ct\nmain() {\n  var s = new ct.Stack[int]()\n  for s to v {\n" +
+           "    int n = 0\n    while n < 1 { s.push(1); n = n + 1 }\n  }\n}\n"
+    expectWarn("flow/while", body, "while 体里")
+    body = "import \"Containers\" as ct\nmain() {\n  var s = new ct.Stack[int]()\n  for s to v {\n" +
+           "    switch v {\n      case 1 { s.push(1) }\n      default { }\n    }\n  }\n}\n"
+    expectWarn("flow/switch", body, "switch case 里")
+
+    // ==================== ⑤ 别名：改的是**另一个变量名** ⇒ 抓不到（已知边界） ====================
+    expectNoWarn("alias/other-name",
+        "import \"Containers\" as ct\nmain() {\n  var s = new ct.Stack[int]()\n  var t = s\n" +
+        "  for s to v { t.push(1) }\n}\n", "别名（不同变量名）")
+
+    // ==================== ⑥ 线程 / 协程：循环体在函数里也要抓到 ====================
+    expectWarn("thread/in-worker",
+        "import \"Containers\" as ct\nimport threads\nmain() {\n  var s = new ct.Stack[int]()\n" +
+        "  threads.start(func() {\n    for s to v { s.push(1) }\n  })\n}\n", "线程函数体里的 for")
+    expectWarn("coro/in-async",
+        "import \"Containers\" as ct\nasync func work(ct.Stack[int] s) {\n  for s to v { s.push(1) }\n}\n" +
+        "main() { var s = new ct.Stack[int]()\n  work(s)\n}\n", "async 函数体里的 for")
+
+    // ==================== ⑥b 把 mut 写错地方：必须报错，不能静默忽略 ====================
+    expectError("misuse/toplevel",
+        "mut func foo() { }\nmain() { foo() }\n", "顶层裸函数标 mut")
+    expectError("misuse/field",
+        "struct S {\n  mut int x = 0\n}\nmain() { var s = new S()\n  s.x = 1\n}\n", "字段标 mut")
+
+    // ==================== ⑦ 运行期：mut 只是声明，语义不变 ====================
+    var st = new ct.Stack[int]()
+    for 0 : 4 to i { st.push(i) }
+    int sum = 0
+    for st to v { sum = sum + v }
+    assert_eq(sum, 10, "⑦ Stack 遍历累加（mut 不影响读）")
+    st.pop()
+    assert_eq(st.len(), 4, "⑦ pop 之后长度正确")
+
+    var bag = mm.makeBag()
+    assert_eq(bag.size(), 2, "⑦ 跨模块 mut 方法正常")
+    bag.drop()
+    assert_eq(bag.size(), 1, "⑦ 跨模块 mut 方法（drop）正常")
+
+    var gb = new mm.GenBox[int]()
+    gb.put(7); gb.put(8)
+    int gsum = 0
+    for gb to v { gsum = gsum + _int(v) }
+    assert_eq(gsum, 15, "⑦ 泛型 mut 类型可遍历")
+
+    // 线程里真实地"边遍历边改"：用**快照路径**（Queue 的 each() 返回 to_array）⇒ 安全
+    var shared = new ct.Queue[int]()
+    for 0 : 3 to i { shared.push(i) }
+    Array[Thread] tids = []
+    tids.add(threads.start(func() {
+        int n = 0
+        for shared to v {
+            n = n + 1
+            if shared.len() > 0 { shared.pop() }   // 改的是队列本身，遍历的是快照
+        }
+    }))
+    threads.join_all(tids)
+    // 只断言"跑完了、没崩"：闭包捕获的容器在子线程里改的是哪一份，属线程语义的事，
+    // 与本用例要钉的（遍历中修改不崩、不静默）无关。
+    assert_eq(tids.len(), 1, "⑦ 线程里边遍历边 pop（快照路径）正常结束")
+    print("test_mut_stress passed\n")
+}

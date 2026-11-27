@@ -267,7 +267,13 @@ int semantic_check_native_arg(Semantic* s, Ast* ast, TypeInfo* arg_type, TypeKin
 //   对**同一个变量**做结构性修改（add/insert/remove/clear/pop/sort/set…，字典还包括
 //   `容器[k] = v`）⇒ 警告。实测会静默跳过元素/键，或"边加边遍历"。
 //   `is_dict` = 1 时把索引赋值也算作结构性修改（数组的 `arr[i] = v` 不算）。
-void semantic_check_iter_mutation(const char* container_name, Ast* body, int is_dict);
+//   `struct_name` = 接收者的 struct 名（NULL/空 = 内置类型）：struct 的"会改结构"方法靠
+//   `mut` 声明（ObjStructDef.mut_names）判定，内置类型仍用名字表（它们的 API 由语言规定）。
+void semantic_check_iter_mutation(const char* container_name, Ast* body, int is_dict,
+                                  const char* struct_name);
+// ★ 2026-11-26：把 struct 定义 AST 里标了 `mut` 的方法名收进 ObjStructDef（幂等）。
+//   语义期建 early_def 的地方有多处（预扫描 / 模块级几条 / visit_type_def）⇒ 必须都调。
+void semantic_fill_struct_mut_names(ObjStructDef* def, Ast* struct_ast);
 // 约束名 → 内建具体类型 kind（`[T: string]` 这类；不是具体类型名 ⇒ TYPE_UNKNOWN，走 face 那条路 ✓）
 TypeKind semantic_constraint_builtin_kind(const char* name);
 // ★ 2026-11-07：校验泛型 struct 的类型实参是否满足声明处的约束（new 实例化用）

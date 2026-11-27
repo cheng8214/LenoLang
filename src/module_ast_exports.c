@@ -1791,6 +1791,7 @@ static void ast_fill_one_struct_meta(ModuleSymbolTable* table, Ast* sd) {
             methods[i].line = fn->line;
             methods[i].is_async = fn->u.func.is_async;
             methods[i].is_private = fn->u.func.is_private;
+            methods[i].is_mut = fn->u.func.is_mut;   // v45：跨模块判 WARN_ITER_MUTATE
         }
         if (sym) {
             // 整组覆盖（phase 1）：构造出来的数组**所有权交给符号表** ⇒ 这里不要释放 ✓

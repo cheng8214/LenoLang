@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#if !defined(_WIN32)
+#include <unistd.h>      // sysconf(_SC_NPROCESSORS_ONLN)：池默认大小 = CPU 核数
+#endif
 
 // ==================== spawn 耗时探针（LENO_THREAD_DEBUG=1 时打印）====================
 // 用途：`threads.start` 单个约 190us，需要知道钱花在哪一段（VM/GC 初始化 / 模块注册 /
@@ -97,6 +100,58 @@ void channel_init_methods(void) {
 
 void channel_mark_methods(void) {
     method_table_mark(&channelMethodTable);
+}
+
+// ============================================================================
+// Atomic 方法注册表（2026-11-26）—— 结构同 Channel，只是对象是"共享的原子整数"
+// ============================================================================
+#define ATOMIC_METHOD_TABLE_INITIAL_CAPACITY 8
+
+static THREAD_LOCAL MethodTable atomicMethodTable = {NULL, 0, 0};
+
+void atomic_method_table_cleanup(void) { method_table_free(&atomicMethodTable); }
+
+void atomic_register_method(const char* name, ObjNative* method,
+                            TypeKind return_type, TypeKind return_element_type,
+                            NativeParamSpec params) {
+    method_table_register_method(&atomicMethodTable, "Atomic", name, method,
+                                 return_type, return_element_type, params);
+}
+
+ObjNative* atomic_find_method(const char* name) {
+    return method_table_find(&atomicMethodTable, name);
+}
+
+void atomic_init_methods(void) {
+    method_table_init_methods(&atomicMethodTable, ATOMIC_METHOD_TABLE_INITIAL_CAPACITY);
+}
+
+void atomic_mark_methods(void) {
+    method_table_mark(&atomicMethodTable);
+}
+
+// 全局登记链（与 Channel 同口径：非 GC 对象，收尾统一释放）
+static ObjAtomic* g_atomic_all = NULL;
+
+ObjAtomic* atomic_new(int64_t init) {
+    ObjAtomic* a = (ObjAtomic*)calloc(1, sizeof(ObjAtomic));
+    if (!a) return NULL;
+    a->header.type = OBJ_ATOMIC;
+    a->header.owner_thread = 0;     // 不归属任何堆：跨线程共享
+    a->value = init;
+    // 登记到全局链：一次原子交换完成"取旧头 + 换新头"（多线程同时创建也安全）
+#ifdef _WIN32
+    a->all_next = (ObjAtomic*)InterlockedExchangePointer((PVOID volatile*)&g_atomic_all, a);
+#else
+    a->all_next = __atomic_exchange_n(&g_atomic_all, a, __ATOMIC_SEQ_CST);
+#endif
+    return a;
+}
+
+void atomic_free_all(void) {
+    ObjAtomic* a = g_atomic_all;
+    while (a) { ObjAtomic* n = a->all_next; free(a); a = n; }
+    g_atomic_all = NULL;
 }
 
 // ============================================================================
@@ -203,8 +258,12 @@ static void channel_clone_reject(int type_tag) {
         native_throw_error(msg);
         return;
     }
-    char msg[192];
-    snprintf(msg, sizeof(msg), "不能跨线程传递此类型 —— %s", support);
+    // ★ 2026-11-26：**没有上下文时也要报出是什么类型**。
+    //   原先这条分支把 kindbuf 整个丢了 ⇒ 直接 `threads.start(f, ptr)` 只说
+    //   "不能跨线程传递此类型 —— 跨线程只支持…"，看不出是 Ptr（实测）：
+    //   而藏在 struct 字段里那条反而点名（"来自 Holder.p，Ptr（原生指针）"）—— 不一致。
+    char msg[320];
+    snprintf(msg, sizeof(msg), "不能跨线程传递此类型（%s）—— %s", kindbuf, support);
     native_throw_error(msg);
 }
 
@@ -419,6 +478,12 @@ static Value channel_clone_value(Value val, int depth) {
                     channel_ref(ch);
                     return val_obj((Object*)ch);
                 }
+                case OBJ_ATOMIC:
+                    // ★ 2026-11-26：**唯一**跨线程共享的可变对象 —— 故意不克隆。
+                    //   理由：它所有访问都走原子指令（下一个人想加"非原子"字段前请先想清楚），
+                    //   共享是它的全部意义（计数器 / 连接池 / 限流）。生命周期由
+                    //   atomic_free_all() 在进程收尾统一负责，不进任何堆 ⇒ 不会被 GC 回收。
+                    return val_obj((Object*)obj);
                 default:
                     channel_clone_reject(obj->type);
                     return val_null();
@@ -456,26 +521,198 @@ typedef struct {
     int struct_def_count;
 } ThreadStartArgs;
 
-static void* thread_entry_point(void* arg) {
-    ThreadStartArgs* args = (ThreadStartArgs*)arg;
-    ObjThread* thread_obj = args->thread_obj;
-    ObjClosure* closure = args->closure;
+// ★ 2026-11-26（线程池重构 · 第 1 步：纯搬运，行为零变化）
+//   把"执行一个任务"从 thread_entry_point 里拆出来。目的：线程池要让一个 worker **复用**
+//   自己的 VM 连续跑多个任务 —— 现在每个 threads.start 都把整套 VM 初始化做一遍
+//   （实测 203 us/线程）。拆成三段：init（仍留在 thread_entry_point）/ exec_task（本函数）/
+//   fini（仍留在 thread_entry_point）。之后 worker 循环 = init 一次 + exec_task 多次。
+//   ⚠ 搬运时只改了两处：栈上 child_vm → 参数 VM* vm（child_vm.x→m->x、
+//     &child_vm→m）；错误路径里的 free/return NULL 改成 return（资源由 entry point
+//     的统一收尾释放，原来那些 free 与收尾重复）。其它一行未动。
+static void thread_exec_task(VM* vm, ObjThread* thread_obj, ObjClosure* closure,
+                             Value* thread_initial_args, int thread_initial_arg_count) {
+    // ★ 始终在子线程 GC 堆上创建新的闭包副本。
+    // 原始闭包在主线程 GC 堆上，主线程 GC 可能在闭包不再被主线程引用时回收它，
+    // 导致子线程访问已释放的 ObjClosure → use-after-free。
+    // function 对象是只读的且通常作为全局函数常驻，可以安全共享。
+    ObjClosure* child_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
+    if (!child_closure) {
+        platform_mutex_lock(&thread_obj->mutex);
+        thread_obj->state = THREAD_ERROR;
+        thread_obj->error_msg = strdup("Failed to allocate closure for thread");
+        thread_obj->has_result = 0;
+        platform_cond_signal(&thread_obj->done_cond);
+        platform_mutex_unlock(&thread_obj->mutex);
+        // ⚠ 资源释放**不在这里**：saved_globals / thread_initial_args / vm 的数组
+        //   统一由 thread_entry_point 的收尾段释放（拆函数前这两处是重复释放）
+        return;
+    }
+    child_closure->function = closure->function;
+    child_closure->upvalue_count = closure->upvalue_count;
+    child_closure->type_param_count = closure->type_param_count;
+    child_closure->type_param_args = NULL;  // 不深拷贝类型参数（泛型场景由调用方处理）
+    if (closure->upvalue_count > 0) {
+        for (int i = 0; i < closure->upvalue_count; i++) {
+            // 读取原始 upvalue 的当前值，创建 closed upvalue
+            Value upval = *closure->upvalues[i]->location;
+            Value cloned = value_clone_for_channel(upval);
+            Upvalue* uv = (Upvalue*)gc_alloc(sizeof(Upvalue), OBJ_UPVALUE);
+            if (!uv) {
+                child_closure->upvalue_count = i;  // 部分初始化
+                break;
+            }
+            uv->location = &uv->closed;
+            uv->closed = cloned;
+            uv->next = NULL;
+            child_closure->upvalues[i] = uv;
+        }
+    }
 
-    Value* saved_globals = args->globals;
-    int saved_global_count = args->global_count;
-    int saved_global_capacity = args->global_capacity;
-    Value* saved_global_funcs = args->global_funcs;
-    int saved_global_func_count = args->global_func_count;
-    int saved_global_func_capacity = args->global_func_capacity;
-    Value* thread_initial_args = args->initial_args;
-    int thread_initial_arg_count = args->initial_arg_count;
-    ObjStructDef** saved_struct_defs = args->struct_defs;
-    int saved_struct_def_count = args->struct_def_count;
-    free(args);
+    // 创建协程对象来执行函数
+    ObjCoroutine* co = coroutine_new(child_closure);
+    if (!co) {
+        platform_mutex_lock(&thread_obj->mutex);
+        thread_obj->state = THREAD_ERROR;
+        thread_obj->error_msg = strdup("Failed to create coroutine");
+        thread_obj->has_result = 0;
+        platform_cond_signal(&thread_obj->done_cond);
+        platform_mutex_unlock(&thread_obj->mutex);
+        // 同上：资源释放交给 thread_entry_point 的统一收尾
+    return;
+    }
 
-    // 创建子线程自己的 VM（独立的局部变量，不共享主程序数据）
-    VM child_vm;
-    memset(&child_vm, 0, sizeof(VM));
+    // ★ 从 thread->pending_args 读取参数（已在主线程 GC 堆上深拷贝），
+    // re-clone 到子线程 GC 堆。读取和清 NULL 都在 mutex 保护下进行，
+    // 与主线程 GC 的 gc_scan_children(OBJ_THREAD) 同步。
+    // thread_initial_args 已在函数开头声明（从 args->initial_args 初始化为 NULL）
+    platform_mutex_lock(&thread_obj->mutex);
+    if (thread_obj->pending_args && thread_obj->pending_arg_count > 0) {
+        thread_initial_arg_count = thread_obj->pending_arg_count;
+        thread_initial_args = (Value*)malloc(thread_initial_arg_count * sizeof(Value));
+        if (thread_initial_args) {
+            // ★ 禁用同步 GC：防止 value_clone_for_channel → gc_alloc → gc_major_collect
+            // → gc_scan_children(OBJ_THREAD) → lock thread->mutex → 自死锁
+            int saved_gc_enabled = gc_get_enabled();
+            gc_set_enabled(0);
+            for (int i = 0; i < thread_initial_arg_count; i++) {
+                thread_initial_args[i] = value_clone_for_channel(thread_obj->pending_args[i]);
+            }
+            gc_set_enabled(saved_gc_enabled);
+        }
+        // 清 NULL，主线程 GC 不再扫描这些值
+        thread_obj->pending_args = NULL;
+        thread_obj->pending_arg_count = 0;
+    }
+    platform_mutex_unlock(&thread_obj->mutex);
+
+    // 设置协程的初始参数（已 clone 到子线程 GC 堆）
+    if (thread_initial_args && thread_initial_arg_count > 0) {
+        co->initial_args = thread_initial_args;
+        co->initial_arg_count = thread_initial_arg_count;
+    }
+
+    int result = vm_run_coroutine_with_vm(co, vm);
+
+    // ★ 统一在 mutex 内完成状态设置 + 最终 GC + 信号通知
+    // 参考 Go goroutine 退出时的处理：Go 在 goroutine 退出时会清理栈上资源，
+    // 但堆对象由共享 GC 管理。Leno 使用 per-thread GC heap，因此需要在退出前
+    // 主动运行一次 GC 回收不可达对象（临时字符串、局部变量等），减少内存泄漏。
+    //
+    // 关键：gc_collect 必须在持有 thread mutex 时执行，因为：
+    // 1. 主线程 join() 在 cond_wait 上等待，signal 后尝试获取 mutex
+    // 2. GC 期间 thread_obj->result 可能被标记/扫描，必须确保主线程不会并发访问
+    // 3. GC 期间 channel buffer 条目通过 vm->globals → channel → buffer 标记为存活
+    // 4. thread_obj->result 通过 gc_push_root 标记为存活，不会被误回收
+    platform_mutex_lock(&thread_obj->mutex);
+
+    if (result != 0 || vm->has_exception) {
+        thread_obj->state = THREAD_ERROR;
+        // ★ 错误消息**不再丢弃**（2026-09-28）：
+        //   原先只有"异常恰好是字符串"才保留，其余一律写成 "unknown error" ✗
+        //   ⇒ 排查线程问题的人只能看到一句废话（作者本人为定位一个入口问题打了 9 轮探针 ✗）
+        //   现在：① 非字符串异常也带**类型**与提示 ② 无论如何都打到 stderr（含入口函数名）✓
+        const char* tname = (closure && closure->function && closure->function->name)
+                            ? closure->function->name : "?";
+        if (vm->has_exception && val_is_obj(vm->exception) && val_as_obj(vm->exception)->type == OBJ_STRING) {
+            ObjString* err = (ObjString*)val_as_obj(vm->exception);
+            thread_obj->error_msg = strdup(err->chars);
+        } else if (vm->has_exception && val_is_obj(vm->exception)
+                   && val_as_obj(vm->exception)->type == OBJ_DICT) {
+            // ★ TH11（2026-10-20）：`throw "xxx"` 会被 `wrap_string_exception` 包成
+            //   `{msg, line, file, stack}`（见 `vm_exception.inc:295`）⇒ 异常值其实是 **Dict**。
+            //   旧代码只认 OBJ_STRING，于是**所有**用户 `throw "..."` 都被写成
+            //   "非字符串异常（对象类型 2）—— 常见于进入函数体之前就失败" ⇒ 把人往"模块没加载"上引 ✗
+            ObjString* mk = str_copy("msg", 3);
+            Value mv = mk ? dict_get((ObjDict*)val_as_obj(vm->exception), val_obj((Object*)mk)) : val_null();
+            if (val_is_string(mv)) {
+                thread_obj->error_msg = strdup(((ObjString*)val_as_obj(mv))->chars);
+            } else {
+                thread_obj->error_msg = strdup("非字符串异常（错误对象里没有 msg 字段）");
+            }
+        } else if (vm->has_exception && val_is_obj(vm->exception)) {
+            char buf[200];
+            snprintf(buf, sizeof(buf),
+                "非字符串异常（对象类型 %d）—— 常见于**进入函数体之前**就失败（如入口函数所属模块未加载）",
+                (int)val_as_obj(vm->exception)->type);
+            thread_obj->error_msg = strdup(buf);
+        } else {
+            char buf[200];
+            snprintf(buf, sizeof(buf),
+                "线程在进入函数体前失败（无异常值；vm_run_coroutine 返回 %d）", result);
+            thread_obj->error_msg = strdup(buf);
+        }
+        // ⚠ 这里**不打印**（去掉 fprintf/fflush 的临时实验）：先前加上它后，应用在**退出阶段**
+        //   必卡（可复现 ✗），而该分支根本没被执行过 ⇒ 说明卡点是退出路径的既有问题被触发了 ✗
+        //   （诊断信息已写进 `error_msg`，join() 时会带出去 ⇒ 不依赖 stderr ✓）
+        (void)tname;
+        thread_obj->has_result = 0;
+    } else {
+        thread_obj->state = THREAD_DONE;
+        // 从协程对象中获取结果
+        thread_obj->result = value_clone_for_channel(co->result);
+        gc_write_barrier((Object*)thread_obj, thread_obj->result);
+        thread_obj->has_result = 1;
+    }
+
+    platform_cond_signal(&thread_obj->done_cond);
+
+    // 最终 GC：回收子线程 GC 堆上的不可达对象
+    // ★ 关键：不能在此处执行 GC 回收 channel buffer 中的对象。
+    // value_clone_for_channel 在 channel_send 中通过 gc_alloc 在子线程 GC 堆上分配对象，
+    // 这些对象存储在 channel buffer 中，但子线程退出时 VM 状态已清空，
+    // GC 无法通过根集合→栈→channel→buffer 追踪到它们，会误回收 → use-after-free。
+    // 修复：禁用 GC，让 gc_collect 成为空操作。子线程 GC 堆上的对象会在进程退出时
+    // 由 gc_free_all 统一释放，不会永久泄漏。
+    gc_push_root(&thread_obj->result);
+    vm->frame_cnt = 0;
+    vm->sp = 0;
+    vm->current_coroutine = NULL;
+    vm->all_coroutines = NULL;
+    vm->open_upvalues = NULL;
+    vm->exception = val_null();
+    vm->has_exception = 0;
+    int saved_gc_enabled = gc_get_enabled();
+    gc_set_enabled(0);
+    gc_collect();
+    gc_set_enabled(saved_gc_enabled);
+    gc_pop_root();
+
+    platform_mutex_unlock(&thread_obj->mutex);
+}
+
+// ★ 2026-11-26（线程池重构 · 第 1b 步：纯搬运）：子线程 VM 的**创建与初始化**单独成函数。
+//   为什么：线程池要让一个 worker **只初始化一次 VM**，然后连续跑多个任务；
+//   	hread_entry_point 原来把这段内联在入口里 ⇒ 每个 threads.start 都要重做一遍
+//   （实测 203 us/线程，绝大多数花在这里）。拆出来后：
+//       worker 循环 = thread_vm_init() 一次 + thread_exec_task() 多次 + 收尾一次
+//   ⚠ 本步仍然**行为零变化**：threads.start 还是 init → exec → fini 各一次，只是搬进了函数。
+//   搬动时只改一处：栈上 child_vm → 参数 VM* vm（child_vm.x→m->x、&child_vm→m）。
+static void thread_vm_init(VM* vm,
+                           Value* saved_globals, int saved_global_count, int saved_global_capacity,
+                           Value* saved_global_funcs, int saved_global_func_count,
+                           int saved_global_func_capacity,
+                           ObjStructDef** saved_struct_defs, int saved_struct_def_count) {
+    memset(vm, 0, sizeof(VM));
 
     // ★ 2026-11-15：线程序号（主线程 VM 恒为 0，这里从 1 开始）。
     //   分配对象时抄进 Object.owner_thread ⇒ module.c 的 module_set_var 据此发现
@@ -484,9 +721,9 @@ static void* thread_entry_point(void* arg) {
     {
         static volatile long g_child_thread_serial = 0;
 #ifdef _MSC_VER
-        child_vm.thread_serial = (uint8_t)_InterlockedIncrement(&g_child_thread_serial);
+        vm->thread_serial = (uint8_t)_InterlockedIncrement(&g_child_thread_serial);
 #else
-        child_vm.thread_serial = (uint8_t)__sync_add_and_fetch(&g_child_thread_serial, 1);
+        vm->thread_serial = (uint8_t)__sync_add_and_fetch(&g_child_thread_serial, 1);
 #endif
     }
 
@@ -494,88 +731,88 @@ static void* thread_entry_point(void* arg) {
     uint64_t dt0 = dbg ? thr_dbg_now_us() : 0;
 
     // 初始化子线程 VM
-    child_vm.chunk = NULL;
-    child_vm.ip = NULL;
-    child_vm.sp = 0;
-    child_vm.stack_capacity = 256;
-    child_vm.stack = (Value*)malloc(child_vm.stack_capacity * sizeof(Value));
-    memset(child_vm.stack, 0, child_vm.stack_capacity * sizeof(Value));
+    vm->chunk = NULL;
+    vm->ip = NULL;
+    vm->sp = 0;
+    vm->stack_capacity = 256;
+    vm->stack = (Value*)malloc(vm->stack_capacity * sizeof(Value));
+    memset(vm->stack, 0, vm->stack_capacity * sizeof(Value));
     // FFI 参数区（2026-11-01）：每个 VM 一份，固定容量、永不 realloc
-    child_vm.ffi_args_sp = 0;
-    child_vm.ffi_args = (Value*)malloc(VM_FFI_ARGS_CAP * sizeof(Value));
-    if (child_vm.ffi_args) {
-        memset(child_vm.ffi_args, 0, VM_FFI_ARGS_CAP * sizeof(Value));
+    vm->ffi_args_sp = 0;
+    vm->ffi_args = (Value*)malloc(VM_FFI_ARGS_CAP * sizeof(Value));
+    if (vm->ffi_args) {
+        memset(vm->ffi_args, 0, VM_FFI_ARGS_CAP * sizeof(Value));
     }
 
-    child_vm.frame_cnt = 0;
-    child_vm.frame_capacity = 16;
-    child_vm.frames = (CallFrame*)malloc(child_vm.frame_capacity * sizeof(CallFrame));
-    memset(child_vm.frames, 0, child_vm.frame_capacity * sizeof(CallFrame));
+    vm->frame_cnt = 0;
+    vm->frame_capacity = 16;
+    vm->frames = (CallFrame*)malloc(vm->frame_capacity * sizeof(CallFrame));
+    memset(vm->frames, 0, vm->frame_capacity * sizeof(CallFrame));
 
-    child_vm.exception = val_null();
-    child_vm.has_exception = 0;
-    child_vm.catch_ip = NULL;
-    child_vm.catch_frame = -1;
-    child_vm.pending_exception = 0;
-    child_vm.exception_line = 0;
+    vm->exception = val_null();
+    vm->has_exception = 0;
+    vm->catch_ip = NULL;
+    vm->catch_frame = -1;
+    vm->pending_exception = 0;
+    vm->exception_line = 0;
 
     for (int i = 0; i < IC_CACHE_SIZE; i++) {
-        child_vm.ic_cache[i].valid = 0;
-        child_vm.ic_cache[i].receiver_type = 0;
-        child_vm.ic_cache[i].method = NULL;
+        vm->ic_cache[i].valid = 0;
+        vm->ic_cache[i].receiver_type = 0;
+        vm->ic_cache[i].method = NULL;
     }
     for (int i = 0; i < IC_NATIVE_CACHE_SIZE; i++) {
-        child_vm.ic_native_cache[i].valid = 0;
-        child_vm.ic_native_cache[i].fn = NULL;
+        vm->ic_native_cache[i].valid = 0;
+        vm->ic_native_cache[i].fn = NULL;
     }
     for (int i = 0; i < IC_MODULE_CACHE_SIZE; i++) {
-        child_vm.ic_module_cache[i].valid = 0;
-        child_vm.ic_module_cache[i].combined_hash = 0;
-        child_vm.ic_module_cache[i].meta = NULL;
+        vm->ic_module_cache[i].valid = 0;
+        vm->ic_module_cache[i].combined_hash = 0;
+        vm->ic_module_cache[i].meta = NULL;
     }
 
-    child_vm.global_scope = NULL;
-    child_vm.open_upvalues = NULL;
-    child_vm.current_module_frame = NULL;
-    child_vm.event_loop = NULL;
-    child_vm.current_coroutine = NULL;
-    child_vm.all_coroutines = NULL;
+    vm->global_scope = NULL;
+    vm->open_upvalues = NULL;
+    vm->current_module_frame = NULL;
+    vm->event_loop = NULL;
+    vm->current_coroutine = NULL;
+    vm->all_coroutines = NULL;
     // ★ 子线程的**线程局部存储**是**独立一份**（TH5）—— 每个子线程的 VM 是自己的结构体，
     //   这个槽天然隔离 ✓（`threads.local_get/set` 就是按这条实现"每线程一份"的 ✓）
-    child_vm.thread_local_store = val_null();
+    vm->thread_local_store = val_null();
 
     // 复制全局变量：这里**只分配槽位 + 填 null**，真正的克隆延后到 gc_init() 之后
     //   （TH8：数据对象要克隆进子线程堆，而 clone 要 gc_alloc ⇒ 必须等 GC 初始化）
     if (saved_globals && saved_global_count > 0) {
-        child_vm.globals = (Value*)malloc(saved_global_capacity * sizeof(Value));
-        if (child_vm.globals) {
-            for (int i = 0; i < saved_global_capacity; i++) child_vm.globals[i] = val_null();
-            child_vm.global_count = saved_global_count;
-            child_vm.global_capacity = saved_global_capacity;
+        vm->globals = (Value*)malloc(saved_global_capacity * sizeof(Value));
+        if (vm->globals) {
+            for (int i = 0; i < saved_global_capacity; i++) vm->globals[i] = val_null();
+            vm->global_count = saved_global_count;
+            vm->global_capacity = saved_global_capacity;
         }
     } else {
-        child_vm.global_capacity = 8;
-        child_vm.globals = (Value*)malloc(child_vm.global_capacity * sizeof(Value));
-        for (int i = 0; i < child_vm.global_capacity; i++) child_vm.globals[i] = val_null();
-        child_vm.global_count = 0;
+        vm->global_capacity = 8;
+        vm->globals = (Value*)malloc(vm->global_capacity * sizeof(Value));
+        for (int i = 0; i < vm->global_capacity; i++) vm->globals[i] = val_null();
+        vm->global_count = 0;
     }
 
     if (saved_global_funcs && saved_global_func_count > 0) {
-        child_vm.global_funcs = (Value*)malloc(saved_global_func_capacity * sizeof(Value));
-        if (child_vm.global_funcs) {
-            memcpy(child_vm.global_funcs, saved_global_funcs, saved_global_func_count * sizeof(Value));
-            child_vm.global_func_count = saved_global_func_count;
-            child_vm.global_func_capacity = saved_global_func_capacity;
+        vm->global_funcs = (Value*)malloc(saved_global_func_capacity * sizeof(Value));
+        if (vm->global_funcs) {
+            memcpy(vm->global_funcs, saved_global_funcs, saved_global_func_count * sizeof(Value));
+            vm->global_func_count = saved_global_func_count;
+            vm->global_func_capacity = saved_global_func_capacity;
         }
     } else {
-        child_vm.global_func_capacity = 8;
-        child_vm.global_funcs = (Value*)malloc(child_vm.global_func_capacity * sizeof(Value));
-        child_vm.global_func_count = 0;
+        vm->global_func_capacity = 8;
+        vm->global_funcs = (Value*)malloc(vm->global_func_capacity * sizeof(Value));
+        vm->global_func_count = 0;
     }
 
     // 初始化子线程的 GC（线程局部）
     gc_init();
-    gc.vm = &child_vm;
+    gc.vm = vm;
 
     // 初始化子线程的字符串表（线程局部）
     extern void intern_table_init(void);
@@ -631,16 +868,16 @@ static void* thread_entry_point(void* arg) {
     //   socket / file / ffi 句柄（克隆出来是假句柄）、channel / thread（引用语义）
     // ⚠ 位置有讲究：必须在 `gc_init()` 之后（clone 要 gc_alloc），且在上面的 struct 定义导入之后
     //   （全局 struct 实例重建时要靠它的 def 找回字段布局）。
-    if (saved_globals && child_vm.globals) {
+    if (saved_globals && vm->globals) {
         extern THREAD_LOCAL VM* current_exec_vm;
         VM* saved_exec_vm = current_exec_vm;
-        current_exec_vm = &child_vm;      // ★ clone 失败时报错要落到**子线程** VM，不能污染主 VM
+        current_exec_vm = vm;      // ★ clone 失败时报错要落到**子线程** VM，不能污染主 VM
         int saved_gc_enabled = gc_get_enabled();
         gc_set_enabled(0);                // saved_globals 是 malloc 数组、不在 GC 根集合里
-        for (int i = 0; i < child_vm.global_count; i++) {
+        for (int i = 0; i < vm->global_count; i++) {
             Value val = saved_globals[i];
             if (!val_is_obj(val)) {
-                child_vm.globals[i] = val;   // 标量：自带副本
+                vm->globals[i] = val;   // 标量：自带副本
                 continue;
             }
             switch (val_as_obj(val)->type) {
@@ -650,18 +887,18 @@ static void* thread_entry_point(void* arg) {
                 case OBJ_STRUCT:
                 case OBJ_CLOSURE: {
                     Value cloned = value_clone_for_channel(val);
-                    if (val_is_null(cloned) || child_vm.has_exception) {
+                    if (val_is_null(cloned) || vm->has_exception) {
                         // 含 Ptr / cstruct 的容器克隆不了 ⇒ 回退成共享（旧行为），
                         //   **不让一个全局变量把整条线程搞挂** ✗
-                        child_vm.exception = val_null();
-                        child_vm.has_exception = 0;
+                        vm->exception = val_null();
+                        vm->has_exception = 0;
                         cloned = val;
                     }
-                    child_vm.globals[i] = cloned;
+                    vm->globals[i] = cloned;
                     break;
                 }
                 default:
-                    child_vm.globals[i] = val;   // 只读元数据 / 资源句柄 / 引用语义对象
+                    vm->globals[i] = val;   // 只读元数据 / 资源句柄 / 引用语义对象
                     break;
             }
         }
@@ -680,192 +917,33 @@ static void* thread_entry_point(void* arg) {
                 (unsigned long long)(dt4 - dt0));
     }
 
-    // ★ 始终在子线程 GC 堆上创建新的闭包副本。
-    // 原始闭包在主线程 GC 堆上，主线程 GC 可能在闭包不再被主线程引用时回收它，
-    // 导致子线程访问已释放的 ObjClosure → use-after-free。
-    // function 对象是只读的且通常作为全局函数常驻，可以安全共享。
-    ObjClosure* child_closure = (ObjClosure*)gc_alloc(sizeof(ObjClosure), OBJ_CLOSURE);
-    if (!child_closure) {
-        platform_mutex_lock(&thread_obj->mutex);
-        thread_obj->state = THREAD_ERROR;
-        thread_obj->error_msg = strdup("Failed to allocate closure for thread");
-        thread_obj->has_result = 0;
-        platform_cond_signal(&thread_obj->done_cond);
-        platform_mutex_unlock(&thread_obj->mutex);
-        if (saved_globals) free(saved_globals);
-        if (saved_global_funcs) free(saved_global_funcs);
-        if (saved_struct_defs) free(saved_struct_defs);
-        if (thread_initial_args) free(thread_initial_args);
-        if (child_vm.frames) free(child_vm.frames);
-        if (child_vm.stack) free(child_vm.stack);
-        if (child_vm.ffi_args) free(child_vm.ffi_args);   // FFI 参数区（2026-11-01）
-        if (child_vm.globals) free(child_vm.globals);
-        if (child_vm.global_funcs) free(child_vm.global_funcs);
-        return NULL;
-    }
-    child_closure->function = closure->function;
-    child_closure->upvalue_count = closure->upvalue_count;
-    child_closure->type_param_count = closure->type_param_count;
-    child_closure->type_param_args = NULL;  // 不深拷贝类型参数（泛型场景由调用方处理）
-    if (closure->upvalue_count > 0) {
-        for (int i = 0; i < closure->upvalue_count; i++) {
-            // 读取原始 upvalue 的当前值，创建 closed upvalue
-            Value upval = *closure->upvalues[i]->location;
-            Value cloned = value_clone_for_channel(upval);
-            Upvalue* uv = (Upvalue*)gc_alloc(sizeof(Upvalue), OBJ_UPVALUE);
-            if (!uv) {
-                child_closure->upvalue_count = i;  // 部分初始化
-                break;
-            }
-            uv->location = &uv->closed;
-            uv->closed = cloned;
-            uv->next = NULL;
-            child_closure->upvalues[i] = uv;
-        }
-    }
+}
 
-    // 创建协程对象来执行函数
-    ObjCoroutine* co = coroutine_new(child_closure);
-    if (!co) {
-        platform_mutex_lock(&thread_obj->mutex);
-        thread_obj->state = THREAD_ERROR;
-        thread_obj->error_msg = strdup("Failed to create coroutine");
-        thread_obj->has_result = 0;
-        platform_cond_signal(&thread_obj->done_cond);
-        platform_mutex_unlock(&thread_obj->mutex);
+static void* thread_entry_point(void* arg) {
+    ThreadStartArgs* args = (ThreadStartArgs*)arg;
+    ObjThread* thread_obj = args->thread_obj;
+    ObjClosure* closure = args->closure;
 
-        if (saved_globals) free(saved_globals);
-        if (saved_global_funcs) free(saved_global_funcs);
-        if (saved_struct_defs) free(saved_struct_defs);
-        if (thread_initial_args) free(thread_initial_args);
+    Value* saved_globals = args->globals;
+    int saved_global_count = args->global_count;
+    int saved_global_capacity = args->global_capacity;
+    Value* saved_global_funcs = args->global_funcs;
+    int saved_global_func_count = args->global_func_count;
+    int saved_global_func_capacity = args->global_func_capacity;
+    Value* thread_initial_args = args->initial_args;
+    int thread_initial_arg_count = args->initial_arg_count;
+    ObjStructDef** saved_struct_defs = args->struct_defs;
+    int saved_struct_def_count = args->struct_def_count;
+    free(args);
 
-        if (child_vm.frames) free(child_vm.frames);
-        if (child_vm.stack) free(child_vm.stack);
-        if (child_vm.ffi_args) free(child_vm.ffi_args);   // FFI 参数区（2026-11-01）
-        if (child_vm.globals) free(child_vm.globals);
-        if (child_vm.global_funcs) free(child_vm.global_funcs);
-
-        return NULL;
-    }
-
-    // ★ 从 thread->pending_args 读取参数（已在主线程 GC 堆上深拷贝），
-    // re-clone 到子线程 GC 堆。读取和清 NULL 都在 mutex 保护下进行，
-    // 与主线程 GC 的 gc_scan_children(OBJ_THREAD) 同步。
-    // thread_initial_args 已在函数开头声明（从 args->initial_args 初始化为 NULL）
-    platform_mutex_lock(&thread_obj->mutex);
-    if (thread_obj->pending_args && thread_obj->pending_arg_count > 0) {
-        thread_initial_arg_count = thread_obj->pending_arg_count;
-        thread_initial_args = (Value*)malloc(thread_initial_arg_count * sizeof(Value));
-        if (thread_initial_args) {
-            // ★ 禁用同步 GC：防止 value_clone_for_channel → gc_alloc → gc_major_collect
-            // → gc_scan_children(OBJ_THREAD) → lock thread->mutex → 自死锁
-            int saved_gc_enabled = gc_get_enabled();
-            gc_set_enabled(0);
-            for (int i = 0; i < thread_initial_arg_count; i++) {
-                thread_initial_args[i] = value_clone_for_channel(thread_obj->pending_args[i]);
-            }
-            gc_set_enabled(saved_gc_enabled);
-        }
-        // 清 NULL，主线程 GC 不再扫描这些值
-        free(thread_obj->pending_args);
-        thread_obj->pending_args = NULL;
-        thread_obj->pending_arg_count = 0;
-    }
-    platform_mutex_unlock(&thread_obj->mutex);
-
-    // 设置协程的初始参数（已 clone 到子线程 GC 堆）
-    if (thread_initial_args && thread_initial_arg_count > 0) {
-        co->initial_args = thread_initial_args;
-        co->initial_arg_count = thread_initial_arg_count;
-    }
-
-    int result = vm_run_coroutine_with_vm(co, &child_vm);
-
-    // ★ 统一在 mutex 内完成状态设置 + 最终 GC + 信号通知
-    // 参考 Go goroutine 退出时的处理：Go 在 goroutine 退出时会清理栈上资源，
-    // 但堆对象由共享 GC 管理。Leno 使用 per-thread GC heap，因此需要在退出前
-    // 主动运行一次 GC 回收不可达对象（临时字符串、局部变量等），减少内存泄漏。
-    //
-    // 关键：gc_collect 必须在持有 thread mutex 时执行，因为：
-    // 1. 主线程 join() 在 cond_wait 上等待，signal 后尝试获取 mutex
-    // 2. GC 期间 thread_obj->result 可能被标记/扫描，必须确保主线程不会并发访问
-    // 3. GC 期间 channel buffer 条目通过 child_vm.globals → channel → buffer 标记为存活
-    // 4. thread_obj->result 通过 gc_push_root 标记为存活，不会被误回收
-    platform_mutex_lock(&thread_obj->mutex);
-
-    if (result != 0 || child_vm.has_exception) {
-        thread_obj->state = THREAD_ERROR;
-        // ★ 错误消息**不再丢弃**（2026-09-28）：
-        //   原先只有"异常恰好是字符串"才保留，其余一律写成 "unknown error" ✗
-        //   ⇒ 排查线程问题的人只能看到一句废话（作者本人为定位一个入口问题打了 9 轮探针 ✗）
-        //   现在：① 非字符串异常也带**类型**与提示 ② 无论如何都打到 stderr（含入口函数名）✓
-        const char* tname = (closure && closure->function && closure->function->name)
-                            ? closure->function->name : "?";
-        if (child_vm.has_exception && val_is_obj(child_vm.exception) && val_as_obj(child_vm.exception)->type == OBJ_STRING) {
-            ObjString* err = (ObjString*)val_as_obj(child_vm.exception);
-            thread_obj->error_msg = strdup(err->chars);
-        } else if (child_vm.has_exception && val_is_obj(child_vm.exception)
-                   && val_as_obj(child_vm.exception)->type == OBJ_DICT) {
-            // ★ TH11（2026-10-20）：`throw "xxx"` 会被 `wrap_string_exception` 包成
-            //   `{msg, line, file, stack}`（见 `vm_exception.inc:295`）⇒ 异常值其实是 **Dict**。
-            //   旧代码只认 OBJ_STRING，于是**所有**用户 `throw "..."` 都被写成
-            //   "非字符串异常（对象类型 2）—— 常见于进入函数体之前就失败" ⇒ 把人往"模块没加载"上引 ✗
-            ObjString* mk = str_copy("msg", 3);
-            Value mv = mk ? dict_get((ObjDict*)val_as_obj(child_vm.exception), val_obj((Object*)mk)) : val_null();
-            if (val_is_string(mv)) {
-                thread_obj->error_msg = strdup(((ObjString*)val_as_obj(mv))->chars);
-            } else {
-                thread_obj->error_msg = strdup("非字符串异常（错误对象里没有 msg 字段）");
-            }
-        } else if (child_vm.has_exception && val_is_obj(child_vm.exception)) {
-            char buf[200];
-            snprintf(buf, sizeof(buf),
-                "非字符串异常（对象类型 %d）—— 常见于**进入函数体之前**就失败（如入口函数所属模块未加载）",
-                (int)val_as_obj(child_vm.exception)->type);
-            thread_obj->error_msg = strdup(buf);
-        } else {
-            char buf[200];
-            snprintf(buf, sizeof(buf),
-                "线程在进入函数体前失败（无异常值；vm_run_coroutine 返回 %d）", result);
-            thread_obj->error_msg = strdup(buf);
-        }
-        // ⚠ 这里**不打印**（去掉 fprintf/fflush 的临时实验）：先前加上它后，应用在**退出阶段**
-        //   必卡（可复现 ✗），而该分支根本没被执行过 ⇒ 说明卡点是退出路径的既有问题被触发了 ✗
-        //   （诊断信息已写进 `error_msg`，join() 时会带出去 ⇒ 不依赖 stderr ✓）
-        (void)tname;
-        thread_obj->has_result = 0;
-    } else {
-        thread_obj->state = THREAD_DONE;
-        // 从协程对象中获取结果
-        thread_obj->result = value_clone_for_channel(co->result);
-        gc_write_barrier((Object*)thread_obj, thread_obj->result);
-        thread_obj->has_result = 1;
-    }
-
-    platform_cond_signal(&thread_obj->done_cond);
-
-    // 最终 GC：回收子线程 GC 堆上的不可达对象
-    // ★ 关键：不能在此处执行 GC 回收 channel buffer 中的对象。
-    // value_clone_for_channel 在 channel_send 中通过 gc_alloc 在子线程 GC 堆上分配对象，
-    // 这些对象存储在 channel buffer 中，但子线程退出时 VM 状态已清空，
-    // GC 无法通过根集合→栈→channel→buffer 追踪到它们，会误回收 → use-after-free。
-    // 修复：禁用 GC，让 gc_collect 成为空操作。子线程 GC 堆上的对象会在进程退出时
-    // 由 gc_free_all 统一释放，不会永久泄漏。
-    gc_push_root(&thread_obj->result);
-    child_vm.frame_cnt = 0;
-    child_vm.sp = 0;
-    child_vm.current_coroutine = NULL;
-    child_vm.all_coroutines = NULL;
-    child_vm.open_upvalues = NULL;
-    child_vm.exception = val_null();
-    child_vm.has_exception = 0;
-    int saved_gc_enabled = gc_get_enabled();
-    gc_set_enabled(0);
-    gc_collect();
-    gc_set_enabled(saved_gc_enabled);
-    gc_pop_root();
-
-    platform_mutex_unlock(&thread_obj->mutex);
+    // 创建子线程自己的 VM（独立的局部变量，不共享主程序数据）
+    // 创建并初始化子线程自己的 VM（拆分说明见 thread_vm_init 上方）
+    VM child_vm;
+    thread_vm_init(&child_vm, saved_globals, saved_global_count, saved_global_capacity,
+                   saved_global_funcs, saved_global_func_count, saved_global_func_capacity,
+                   saved_struct_defs, saved_struct_def_count);
+    // 执行体已搬到 thread_exec_task（见上方说明）
+    thread_exec_task(&child_vm, thread_obj, closure, thread_initial_args, thread_initial_arg_count);
 
     if (saved_globals) free(saved_globals);
     if (saved_global_funcs) free(saved_global_funcs);
@@ -914,6 +992,7 @@ static void* thread_entry_point(void* arg) {
         socket_method_table_cleanup();
         thread_method_table_cleanup();
         channel_method_table_cleanup();
+    atomic_method_table_cleanup();
         struct_method_table_cleanup();
         arr_free_list_release_all();
     }
@@ -978,9 +1057,12 @@ ObjThread* thread_new_with_args(ObjClosure* closure, Value* call_args, int call_
     thread->pending_args = NULL;
     thread->pending_arg_count = 0;
     thread->dead_heap = NULL;
+    thread->is_pool_task = 0;
+    thread->reaped = 0;
 
     platform_mutex_init(&thread->mutex);
     platform_cond_init(&thread->done_cond);
+    platform_cond_init(&thread->reap_cond);
 
     // ★ 深拷贝线程参数到主线程 GC 堆，并存入 thread->pending_args。
     // 这样主线程 GC 可以通过 gc_scan_children(OBJ_THREAD) 扫描到这些值，
@@ -1099,7 +1181,30 @@ static int thread_wait(ObjThread* thread, int timeout_ms) {
 
 // 收尾（必须在"线程已结束"后调用）：克隆 result 到本线程堆 → join OS 线程 → 释放子线程堆
 //   → 从 active_threads 摘除 → 线程出错则抛异常。重复调用是幂等的（joined / dead_heap 都有守卫）
+// ★ 2026-11-26（线程池）：`thread_reap` 的"不抛异常"版本。
+//   为什么必须要它：`map` / `parallel_for` 里如果第 3 个任务抛错、循环直接中断，
+//   剩下 4..N 个任务就**没人 reap** ⇒ worker 永远卡在"等 reap"上（池会越用越少，
+//   最终死锁）。所以批量接口必须**先把所有任务排空**（每个都 reap），再抛第一个错误。
+//   out 可为 NULL；err 里放错误消息（调用方拼成一次 throw）。
+static Value thread_reap_impl(ObjThread* thread, int throw_on_error, char* err, int err_cap);
+
+int thread_reap_quiet(ObjThread* thread, Value* out, char* err, int err_cap) {
+    if (out) *out = val_null();
+    if (!thread) return 0;
+    if (err && err_cap > 0) err[0] = '\0';
+    if (!thread_wait(thread, -1)) return 0;
+    Value v = thread_reap_impl(thread, 0, err, err_cap);
+    if (out) *out = v;
+    return (err && err_cap > 0 && err[0] != '\0') ? 1 : 0;
+}
+
 static Value thread_reap(ObjThread* thread) {
+    return thread_reap_impl(thread, 1, NULL, 0);
+}
+
+// 实体的实现：throw_on_error = 1 时与旧的 thread_reap 完全一致；
+//   0 时把错误消息写进 err 并返回 val_null（不设置 VM 异常）。
+static Value thread_reap_impl(ObjThread* thread, int throw_on_error, char* err, int err_cap) {
     platform_mutex_lock(&thread->mutex);
 
     // ★ 在 mutex 内克隆 result 到主线程 GC 堆。
@@ -1124,8 +1229,19 @@ static Value thread_reap(ObjThread* thread) {
     platform_mutex_unlock(&thread->mutex);
 
     if (!thread->joined) {
-        platform_thread_join(thread->os_thread, NULL);
+        // ★ 2026-11-26（线程池）：池任务没有自己的 OS 线程（由 worker 代跑）
+        //   ⇒ 不能 platform_thread_join（句柄是空的，行为未定义）。
+        if (!thread->is_pool_task) platform_thread_join(thread->os_thread, NULL);
         thread->joined = 1;
+    }
+
+    // ★ 2026-11-26（线程池）：结果已经克隆进调用方堆 ⇒ 通知 worker 可以接下一条了。
+    //   （在 mutex 内做，worker 那边也是在 mutex 上等这个条件）
+    {
+        platform_mutex_lock(&thread->mutex);
+        thread->reaped = 1;
+        platform_cond_signal(&thread->reap_cond);
+        platform_mutex_unlock(&thread->mutex);
     }
 
     // ★★ 2026-10-19：result 已经克隆到主线程堆（上面那段）⇒ 子线程那个堆可以放了 ✓
@@ -1153,10 +1269,19 @@ static Value thread_reap(ObjThread* thread) {
     }
 
     if (thread->state == THREAD_ERROR) {
-        char msg[256];
-        snprintf(msg, sizeof(msg), "线程内抛出异常：%s",
-                 thread->error_msg ? thread->error_msg : "（未记录消息）");
-        native_throw_error(msg);
+        // ★ 2026-11-26（线程池）：批量接口（map/parallel_for）用 throw_on_error=0 先排空
+        //   整批任务、把错误消息带出来，最后由调用方**统一抛一次** —— 否则第一个失败就
+        //   中断循环，剩下的任务没人 reap ⇒ worker 全部卡死在"等 reap"。
+        if (err && err_cap > 0) {
+            snprintf(err, (size_t)err_cap, "线程内抛出异常：%s",
+                     thread->error_msg ? thread->error_msg : "（未记录消息）");
+        }
+        if (throw_on_error) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "线程内抛出异常：%s",
+                     thread->error_msg ? thread->error_msg : "（未记录消息）");
+            native_throw_error(msg);
+        }
         return val_null();
     }
 
@@ -1562,3 +1687,363 @@ Value channel_try_receive(ObjChannel* channel) {
 }
 
 // 注意：Thread 和 Channel 的实例方法已移到 threads.c 模块中
+// ============================================================================
+// 线程池（2026-11-26，第 2 步）
+// ----------------------------------------------------------------------------
+// 为什么要有它：`threads.start` 每次都要跑一遍 `thread_vm_init`（建 VM / gc_init /
+//   注册 native 全局+模块 / 导入 struct 定义 / 克隆 globals），实测 **203~227 us/线程**。
+//   而 `threads.map(arr, f)` 是"每个元素一条线程" ⇒ 1 万元素 = 1 万条 OS 线程，
+//   光启动开销就 2 秒级。池子把这笔一次性成本摊给 N 个常驻 worker。
+//
+// 设计（三条，都是为了不埋病根）：
+//   ① **worker 持有自己的 VM**（`thread_vm_init` 只跑一次），任务用 `thread_exec_task` 跑；
+//   ② **跑完必须等 reap 再接下一条** —— 结果分配在 worker 堆上、任务对象在调用方堆，
+//      worker 的 GC **看不见**那个结果；不等就会把上一条还没取走的结果回收（偶发野指针）。
+//      握手字段：`ObjThread.is_pool_task / reaped / reap_cond`（见 `thread_reap`）；
+//   ③ worker 常驻不退出（进程结束时随进程消亡）⇒ 不必再抽一段 fini，
+//      也不会在退出阶段和 GC 收尾抢资源。
+//
+// 任务对象复用 `ObjThread`：它的 mutex / done_cond / result / pending_args 已经能被
+//   `gc_scan_children(OBJ_THREAD)` 扫描，等于白拿一套"结果容器 + GC 可见性"。
+// ============================================================================
+
+#define POOL_MAX_WORKERS 64
+// 默认 worker 数 = **CPU 核数**（2026-11-26 第二轮）：
+//   原来写死 4，在 16 核机器上 `map` 只用 1/4 的机器 —— 静默的性能损失。
+//   探测失败（或返回 0）时退回 4。
+#define POOL_FALLBACK_WORKERS 4
+
+static int pool_detect_cores(void) {
+#if defined(_WIN32)
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    int n = (int)si.dwNumberOfProcessors;
+#elif defined(__unix__) || defined(__APPLE__)
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+#else
+    int n = 0;
+#endif
+    if (n <= 0) n = POOL_FALLBACK_WORKERS;
+    if (n > POOL_MAX_WORKERS) n = POOL_MAX_WORKERS;
+    return n;
+}
+
+typedef struct PoolItem {
+    ObjThread* task;        // 结果/状态容器（分配在调用方堆）
+    ObjClosure* closure;    // 任务闭包（分配在调用方堆；worker 里再克隆）
+    struct PoolItem* next;
+} PoolItem;
+
+// 当前线程是否是池 worker（THREAD_LOCAL）：嵌套批次要据此回退，避免饿死
+static THREAD_LOCAL int tls_in_pool_worker = 0;
+
+static PlatformMutex   g_pool_mu;
+static PlatformCondVar g_pool_cv_work;    // worker 等任务
+// ★★ 2026-11-26（gdb 抓到的真崩溃）：worker **初始化完成**的屏障。
+//   没有它：`pool_ensure_started()` 建完 16 条线程就返回，而 worker 还在
+//   `thread_vm_init` 里干活；主线程可能已经把测试跑完并进入**收尾**
+//   （`struct_def_free_all` 把结构体定义释放掉）⇒ worker 随后调用
+//   `struct_def_import_from_thread(g_pool_snap.struct_defs…)` 读到 **0xFEEEFEEE**
+//   （CRT 释放填充）⇒ 0xC0000005。gdb 栈：sd_hash_first ← struct_def_register
+//   ← struct_def_import_from_thread ← thread_vm_init ← pool_worker_main。
+//   同一个窗口还会让 worker 去克隆 `g_pool_snap.globals`（指向主线程堆的 Value），
+//   而主线程可能已经 GC 过一轮 —— 同一个病。
+//   ⇒ 初始化期间主线程**必须阻塞**：等全部 worker 报"init 完成"再返回。
+static PlatformCondVar g_pool_cv_ready;
+static int g_pool_ready_count = 0;
+static PoolItem* g_pool_head = NULL;
+static PoolItem* g_pool_tail = NULL;
+static int g_pool_busy = 0;               // 正在跑（含等 reap）的任务数
+static int g_pool_workers = 0;            // 已启动的 worker 数
+static int g_pool_wanted = 0;             // 期望的 worker 数
+static int g_pool_inited = 0;
+static int g_pool_stop = 0;                  // 收尾信号（见 pool_shutdown）
+static PlatformThread g_pool_threads[POOL_MAX_WORKERS];  // 收尾要 join 它们
+
+typedef struct PoolSnapshot {
+    Value* globals; int global_count; int global_capacity;
+    Value* global_funcs; int global_func_count; int global_func_capacity;
+    ObjStructDef** struct_defs; int struct_def_count;
+} PoolSnapshot;
+
+static PoolSnapshot g_pool_snap;
+
+// 抓"当前 VM 的快照"：与 `thread_new_with_args` 同口径（globals / 函数表 / struct 定义）
+static void pool_capture_snapshot(void) {
+    extern THREAD_LOCAL VM* current_exec_vm;
+    extern VM vm;
+    VM* tv = current_exec_vm ? current_exec_vm : &vm;
+    memset(&g_pool_snap, 0, sizeof(g_pool_snap));
+
+    if (tv->global_count > 0 && tv->globals && tv->global_capacity > 0) {
+        g_pool_snap.globals = (Value*)malloc((size_t)tv->global_capacity * sizeof(Value));
+        if (g_pool_snap.globals) {
+            memcpy(g_pool_snap.globals, tv->globals, (size_t)tv->global_count * sizeof(Value));
+            g_pool_snap.global_count = tv->global_count;
+            g_pool_snap.global_capacity = tv->global_capacity;
+        }
+    }
+    if (tv->global_func_count > 0 && tv->global_funcs && tv->global_func_capacity > 0) {
+        g_pool_snap.global_funcs = (Value*)malloc((size_t)tv->global_func_capacity * sizeof(Value));
+        if (g_pool_snap.global_funcs) {
+            memcpy(g_pool_snap.global_funcs, tv->global_funcs,
+                   (size_t)tv->global_func_count * sizeof(Value));
+            g_pool_snap.global_func_count = tv->global_func_count;
+            g_pool_snap.global_func_capacity = tv->global_func_capacity;
+        }
+    }
+    int dc = struct_def_get_count();
+    if (dc > 0) {
+        g_pool_snap.struct_defs = (ObjStructDef**)malloc((size_t)dc * sizeof(ObjStructDef*));
+        if (g_pool_snap.struct_defs) {
+            for (int i = 0; i < dc; i++) g_pool_snap.struct_defs[i] = struct_def_get(i);
+            g_pool_snap.struct_def_count = dc;
+        }
+    }
+}
+
+// worker 主循环
+static void* pool_worker_main(void* arg) {
+    (void)arg;
+    tls_in_pool_worker = 1;   // 见 pool_ready()：本线程内的嵌套批次回退到独立线程
+
+    VM vm;
+    memset(&vm, 0, sizeof(VM));
+
+    // 每个 worker 拷一份快照（thread_vm_init 不持有这些数组的所有权，用完由这里释放）
+    Value* g = NULL;
+    if (g_pool_snap.globals && g_pool_snap.global_capacity > 0) {
+        g = (Value*)malloc((size_t)g_pool_snap.global_capacity * sizeof(Value));
+        if (g) memcpy(g, g_pool_snap.globals, (size_t)g_pool_snap.global_count * sizeof(Value));
+    }
+    Value* gf = NULL;
+    if (g_pool_snap.global_funcs && g_pool_snap.global_func_capacity > 0) {
+        gf = (Value*)malloc((size_t)g_pool_snap.global_func_capacity * sizeof(Value));
+        if (gf) memcpy(gf, g_pool_snap.global_funcs,
+                       (size_t)g_pool_snap.global_func_count * sizeof(Value));
+    }
+    ObjStructDef** sd = NULL;
+    if (g_pool_snap.struct_defs && g_pool_snap.struct_def_count > 0) {
+        sd = (ObjStructDef**)malloc((size_t)g_pool_snap.struct_def_count * sizeof(ObjStructDef*));
+        if (sd) memcpy(sd, g_pool_snap.struct_defs,
+                       (size_t)g_pool_snap.struct_def_count * sizeof(ObjStructDef*));
+    }
+
+    thread_vm_init(&vm, g, g_pool_snap.global_count, g_pool_snap.global_capacity,
+                   gf, g_pool_snap.global_func_count, g_pool_snap.global_func_capacity,
+                   sd, g_pool_snap.struct_def_count);
+
+    if (g) free(g);
+    if (gf) free(gf);
+    if (sd) free(sd);
+
+    // 报到：本 worker 的 VM 初始化完成（见 g_pool_cv_ready 的说明）
+    platform_mutex_lock(&g_pool_mu);
+    g_pool_ready_count++;
+    platform_cond_broadcast(&g_pool_cv_ready);
+    platform_mutex_unlock(&g_pool_mu);
+
+    for (;;) {
+        platform_mutex_lock(&g_pool_mu);
+        while (!g_pool_head && !g_pool_stop) {
+            platform_cond_wait(&g_pool_cv_work, &g_pool_mu);
+        }
+        if (!g_pool_head && g_pool_stop) {          // 收尾：没有待办就走人
+            platform_mutex_unlock(&g_pool_mu);
+            break;
+        }
+        PoolItem* it = g_pool_head;
+        g_pool_head = it->next;
+        if (!g_pool_head) g_pool_tail = NULL;
+        g_pool_busy++;
+        platform_mutex_unlock(&g_pool_mu);
+
+        ObjThread* task = it->task;
+        ObjClosure* closure = it->closure;
+        free(it);
+
+        // 执行体与 threads.start 完全相同（克隆闭包/参数、协程、结果、最终 GC）
+        thread_exec_task(&vm, task, closure, NULL, 0);
+
+        // ★ 握手：等调用方 reap（已把结果克隆进它自己的堆）之后才接下一条
+        platform_mutex_lock(&task->mutex);
+        while (!task->reaped) platform_cond_wait(&task->reap_cond, &task->mutex);
+        platform_mutex_unlock(&task->mutex);
+
+        platform_mutex_lock(&g_pool_mu);
+        g_pool_busy--;
+        platform_mutex_unlock(&g_pool_mu);
+    }
+    return NULL;
+}
+
+static void pool_ensure_started(void) {
+    if (g_pool_inited) return;
+    g_pool_inited = 1;
+    platform_mutex_init(&g_pool_mu);
+    platform_cond_init(&g_pool_cv_work);
+    pool_capture_snapshot();
+
+    if (g_pool_wanted <= 0) g_pool_wanted = pool_detect_cores();
+    if (g_pool_wanted > POOL_MAX_WORKERS) g_pool_wanted = POOL_MAX_WORKERS;
+    platform_cond_init(&g_pool_cv_ready);
+    for (int i = 0; i < g_pool_wanted; i++) {
+        PlatformThread th;
+        if (platform_thread_create(&th, pool_worker_main, NULL) != 0) break;
+        g_pool_threads[g_pool_workers] = th;
+        g_pool_workers++;
+    }
+    // ★★ 等**全部 worker 初始化完成**再返回：否则主线程可能跑完程序进入收尾
+    //   （释放 struct 定义 / GC 主线程堆），而 worker 还在 thread_vm_init 里读那些指针
+    //   ⇒ 0xC0000005（gdb 实测复现，见 g_pool_cv_ready 的注释）。
+    if (g_pool_workers > 0) {
+        platform_mutex_lock(&g_pool_mu);
+        while (g_pool_ready_count < g_pool_workers) {
+            platform_cond_wait(&g_pool_cv_ready, &g_pool_mu);
+        }
+        platform_mutex_unlock(&g_pool_mu);
+    }
+    if (g_pool_workers == 0) g_pool_wanted = 0;   // 一条都起不来 ⇒ 调用方回退
+}
+
+int pool_worker_count(void) { return g_pool_workers; }
+
+// 池是否可用（会**懒启动**）：调用方拿它决定"走池"还是"回退到一任务一线程"
+//
+// ★★ 2026-11-26（压测发现）：**池任务内部再开批（嵌套 map/parallel_for）必须回退到独立线程**。
+//   否则经典饿死：池只有 N 个 worker，N 个外层任务把 worker 全占了、各自在里面等内层任务，
+//   而内层任务排在队列里没人跑 ⇒ **死锁**（实测 `set_pool_size(2)` + 嵌套 map，8 秒不返回）。
+//   检测方式：worker 线程自己带一个 THREAD_LOCAL 标记，看到它就让调用方走老路径
+//   （每次一条独立 OS 线程）。嵌套并行本来就少见，这个代价可以接受，胜在**不会死锁**。
+int pool_ready(void) {
+    if (tls_in_pool_worker) return 0;
+    pool_ensure_started();
+    return g_pool_workers > 0;
+}
+
+// 建一个"池任务"：结果容器分配在**调用方堆**（GC 可见），参数深克隆进去等 worker 取
+ObjThread* thread_new_pool_task(ObjClosure* closure, Value* call_args, int call_arg_count) {
+    (void)closure;   // 闭包在 pool_submit() 里随任务入队，这里只用它占住签名（与 thread_new_with_args 同形）
+    ObjThread* t = (ObjThread*)gc_alloc(sizeof(ObjThread), OBJ_THREAD);
+    if (!t) return NULL;
+    t->state = THREAD_RUNNING;
+    t->result = val_null();
+    t->error_msg = NULL;
+    t->has_result = 0;
+    t->joined = 0;
+    t->pending_args = NULL;
+    t->pending_arg_count = 0;
+    t->dead_heap = NULL;
+    t->is_pool_task = 1;
+    t->reaped = 0;
+    memset(&t->os_thread, 0, sizeof(t->os_thread));
+    platform_mutex_init(&t->mutex);
+    platform_cond_init(&t->done_cond);
+    platform_cond_init(&t->reap_cond);
+
+    if (call_args && call_arg_count > 0) {
+        platform_mutex_lock(&t->mutex);
+        t->pending_args = (Value*)malloc((size_t)call_arg_count * sizeof(Value));
+        if (t->pending_args) {
+            // 禁用同步 GC：value_clone_for_channel → gc_alloc 失败时会同步回收，
+            //   而回收会 lock thread->mutex（我们正持有）⇒ 自死锁（与 start 同款处理）
+            int saved_gc_enabled = gc_get_enabled();
+            gc_set_enabled(0);
+            for (int i = 0; i < call_arg_count; i++) {
+                t->pending_args[i] = value_clone_for_channel(call_args[i]);
+            }
+            gc_set_enabled(saved_gc_enabled);
+            t->pending_arg_count = call_arg_count;
+        }
+        platform_mutex_unlock(&t->mutex);
+    }
+
+    // ★★ 2026-11-26（压测抓到的真崩溃）：**必须登记进 active_threads**。
+    //   任务对象分配在调用方堆，而调用方只把它存进一个 C 数组（不是 GC 根）⇒
+    //   调用方的 GC 完全可以把"还没被 worker 跑/还没 reap"的任务对象回收掉，
+    //   而 worker 仍在往它的 mutex/result 上写 ⇒ 0xC0000005（实测 GC 压力下 1/10 复现，
+    //   fault addr 0x24 正好是 ObjThread 里 mutex 之后的字段偏移）。
+    //   active_threads 是 VM 的 GC 根之一（gc_mark_roots 会扫），普通线程也是靠它保命的；
+    //   reap 时会把本对象从中移除（见 thread_reap 末尾那段）。
+    {
+        extern THREAD_LOCAL VM* current_exec_vm;
+        extern VM vm;
+        VM* tv = current_exec_vm ? current_exec_vm : &vm;
+        if (tv->active_thread_count >= tv->active_thread_capacity) {
+            int nc = tv->active_thread_capacity == 0 ? 8 : tv->active_thread_capacity * 2;
+            ObjThread** nt = (ObjThread**)realloc(tv->active_threads, (size_t)nc * sizeof(ObjThread*));
+            if (nt) {
+                tv->active_threads = nt;
+                tv->active_thread_capacity = nc;
+            }
+        }
+        if (tv->active_threads && tv->active_thread_count < tv->active_thread_capacity) {
+            tv->active_threads[tv->active_thread_count++] = t;
+        }
+    }
+    return t;
+}
+
+// 提交到池；返回 1 = 已入队，0 = 池起不来（调用方应回退到 threads.start）
+int pool_submit(ObjThread* task, ObjClosure* closure) {
+    if (!task || !closure) return 0;
+    pool_ensure_started();
+    if (g_pool_workers == 0) return 0;
+
+    PoolItem* it = (PoolItem*)malloc(sizeof(PoolItem));
+    if (!it) return 0;
+    it->task = task;
+    it->closure = closure;
+    it->next = NULL;
+
+    platform_mutex_lock(&g_pool_mu);
+    if (g_pool_tail) g_pool_tail->next = it; else g_pool_head = it;
+    g_pool_tail = it;
+    platform_cond_signal(&g_pool_cv_work);
+    platform_mutex_unlock(&g_pool_mu);
+    return 1;
+}
+
+int pool_size(void) { return g_pool_wanted > 0 ? g_pool_wanted : pool_detect_cores(); }
+
+// 返回：1 = 生效；0 = 池已启动（不能再改）；-1 = 超出 1..POOL_MAX_WORKERS
+//   ★ 2026-11-26：此前这两种情况都**静默忽略**（越界被悄悄夹到范围内、已启动就当一个没发生），
+//     属于"不能有静默错误"要禁的那一类 —— 调用方以为调了，实际没生效。
+int pool_set_size(int n) {
+    if (n < 1 || n > POOL_MAX_WORKERS) return -1;
+    if (g_pool_inited) return 0;
+    g_pool_wanted = n;
+    return 1;
+}
+
+// ★★ 2026-11-26（收尾）：**主动**叫停并 join 全部 worker。
+//   为什么必须做（而不是让它们随进程被杀）：worker 的 VM 持有指向**主线程堆**的指针
+//   （`ObjStructDef` / `ObjFunction` 都是共享只读对象）。进程退出时主线程会
+//   `gc_free_all()` 把这些堆释放掉 —— 只要还有人活着，就存在"它下一秒碰一下"的可能。
+//   先 join 再释放，顺序就变成确定的：人走了 → 才拆房子。
+//   （上一版加的是"初始化完成屏障"，解决的是**起跑**；这条解决**收尾**。两头都封住，
+//     中间那段主线程本来就是阻塞等 reap 的，所以整条生命周期没有窗口。）
+//
+//   ⚠ worker 自己不能 join 自己（嵌套场景不会走到这里，但仍然挡一道）。
+//   ⚠ 幂等：`gc_free_all()` 在 main.c / vm_main.c 有多处调用，重复进来直接返回。
+void pool_shutdown(void) {
+    if (!g_pool_inited || g_pool_workers == 0) return;
+    if (tls_in_pool_worker) return;
+
+    int n = g_pool_workers;
+    platform_mutex_lock(&g_pool_mu);
+    g_pool_stop = 1;
+    platform_cond_broadcast(&g_pool_cv_work);
+    platform_mutex_unlock(&g_pool_mu);
+
+    for (int i = 0; i < n; i++) {
+        if (g_pool_threads[i]) {
+            platform_thread_join(g_pool_threads[i], NULL);
+            g_pool_threads[i] = NULL;
+        }
+    }
+    g_pool_workers = 0;
+    g_pool_ready_count = 0;
+    g_pool_inited = 0;
+    g_pool_stop = 0;      // 允许后续（极少数）重新懒启动
+}

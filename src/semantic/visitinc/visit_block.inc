@@ -41,6 +41,8 @@
                             for (int j = 0; j < stmt->u.struct_def.method_count; j++) {
                                 early_def->methods[j].name = strdup(stmt->u.struct_def.methods[j]->u.func.name);
                             }
+                            // ★ 2026-11-26：收集 `mut` 方法名（WARN_ITER_MUTATE 判据；幂等）
+                            semantic_fill_struct_mut_names(early_def, stmt);
                             struct_def_register(early_def);
                         }
                     }

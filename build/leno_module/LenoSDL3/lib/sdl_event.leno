@@ -53,11 +53,21 @@ func _geoMY(float v): float {
 }
 
 export struct Event {
-    Ptr[u8] raw     // SDL_Event 原始内存（128 字节）
+    Ptr[u8] raw     // SDL_Event 原始内存（SDL_Event.size() 字节，SDL3 恒为 128）
     bool has = false    // 上次 poll 是否有事件（显式初值，消 [字段未初始化] 警告）
+    // ★ 2026-11-26：本事件已被判定为"程序自己发起的关闭"。
+    //   为什么需要它：`_selfCloseWids` 里的标记是**一次性**的（查完就删，否则下次用户真点 X
+    //   会被误判成程序关 ✗），但"查完就删"又让同一条事件里的**第二次** `isUserClose()`
+    //   看到空标记 ⇒ 返回 true（方向反了 ✗）。所以把判定结果记在**事件自己**身上：
+    //   每个新事件在 poll/waitTimeout 里清零，同一事件内多次调用答案一致 ✓
+    bool _selfClosed = false
     // 分配事件内存
+    // ★ 2026-11-26：`128` 改成 `SDL_Event.size()`（类型名静态求大小，编译期常量）。
+    //   原来本文件 3 处 + sdl_window 2 处各写死一个 128，SDL 换 ABI 时只会漏改其中几处，
+    //   漏掉的那处就是"memcpy 128 字节到一个更小的缓冲"⇒ 堆越界（静默、难查 ✗）。
+    //   现在只有一个事实来源：`sdl_core.leno` 里 `union SDL_Event { … u8 padding[128] }`。
     func init(): bool {
-        raw = ffi.malloc(128)
+        raw = ffi.malloc(SDL_Event.size())
         has = false
         return true
     }
@@ -73,13 +83,17 @@ export struct Event {
     // 从事件队列中轮询一个事件，返回是否有事件待处理
     func poll(): bool {
         has = _lib.SDL_PollEvent(raw)
+        _selfClosed = false     // 新事件 ⇒ 判定结果作废（见字段注释）
         return has
     }
 
     // 阻塞等待事件，最多等待 timeoutMS 毫秒。返回是否有事件（事件数据已写入 raw）。
     // 配合 has 字段使用：if waitTimeout(16) { while has { ...; poll() } }
+    //   ⚠ 别写成 `if waitTimeout(16) { while poll() { … } }`：waitTimeout 已经取到了
+    //     一条事件，再 poll 一次会**把它覆盖掉**（那条事件就丢了 ✗）
     func waitTimeout(int timeoutMS): bool {
         has = _lib.SDL_WaitEventTimeout(raw, timeoutMS)
+        _selfClosed = false
         return has
     }
 
@@ -93,8 +107,27 @@ export struct Event {
     // 是否退出事件（SDL_QUIT）
     func isQuit(): bool  { return sdl3_type() == core.EventType.QUIT }
 
-    // 获取触发事件的窗口 ID
+    // 获取触发事件的窗口 ID；**无窗口事件返回 0**
+    // ★ 2026-11-26 修：原来无条件读 `ev().key.windowID`。SDL_Event 是 union（成员共享
+    //   同一块 128B），对**不带 windowID** 的事件（LOW_MEMORY / LOCALE_CHANGED /
+    //   DISPLAY_ORIENTATION / TERMINATING / 渲染设备重置…）读偏移 16 拿到的是**事件队列
+    //   槽位里上一条事件的残值** —— 不越界、不崩，但可能恰好等于某个真实窗口 ID：
+    //   ⇒ run() 里 `wid` 取到错值，事件被派发给那个窗口（控件对未知事件 no-op 算走运），
+    //     同时 `_hadEventWid` 记错（窗口重绘归属跟着错）✗
+    //   现在按白色名单取值：名单外一律 0（= 无窗口），dispatch 侧匹配不到就自然丢弃 ✓
+    //   名单口径 = SDL3 头文件里"结构体在偏移 16 放 SDL_WindowID"的那些事件。
     func windowID(): int {
+        int t = sdl3_type()
+        bool _hasWid =
+            t == core.EventType.KEY_DOWN or t == core.EventType.KEY_UP
+            or t == core.EventType.TEXT_INPUT
+            or t == core.EventType.MOUSE_MOTION
+            or t == core.EventType.MOUSE_BUTTON_DOWN or t == core.EventType.MOUSE_BUTTON_UP
+            or t == core.EventType.MOUSE_WHEEL
+            or t == core.EventType.DROP_FILE or t == core.EventType.DROP_TEXT
+            // WINDOW_SHOWN(0x202) … WINDOW_CLOSE_REQUESTED(0x210) 是连续段，全部带 windowID ✓
+            or (t >= core.EventType.WINDOW_SHOWN and t <= core.EventType.WINDOW_CLOSE_REQUESTED)
+        if not _hasWid { return 0 }
         return ev().key.windowID
     }
 
@@ -108,10 +141,13 @@ export struct Event {
     //   现在 requestClose 会先在 _selfCloseWids 里登记，这里据此判断来源 ✓
     func isUserClose(): bool {
         if not isWindowClose() { return false }
-        int wid = windowID()
-        if isSelfClose(wid) {
-            // 一次性：查完就清掉，否则下次用户真的点 X 会被误判成"程序自己关" ✗
-            clearSelfClose(wid)
+        // ★ 2026-11-26 修：原来"先 isSelfClose 查、再 clearSelfClose 清、返回 false"，
+        //   同一条 WINDOW_CLOSE_REQUESTED 被**第二次**调用时标记已清 ⇒ 返回 true（方向反了 ✗）。
+        //   现在：标记只取走一次（takeSelfClose，防残留），**判定结果记在事件上**
+        //   （`_selfClosed`，每个新事件清零）⇒ 同一事件内反复调用答案永远一致 ✓
+        if _selfClosed { return false }
+        if takeSelfClose(windowID()) {
+            _selfClosed = true
             return false
         }
         return true
@@ -245,6 +281,11 @@ export struct Event {
             and t != core.EventType.MOUSE_BUTTON_DOWN
             and t != core.EventType.MOUSE_BUTTON_UP {
             // 解包再拼回去：跨模块直接 `return 别处的 [float,float]` 会被判"返回类型不匹配"（实测 ✓）
+            // ⚠ 已知限制（2026-11-26 记录，未改行为）：`currentMousePos()` 取的是
+            //   **当前**光标位置（且按帧缓存、坐标相对**焦点窗口**），与这条事件不是同一时刻，
+            //   多窗口时还可能落在**别的窗口**的坐标系里 ⇒ 回退值适合"悬停控件判定"，
+            //   不适合精确时序回放。要按事件窗口取坐标，得先在事件里拿到窗口句柄，
+            //   而窗口表在 sdl_window（反向依赖）⇒ 留给调用方按需处理。
             var[float, float](cx, cy) = core.currentMousePos()
             return _geoMX(cx), _geoMY(cy)
         }
@@ -254,19 +295,28 @@ export struct Event {
         return _geoMX(mx), _geoMY(my)
     }
 
-    // 鼠标相对移动量（自上一帧的增量）
+    // 鼠标相对移动量（自上一帧的增量）；**非 MOUSE_MOTION 事件返回 (0,0)**
+    // ★ 2026-11-26：原来对任何事件都读 `motion.xrel/yrel` ⇒ 键盘/窗口事件上拿到的是
+    //   同一偏移处的无关字段（键码、窗口 data1…），当"鼠标动了吗"用就是假阳性。
+    //   目前库里没人调它，属于埋着的坑，一并补上守卫。
     func mouseDelta(): [float, float] {
+        if not isMouseMotion() { return 0.0, 0.0 }
         var e = ev()
         return e.motion.xrel, e.motion.yrel
     }
 
-    // 鼠标按钮编号：1=左键, 2=中键, 3=右键
+    // 鼠标按钮编号：1=左键, 2=中键, 3=右键；**非鼠标按下/抬起事件返回 0**
+    // ★ 2026-11-26：同上，不再跨事件类型读 `button.button`（偏移 24 在 KEY 事件里是键码）。
     func mouseButton(): int {
+        int t = sdl3_type()
+        if t != core.EventType.MOUSE_BUTTON_DOWN and t != core.EventType.MOUSE_BUTTON_UP { return 0 }
         return ev().button.button
     }
 
-    // 点击次数：1=单击, 2=双击
+    // 点击次数：1=单击, 2=双击；**非鼠标按下/抬起事件返回 0**
     func mouseClicks(): int {
+        int t = sdl3_type()
+        if t != core.EventType.MOUSE_BUTTON_DOWN and t != core.EventType.MOUSE_BUTTON_UP { return 0 }
         return ev().button.clicks
     }
 
@@ -293,7 +343,11 @@ export struct Event {
     func isTextInput(): bool { return sdl3_type() == core.EventType.TEXT_INPUT }
 
     // 获取输入的文本内容（UTF-8 字符串，只在此次 poll 内有效）
+    // ★ 2026-11-26：加事件类型守卫 —— 在非 TEXT_INPUT 事件上调它，偏移 24 不是指针
+    //   （KEY 事件那里是 scancode），`read_string` 会照着一个整数当地址读 ⇒ 崩。
+    //   返回 "" 是唯一安全的兜底（"没有文本"与"不是这个事件"语义一致）。
     func text(): string {
+        if not isTextInput() { return "" }
         return ffi.read_string(ev().text.text, 0)
     }
 
@@ -302,15 +356,18 @@ export struct Event {
     func isDropFile(): bool { return sdl3_type() == core.EventType.DROP_FILE }
     func isDropText(): bool { return sdl3_type() == core.EventType.DROP_TEXT }
 
-    // 获取拖放的文件路径或文本内容
+    // 获取拖放的文件路径或文本内容；非拖放事件返回 ""
+    // ★ 2026-11-26：同 text()，非 DROP_* 事件上偏移 40 不是指针 ⇒ 必须先判类型。
     func dropPath(): string {
+        if not isDropFile() and not isDropText() { return "" }
         return ffi.read_string(ev().drop.data, 0)
     }
 
     // 将当前 raw 缓冲区内容复制到 dst（用于事件合并时保存/恢复事件数据）
-    func saveRaw(Ptr[u8] dst) { ffi.memcpy(dst, raw, 128) }
+    // ⚠ dst 也必须由 SDL_Event.size() 分配 —— 传个更小的缓冲就是堆越界写（见 init 的注释）
+    func saveRaw(Ptr[u8] dst) { ffi.memcpy(dst, raw, SDL_Event.size()) }
     // 从 src 恢复 raw 缓冲区内容
-    func restoreRaw(Ptr[u8] src) { ffi.memcpy(raw, src, 128) }
+    func restoreRaw(Ptr[u8] src) { ffi.memcpy(raw, src, SDL_Event.size()) }
 
     // 释放事件内存
     func uninit() {
@@ -330,20 +387,30 @@ export func createEvent(): Event {
 //
 //   为什么放在 sdl_event 而不是 sdl_window：sdl_window 已经 import sdl_event，
 //   反过来会形成循环依赖 ✗
-var _selfCloseWids = []
+// ⚠ 2026-11-26 契约：本表**只在主线程的事件循环**里读写（SDL 事件由 run() 单线程取；
+//   Leno 的模块级 var 也不能跨线程共享可变对象）。窗口数是个位数 ⇒ 线性扫足够，
+//   不要换成字典/集合：Leno 没有 Set，Dict 的键又只能是 string（转字符串比扫 3 个 int 慢 ✗）。
+//   元素类型显式写成 `Array[int]`（原来是裸 `[]`，推断成 `Array[any]`，比较时多一层装箱）。
+Array[int] _selfCloseWids = []
 
 export func markSelfClose(int wid) {
     if isSelfClose(wid) { return }
     _selfCloseWids.add(wid)
 }
 
-export func clearSelfClose(int wid) {
+// 取走标记：命中 ⇒ 删除并返回 true（一次性语义，给 isUserClose 用 ✓）
+export func takeSelfClose(int wid): bool {
     for 0 : _selfCloseWids.len() - 1 to i {
         if _selfCloseWids[i] == wid {
             _selfCloseWids.remove(i)
-            return
+            return true
         }
     }
+    return false
+}
+
+export func clearSelfClose(int wid) {
+    takeSelfClose(wid)
 }
 
 export func isSelfClose(int wid): bool {

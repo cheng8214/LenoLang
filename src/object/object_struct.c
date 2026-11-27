@@ -106,6 +106,8 @@ ObjStructDef* struct_def_new(const char* name, int field_count, int method_count
     def->methods = (StructMethodInfo*)calloc(method_count, sizeof(StructMethodInfo));
     def->impl_names = NULL;
     def->impl_count = 0;
+    def->mut_names = NULL;      // v45：`mut` 方法名（语义期填，见 WARN_ITER_MUTATE）
+    def->mut_count = 0;
     def->type_param_count = 0;
     def->type_param_names = NULL;
     def->type_param_constraints = NULL;

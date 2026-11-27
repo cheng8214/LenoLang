@@ -119,6 +119,28 @@ export func expect_warning(string script_path, string tag, string expect_text, i
     return out
 }
 
+// ★ 2026-11-26：只看**编译期**（--check）的警告断言。
+//   为什么需要单独的：`expect_warning` 会真跑程序，而"遍历中改容器"这类用例在新语义下
+//   **运行期会抛错**（for 的边界在进入时确定 ⇒ 改短后取元素必越界）——
+//   那是**预期行为**，不该让"警告是否报对"这条断言依赖它。
+export func expect_warning_check(string script_path, string tag, string expect_text,
+                                 int expect_line):string {
+    var r = _exec(_executable() + " --check \"" + script_path + "\"", EXEC_TIMEOUT_MS)
+    assert_ne(r, null, tag + "：_exec 返回 null（子进程起不来？）")
+    var out = _str(r.output)
+    assert_ne(r.code, EXEC_TIMEOUT_CODE,
+        tag + "：子进程超时（" + EXEC_TIMEOUT_MS + "ms 未返回）；输出=" + out)
+    assert_eq(r.code, 0, tag + "：警告**不该**让编译失败，实际 exit=" + r.code + "；输出=" + out)
+    assert_true(strings.has(out, expect_text),
+        tag + "：警告文案应包含「" + expect_text + "」；输出=" + out)
+    if expect_line > 0 {
+        var loc = "(" + expect_line + ","
+        assert_true(strings.has(out, loc),
+            tag + "：警告应落在第 " + expect_line + " 行（期望包含「" + loc + "」）；输出=" + out)
+    }
+    return out
+}
+
 // 断言**没有**该警告（防误报）。新加的检查最容易在真实代码库上刷屏 ✗（实测过一次：
 //   漏 return 那条初版在 SDL3 上刷出 254 条**全误报** ✗，根因是没排除 void 函数的
 //   TYPE_INFER 占位 ✓）⇒ 每条新检查都该配一条"不该报"的对照用例 ✓。

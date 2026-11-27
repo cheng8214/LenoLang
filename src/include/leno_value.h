@@ -47,6 +47,7 @@ typedef enum {
     OBJ_THREAD,     // 线程对象
     OBJ_CHANNEL,    // Channel 对象
     OBJ_SOCKET,       // Socket 对象
+    OBJ_ATOMIC,       // 原子整数（2026-11-26）：跨线程**共享**的可变状态
     OBJ_NONE,       // 无效/空类型标记
     OBJ_INT,        // int 类型标记（内联缓存用）
     OBJ_FLOAT,      // float 类型标记（内联缓存用）
@@ -775,6 +776,12 @@ typedef struct {
     StructMethodInfo* methods;     // 方法信息数组
     int method_count;              // 方法数量
     char** impl_names;             // impl 声明的 face 名称数组
+    // ★ 2026-11-26：标了 `mut` 的方法名（"会改结构"：增/删/清/排序）。
+    //   唯一消费点：语义期 `for 容器 to x { 容器.方法() }` 的 WARN_ITER_MUTATE ——
+    //   靠这个**声明**判断"是结构性修改"，而不是让编译器背各模块的方法名表。
+    //   由语义期从 AST（本模块）或符号表（跨模块）填；运行期 OP_STRUCT_DEF 不填（用不到）。
+    char** mut_names;
+    int mut_count;
     int impl_count;                // impl 声明数量
     int type_param_count;          // 泛型类型参数数量（如 Box[T] 的 type_param_count=1）
     char** type_param_names;       // 泛型类型参数名称数组（如 ["T"] 或 ["K","V"]）
@@ -973,7 +980,32 @@ typedef struct ObjThread {
     //   这里只在 result 是对象时钉住它（join 还要从堆里克隆 result ✓）；
     //   没人 join 时由 free_object_resources 的 unpin 兜底 ✓
     void* dead_heap;
+    // ★ 2026-11-26（线程池）：当作**池任务**用时的标记 + "结果已被取走"握手。
+    //   为什么要握手：任务结果分配在 worker 的堆上，而任务对象在调用方堆
+    //   ⇒ worker 的 GC **看不见**那个结果。若 worker 跑完立刻接下一条，
+    //   下一次 GC 就会把上一条还没被 reap 的结果回收（偶发读野指针）。
+    //   所以：worker 跑完 → 等 `reaped` → 才接下一条；reap 时置位并 signal。
+    int is_pool_task;
+    int reaped;
+    PlatformCondVar reap_cond;
 } ObjThread;
+
+// 原子整数（2026-11-26）—— 跨线程**共享**的可变状态
+// ----------------------------------------------------------------------------
+// 为什么需要它：Leno 的并发模型是 shared-nothing（跨线程一律深克隆，见 M14），
+//   于是"多个线程累加同一个计数器"根本表达不出来（每个线程各改各的副本）。
+//   而裸 `lock()/unlock()` 一旦忘记解锁就是**静默死锁**，与"不能有静默错误"冲突。
+//   ⇒ 只提供**封闭操作集**（add/sub/load/store/cas/swap），由 VM 保证原子性，
+//     用不上锁、也漏不掉解锁。
+//
+// 生命周期：与 ffi 库对象同口径 —— malloc 分配、**永不回收**，登记全局链由
+//   atomic_free_all() 在进程收尾时统一释放。不做引用计数（Atomic 跨线程共享是常态，
+//   计数的收益远小于它带来的 double-free 风险）。
+typedef struct ObjAtomic {
+    Object header;
+    volatile int64_t value;
+    struct ObjAtomic* all_next;   // 全局登记链（收尾统一释放）
+} ObjAtomic;
 
 // Channel 对象
 typedef struct ObjChannel {
@@ -1931,6 +1963,16 @@ ObjNative* file_find_method(const char* name);
 
 ObjNative* thread_find_method(const char* name);
 ObjNative* channel_find_method(const char* name);
+
+// 原子整数（2026-11-26）：跨线程共享的可变状态，封闭操作集（add/sub/load/store/cas/swap）
+ObjNative* atomic_find_method(const char* name);
+void atomic_register_method(const char* name, ObjNative* method,
+                            TypeKind return_type, TypeKind return_element_type,
+                            NativeParamSpec params);
+void atomic_init_methods(void);
+void atomic_mark_methods(void);
+void atomic_free_all(void);
+ObjAtomic* atomic_new(int64_t init);
 
 void thread_register_method(const char* name, ObjNative* method,
                                   TypeKind return_type, TypeKind return_element_type,

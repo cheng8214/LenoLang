@@ -825,6 +825,7 @@ const char* type_kind_to_string(TypeKind kind) {
         case TYPE_FILE:     return "File";
         case TYPE_SOCKET:   return "Socket";
         case TYPE_CHANNEL:  return "Channel";
+        case TYPE_ATOMIC:   return "Atomic";
         case TYPE_THREAD:   return "Thread";
         case TYPE_FUTURE:   return "Future";
         case TYPE_PTR:      return "Ptr";
@@ -990,6 +991,7 @@ static int kind_accepts_null_ref(TypeKind k) {
         case TYPE_STRUCT: case TYPE_STRING: case TYPE_ARRAY: case TYPE_DICT:
         case TYPE_FUNCTION: case TYPE_ENUM:
         case TYPE_CHANNEL: case TYPE_THREAD: case TYPE_FUTURE:
+        case TYPE_ATOMIC:   // 2026-11-26：`Atomic?` 可以接受 null（判空是合法用法）
         case TYPE_SOCKET: case TYPE_FILE:
             return 1;
         default:
@@ -1030,6 +1032,7 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     //   visit_expr.inc 的实例通道分支）：泛型参数传给**具体类型**的 native 形参 ⇒ 报错 ✓
     if (target->kind == TYPE_GENERIC_PARAM) return 1;
     if (source->kind == TYPE_GENERIC_PARAM) return 1;
+
 
     // ★ 2026-11-11（Ptr 设计复查）：**`Ptr[T]` 与 `Ptr[U]` 只有 T == U 才兼容**
     //   （任一侧元素未知/any 则放行；裸 `Ptr` 与本类型之间照旧双向兼容，走后面的原判据）。
@@ -1073,6 +1076,14 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
         // 引用类型可以为 null（指针 / C 布局 / 句柄 / GC 托管对象 / 函数引用）
         //   值类型（int, float, bool, bigint）不接受 null 赋值 ⇒ 需要可空就写 `int?`
         return kind_accepts_null_ref(target->kind);
+    }
+
+    // ★ 2026-11-26：`Atomic` **只与 Atomic 兼容**（放行 null/any/泛型由上面的分支处理过）。
+    //   为什么必须拦：`Atomic a = threads.atomic(0); a == 0` 此前编译通过、运行期恒 false
+    //   （对象与数字比较）—— 典型**静默错值**；正确写法是 `a.load() == 0`。
+    //   ⚠ 必须排在 **null / any / 泛型分支之后**，否则 `Atomic? a = null` 会被这条拦住（实测踩过）。
+    if (target->kind == TYPE_ATOMIC || source->kind == TYPE_ATOMIC) {
+        return target->kind == source->kind;
     }
 
     // ★ 2026-11-16：**两侧都是多返回值**时逐项（按位置）比较。

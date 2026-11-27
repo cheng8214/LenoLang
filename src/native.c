@@ -848,6 +848,7 @@ const NativeTypeSpec NATIVE_T_PTR         = { NTYPE_PTR,    NULL, NULL, NULL, 0,
 const NativeTypeSpec NATIVE_T_FILE        = { NTYPE_FILE,   NULL, NULL, NULL, 0, -1 };
 const NativeTypeSpec NATIVE_T_SOCKET      = { NTYPE_SOCKET, NULL, NULL, NULL, 0, -1 };
 const NativeTypeSpec NATIVE_T_CHANNEL     = { NTYPE_CHANNEL,NULL, NULL, NULL, 0, -1 };
+const NativeTypeSpec NATIVE_T_ATOMIC      = { NTYPE_ATOMIC, NULL, NULL, NULL, 0, -1 };
 const NativeTypeSpec NATIVE_T_THREAD      = { NTYPE_THREAD, NULL, NULL, NULL, 0, -1 };
 const NativeTypeSpec NATIVE_T_FUTURE      = { NTYPE_FUTURE, NULL, NULL, NULL, 0, -1 };
 const NativeTypeSpec NATIVE_T_ARR         = { NTYPE_ARRAY,  NULL, NULL, NULL, 0, -1 };       // 元素未指定
@@ -946,6 +947,7 @@ static TypeKind native_spec_kind(const NativeTypeSpec* spec) {
         case NTYPE_FILE:        return TYPE_FILE;
         case NTYPE_SOCKET:      return TYPE_SOCKET;
         case NTYPE_CHANNEL:     return TYPE_CHANNEL;
+        case NTYPE_ATOMIC:      return TYPE_ATOMIC;
         case NTYPE_THREAD:      return TYPE_THREAD;
         case NTYPE_FUTURE:      return TYPE_FUTURE;
         // `T?` 包装：Kind 取内层（可空性是 TypeInfo.nullable 上的标记，不是另一个 Kind）
@@ -1113,6 +1115,7 @@ void native_type_spec_to_string(const NativeTypeSpec* spec, char* out, int out_s
         case NTYPE_FILE:   NSPEC_APPEND("File");   break;
         case NTYPE_SOCKET: NSPEC_APPEND("Socket"); break;
         case NTYPE_CHANNEL:NSPEC_APPEND("Channel");break;
+        case NTYPE_ATOMIC: NSPEC_APPEND("Atomic");break;
         case NTYPE_THREAD:
             NSPEC_APPEND("Thread");
             if (spec->sub) {   // Thread[T]（T = join 的返回类型，2026-09-28）
@@ -2334,6 +2337,7 @@ const char* native_get_type_name(TypeKind kind) {
         case TYPE_CSTRUCT: return "cstruct";
         case TYPE_THREAD:  return "Thread";
         case TYPE_CHANNEL: return "Channel";
+        case TYPE_ATOMIC:  return "Atomic";
         case TYPE_SOCKET:  return "Socket";
         case TYPE_INT:
         case TYPE_FLOAT:  return "number";

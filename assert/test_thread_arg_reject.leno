@@ -1,0 +1,100 @@
+// test_thread_arg_reject.leno —— 跨线程传递的**拒绝面**（2026-11-26）
+//
+// 背景：Leno 的并发模型是 shared-nothing（参数 / 闭包捕获 / Channel 载荷一律**深克隆**），
+//   所以"两个线程改同一块内存"在语言层构造不出来。唯一的后门是原生指针（Ptr / cstruct /
+//   FFI 句柄 / Socket）—— 它们克隆的只是**地址**，两个线程会指向同一块内存且没有任何同步。
+//
+// 这个文件钉住三件事：
+//   ① 四条路传 Ptr 都必须**报错**（直接实参 / struct 字段 / 数组元素 / Channel），
+//      且文案要**点名类型**（曾经直接传只报"不能跨线程传递此类型"，看不出是 Ptr）；
+//   ② 报错要能定位到"哪个字段"（`来自 Holder.p`）；
+//   ③ 支持的类型（标量 / string / Array[int] / struct 里只有普通字段）必须**照常通过**。
+import threads
+import ffi
+
+struct Holder {
+    Ptr[u8] p
+    int n = 0
+}
+
+struct Plain {
+    int n = 0
+    Array[int] xs = []
+}
+
+func wPtr(Ptr[u8] x) { }
+func wHolder(Holder h) { }
+func wPlain(Plain p) { }
+func wArr(Array[int] a) { }
+func wPtrArr(Array[Ptr[u8]] a) { }
+
+main() {
+    Ptr[u8] raw = ffi.malloc(16)
+
+    // ---------- ① 直接当实参 ----------
+    int caught = 0
+    try {
+        Array[Thread] t = []
+        t.add(threads.start(wPtr, raw))
+        threads.join_all(t)
+    } catch e {
+        caught = 1
+        string m = _str(e)
+        assert_true(m.has("不能跨线程传递"), "① 直接传 Ptr：应报「不能跨线程传递」；实际：" + m)
+        assert_true(m.has("Ptr"), "① 文案必须点名 Ptr；实际：" + m)
+    }
+    assert_eq(caught, 1, "① 直接传 Ptr 必须报错")
+
+    // ---------- ② 藏在 struct 字段里：要指到字段 ----------
+    var h = new Holder()
+    h.p = raw
+    caught = 0
+    try {
+        Array[Thread] t2 = []
+        t2.add(threads.start(wHolder, h))
+        threads.join_all(t2)
+    } catch e2 {
+        caught = 1
+        string m2 = _str(e2)
+        assert_true(m2.has("Holder.p"), "② 要指到字段 Holder.p；实际：" + m2)
+        assert_true(m2.has("Ptr"), "② 要点名 Ptr；实际：" + m2)
+    }
+    assert_eq(caught, 1, "② struct 字段里的 Ptr 必须报错")
+
+    // ---------- ③ 数组元素里 ----------
+    Array[Ptr[u8]] pa = []
+    pa.add(raw)
+    caught = 0
+    try {
+        Array[Thread] t3 = []
+        t3.add(threads.start(wPtrArr, pa))
+        threads.join_all(t3)
+    } catch e3 {
+        caught = 1
+        assert_true(_str(e3).has("Ptr"), "③ 数组元素里的 Ptr 要点名；实际：" + _str(e3))
+    }
+    assert_eq(caught, 1, "③ Array[Ptr] 必须报错")
+
+    // ---------- ④ Channel ----------
+    var ch = threads.channel(1)
+    caught = 0
+    try {
+        ch.send(raw)
+    } catch e4 {
+        caught = 1
+        assert_true(_str(e4).has("Ptr"), "④ channel 送 Ptr 要点名；实际：" + _str(e4))
+    }
+    assert_eq(caught, 1, "④ channel 送 Ptr 必须报错")
+
+    // ---------- ⑤ 对照：支持的类型必须照常通过 ----------
+    var p = new Plain()
+    p.n = 7
+    p.xs.add(1)
+    Array[Thread] t5 = []
+    t5.add(threads.start(wPlain, p))
+    t5.add(threads.start(wArr, [1, 2, 3]))
+    threads.join_all(t5)
+    assert_eq(t5.len(), 2, "⑤ 普通 struct / Array[int] 跨线程照常工作")
+
+    print("test_thread_arg_reject passed（Ptr 四条路全拒 + 普通值照常）")
+}

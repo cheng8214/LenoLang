@@ -179,7 +179,7 @@ static int is_statement_start(LenoTokenType type) {
            type == TOK_PTR_TYPE ||
            type == TOK_FILE_TYPE ||
            type == TOK_SOCKET_TYPE ||
-           type == TOK_CHANNEL_TYPE ||
+           type == TOK_CHANNEL_TYPE || type == TOK_ATOMIC_TYPE ||
            type == TOK_THREAD_TYPE ||
            type == TOK_FUTURE_TYPE ||
            type == TOK_I8 || type == TOK_U8 || type == TOK_I16 || type == TOK_U16 ||
@@ -220,7 +220,7 @@ int is_type_keyword(LenoTokenType type) {
            type == TOK_DICT_TYPE ||
            type == TOK_FILE_TYPE ||
            type == TOK_SOCKET_TYPE ||
-           type == TOK_CHANNEL_TYPE ||
+           type == TOK_CHANNEL_TYPE || type == TOK_ATOMIC_TYPE ||
            type == TOK_THREAD_TYPE ||
            type == TOK_FUTURE_TYPE ||
            type == TOK_PTR_TYPE ||

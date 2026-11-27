@@ -330,12 +330,17 @@ TOK_EXTEND,        // extend 关键字（顶层：把 target struct 的方法写
     TOK_NEW,           // new 关键字（struct 实例化）
     TOK_ALIAS,         // alias 关键字（类型别名）
     TOK_PRI,           // pri 关键字（struct 成员私有：默认全公有，只有标了 pri 的才拦 ✓）
+    TOK_MUT,           // mut 关键字（struct 方法：声明"会改结构"，2026-11-26）
+                       //   用途：`for 容器 to x { 容器.mut方法(...) }` 能报警告，而**不需要**
+                       //   编译器去背任何模块的方法名（信息来自这个声明，不是名字猜测）。
+                       //   语义与 pri 同槽位（都写在 func 前面，可任意顺序、可同时用）。
     // 类型关键字
     TOK_INT_TYPE, TOK_FLOAT_TYPE, TOK_STRING_TYPE, TOK_BOOL_TYPE, TOK_ARRAY_TYPE, TOK_DICT_TYPE, TOK_ANY_TYPE,
     // TOK_BINT 已移除（int 统一对外，Bint 仅作为内部 TYPE_BIGINT 存在）
     TOK_FILE_TYPE, TOK_PTR_TYPE,
     TOK_SOCKET_TYPE,     // Socket 类型
     TOK_CHANNEL_TYPE,    // Channel 类型
+TOK_ATOMIC_TYPE,     // Atomic 类型（2026-11-26）
     TOK_THREAD_TYPE,     // Thread 类型
     TOK_FUTURE_TYPE,     // Future 类型
     // C 布局类型关键字
@@ -419,6 +424,7 @@ typedef enum {
     TYPE_PTR_GENERIC,           // 泛型指针 Ptr[T]
     TYPE_THREAD,                // 线程类型
     TYPE_CHANNEL,               // Channel 类型
+    TYPE_ATOMIC,                // Atomic 类型（2026-11-26）
     TYPE_FUTURE,                // Future 类型（异步结果）
     TYPE_SOCKET,                // Socket 类型
     TYPE_GENERIC_PARAM,         // 泛型类型参数（如 T、U）
@@ -510,6 +516,7 @@ typedef enum {
     NTYPE_FILE,
     NTYPE_SOCKET,
     NTYPE_CHANNEL,
+    NTYPE_ATOMIC,
     NTYPE_THREAD,
     NTYPE_FUTURE,
     // ---- "引用第 0 个实参"的**关系型**标签（2026-09-27）----
