@@ -2364,7 +2364,16 @@ TypeInfo* infer_expr_type(Semantic* s, Ast* ast) {
                     const NativeTypeSpec* fn_spec = native_get_return_spec(func_name);
                     if (fn_spec) {
                         fn_spec = native_type_spec_resolve_for_call(fn_spec, ast->u.call.args.count);
-                        TypeInfo* spec_ret = native_type_spec_to_info(fn_spec);
+                        // ★ 2026-11-27：关系型规格（返回类型跟随实参，如 `_freeze` / `_thaw`）
+                        //   必须把第 0 个实参的**推断类型**代入，否则 `Frozen[Array[int]]`
+                        //   推不出来（会退化成 Kind 槽的 any，编译期只读检查全丢）。
+                        TypeInfo* spec_ret = NULL;
+                        if (native_type_spec_has_arg_ref(fn_spec) && ast->u.call.args.count > 0) {
+                            TypeInfo* a0 = infer_expr_type(s, ast->u.call.args.items[0]);
+                            spec_ret = native_type_spec_to_info_with_args(fn_spec, a0);
+                        } else {
+                            spec_ret = native_type_spec_to_info(fn_spec);
+                        }
                         if (spec_ret) {
                             ast->cached_type = type_copy(spec_ret);
                             return spec_ret;

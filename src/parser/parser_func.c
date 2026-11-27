@@ -746,8 +746,34 @@ static TypeInfo* parse_type_internal(Parser* p) {
         return NULL;
     }
 
+    // ★ 2026-11-27：`Frozen[T]` —— 只读视图（见 LenoDocsSrc/大对象零拷贝共享设计.md §3.5）。
+    //   为什么用**上下文关键字**（大写 Frozen + 紧跟 '['）而不是新增 TOK_*：
+    //     · 只出现在类型位置，新增 token 只会污染词法器与所有 switch；
+    //     · `Frozen` 仍可当普通标识符（变量/字段名）→ 对既有代码零影响 ✓
+    //   语法：`Frozen[Array[int]]`、`Frozen[Dict[string,int]]`、`Frozen[Pt]`、`Frozen[int]`（标量也允许，
+    //   虽然没意义，但拒它要额外一条规则、收益为零）。
+    if (p->lex.current.type == TOK_IDENT && p->lex.current.len == 6 &&
+        memcmp(p->lex.current.text, "Frozen", 6) == 0) {
+        lexer_next(&p->lex);                       // 消费 Frozen
+        if (p->lex.current.type != TOK_LBRACKET) {
+            error_add_at_fmt(ERR_SYNTAX, type_line, type_column,
+                "Frozen 后面要紧跟 '[' —— 写法是 `Frozen[Array[int]]` / `Frozen[Dict[string,int]]`");
+            return NULL;
+        }
+        lexer_next(&p->lex);                       // 消费 '['
+        TypeInfo* inner = parse_type_internal(p);
+        if (!inner) return NULL;                   // 内层已报错
+        if (p->lex.current.type != TOK_RBRACKET) {
+            error_add_at_fmt(ERR_SYNTAX, p->lex.current.line, p->lex.current.column,
+                "期望 ']' 结束 Frozen 类型");
+            type_free(inner);
+            return NULL;
+        }
+        lexer_next(&p->lex);                       // 消费 ']'
+        t = type_frozen(inner);                    // 消费 inner（内部深拷贝 + 释放原名）
+    }
     // 尝试解析函数类型
-    if (p->lex.current.type == TOK_FUNC) {
+    else if (p->lex.current.type == TOK_FUNC) {
         t = parse_function_type(p);
     }
     // 尝试解析 Array[T]

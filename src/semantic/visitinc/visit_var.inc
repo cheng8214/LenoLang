@@ -802,6 +802,17 @@
                         }
                     }
 
+                    // ★ 2026-11-27：**frozen 的元素写**（编译期拦；运行期还有 FROZEN 位兜底）
+                    //   按"根"判：frozen 是整图不可变，`f[0]` 的静态类型本身不带 frozen 位。
+                    {
+                        char fz_type[BUFFER_SMALL];
+                        if (sem_frozen_root_type(s, target->u.index.obj, fz_type, (int)sizeof(fz_type))) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                             "不能修改 %s 的元素 —— frozen 是**整体不可变**；"
+                                             "需要可变副本请用 _thaw() 深拷贝一份", fz_type);
+                        }
+                    }
+
                     // 索引表达式：访问索引节点进行语义分析
                     visit(s, target);
 
@@ -822,10 +833,16 @@
                     // ★ N14（2026-10-24）：根是 const 的字段写也要拦（`const s = new S8(); s.v = 42`
                     //   此前这条路径根本没有 const 检查，改得动）。
                     char const_root[BUFFER_SMALL];
+                    char fz_type[BUFFER_SMALL];
                     if (sem_const_root_name(s, target, const_root, (int)sizeof(const_root))) {
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                          "不能修改 const 变量 '%s' 的字段（const 是**整体不可变**："
                                          "需要可变对象请声明为 var）", const_root);
+                    } else if (sem_frozen_root_type(s, target, fz_type, (int)sizeof(fz_type))) {
+                        // ★ 2026-11-27：frozen 的字段写（编译期拦）
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "不能修改 %s 的字段 —— frozen 是**整体不可变**；"
+                                         "需要可变副本请用 _thaw() 深拷贝一份", fz_type);
                     } else {
                         visit(s, target);
                         if (target->kind == AST_NUM || target->kind == AST_STRING ||
@@ -846,10 +863,16 @@
                     //   字段写此前**完全没检查**（AST_FIELD 写路径没有 const 分支）。
                     //   必须在 visit 之前判：visit 会把它改写成 AST_FIELD_ACCESS/AST_INDEX。
                     char const_root[BUFFER_SMALL];
+                    char fz_type2[BUFFER_SMALL];
                     if (sem_const_root_name(s, target, const_root, (int)sizeof(const_root))) {
                         error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
                                          "不能修改 const 变量 '%s' 的字段（const 是**整体不可变**："
                                          "需要可变对象请声明为 var）", const_root);
+                    } else if (sem_frozen_root_type(s, target, fz_type2, (int)sizeof(fz_type2))) {
+                        // ★ 2026-11-27：frozen 的字段写（parser 把 `s.f` 建成了 MODULE_ACCESS）
+                        error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                         "不能修改 %s 的字段 —— frozen 是**整体不可变**；"
+                                         "需要可变副本请用 _thaw() 深拷贝一份", fz_type2);
                     } else {
                         visit(s, target);
                         if (target->kind == AST_NUM || target->kind == AST_STRING ||

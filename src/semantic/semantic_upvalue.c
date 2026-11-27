@@ -84,6 +84,57 @@ int sem_const_root_name(Semantic* s, Ast* e, char* buf, int bufsz) {
     }
 }
 
+// ★ 2026-11-27：**frozen 的编译期保护** —— 表达式的"根"是不是 `Frozen[...]`？
+// ----------------------------------------------------------------------------
+// 为什么按"根"判：frozen 是**整图**不可变，元素/字段的类型本身不带 frozen 位
+//   （`Frozen[Array[Array[int]]]` 的 element_type 是普通 `Array[int]`）。
+//   所以 `f[0].add(1)` 这种路径必须从根 `f` 判，不能只看紧邻的 obj 类型。
+// ⚠ **只看已解析的符号类型，绝不调 infer_expr_type**：
+//   这条检查跑在赋值/调用**语义分析的早期**，此时字段/泛型实参还没解析完 ——
+//   提前 infer 会把 `bd.cells` 这种表达式**缓存成 any**（AST 节点的 cached_type），
+//   后续真正的推断就拿到 any ⇒ 实测 7 个用例报「不能在 any 类型上进行索引访问」✗
+//   （test_nested_2d / test_forward_generic / test_struct_edge …）。
+// ⚠ 已知边界（有意留到运行期）：`var v = f[0]` 之后 `v.add(1)` —— v 的静态类型是
+//   普通 `Array[int]`，编译期看不见它其实指向冻结图 ⇒ 由运行期 FROZEN 位兜底报错。
+int sem_frozen_root_type(Semantic* s, Ast* e, char* buf, int bufsz) {
+    if (!e) return 0;
+    switch (e->kind) {
+        case AST_VAR: {
+            SymRef tmp;
+            memset(&tmp, 0, sizeof(tmp));
+            Symbol* sym = resolve_variable_with_upvalue(s, e->u.var.name, &tmp);
+            int isf = (sym && sym->type && sym->type->frozen) ? 1 : 0;
+            if (isf && buf && bufsz > 0) {
+                snprintf(buf, (size_t)bufsz, "%s", type_to_string(sym->type));
+            }
+            symref_dispose(&tmp);
+            return isf;
+        }
+        // 沿链上溯（`f[0]` / `f.arr` / `f.arr[1]` 的根都是 `f`）
+        case AST_INDEX:
+            return sem_frozen_root_type(s, e->u.index.obj, buf, bufsz);
+        case AST_FIELD_ACCESS:
+            return sem_frozen_root_type(s, e->u.field_access.obj, buf, bufsz);
+        case AST_MODULE_ACCESS: {
+            const char* base = e->u.module_access.module_name;
+            // 模块成员（`m.CFG`）不走这里：ModuleVarSymbol 目前不带 TypeInfo；
+            // 不是模块别名 ⇒ 是"变量.字段"形态，按基变量判。
+            if (semantic_module_alias_info(s, base)) return 0;
+            SymRef tmp;
+            memset(&tmp, 0, sizeof(tmp));
+            Symbol* bsym = resolve_variable_with_upvalue(s, base, &tmp);
+            int isf = (bsym && bsym->type && bsym->type->frozen) ? 1 : 0;
+            if (isf && buf && bufsz > 0) {
+                snprintf(buf, (size_t)bufsz, "%s", type_to_string(bsym->type));
+            }
+            symref_dispose(&tmp);
+            return isf;
+        }
+        default:
+            return 0;
+    }
+}
+
 // N1（2026-10-25）：跨模块写导出变量**已经打通**（读 10-24、写 10-25），
 //   原来这里那个 semantic_report_module_var_write（"跨模块写没打通，请写 setter"）
 //   已删除 —— 现在 `m.var = v` 会真的写进 module->globals 并同步 exports。

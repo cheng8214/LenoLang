@@ -86,6 +86,23 @@ TypeInfo* type_channel_generic(TypeInfo* element_type) {
     return type;
 }
 
+// ★ 2026-11-27：`Frozen[T]` —— 冻结/只读视图。**不新增 TypeKind**，只给底层类型打 frozen 位。
+//   为什么先深拷贝再释放：inner 可能是驻留实例（`type_get_array_cached`）或被别处共享的
+//   TypeInfo，就地置位会污染它们 ⇒ 必须"复制一份 + 改名"。interned 的 type_free 是空操作，
+//   不会破坏缓存 ✓
+TypeInfo* type_frozen(TypeInfo* inner) {
+    if (!inner) {
+        TypeInfo* t = type_new(TYPE_ANY);
+        if (t) t->frozen = 1;
+        return t;
+    }
+    TypeInfo* copy = type_copy(inner);
+    if (!copy) return inner;          // 分配失败：退化成"没打标记"（不会更糟）
+    type_free(inner);
+    copy->frozen = 1;
+    return copy;
+}
+
 // 创建 Thread[T]（TH4 顺带：解析器现在能吃 `Thread[T]` 标注了 —— 之前只能由原生规格内部构造）
 TypeInfo* type_thread_generic(TypeInfo* element_type) {
     TypeInfo* type = type_new(TYPE_THREAD);
@@ -206,6 +223,8 @@ int type_equals(TypeInfo* a, TypeInfo* b) {
     if (!a || !b) return a == b;
     if (a->kind != b->kind) return 0;
     if (a->nullable != b->nullable) return 0;
+    // frozen 是类型的一部分：`Frozen[Array[int]]` ≠ `Array[int]`（2026-11-27）
+    if (a->frozen != b->frozen) return 0;
     
     switch (a->kind) {
         case TYPE_ARRAY:
@@ -289,6 +308,9 @@ TypeInfo* type_copy(TypeInfo* type) {
     
     TypeInfo* copy = type_new(type->kind);
     if (!copy) return NULL;
+    // ★ 2026-11-27：frozen 位必须跟着复制 —— 漏了它，形参/字段/表达式缓存里的
+    //   `Frozen[Array[int]]` 会悄悄退化成 `Array[int]`，编译期的只读保证就没了。
+    copy->frozen = type->frozen;
     
     switch (type->kind) {
         case TYPE_ARRAY:
@@ -395,6 +417,26 @@ static void build_generic_type_string(TypeInfo* type, char* buf, size_t buf_size
         return;
     }
     
+    // ★ 2026-11-27：frozen 在**渲染**上包一层（`Frozen[Array[int]]`），
+    //   内部实现仍是底层 kind。用栈上浅拷贝去掉标记再递归，避免"无限包自己"。
+    if (type->frozen) {
+        const char* fp = "Frozen[";
+        size_t fl = strlen(fp);
+        if (*offset + fl < buf_size - 1) {
+            memcpy(buf + *offset, fp, fl);
+            *offset += fl;
+        }
+        TypeInfo inner = *type;
+        inner.frozen = 0;
+        build_generic_type_string(&inner, buf, buf_size, offset);
+        if (*offset + 1 < buf_size) {
+            buf[*offset] = ']';
+            (*offset)++;
+            buf[*offset] = '\0';
+        }
+        return;
+    }
+
     switch (type->kind) {
         case TYPE_ARRAY: {
             // Array[ElementType] 或 Array（元素类型未指定）
@@ -1032,6 +1074,21 @@ int type_is_compatible(TypeInfo* target, TypeInfo* source) {
     //   visit_expr.inc 的实例通道分支）：泛型参数传给**具体类型**的 native 形参 ⇒ 报错 ✓
     if (target->kind == TYPE_GENERIC_PARAM) return 1;
     if (source->kind == TYPE_GENERIC_PARAM) return 1;
+
+    // ★ 2026-11-27：**frozen ↔ 可变 双向不兼容**。
+    //   为什么要拦：`Frozen[Array[int]] f = ...; Array[int] a = f;` 之后 a 就能写，
+    //   而 f 的对象是堆外共享图 ⇒ 一条赋值就把"不可变"变成假的（还可能跨线程踩同一块内存）。
+    //   正确写法：要可变就 `_thaw(f)`（深拷贝一份）。
+    //   ⚠ 排除宽口径来源：null / any / var（infer）/ 泛型参数 —— 它们本来就不携带 frozen 信息，
+    //     在它们身上拦会让 `Array[int]? a = null` 这类合法代码报错（口径与 TYPE_ATOMIC 那条一致）。
+    if (target->frozen != source->frozen) {
+        if (target->kind != TYPE_ANY && target->kind != TYPE_INFER &&
+            target->kind != TYPE_GENERIC_PARAM && target->kind != TYPE_NULL &&
+            source->kind != TYPE_ANY && source->kind != TYPE_INFER &&
+            source->kind != TYPE_GENERIC_PARAM && source->kind != TYPE_NULL) {
+            return 0;
+        }
+    }
 
 
     // ★ 2026-11-11（Ptr 设计复查）：**`Ptr[T]` 与 `Ptr[U]` 只有 T == U 才兼容**

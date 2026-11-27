@@ -1586,6 +1586,19 @@
                                      ast->u.module_call.module_name, method_name);
                         }
 
+                        // ★ 2026-11-27：**Frozen 的修改方法 —— 编译期拦**。
+                        //   `Frozen[Array[int]] f` 上 `f.add(x)` / `f.sort()` 直接报错；
+                        //   struct 的 `mut func` 同样拦（判据来自声明，不靠猜名字）。
+                        //   ⚠ 元素级路径（`f[0].add(x)`、`var v = f[0]; v.add(x)`）编译期
+                        //     看不到 frozen 位（元素类型不带位）⇒ 运行期 FROZEN 位兜底。
+                        if (obj_sym->type && obj_sym->type->frozen &&
+                            semantic_is_mutating_method(obj_sym->type->struct_name, method_name)) {
+                            error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                     "不能对 %s 调用修改方法 '%s' —— frozen 是**整体不可变**；"
+                                     "需要可变副本请用 _thaw() 深拷贝一份",
+                                     type_to_string(obj_sym->type), method_name);
+                        }
+
                         const InstanceMethodMeta* inst_meta = NULL;
                         if (obj_type_name) {
                             inst_meta = native_find_instance_method(obj_type_name, method_name);

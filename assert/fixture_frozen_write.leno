@@ -1,0 +1,24 @@
+// fixture_frozen_write.leno —— **应当编译失败**的用例（由 test_frozen.leno 用 --check 跑）
+// 覆盖：Frozen 变量上的元素写 / mutator 调用、Frozen 形参体内写、
+//       Frozen 直接赋给可变类型、`is Frozen[...]`。
+// ⚠ 名字不能以 test_ 开头（那会被 run_tests 当成"必须跑通"的用例）。
+
+var src = [1, 2, 3]
+Frozen[Array[int]] f = _freeze(src)
+
+// ① 元素写
+f[0] = 9
+
+// ② mutator 方法
+f.add(4)
+
+// ③ Frozen 形参：函数体内写
+func poke(Frozen[Array[int]] p) {
+    p.add(5)
+}
+
+// ④ 赋给可变类型（必须显式 _thaw）
+Array[int] m = f
+
+// ⑤ is 不接受 Frozen[...]
+var b = f is Frozen[Array[int]]

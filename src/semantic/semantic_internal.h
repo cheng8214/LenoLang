@@ -180,6 +180,12 @@ int semantic_same_module_file(const char* a, const char* b);
 // const 的**深层**保护（N14）：表达式的根对象是 const 时返回 1，并把根名字写进 buf。
 //   `s.v = 1` / `s.arr.add(1)` / `s.arr[0] = 1` 的根都是 `s` ⇒ const 整体不可变。
 int sem_const_root_name(Semantic* s, Ast* e, char* buf, int bufsz);
+// ★ 2026-11-27：**frozen 的编译期保护**（见 LenoDocsSrc/大对象零拷贝共享设计.md §8.1）
+//   sem_frozen_root_type：沿 `字段/下标` 链上溯，根表达式的静态类型是 `Frozen[...]` ⇒ 返回 1
+//     （buf 里写类型名，供报错文案用）。frozen 是**整图**不可变 ⇒ 必须按根判。
+//   ⚠ 实现只读**已解析的符号类型**，不调 infer_expr_type（提前推断会把字段表达式缓存成
+//     any，实测 7 个用例回归）。
+int sem_frozen_root_type(Semantic* s, Ast* e, char* buf, int bufsz);
 int add_upvalue(Ast* func_ast, const char* name, int index, int is_local, int is_value_capture);
 Symbol* resolve_variable_with_upvalue(Semantic* s, const char* name, SymRef* ref);
 // 上面那个的**原实现**（2026-10-10 拆出来给 WARN_UNUSED_VAR 用）：它只做解析，
@@ -274,6 +280,11 @@ void semantic_check_iter_mutation(const char* container_name, Ast* body, int is_
 // ★ 2026-11-26：把 struct 定义 AST 里标了 `mut` 的方法名收进 ObjStructDef（幂等）。
 //   语义期建 early_def 的地方有多处（预扫描 / 模块级几条 / visit_type_def）⇒ 必须都调。
 void semantic_fill_struct_mut_names(ObjStructDef* def, Ast* struct_ast);
+// ★ 2026-11-27：frozen 的编译期拦截用 —— 该方法是否会修改接收者？
+//   内置 Array/Dict 走名字表，struct 走声明里的 `mut`（ObjStructDef.mut_names）。
+int semantic_is_mutating_method(const char* struct_name, const char* method_name);
+// ★ 2026-11-27：`_freeze(x)` 的实参类型编译期检查（Ptr / cstruct / Channel / Atomic / 函数…）
+void semantic_check_freeze_arg_type(TypeInfo* t, int line, int column);
 // 约束名 → 内建具体类型 kind（`[T: string]` 这类；不是具体类型名 ⇒ TYPE_UNKNOWN，走 face 那条路 ✓）
 TypeKind semantic_constraint_builtin_kind(const char* name);
 // ★ 2026-11-07：校验泛型 struct 的类型实参是否满足声明处的约束（new 实例化用）

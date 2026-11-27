@@ -1,0 +1,9 @@
+// fixture_frozen_badtype.leno —— **应当编译失败**：`_freeze` 只支持数据类类型。
+// Channel / Ptr / cstruct / 函数 / Atomic 都在**编译期**拒（静态类型可判 ⇒ 不留到运行期）。
+import threads
+
+var ch = threads.channel(1)
+var f1 = _freeze(ch)
+
+var fn = func() { return 1 }
+var f2 = _freeze(fn)

@@ -766,6 +766,17 @@
                                                  const_root, method_name);
                             }
                         }
+                        // ★ 2026-11-27：**Frozen 的修改方法（编译期）** —— 覆盖上面所有 receiver 形态
+                        //   （裸变量 / 字段 / 下标 / 嵌套链），按"根是不是 Frozen"判。
+                        {
+                            char fz_type[BUFFER_SMALL];
+                            if (sem_frozen_root_type(s, obj, fz_type, (int)sizeof(fz_type))) {
+                                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                                                 "不能对 %s 调用修改方法 '%s' —— frozen 是**整体不可变**；"
+                                                 "需要可变副本请用 _thaw() 深拷贝一份",
+                                                 fz_type, method_name);
+                            }
+                        }
                     }
                 }
 
@@ -1989,6 +2000,13 @@
                                      func_name, builtins[i].max_arity, actual_arity);
                         }
                         else if (actual_arity > 0) {
+                            // ★ 2026-11-27：`_freeze(x)` 的实参类型**编译期**拒（Ptr/cstruct/Channel…）
+                            //   放在 arity 校验通过之后：先保证实参个数对，再判类型，报错不级联。
+                            if (strcmp(func_name, "_freeze") == 0) {
+                                semantic_check_freeze_arg_type(
+                                    infer_expr_type(s, ast->u.call.args.items[0]),
+                                    ast->line, ast->column);
+                            }
                             // 参数数量已在上面的分支校验过（定长 = 相等；可变参数 = 在 min/max 之间）
                             // ⚠ v3.2.8：条件由 `arity >= 0 && actual_arity == arity` 放宽为 `actual_arity > 0`
                             //   —— **可变参数**的内置函数此前**整段不做参数类型检查**（`input(123)` 也能编过）。

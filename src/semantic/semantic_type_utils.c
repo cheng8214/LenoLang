@@ -2150,6 +2150,73 @@ void semantic_fill_struct_mut_names(ObjStructDef* def, Ast* struct_ast) {
 //   语义期是单线程顺序执行的，用这个静态上下文避免给扫描函数逐个加参数（递归点有 20 多个）。
 static const char* g_iter_mut_struct = NULL;
 
+// ★ 2026-11-27：`_freeze(x)` 的**类型面**在编译期就拒（能判的全在编译期，别等运行期）。
+//   判据只看静态类型：Ptr / cstruct / Channel / Atomic / 函数 / 闭包 / 句柄类 一律不行。
+//   `any` / `var`（infer）/ 泛型参数 编译期看不见 ⇒ 留运行期检查（object_frozen.c 的 fz_check_value）。
+//   为什么这条值得单列：这些类型全是"裸内存/句柄/共享可变"，冻了会给用户一个假的安全感
+//   （以为跨线程零拷贝是安全的），实际是指针被共享到别的线程。
+void semantic_check_freeze_arg_type(TypeInfo* t, int line, int column) {
+    if (!t) return;
+    const char* why = NULL;
+    switch (t->kind) {
+        case TYPE_PTR:
+        case TYPE_PTR_GENERIC:
+        case TYPE_CSTRUCT:
+            why = "裸内存/原生指针 —— 冻结后别的线程会拿到同一块内存，没有所有权可言";
+            break;
+        case TYPE_CHANNEL:
+            why = "Channel 本来就是跨线程共享的可变通道；请传冻结后的数据本身";
+            break;
+        case TYPE_ATOMIC:
+            why = "Atomic 是唯一允许共享的可变值，与不可变语义冲突";
+            break;
+        case TYPE_FUNCTION:
+            why = "函数对象挂在创建线程的堆上（S4 之前无法保证生命周期）";
+            break;
+        case TYPE_FILE:
+        case TYPE_SOCKET:
+            why = "这是句柄，不是数据；跨线程共享句柄另有规则";
+            break;
+        case TYPE_THREAD:
+        case TYPE_FUTURE:
+            why = "这是并发控制对象，不能冻结";
+            break;
+        case TYPE_CLIB:
+        case TYPE_CFUNC:
+            why = "C 库/回调句柄，不能冻结";
+            break;
+        default:
+            return;   // 常见类型 / any / var / 泛型参数 ⇒ 放行（后三者由运行期兜底）
+    }
+    error_add_at_fmt(ERR_SEMANTIC, line, column,
+        "不能冻结 '%s'：%s。冻结只支持 标量 / string / Array / Dict / struct —— "
+        "这些类型在**编译期**就拒，不等运行期",
+        type_to_string(t), why);
+}
+
+// ★ 2026-11-27：**frozen 的编译期拦截**用 —— 这个方法会不会改容器/结构？
+//   判据与 WARN_ITER_MUTATE 同一套：内置类型用名字表，struct 用声明里的 `mut`（mut_names）。
+//   为什么要独立一个函数：`Frozen[P] p; p.setX(1)` 这种必须在**编译期**报，
+//   不能等运行期 FROZEN 位（那要等到真写进去那一刻，而且只在 `any` 路径才拦不住时兜底）。
+int semantic_is_mutating_method(const char* struct_name, const char* method_name) {
+    if (!method_name) return 0;
+    if (type_utils_is_array_element_mutator(method_name) ||
+        type_utils_is_dict_element_mutator(method_name)) {
+        return 1;
+    }
+    if (struct_name && struct_name[0]) {
+        ObjStructDef* sd = struct_def_find(struct_name);
+        if (sd) {
+            for (int i = 0; i < sd->mut_count; i++) {
+                if (sd->mut_names && sd->mut_names[i] && strcmp(sd->mut_names[i], method_name) == 0) {
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 static int iter_mut_is_structural(const char* name) {
     static const char* const kNames[] = {
         "add", "insert", "remove", "clear", "pop", "sort", "set", "setdefault"

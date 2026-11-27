@@ -1,0 +1,116 @@
+// test_frozen.leno —— 冻结对象（frozen）语义 + 编译期拦截
+//   设计：LenoDocsSrc/大对象零拷贝共享设计.md
+//   S1a：_freeze/_thaw/_is_frozen、快照语义、只读执法、拒绝面、引用计数
+//   S1b：Frozen[T] 静态类型 —— 写它 / 把它当可变传 / is 它，都是**编译错误**
+//
+// 为什么编译期那部分要用 _exec 跑 fixture：
+//   正常套件的判定是"退出码 == 0"，而这里要证明"编不过 **且** 报错说得对"——
+//   只有把编译器当子进程跑才能同时验证这两点。
+
+import threads
+import strings
+
+// 断言两份输出里都包含某个关键片段（编译期诊断的**文案**也是契约）
+func assert_has(string text, string needle, string what) {
+    if not strings.has(text, needle) {
+        print("[FAIL] " + what + "：输出里没有 '" + needle + "'")
+        print("--- 实际输出 ---")
+        print(text)
+        _exit(1)
+    }
+}
+
+// 跑一次 --check，返回 [code, output]
+func check_file(string path): Array[any] {
+    var r = _exec(_executable() + " --check " + path, 30000)
+    if not (r is ExecResult) {
+        return [1, "执行失败"]
+    }
+    var out = _str(r.output)
+    return [_int(r.code), out]
+}
+
+main() {
+    // ================= ① 冻结 = 快照：原对象不受影响 =================
+    var a = []
+    for 0 : 9 to i { a.add(i) }
+
+    Frozen[Array[int]] f = _freeze(a)
+    assert_eq(_is_frozen(f), true)
+    assert_eq(f.len(), 10)
+    assert_eq(f[3], 3)
+
+    a.add(99)                       // 原对象照常可写
+    assert_eq(a.len(), 11)
+    assert_eq(f.len(), 10)          // 冻结的是快照
+
+    // ================= ② 解冻 = 独立可写副本 =================
+    Array[int] t = _thaw(f)
+    t.add(100)
+    t[0] = 777
+    assert_eq(t.len(), 11)
+    assert_eq(f.len(), 10)
+    assert_eq(f[0], 0)
+    assert_eq(t[0], 777)
+
+    // ================= ③ 幂等 =================
+    Frozen[Array[int]] f2 = _freeze(f)
+    assert_eq(f2.len(), 10)
+
+    // ================= ④ dict / 嵌套 / struct =================
+    Dict[string, Array[int]] d = {}
+    d.set("k", [1, 2, 3])
+    var fd = _freeze(d)
+    var inner = fd.get("k") as Array[int]
+    assert_eq(inner.len(), 3)
+    assert_eq(inner[2], 3)
+
+    struct P { int x = 0; string name = "" }
+    var p = new P(x = 3, name = "ab")
+    Frozen[P] fp = _freeze(p)
+    assert_eq(fp.x, 3)
+    assert_eq(fp.name, "ab")
+
+    // ================= ⑤ 运行期兜底（any 路径看不见静态类型） =================
+    //     `var anyVal: any = f` 之后静态类型是 any ⇒ 编译期放行 ⇒ 由 FROZEN 位报错。
+    //     这条**必须**在：它是"编译期闭环"的唯一兜底。
+    var anyVal = f as any
+    var caught = ""
+    if anyVal is Array[int] => arr {
+        try { arr.add(1) } catch e { caught = _str(e) }
+    }
+    assert_has(caught, "冻结对象（frozen）不可修改", "any 路径写 frozen 应报 frozen 文案")
+
+    // ================= ⑥ 拒绝面（运行期只剩"数据相关"的几条） =================
+    // 环：超深即拒（引用计数回收不了环）
+    var bad = 0
+    var cyc = []
+    cyc.add(cyc)
+    bad = 0
+    try { _freeze(cyc) } catch e { bad = 1 }
+    assert_eq(bad, 1, "_freeze(含环) 必须报错")
+
+    // _thaw 非冻结值
+    bad = 0
+    try { _thaw(a) } catch e { bad = 1 }
+    assert_eq(bad, 1, "_thaw(非冻结) 必须报错")
+
+    // ================= ⑦ 编译期拦截：写 / 传参 / 赋值 / is =================
+    var c1 = check_file("assert/fixture_frozen_write.leno")
+    assert_eq(_int(c1[0]) != 0, true, "fixture_frozen_write 应该编译失败")
+    var out1 = _str(c1[1])
+    assert_has(out1, "不能修改 Frozen[Array[int]] 的元素", "元素写在编译期拦")
+    assert_has(out1, "不能对 Frozen[Array[int]] 调用修改方法 'add'", "mutator 在编译期拦")
+    assert_has(out1, "Frozen[Array[int]]", "Frozen 形参体内写要在编译期拦")
+    assert_has(out1, "类型错误", "frozen 赋给可变类型要报类型不匹配")
+    assert_has(out1, "`is` 不支持 Frozen", "is Frozen[...] 必须在编译期禁")
+
+    // ================= ⑧ 编译期拦截：不支持的类型 =================
+    var c2 = check_file("assert/fixture_frozen_badtype.leno")
+    assert_eq(_int(c2[0]) != 0, true, "fixture_frozen_badtype 应该编译失败")
+    var out2 = _str(c2[1])
+    assert_has(out2, "不能冻结", "_freeze 的不支持类型在编译期拦")
+    assert_has(out2, "Channel", "要点名 Channel")
+
+    print("test_frozen 全部通过")
+}

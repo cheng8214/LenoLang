@@ -6,7 +6,11 @@
 // ⚠ 版本号登记表：LenoDocsSrc/site/单一事实来源与重复实现收敛.html 第七节
 //   （只覆盖符号表缓存；2026-09-16 撞过车：与上游都用 v23 但格式不同）
 #define LENOSYMC_MAGIC   0x4D59534C  // "LSYM" little-endian
-#define LENOSYMC_VERSION 0x0000002D  // v45 (2026-11-26): struct 方法段在 `is_private` 后追加
+#define LENOSYMC_VERSION 0x0000002E  // v46 (2026-11-27): TypeInfo 段在 `nullable` 后追加
+                                     //   **`frozen` 位**（`Frozen[T]`，大对象零拷贝共享）。
+                                     //   kind 相同、只有这位能区分 ⇒ 旧缓存读会把 subtype 段
+                                     //   整体错位一字节（静默错类型），必须作废。
+                                     // v45 (2026-11-26): struct 方法段在 `is_private` 后追加
                                      //   **`mut` 位**（"会改结构"，WARN_ITER_MUTATE 跨模块要用）。
                                      //   旧缓存缺这一位 ⇒ 读到的是 param_text 的首字节 ⇒
                                      //   必须作废旧缓存（版本号不改就会静默错位）。
@@ -124,6 +128,10 @@ static void sym_cache_write_type_info(FILE* f, TypeInfo* ti) {
     fwrite(&kind, 1, 1, f);
     uint8_t nullable = (uint8_t)(ti->nullable ? 1 : 0);
     fwrite(&nullable, 1, 1, f);
+    // ★ 2026-11-27（v46）：frozen 位。`Frozen[Array[int]]` 与 `Array[int]` 的 kind 相同，
+    //   只有这一位能区分 ⇒ 必须序列化（跨模块的 `Frozen[...]` 形参/字段靠它保住只读语义）。
+    uint8_t frozen = (uint8_t)(ti->frozen ? 1 : 0);
+    fwrite(&frozen, 1, 1, f);
     switch (ti->kind) {
         case TYPE_ARRAY:
         case TYPE_PTR_GENERIC:
@@ -179,10 +187,14 @@ static TypeInfo* sym_cache_read_type_info(FILE* f) {
 
     uint8_t nullable = 0;
     if (fread(&nullable, 1, 1, f) != 1) return NULL;
+    // v46（2026-11-27）：frozen 位必须与写端同序
+    uint8_t frozen = 0;
+    if (fread(&frozen, 1, 1, f) != 1) return NULL;
 
     TypeInfo* ti = type_new((TypeKind)kind);
     if (!ti) return NULL;
     ti->nullable = nullable ? 1 : 0;
+    ti->frozen = frozen ? 1 : 0;
     switch ((TypeKind)kind) {
         case TYPE_ARRAY:
         case TYPE_PTR_GENERIC: {

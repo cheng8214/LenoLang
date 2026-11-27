@@ -1724,6 +1724,14 @@ static Value native_mem(int argCount, Value* args) {
     return val_obj((Object*)d);
 }
 
+// ★ 2026-11-27：`_freeze` / `_thaw` 的返回类型**跟随第 0 个实参**
+//   （关系型标签 NTYPE_ARG0_FROZEN / _THAWED，见 leno_types.h）。
+//   为什么不能用 Kind 槽：`_freeze(Array[int])` 必须推成 `Frozen[Array[int]]` ——
+//   写成 `Array[any]` 会丢元素类型（`f[0]` 退化成 any），写成 `Array` 会丢掉只读位
+//   （编译期拦截就没了，只能等运行期）。
+static const NativeTypeSpec S_FREEZE_SPEC = { NTYPE_ARG0_FROZEN, NULL, NULL, NULL, 0, -1 };
+static const NativeTypeSpec S_THAW_SPEC   = { NTYPE_ARG0_THAWED, NULL, NULL, NULL, 0, -1 };
+
 void sys_init_globals(void) {
     // 注册全局 _args 函数（返回 Array[string]，0 个参数）
     vm_register_native("_args", native_args, TYPE_ARRAY, TYPE_STRING, NATIVE_FIXED_NONE(0));
@@ -1747,6 +1755,9 @@ void sys_init_globals(void) {
     vm_register_native("_freeze", frozen_native_freeze, TYPE_ANY, TYPE_UNKNOWN, NATIVE_VARARG(1, 1, 0, NULL, TYPE_ANY));
     vm_register_native("_thaw", frozen_native_thaw, TYPE_ANY, TYPE_UNKNOWN, NATIVE_VARARG(1, 1, 0, NULL, TYPE_ANY));
     vm_register_native("_is_frozen", frozen_native_is_frozen, TYPE_BOOL, TYPE_UNKNOWN, NATIVE_VARARG(1, 1, 0, NULL, TYPE_ANY));
+    // 规格版返回类型（必须在 vm_register_native 之后：那是"查找并更新"）
+    native_register_meta_spec("_freeze", &S_FREEZE_SPEC);
+    native_register_meta_spec("_thaw", &S_THAW_SPEC);
 
     // 注册全局 _os 函数（返回 string，0 个参数）
     vm_register_native("_os", native_os, TYPE_STRING, TYPE_UNKNOWN, NATIVE_FIXED_NONE(0));

@@ -1,4 +1,14 @@
         case AST_TYPE_CHECK:
+            // ★ 2026-11-27：`is` / `as` **不接受 Frozen[...] 目标**。
+            //   为什么直接禁止而不是让它返回 false/null：运行期只有对象标签（kind），没有
+            //   "frozen"位 —— 所以 `x is Frozen[Array[int]]` 会恒为真（只看 kind 是 Array），
+            //   `x as Frozen[...]` 会恒成功且把只读保证变成假的。静默给错答案比报错更坏。
+            //   要判冻结请用 `_is_frozen(x)`；要可变副本请 `_thaw(x)`。
+            if (ast->u.type_check.type && ast->u.type_check.type->frozen) {
+                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                    "`is` 不支持 Frozen[...] —— 运行期只按对象标签（Array/Dict/struct）判别，"
+                    "分不出是否冻结；判冻结请用 `_is_frozen(x)`，要可变副本请 `_thaw(x)`");
+            }
             if (ast->u.type_check.expr) {
                 visit(s, ast->u.type_check.expr);
             }
@@ -12,6 +22,12 @@
             break;
 
         case AST_AS_CAST:
+            // 同 AST_TYPE_CHECK：`as Frozen[...]` 会恒成功且把只读保证变成假的 ⇒ 编译期禁
+            if (ast->u.type_check.type && ast->u.type_check.type->frozen) {
+                error_add_at_fmt(ERR_SEMANTIC, ast->line, ast->column,
+                    "`as` 不支持 Frozen[...] —— 运行期只按对象标签判别，分不出是否冻结；"
+                    "`as Frozen[...]` 会恒成功但把只读保证变成假的。判冻结请用 `_is_frozen(x)`");
+            }
             if (ast->u.type_check.expr) {
                 // ★ 2026-11-10（泛型载荷 enum 步 3/3）：`Res.err(2, "x") as Res[int]`
                 //   的类型实参就从**转换目标类型**来（第四个"期望类型"通道）

@@ -984,6 +984,14 @@ static TypeInfo* native_arg0_part_to_info(TypeInfo* arg0, NativeTypeTag tag) {
     if (tag == NTYPE_ARG0_VALUE && arg0->kind == TYPE_DICT && arg0->value_type) {
         return type_copy(arg0->value_type);
     }
+    // ★ 2026-11-27：`_freeze` / `_thaw` —— 返回"与实参同形"的类型，只改 frozen 位。
+    //   `Frozen[Frozen[X]]` 不产生嵌套：先在副本上清位再置位 ✓
+    if (tag == NTYPE_ARG0_FROZEN || tag == NTYPE_ARG0_THAWED) {
+        TypeInfo* copy = type_copy(arg0);
+        if (!copy) return NULL;
+        copy->frozen = (tag == NTYPE_ARG0_FROZEN) ? 1 : 0;
+        return copy;
+    }
     return NULL;
 }
 
@@ -992,7 +1000,8 @@ int native_type_spec_has_arg_ref(const NativeTypeSpec* spec) {
     if (!spec) return 0;
     if (spec->tag == NTYPE_ARG0_ELEM || spec->tag == NTYPE_ARG0_ELEM2 ||
         spec->tag == NTYPE_ARG0_KEY ||
-        spec->tag == NTYPE_ARG0_VALUE || spec->tag == NTYPE_ARG_CB_RET) {
+        spec->tag == NTYPE_ARG0_VALUE || spec->tag == NTYPE_ARG_CB_RET ||
+        spec->tag == NTYPE_ARG0_FROZEN || spec->tag == NTYPE_ARG0_THAWED) {
         return 1;
     }
     return native_type_spec_has_arg_ref(spec->sub) || native_type_spec_has_arg_ref(spec->sub2);
@@ -1030,7 +1039,8 @@ static TypeInfo* native_type_spec_to_info_impl(const NativeTypeSpec* spec, TypeI
     //   变成 `any`（症状：`m.flatten()` 明明查到了 spec，结果还是 `Array[any]`，
     //   而且解析函数里的打印一行都不出 —— 2026-10-22 实测踩过）
     if (spec->tag == NTYPE_ARG0_ELEM || spec->tag == NTYPE_ARG0_KEY ||
-        spec->tag == NTYPE_ARG0_VALUE || spec->tag == NTYPE_ARG0_ELEM2) {
+        spec->tag == NTYPE_ARG0_VALUE || spec->tag == NTYPE_ARG0_ELEM2 ||
+        spec->tag == NTYPE_ARG0_FROZEN || spec->tag == NTYPE_ARG0_THAWED) {
         return native_arg0_part_to_info(arg0_type, spec->tag);
     }
     // 回调返回类型：**结构解析器解析不了**（要语义侧推闭包函数体）⇒ 只认预计算值；

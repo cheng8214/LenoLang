@@ -464,6 +464,12 @@ struct TypeInfo {
     TypeInfo** generic_args; // 具体类型参数数组
     int generic_count;       // 类型参数数量
     int nullable;            // 可空类型标记：1=Type?，0=Type
+    // ★ 2026-11-27：**frozen 位**（`Frozen[T]`，见 LenoDocsSrc/大对象零拷贝共享设计.md §3.5）
+    //   为什么不新增 TypeKind：读特化的判据就是静态 kind（codegen_expr.c:782 / codegen_stmt.c:1790），
+    //   新 kind 会让 `f[i]` 全部回落通用 OP_INDEX（恰好在拖慢大对象读）。
+    //   语义：kind 仍是底层类型（ARRAY/DICT/STRUCT/...），这一位只表示"不可写 + 跨线程共享"。
+    //   类型规则：frozen ↔ 可变 **双向不兼容**（必须显式 _freeze()/_thaw()）。
+    int frozen;              // 0=普通，1=Frozen[...]（只读视图）
     // 位置信息（用于错误报告）
     int line;                // 类型在源代码中的行号（1-based），0 表示未知
     int column;               // 类型在源代码中的列号（1-based），0 表示未知
@@ -552,6 +558,14 @@ typedef enum {
     NTYPE_BY_ARITY,     // 按 argc 分支：argc < arg_index ⇒ sub，否则 ⇒ sub2
     // 第 0 个实参的**二层**元素类型（Array[Array[T]] 的 T），flatten 用
     NTYPE_ARG0_ELEM2,
+    // ---- `_freeze` / `_thaw` 的"跟随第 0 个实参"（2026-11-27）----
+    //   NTYPE_ARG0_FROZEN：返回 arg0 类型的**副本 + frozen 位**（`Frozen[T]`）
+    //   NTYPE_ARG0_THAWED：返回 arg0 类型的**副本、清 frozen 位**（解冻回可变的 T）
+    //   为什么要关系标签：`_freeze(Array[int])` 的返回类型不是固定的 `Array`，
+    //   而是"和实参同形、只是不可写" —— 写成 `Array[any]` 会把元素类型丢掉，
+    //   后续 `f[0]` 就退化成 any（编译期检查全丢）。
+    NTYPE_ARG0_FROZEN,
+    NTYPE_ARG0_THAWED,
     // ---- "可空"包装（2026-10-28）----
     //   含义：**内层规格（sub）描述的类型是可空的**（Leno 侧写 `T?`）。
     //   为什么需要：规格是 native 返回/字段类型的**唯一来源**，此前只能表达"非可空 T" ⇒
@@ -602,6 +616,9 @@ TypeInfo* type_ptr_generic(TypeInfo* element_type);
 //   （element_type == NULL 即裸 `Channel` / `Thread` = 元素类型未知）
 TypeInfo* type_channel_generic(TypeInfo* element_type);
 TypeInfo* type_thread_generic(TypeInfo* element_type);
+// Frozen[T]（2026-11-27）：**不是新 kind**，只是给 inner 打 frozen 位（见 TypeInfo.frozen）。
+//   所有权：消费 inner（内部会深拷贝一份再释放原名，避免改到驻留/共享实例）。
+TypeInfo* type_frozen(TypeInfo* inner);
 // Future[T]（T3，2026-10-12）：元素槽 = `await` 解包出来的类型。
 //   element_type == NULL 即裸 `Future`（元素未知 ⇒ `await` 退回旧的"调用点启发式" ✓）
 TypeInfo* type_future_generic(TypeInfo* element_type);
