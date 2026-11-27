@@ -23,6 +23,7 @@ import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect
 use core.sdl3        // 2026-10-13：图标缓存回收要调 SDL_DestroyTexture ⇒ 得先能命名 clib ✓
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ScrollView 共用 ✓）
+import "sdl_animator.leno" as ani; use ani.Anim         // 悬停行渐变 ✓
 import "sdl_edit.leno" as edt; use edt.Edit
 import "sdl_tooltip.leno" as tip
 import "sdl_progress.leno" as prgb    // 进度单元格复用它的观感 + 取值规则（同源 ✓）
@@ -58,6 +59,10 @@ export struct Table impl Widget, Themeable {
     //     · 滚轮叠加速度 ⇒ 一格不再"一步跳到下一行"，末尾有滑行 ✓
     //     · 撞到上下边界会回弹（越界量在 `phys.overY`，绘制偏移见 `dispY()`）✓
     pri ScrollPhys phys
+    // ★ 2026-11-27：悬停行底色**渐入/渐出**（0..1）。`hovRowA` 是"正在渐变的行"——
+    //   鼠标离开后它保留旧行号，那一行自己淡出（不是硬切）✓
+    pri Anim hovA
+    pri int hovRowA = -1
     // ★ 2026-11-27：**触摸拖动滚动**（手机上唯一能滚 Table 的手势 —— 滚轮不存在、滚动条太细）
     //   只对"手指"生效（`ev.isTouchLike()`）：桌面鼠标左键拖动是"拖行/拖列/选文字"，不能抢 ✓
     //   panSt：0 空闲 / 1 按下但还没超过阈值（子控件的点击照常生效）/ 2 拖动中
@@ -681,6 +686,8 @@ export struct Table impl Widget, Themeable {
     func get_scroll_velocity(): float { return phys.velY }
     func get_overscroll_y(): float { return phys.overY }
     func is_scrolling(): bool { return phys.is_moving() }
+    // 悬停行渐变进度（0~1）—— 自测断言用
+    func get_hover_anim(): float { return hovA.value() }
     // 是否已滚到接近底部：`pad` = 距底部多少像素内算"到底"
     //   内容没超出视口（没有可滚的）⇒ **false** —— 那种情况该由调用方在"首屏就装满"时判断，
     //   这里返回 true 会让 tick 里无限触发加载 ✗
@@ -1967,7 +1974,15 @@ export struct Table impl Widget, Themeable {
                 hoverRow = -1; hoverCol = -1
             }
             bool hv = hoverRow >= 0
-            if hoverRow != prevHover or hoverCol != prevHoverCol { core.markFrameRedraw() } else { core.markFrameMotion() }
+            if hoverRow != prevHover or hoverCol != prevHoverCol {
+                if hoverRow != prevHover {
+                    // 换行重新淡入；离开 ⇒ 旧行自己淡出 ✓
+                    hovRowA = hoverRow
+                    hovA.snap(0.0)
+                    hovA.set_target(if hoverRow >= 0 then 1.0 else 0.0)
+                }
+                core.markFrameRedraw()
+            } else { core.markFrameMotion() }
             if dragCol >= 0 {
                 float nw = dragStartW + (mx - _dragStartX)
                 if nw < 24.0 { nw = 24.0 }
@@ -2530,6 +2545,7 @@ export struct Table impl Widget, Themeable {
         if not _loaded or not visible { return }
         ensure_font()
         pump_scroll()          // 每帧推进一次物理（含续帧请求，见函数注释 ✓）
+        if hovA.pump() { core.requestRedraw() }   // 悬停渐入/渐出也要续帧 ✓
 
         // 背景底色（在字体检查之前画，避免字体偶发未就绪时 Table 区域变透明露出容器底色 → 闪一下）
         Color bgC = bgColor
@@ -2608,8 +2624,17 @@ export struct Table impl Widget, Themeable {
                 // 单元格模式：行背景只画 zebra，hover/选中在 Pass 1.5 中按单元格画
                 if _zebra and (ri % 2 == 1) { rc = zebColor }
             } else {
+                // ★ 2026-11-27：hover 行底色从"本行原色（bg / zebra）"渐变到 hovColor
+                //   （以前硬切 ⇒ 鼠标扫过整表时一行行"啪啪"闪 ✗）
+                float ht = hovA.value()
+                Color rbase = if _zebra and (ri % 2 == 1) then zebColor else bgC
                 if is_sel(ri) { rc = selColor; solid = true }
-                eif ri == hoverRow { rc = hovColor; solid = true }
+                eif ri == hovRowA and ht > 0.002 {
+                    // 用 `mixhl` 而不是裸 `mixbg`：底色透明时（Aria 歌曲列表就是 `bg_color: 透明`）
+                    //   直接混 RGB 会先混出一块半透明**黑** ⇒ 看起来"黑框闪一下"✗（见 theme.mixhl 注释）
+                    rc = theme.mixhl(rbase, hovColor, ht)
+                    solid = true
+                }
                 eif _zebra and (ri % 2 == 1) { rc = zebColor }
             }
             // **选中行 / hover 行必须不透明** ——

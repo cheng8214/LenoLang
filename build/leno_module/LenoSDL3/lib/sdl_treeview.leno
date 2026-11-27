@@ -25,6 +25,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect; use core.sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ScrollView/Table 共用 ✓）
+import "sdl_animator.leno" as ani; use ani.Anim         // 悬停行渐变 ✓
 import "sdl_tooltip.leno" as tip
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
@@ -100,6 +101,9 @@ export struct TreeView impl Widget, Themeable {
     pri float padX = 6.0
     pri float scroll = 0.0
     pri ScrollPhys phys             // ★ 2026-11-27 物理滚动：滚轮加速 + 撞界回弹（见 dispY/pump_scroll）
+    // ★ 2026-11-27：悬停行底色渐入/渐出（`hovIdA` = 正在渐变的节点 id，鼠标离开后它自己淡出）
+    pri Anim hovA
+    pri int hovIdA = -1
     pri int hover = -1
     pri int sel = -1
     pri Array[int] sel2 = []
@@ -464,6 +468,8 @@ export struct TreeView impl Widget, Themeable {
     func get_scroll_velocity(): float { return phys.velY }
     func get_overscroll_y(): float { return phys.overY }
     func is_scrolling(): bool { return phys.is_moving() }
+    // 悬停行渐变进度（0~1）—— 自测断言用
+    func get_hover_anim(): float { return hovA.value() }
     // 层级连接线
     func set_show_lines(bool v) { showLines = v }
     func get_show_lines(): bool { return showLines }
@@ -790,7 +796,13 @@ export struct TreeView impl Widget, Themeable {
         if ev.isMouseMotion() {
             int prevHover = hover
             hover = _id_at(mx, my)
-            if hover != prevHover { core.markFrameRedraw() } else { core.markFrameMotion() }
+            if hover != prevHover {
+                // 换节点重新淡入；离开 ⇒ 旧行自己淡出 ✓
+                hovIdA = hover
+                hovA.snap(0.0)
+                hovA.set_target(if hover >= 0 then 1.0 else 0.0)
+                core.markFrameRedraw()
+            } else { core.markFrameMotion() }
             if hover >= 0 and _cursor >= 0 { core.requestCursor(_cursor) }
             if _tip != "" {
                 if hover >= 0 {
@@ -837,6 +849,7 @@ export struct TreeView impl Widget, Themeable {
         if not _loaded { return }
         if not visible { return }
         pump_scroll()          // 每帧推进一次物理（含续帧请求，见函数注释 ✓）
+        if hovA.pump() { core.requestRedraw() }   // 悬停渐入/渐出也要续帧 ✓
         ensure_font()
         if _font == null or not _font.ok { return }   // 字体无效时跳过渲染，避免"有背景无文字"的闪烁
         flatten()
@@ -863,10 +876,15 @@ export struct TreeView impl Widget, Themeable {
             float checkOff = if showCheck then 18.0 else 0.0
 
             bool seld = is_flat_sel(i)   // ★ O(1) 按下标读拍平时预计算的选中状态
+            // ★ 2026-11-27：悬停底色从 bgC 渐变到 hovColor（以前硬切，鼠标划过会一行行闪 ✗）
+            bool isHov = (id == hovIdA and hovA.value() > 0.002)
             Color rowC = bgC
             if seld { rowC = selColor }
-            else if id == hover { rowC = hovColor }
-            if seld or id == hover { r.setColor(rowC); r.fillRoundedRect(x + 2.0, rowY + 1.0, w - 4.0, rowH - 2.0, 4.0) }
+            //   `mixhl`：底色透明时走 alpha 淡入（裸 mixbg 会先混出黑色 ✗，见 theme.mixhl 注释）
+            else if isHov {
+                rowC = theme.mixhl(bgC, hovColor, hovA.value())
+            }
+            if seld or isHov { r.setColor(rowC); r.fillRoundedRect(x + 2.0, rowY + 1.0, w - 4.0, rowH - 2.0, 4.0) }
 
             int depth = flatDepth[i]
 

@@ -774,6 +774,8 @@ export func midnightTheme(): Theme       { return thm.midnightTheme() }
 export func brighten(Color c, int delta): Color  { return thm.brighten(c, delta) }
 export func darken(Color c, int delta): Color    { return thm.darken(c, delta) }
 export func withAlpha(Color c, int a): Color     { return thm.withAlpha(c, a) }
+// 高亮渐变（底色 → 高亮色，t=0..1）：底色透明时走 alpha 淡入，不会先混成黑色（2026-11-27）
+export func mixhl(Color base, Color hl, float t): Color { return thm.mixhl(base, hl, t) }
 export func packColor(int r, int g, int b, int a = 255): Color { return thm.packColor(r, g, b, a) }
 export func colorR(Color c): int               { return thm.colorR(c) }
 export func colorG(Color c): int               { return thm.colorG(c) }

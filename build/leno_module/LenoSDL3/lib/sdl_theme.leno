@@ -79,6 +79,26 @@ export func mixbg(Color c, Color bg, int ratio): Color {
     return (c & 0xFF000000) | (r << 16) | (g << 8) | b
 }
 
+// 高亮**渐变**：从底色 base 淡入到高亮色 hl，`t` = 0..1（2026-11-27）
+//
+// ⚠ 为什么不直接 `mixbg(base, hl, t*100)`：`mixbg` 的 alpha 取自**第一个参数**，而
+//   底色常常是**透明的**（`bg_color: #00000000`，RGB 全 0）⇒ 中间态会变成
+//   "RGB 混向黑色 + alpha 却是高亮色的 D9" = **一块半透明黑块**，看起来像黑框闪一下 ✗
+//   （Aria 歌曲列表实测抓到）
+// ⇒ 分两种口径：
+//     底色不透明 ⇒ RGB 混色（从底色渐变到高亮色），alpha 也跟着插值
+//     底色透明   ⇒ 只用 hl 的 RGB，**alpha 从 0 涨到 hl 的 alpha**（干净的淡入）✓
+export func mixhl(Color base, Color hl, float t): Color {
+    if t <= 0.0 { return base }
+    if t >= 1.0 { return hl }
+    int ba = colorA(base)
+    int ha = colorA(hl)
+    Color rgbBase = if ba < 8 then hl else base
+    Color c = mixbg(rgbBase, hl, _int(t * 100.0))
+    int a = ba + _int(_float(ha - ba) * t)
+    return withAlpha(c, a)
+}
+
 // ==================== Theme 结构体 ====================
 export struct Theme {
     string name = "dark"

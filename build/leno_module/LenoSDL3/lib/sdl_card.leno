@@ -44,6 +44,7 @@ import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
 use theme.Color
 import "sdl_menu.leno" as menu; use menu.MenuBar   // 右键上下文菜单（菜单本体共用 sdl_menu ✓）
 import strings
+import "sdl_animator.leno" as ani; use ani.Anim   // hover 抬起/底色渐变（与 Tab/ComboBox 共用 ✓）
 
 
 // 角标规格（多角标 ✓）：opts 里用 Dict 描述，进控件时**只转一次**成结构体（不是每帧转 ✗）
@@ -201,6 +202,9 @@ export struct Card impl Widget, Themeable {
     pri bool bare = false
     pri int cursor = SystemCursor.POINTER
     pri float hoverLift = 0.0         // 悬停时**视觉**上移像素（不改 x/y ✓）
+    // ★ 2026-11-27：hover 抬起/底色**渐变**（0..1，约 150ms）——
+    //   以前 `hover` 一变就瞬移 `hoverLift` 像素、底色也瞬换 ⇒ 鼠标扫过一排卡片时"啪啪"跳 ✗
+    pri Anim hoverA
     pri func():void onClick
     bool hover = false
     pri bool pressed = false
@@ -433,6 +437,8 @@ export struct Card impl Widget, Themeable {
     func set_selected(bool v) { if selected != v { selected = v; core.markFrameRedraw() } }
     func is_selected(): bool { return selected }
     func is_hover(): bool { return hover }
+    // 悬停渐变进度（0 = 完全未悬停、1 = 完全抬起/高亮）—— 自测断言用
+    func get_hover_anim(): float { return hoverA.value() }
     func is_pressed(): bool { return pressed }
 
     // ==================== 右键上下文菜单 API（与 ListBox / Table **同名同义** ✓ 应用层照写就熟）====================
@@ -710,6 +716,7 @@ export struct Card impl Widget, Themeable {
             hover = inside
             // ★ 2026-11-17 晚：局部重绘已删除 ⇒ 退回整窗重绘（跨窗口收益由 F4 分窗重绘承担）
             if hover != wasHover {
+                hoverA.set_target(if hover then 1.0 else 0.0)   // 抬起/底色渐变的目标 ✓
                 core.markFrameRedraw()
             } else { core.markFrameMotion() }
             if cursor >= 0 and hover { core.requestCursor(cursor) }
@@ -746,15 +753,22 @@ export struct Card impl Widget, Themeable {
         sync_content()
 
         // 绘制坐标（hover_lift 只动绘制，不动 x/y ✓ 不变式 ③）
-        float vy = y
-        if hover and hoverLift > 0.0 { vy = y - hoverLift }
+        //   ★ 2026-11-27：抬起量按 `hoverA` 渐变（0→1），移出时自然落回，不再瞬移 ✓
+        if hoverA.pump() { core.requestRedraw() }
+        float ht = hoverA.value()
+        float vy = y - hoverLift * ht
 
         // ① 卡片底（颜色优先级：selected → pressed → hover → 正常；禁用另走混背景 ✓）
+        //   hover 的底色也从 bgColor 渐变到 hovColor（ht=1 时与老的 `bg = hovColor` 等价 ✓）
         Color bg = bgColor
         if not enabled { bg = theme.mixbg(bgColor, theme.getTheme().bg, 60) }
         else if selected { bg = selectedColor }
         else if pressed { bg = if prColor != 0 then prColor else theme.darken(hovColor, 10) }
-        else if hover { bg = hovColor }
+        //   `mixhl`：卡片底色透明（`bg_color: #00000000`）时走 alpha 淡入，
+        //   裸 mixbg 会先混成"半透明黑"⇒ hover 瞬间像黑块 ✗（见 theme.mixhl 注释）
+        else if hover or ht > 0.002 {
+            bg = theme.mixhl(bgColor, hovColor, ht)
+        }
         r.setColor(bg)
         r.fillRoundedRect(x, vy, _w, _h, radius)
 
@@ -937,7 +951,7 @@ export struct Card impl Widget, Themeable {
         // ⑥ 边框（opt-in；selected 换强调色 ✓）
         if showBorder {
             Color bc = if selected then bdrSelColor else bdrColor
-            if hover { bc = theme.brighten(bc, 20) }
+            if hover or ht > 0.002 { bc = theme.mixhl(bc, theme.brighten(bc, 20), ht) }
             r.setColor(bc)
             r.drawRoundedRect(x, vy, _w, _h, radius)
         }

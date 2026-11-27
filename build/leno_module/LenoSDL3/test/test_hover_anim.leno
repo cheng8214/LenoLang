@@ -1,0 +1,104 @@
+// test_hover_anim.leno —— 悬停渐变回归：Card / ListBox / Table（2026-11-27）
+//
+// 以前 `hover` 一变就**硬切**：卡片"啪"地抬起并换底色、列表行"啪啪"闪。
+// 现在统一由 `Anim`（lib/sdl_animator.leno）驱动 0→1 渐变（~150ms）。本测试钉住：
+//   ① 鼠标刚移进去的那几十毫秒，进度在 (0, 1) 之间（说明是在渐变，不是瞬变）
+//   ② ~300ms 后到 1（完全高亮）
+//   ③ 移出去之后回到 0（不会卡在 1）
+//   ⚠ TreeView 的同一套改动本测试不覆盖（造树数据成本高），靠 --check + 手测
+//
+// 用法：
+//     ./build/leno.exe build/leno_module/LenoSDL3/test/test_hover_anim.leno
+import "SDL3" as SDL3
+import maths
+use SDL3.(Event, Renderer, Window, Card, ListBox, Table, Color)
+
+int gFail = 0
+float gCardMid = 0.0
+float gLbMid = 0.0
+bool gShot = false
+bool gShotDone = false
+
+func check(bool cond, string what) {
+    if cond {
+        print("[PASS] " + what + "\n")
+    } else {
+        gFail = gFail + 1
+        print("[FAIL] " + what + "\n")
+    }
+}
+
+main() {
+    if not SDL3.initVideo() {
+        print("[FAIL] initVideo 失败: " + SDL3.getError() + "\n")
+        return
+    }
+    var win = SDL3.createWindow({title: "hover anim test", w: 700, h: 620})
+    if not win.ok {
+        print("[FAIL] 建窗口失败: " + SDL3.getError() + "\n")
+        return
+    }
+
+    // ⚠ Card 没有 `win.addCard`（它是"放进容器/卡片墙"的控件）⇒ createCard + win.add ✓
+    // ---- 纯函数先钉住"中间态不能是黑色"（这是 Aria 里"黑框闪一下"的根因）----
+    //   透明底色 #00000000 的 RGB 是 0 ⇒ 直接混 RGB 会先变成"半透明黑"
+    Color cHalf = SDL3.mixhl(#00000000, #EDE7FBD9, 0.5)
+    check(SDL3.colorR(cHalf) > 200 and SDL3.colorA(cHalf) > 80 and SDL3.colorA(cHalf) < 160,
+        "透明底渐变中间态是半透明白而非黑（R=" + _str(SDL3.colorR(cHalf)) + " A=" + _str(SDL3.colorA(cHalf)) + "）")
+    Color cSolid = SDL3.mixhl(#2C2E36FF, #EDE7FBD9, 0.5)
+    //   alpha 会从底色的 255 插到高亮色的 217(D9) ⇒ 中间态 236（别写成"必须 255"✗）
+    check(SDL3.colorR(cSolid) > 120 and SDL3.colorA(cSolid) >= 217,
+        "不透明底渐变仍是正常插值（R=" + _str(SDL3.colorR(cSolid)) + " A=" + _str(SDL3.colorA(cSolid)) + "）")
+
+    Card card = SDL3.createCard({x: 20, y: 20, w: 200, h: 120, title: "卡片", hover_lift: 12, radius: 10})
+    win.add(card)
+    Array[string] xs = []
+    for 20 to i { xs.add("项 " + _str(i)) }
+    ListBox lb = win.addListBox({x: 20, y: 180, w: 300, h: 160, items: xs})
+    // ⚠ 复现 Aria 歌曲列表的配置：**透明底色 + solid_sel:false + 带 alpha 的 hover 色**
+    //   （player_tick.leno:661-663 就是这套）—— 混色时若 alpha 取了"透明底色"，
+    //   整个 hover 行会变成 alpha=0 ⇒ 看起来"所有 hover 背景都没了"✗
+    Table tb = win.addTable({x: 20, y: 370, w: 400, h: 160, headers: ["行"],
+                             bg_color: #00000000, hover_color: #EDE7FBD9,
+                             sel_color: #E6DCF7CC, solid_sel: false, border: false})
+    Array[Array[string]] rows = []
+    for 10 to i { rows.add(["行 " + _str(i)]) }
+    tb.set_rows(rows)
+
+    // ---- Card：移进去 → 中间态 → 到位 ----
+    win.addTimerOnce(300, func() { SDL3.testMoveAt(win.getID(), 100.0, 70.0) })
+    win.addTimerOnce(360, func() { gCardMid = card.get_hover_anim() })
+    win.addTimerOnce(800, func() {
+        check(gCardMid > 0.02 and gCardMid < 0.98, "Card 悬停渐变中间态（进度 " + _str(gCardMid) + "）")
+        check(maths.abs(card.get_hover_anim() - 1.0) < 0.02, "Card 最终抬起到位（" + _str(card.get_hover_anim()) + "）")
+        // 移开 ⇒ 落回
+        SDL3.testMoveAt(win.getID(), 600.0, 560.0)
+    })
+    win.addTimerOnce(1400, func() {
+        check(card.get_hover_anim() < 0.02, "Card 移开后落回 0（" + _str(card.get_hover_anim()) + "）")
+        // ---- ListBox：移进去看渐变 ----
+        SDL3.testMoveAt(win.getID(), 100.0, 260.0)
+    })
+    win.addTimerOnce(1460, func() { gLbMid = lb.get_hover_anim() })
+    win.addTimerOnce(1900, func() {
+        check(gLbMid > 0.02 and gLbMid < 0.98, "ListBox 悬停渐变中间态（进度 " + _str(gLbMid) + "）")
+        check(maths.abs(lb.get_hover_anim() - 1.0) < 0.02, "ListBox 最终到位（" + _str(lb.get_hover_anim()) + "）")
+        // ---- Table：移进去看渐变（到 1 即可，不重复验中间态）----
+        SDL3.testMoveAt(win.getID(), 100.0, 430.0)
+    })
+    win.addTimerOnce(2350, func() { gShot = true })   // 抓一帧，人工核对 hover 行到底有没有底色
+    win.addTimerOnce(2560, func() {
+        check(maths.abs(tb.get_hover_anim() - 1.0) < 0.02, "Table 悬停到位（" + _str(tb.get_hover_anim()) + "）")
+        print(if gFail == 0 then "[RESULT] 全部通过 ✓\n" else "[RESULT] 失败 " + _str(gFail) + " 项 ✗\n")
+        SDL3.requestExit()
+    })
+    win.addTimerOnce(9000, func() { check(false, "9 秒内没跑完 ✗"); SDL3.requestExit() })
+
+    win.setOverlay(func(Renderer r) {
+        if gShot and not gShotDone {
+            gShotDone = true
+            SDL3.saveImagePNG(r.readPixelsAt(0, 0, 700, 620), "build\\shot_hover.png")
+        }
+    })
+    win.run(func(Event ev): bool { return true }, func(Renderer r) {})
+}

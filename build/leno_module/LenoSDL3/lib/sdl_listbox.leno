@@ -9,6 +9,7 @@ import "sdl_event.leno" as evt; use evt.Event
 import "sdl_core.leno" as core; use core.SystemCursor; use core.SDL_Rect; use core.sdl3
 import "sdl_widget.leno" as wgt; use wgt.Widget
 import "sdl_scrollphys.leno" as sph; use sph.ScrollPhys   // 物理滚动内核（与 ScrollView/Table 共用 ✓）
+import "sdl_animator.leno" as ani; use ani.Anim         // 悬停渐变 ✓
 import "sdl_tooltip.leno" as tip
 import "sdl_menu.leno" as menu; use menu.MenuBar
 import "sdl_theme.leno" as theme; use theme.(Theme, Themeable)
@@ -33,6 +34,10 @@ export struct ListBox impl Widget, Themeable {
     pri float itemH = 24.0          // 行高
     pri float scroll = 0.0          // 已向下滚动的像素（0 = 顶部）
     pri ScrollPhys phys             // ★ 2026-11-27 物理滚动：滚轮加速 + 撞界回弹（见 dispY/pump_scroll）
+    // ★ 2026-11-27：悬停行底色**渐入/渐出**（0..1）。`hovRowA` 是"当前正在渐变的行"，
+    //   鼠标离开时它保留旧行号 ⇒ 那一行自己淡出（不是硬切）✓
+    pri Anim hovA
+    pri int hovRowA = -1
     pri int hover = -1              // 当前悬停行索引（-1 无）
     float _fontSize = 15.0; pri string fontPath = ""; pri int fontStyle = 0; Font? _font
     int _mode = MODE_SINGLE       // 选择模式（MODE_SINGLE/MODE_MULTI）
@@ -372,6 +377,8 @@ export struct ListBox impl Widget, Themeable {
     func get_scroll_velocity(): float { return phys.velY }
     func get_overscroll_y(): float { return phys.overY }
     func is_scrolling(): bool { return phys.is_moving() }
+    // 悬停行渐变进度（0~1）—— 自测断言用
+    func get_hover_anim(): float { return hovA.value() }
     func get_selected_indices(): Array[int] { return sel }
     func get_selected_index(): int {
         if sel.len() > 0 { return sel[0] }
@@ -562,7 +569,13 @@ export struct ListBox impl Widget, Themeable {
             if in_vscroll(mx, my) { hover = -1 }
             else { hover = index_at(mx, my) }
             bool hv = hover >= 0
-            if hover != prevHover { core.markFrameRedraw() } else { core.markFrameMotion() }
+            if hover != prevHover {
+                // 换行就重新淡入（同一行内不重置）；离开 ⇒ 让旧行淡出 ✓
+                hovRowA = hover
+                hovA.snap(0.0)
+                hovA.set_target(if hover >= 0 then 1.0 else 0.0)
+                core.markFrameRedraw()
+            } else { core.markFrameMotion() }
             if hv and cursor >= 0 { core.requestCursor(cursor) }
             if hv and _tip != "" { tip.tipReport(_tip, mx, my) }
         }
@@ -652,6 +665,7 @@ export struct ListBox impl Widget, Themeable {
         if not _loaded { return }
         if not visible { return }
         pump_scroll()          // 每帧推进一次物理（含续帧请求，见函数注释 ✓）
+        if hovA.pump() { core.requestRedraw() }   // 悬停渐入/渐出也要续帧 ✓
         ensure_font()
 
         Color bgC = bgColor
@@ -678,7 +692,11 @@ export struct ListBox impl Widget, Themeable {
             if iy + itemH < y or iy > y + h { continue }
             Color rowC = bgC
             if is_selected(i) { rowC = selColor }
-            else if i == hover { rowC = hovColor }
+            else if i == hovRowA and hovA.value() > 0.002 {
+                // ★ 2026-11-27：悬停底色**渐入**（以前 mouse 一进就是硬色，扫过一排会"啪啪"闪 ✗）
+                //   `mixhl`：底色透明时走 alpha 淡入（裸 mixbg 会先混出黑色 ✗，见 theme.mixhl 注释）
+                rowC = theme.mixhl(bgC, hovColor, hovA.value())
+            }
             r.setColor(rowC)
             // 行底色统一走渲染器的共用件：圆角**锚在面板的边**上 ✓
             //   ⚠ 旧写法"末行按自己的矩形补圆角"在末行只露一半时，圆角落到面板底下 ⇒
