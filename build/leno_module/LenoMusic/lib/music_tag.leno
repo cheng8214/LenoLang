@@ -19,6 +19,7 @@
 //   · 原地写必须用 **`rb+`**：`r+` 是文本模式，会把 0x0A 转成 0x0D 0x0A，直接把文件写坏 ✗
 //     （2026-10-28 实测：r+ 写过的地方后面全错位）
 import files
+import bytes
 import dirs
 import strings
 import "MIME" as mimeLib          // 封面 MIME 统一由 LenoMIME 判定（原先这里手写了一份 .jpg 判断）
@@ -70,16 +71,24 @@ func synchsafe(int v): string {
     return from_bytes([(v >> 21) & 127, (v >> 14) & 127, (v >> 7) & 127, v & 127])
 }
 
+// ★ 2026-11-28：这三个读函数从"4 次 `byte_of`（每次一个 native 调用 + 类型收窄）"
+//   改成一次 `bytes.read_*`。软越界口径保留：先 `bytes.check` 判一次，不够就给 0
+//   （解析截断的标签文件时不抛错 —— 与原 `byte_of` 的"越界给 0"一致）。
 func read_be32(string s, int i): int {
-    return (byte_of(s, i) << 24) | (byte_of(s, i + 1) << 16) | (byte_of(s, i + 2) << 8) | byte_of(s, i + 3)
+    if not bytes.check(s, i, 4) { return 0 }
+    return bytes.read_u32be(s, i)
 }
 
 func read_le32(string s, int i): int {
-    return byte_of(s, i) | (byte_of(s, i + 1) << 8) | (byte_of(s, i + 2) << 16) | (byte_of(s, i + 3) << 24)
+    if not bytes.check(s, i, 4) { return 0 }
+    return bytes.read_u32(s, i)
 }
 
 func read_synchsafe(string s, int i): int {
-    return (byte_of(s, i) << 21) | (byte_of(s, i + 1) << 14) | (byte_of(s, i + 2) << 7) | byte_of(s, i + 3)
+    // synchsafe 不是大小端整数（每字节只用低 7 位）⇒ bytes 没有对应方法，逐字节读
+    if not bytes.check(s, i, 4) { return 0 }
+    return (bytes.read_u8(s, i) << 21) | (bytes.read_u8(s, i + 1) << 14) |
+        (bytes.read_u8(s, i + 2) << 7) | bytes.read_u8(s, i + 3)
 }
 
 func file_len(string p): int {

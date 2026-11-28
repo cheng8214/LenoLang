@@ -25,32 +25,31 @@ import strings
 import files
 import times
 import maths
+import bytes
 import "Compress" as z
 
 // ---------------- 小端读写 ----------------
-
+// ★ 2026-11-28：原来 `_u16/_u32` 用 `strings.byte(...)` 拼（一个 u32 要 4 次 native 调用），
+//   `_le16/_le32` 逐字节 add 进数组。现在都走内置 `bytes`：
+//   · 读：`bytes.read_u16/read_u32`（一次调用；`string` 载体零拷贝）
+//   · 写：`bytes.write_u16/write_u32`（一次调用写完整数）
 func _u16(string s, int o): int {
-    return strings.byte(s, o) | (strings.byte(s, o + 1) << 8)
+    return bytes.read_u16(s, o)
 }
 
 func _u32(string s, int o): int {
-    return strings.byte(s, o) | (strings.byte(s, o + 1) << 8)
-         | (strings.byte(s, o + 2) << 16) | (strings.byte(s, o + 3) << 24)
+    return bytes.read_u32(s, o)
 }
 
 func _le16(int v): string {
     Array[int] b = []
-    b.add(v & 0xFF)
-    b.add((v >> 8) & 0xFF)
+    bytes.write_u16(b, v)
     return strings.from_bytes(b)
 }
 
 func _le32(int v): string {
     Array[int] b = []
-    b.add(v & 0xFF)
-    b.add((v >> 8) & 0xFF)
-    b.add((v >> 16) & 0xFF)
-    b.add((v >> 24) & 0xFF)
+    bytes.write_u32(b, v)
     return strings.from_bytes(b)
 }
 

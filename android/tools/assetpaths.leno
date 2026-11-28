@@ -31,14 +31,16 @@
 //   · 改完要重新签名（内容变了）：本工具在 zipalign/apksigner **之前**调用 ✓
 import strings
 import files
+import bytes
 
+// ★ 2026-11-28：`_u16/_u32` 改用内置 `bytes.read_u16/read_u32`
+//   （原来一个 u32 要 4 次 `strings.byte` 调用；现在是 1 次，且 string 载体零拷贝）
 func _u16(string s, int o): int {
-    return strings.byte(s, o) | (strings.byte(s, o + 1) << 8)
+    return bytes.read_u16(s, o)
 }
 
 func _u32(string s, int o): int {
-    return strings.byte(s, o) | (strings.byte(s, o + 1) << 8)
-         | (strings.byte(s, o + 2) << 16) | (strings.byte(s, o + 3) << 24)
+    return bytes.read_u32(s, o)
 }
 
 func _die(string msg) {

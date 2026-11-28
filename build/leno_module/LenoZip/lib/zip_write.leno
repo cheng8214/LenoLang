@@ -16,19 +16,13 @@
 import maths
 import strings
 import times
+import bytes
 import "Compress" as z
 
-func _u16(Array[int] out, int v) {
-    out.add(v & 0xFF)
-    out.add((v >> 8) & 0xFF)
-}
+// ★ 2026-11-28：原来这里有两个手抄的"整数 → 小端字节"helper（u16 / u32 各一份，
+//   逐字节 out.add），已删除并**全量替换**成内置 `bytes.write_u16` / `bytes.write_u32`
+//   （一次 native 调用写完整数，也不再套一层函数调用）。
 
-func _u32(Array[int] out, int v) {
-    out.add(v & 0xFF)
-    out.add((v >> 8) & 0xFF)
-    out.add((v >> 16) & 0xFF)
-    out.add((v >> 24) & 0xFF)
-}
 
 // [DOS time, DOS date]
 func _dos_stamp(): Array[int] {
@@ -72,38 +66,38 @@ export func encode(Array[Dict] entries, bool compress): string {
         int off = out.len()
 
         // ---- local file header ----
-        _u32(out, 0x04034b50)
-        _u16(out, 20)              // version needed 2.0
-        _u16(out, 0x0800)          // flag: UTF-8 文件名
-        _u16(out, method)
-        _u16(out, dt)
-        _u16(out, dd)
-        _u32(out, crc)
-        _u32(out, pb.len())        // compressed size
-        _u32(out, db.len())        // uncompressed size
-        _u16(out, nb.len())
-        _u16(out, 0)               // extra len
+        bytes.write_u32(out, 0x04034b50)
+        bytes.write_u16(out, 20)              // version needed 2.0
+        bytes.write_u16(out, 0x0800)          // flag: UTF-8 文件名
+        bytes.write_u16(out, method)
+        bytes.write_u16(out, dt)
+        bytes.write_u16(out, dd)
+        bytes.write_u32(out, crc)
+        bytes.write_u32(out, pb.len())        // compressed size
+        bytes.write_u32(out, db.len())        // uncompressed size
+        bytes.write_u16(out, nb.len())
+        bytes.write_u16(out, 0)               // extra len
         for nb to b { out.add(b) }
         for pb to b { out.add(b) }
 
         // ---- central directory record ----
-        _u32(cds, 0x02014b50)
-        _u16(cds, 20)              // version made by（低字节 2.0，高字节 0 = MS-DOS）
-        _u16(cds, 20)              // version needed
-        _u16(cds, 0x0800)
-        _u16(cds, method)
-        _u16(cds, dt)
-        _u16(cds, dd)
-        _u32(cds, crc)
-        _u32(cds, pb.len())
-        _u32(cds, db.len())
-        _u16(cds, nb.len())
-        _u16(cds, 0)               // extra
-        _u16(cds, 0)               // comment
-        _u16(cds, 0)               // disk start
-        _u16(cds, 0)               // internal attrs
-        _u32(cds, 0)               // external attrs
-        _u32(cds, off)             // local header offset
+        bytes.write_u32(cds, 0x02014b50)
+        bytes.write_u16(cds, 20)              // version made by（低字节 2.0，高字节 0 = MS-DOS）
+        bytes.write_u16(cds, 20)              // version needed
+        bytes.write_u16(cds, 0x0800)
+        bytes.write_u16(cds, method)
+        bytes.write_u16(cds, dt)
+        bytes.write_u16(cds, dd)
+        bytes.write_u32(cds, crc)
+        bytes.write_u32(cds, pb.len())
+        bytes.write_u32(cds, db.len())
+        bytes.write_u16(cds, nb.len())
+        bytes.write_u16(cds, 0)               // extra
+        bytes.write_u16(cds, 0)               // comment
+        bytes.write_u16(cds, 0)               // disk start
+        bytes.write_u16(cds, 0)               // internal attrs
+        bytes.write_u32(cds, 0)               // external attrs
+        bytes.write_u32(cds, off)             // local header offset
         for nb to b { cds.add(b) }
     }
 
@@ -111,14 +105,14 @@ export func encode(Array[Dict] entries, bool compress): string {
     for cds to b { out.add(b) }
 
     // ---- EOCD ----
-    _u32(out, 0x06054b50)
-    _u16(out, 0)                   // disk number
-    _u16(out, 0)                   // disk with CD
-    _u16(out, entries.len())
-    _u16(out, entries.len())
-    _u32(out, cds.len())
-    _u32(out, cdOff)
-    _u16(out, 0)                   // comment len
+    bytes.write_u32(out, 0x06054b50)
+    bytes.write_u16(out, 0)                   // disk number
+    bytes.write_u16(out, 0)                   // disk with CD
+    bytes.write_u16(out, entries.len())
+    bytes.write_u16(out, entries.len())
+    bytes.write_u32(out, cds.len())
+    bytes.write_u32(out, cdOff)
+    bytes.write_u16(out, 0)                   // comment len
 
     return strings.from_bytes(out)
 }

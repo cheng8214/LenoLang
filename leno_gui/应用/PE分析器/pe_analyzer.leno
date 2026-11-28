@@ -16,6 +16,7 @@ use SDL3.(Button, Label, ListBox, Table, HBox, VBox, TabControl, Edit)
 import files
 import strings
 import dirs
+import bytes
 
 // ==================== PE 解析常量 ====================
 
@@ -38,22 +39,21 @@ func xorKey(int i): int {
 //       rbe32/rbe16 读取大端，用于 LENB blob 内部数据
 
 // 从 string 的指定偏移读取 4 字节小端 uint32
+// ★ 2026-11-28：原来循环 4 次 `data.byte(off+i)`（每次一个 native 调用）
+//   ⇒ 改成一次 `bytes.read_u32`（反汇编/节表遍历里这个调用点很多）。
+//   越界从"byte() 给 null 再炸"变成**明确的越界报错**（带 offset/长度）。
 func readU32(string data, int off): int {
-    int val = 0
-    for 0:3 to i {
-        val = val | (data.byte(off + i) << (i * 8))
-    }
-    return val
+    return bytes.read_u32(data, off)
 }
 
 // 从 string 的指定偏移读取 2 字节小端 uint16
 func readU16(string data, int off): int {
-    return data.byte(off) | (data.byte(off + 1) << 8)
+    return bytes.read_u16(data, off)
 }
 
 // 从 string 的指定偏移读取 1 字节
 func readU8(string data, int off): int {
-    return data.byte(off)
+    return bytes.read_u8(data, off)
 }
 
 // ==================== 格式化工具函数 ====================

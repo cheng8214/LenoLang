@@ -8,6 +8,7 @@
 // 2026-11-06 起支持 chunked 请求体（`dechunk`），multipart 见 `parse_multipart`。
 import maths
 import strings
+import bytes
 
 func lower(string s): string {
     Array[int] out = []
@@ -310,45 +311,48 @@ export func multipart_boundary(string ct): string {
 //   ok=false, more=true  ⇒ 数据还不够，调用方继续 recv
 //   ok=false, more=false ⇒ 报文非法（err 给原因，调用方回 400）
 export func dechunk(string raw): Dict {
-    Array[int] bs = raw.to_bytes()
-    int n = bs.len()
-    Array[int] out = []
+    // ★ 2026-11-28：原来整条报文先 `to_bytes()` 成 Array[int]、正文再**逐字节 add**，
+    //   最后 `strings.from_bytes(out)` —— 1MB 正文要 30~50ms，临时内存还是 ×8。
+    //   现在全程 `string` 载体：正文用 `byte_slice` 切片、末尾 `join` 一次。
+    int n = raw.byte_len()
+    Array[string] parts = []
     var pos = 0
     while true {
-        int eol = _find_crlf(bs, pos)
+        int eol = _find_crlf(raw, pos)
         if eol < 0 { return {ok: false, body: "", rest: "", more: true, err: ""} }
         // 长度行可能带扩展 `5;name=val` ⇒ 只取分号前那段
         int hend = eol - 1
         for pos : eol - 1 to i {
-            if bs[i] == 59 { hend = i - 1; break }          // ';'
+            if bytes.read_u8(raw, i) == 59 { hend = i - 1; break }          // ';'
         }
-        int size = _hex_int(bs, pos, hend)
+        int size = _hex_int(raw, pos, hend)
         if size < 0 { return {ok: false, body: "", rest: "", more: false, err: "chunk 长度非法"} }
         pos = eol + 2
         if size == 0 {
             // 末块之后是可选 trailer（通常为空）⇒ 一直读到空行为止
             while true {
-                int e2 = _find_crlf(bs, pos)
+                int e2 = _find_crlf(raw, pos)
                 if e2 < 0 { return {ok: false, body: "", rest: "", more: true, err: ""} }
                 if e2 == pos {
                     var restS = ""
                     int after = pos + 2
                     if after <= n - 1 { restS = strings.byte_slice(raw, after, n - 1) }
-                    return {ok: true, body: strings.from_bytes(out), rest: restS, more: false, err: ""}
+                    return {ok: true, body: parts.join(""), rest: restS, more: false, err: ""}
                 }
                 pos = e2 + 2
             }
         }
         if pos + size + 1 > n - 1 { return {ok: false, body: "", rest: "", more: true, err: ""} }
-        for 0 : size - 1 to k { out.add(bs[pos + k]) }
+        parts.add(strings.byte_slice(raw, pos, pos + size - 1))
         pos = pos + size + 2                                // 块的正文 + 尾随 CRLF
     }
 }
 
-func _find_crlf(Array[int] bs, int from): int {
+func _find_crlf(string s, int from): int {
+    int last = s.byte_len() - 1
     var i = from
-    while i + 1 <= bs.len() - 1 {
-        if bs[i] == 13 and bs[i + 1] == 10 { return i }
+    while i + 1 <= last {
+        if bytes.read_u8(s, i) == 13 and bytes.read_u8(s, i + 1) == 10 { return i }
         i = i + 1
     }
     return -1
@@ -356,11 +360,12 @@ func _find_crlf(Array[int] bs, int from): int {
 
 // 十六进制长度：只看 [from, lastIx]；非法 / 过长（> 8 位）⇒ -1
 //   ⚠ 参数不能叫 `to`（保留字），会被语法分析器当成 for 的 `to`
-func _hex_int(Array[int] bs, int from, int lastIx): int {
+func _hex_int(string s, int from, int lastIx): int {
     if from < 0 or lastIx < from or lastIx - from > 7 { return -1 }
+    if lastIx >= s.byte_len() { return -1 }              // 越界不再静默（bytes.read_u8 会抛）
     int v = 0
     for from : lastIx to i {
-        int d = _hexval(bs[i])
+        int d = _hexval(bytes.read_u8(s, i))
         if d < 0 { return -1 }
         v = v * 16 + d
     }

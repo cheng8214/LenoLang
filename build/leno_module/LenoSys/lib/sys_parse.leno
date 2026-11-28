@@ -10,6 +10,7 @@
 // ⚠ 本文件**不许 import ffi / Win32 / SDL3**，也不许调 _exec —— 保持"纯函数"才可测 ✓
 import strings
 import regexs
+import bytes
 
 // ==================== 通用文本小工具 ====================
 
@@ -688,30 +689,17 @@ export func filetime_to_epoch(int ft): int {
     return sec
 }
 
-// 小端 u32 / u64（越界字节当 0 ⇒ 短记录不会崩 ✓）
+// 小端 u32 / u64。★ 2026-11-28：原来是自己 for 循环逐字节乘 256 累加（4/8 次下标 +
+//   乘加），现在一次 `bytes.read_*` 搞定；"越界字节当 0 ⇒ 短记录不会崩"的老口径用
+//   `bytes.check` 先判一下保留住（read_* 是抛错的）。
 func _le32(Array[int] by, int off): int {
-    int v = 0
-    int i = 3
-    while (i >= 0) {
-        v = v * 256 + _byte_at(by, off + i)
-        i = i - 1
-    }
-    return v
+    if not bytes.check(by, off, 4) { return 0 }
+    return bytes.read_u32(by, off)
 }
 
 func _le64(Array[int] by, int off): int {
-    int v = 0
-    int i = 7
-    while (i >= 0) {
-        v = v * 256 + _byte_at(by, off + i)
-        i = i - 1
-    }
-    return v
-}
-
-func _byte_at(Array[int] by, int i): int {
-    if i < 0 or i >= by.len() { return 0 }
-    return by[i]
+    if not bytes.check(by, off, 8) { return 0 }
+    return bytes.read_u64(by, off)
 }
 
 // UTF-16**LE** 字节段 → UTF-8 字符串
@@ -722,47 +710,21 @@ func _byte_at(Array[int] by, int i): int {
 //   ⚠ 全程按**字节**处理（`to_bytes` → 逐字节拼 `from_bytes` ✓）：UTF-16 是字节级格式，
 //     拿 `strings.slice`（字符语义）切会把相邻两字节当成一个码点 ✗
 export func decode_utf16le(Array[int] by, int from, int maxUnits): string {
-    Array[int] out = []
+    // ★ 2026-11-28：转换本体改调内置 `bytes.decode_utf16le`（C 侧一遍扫完，不再逐单元
+    //   add 进 Array[int] 再 from_bytes）。这里只负责本 API 特有的格式语义：
+    //   "遇 NUL 单元停" + "最多 maxUnits 个单元" ⇒ 先定出字节长度，再交给 bytes 解码。
+    //   孤立代理由 bytes 给 U+FFFD（旧实现是"跳过"）—— 输出仍是合法 UTF-8，且看得出坏了。
+    int n = by.len()
+    if from < 0 or from + 1 >= n { return "" }
     int i = from
-    int n = 0
-    while (i + 1 < by.len()) {
-        if maxUnits > 0 and n >= maxUnits { break }
-        int u = by[i] + by[i + 1] * 256
-        if u == 0 { break }
+    int units = 0
+    while i + 1 < n {
+        if maxUnits > 0 and units >= maxUnits { break }
+        if bytes.read_u16(by, i) == 0 { break }     // NUL 单元 = 字符串结束
         i = i + 2
-        n = n + 1
-
-        int cp = u
-        if u >= 55296 and u <= 56319 {              // 0xD800..0xDBFF：高代理
-            if (i + 1 >= by.len()) { continue }
-            int lo = by[i] + by[i + 1] * 256
-            if lo < 56320 or lo > 57343 { continue }  // 后面不是低代理（0xDC00..0xDFFF）⇒ 丢弃
-            cp = 65536 + (u - 55296) * 1024 + (lo - 56320)
-            i = i + 2
-            n = n + 1
-        } else if u >= 56320 and u <= 57343 {        // 孤立的低代理 ⇒ 丢弃
-            continue
-        }
-        _push_utf8(out, cp)
+        units = units + 1
     }
-    return strings.from_bytes(out)
-}
-
-// 一个码点 → UTF-8 字节（标准 1/2/3/4 字节编码 ✓）
-func _push_utf8(Array[int] out, int cp) {
-    if cp < 128 {
-        out.add(cp)
-    } eif cp < 2048 {
-        out.add(192 + cp / 64)
-        out.add(128 + cp % 64)
-    } eif cp < 65536 {
-        out.add(224 + cp / 4096)
-        out.add(128 + (cp / 64) % 64)
-        out.add(128 + cp % 64)
-    } else {
-        out.add(240 + cp / 262144)
-        out.add(128 + (cp / 4096) % 64)
-        out.add(128 + (cp / 64) % 64)
-        out.add(128 + cp % 64)
-    }
+    int nb = i - from
+    if nb <= 0 { return "" }
+    return bytes.decode_utf16le(by, from, nb)
 }

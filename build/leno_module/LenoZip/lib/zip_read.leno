@@ -12,48 +12,46 @@
 import maths
 import strings
 import files
+import bytes
 import "Compress" as z
 import "Result" as res
 use res.Result
 use z.Inflated
 
-func _u16(Array[int] bs, int o): int {
-    return bs[o] | (bs[o + 1] << 8)
-}
-
-func _u32(Array[int] bs, int o): int {
-    return bs[o] | (bs[o + 1] << 8) | (bs[o + 2] << 16) | (bs[o + 3] << 24)
-}
+// ★ 2026-11-28：原来有 `_u16/_u32` 两个 helper + 整包 `raw.to_bytes()`。
+//   现在直接用内置 `bytes` 模块、**保留 `string` 载体**：
+//   · 省掉"整包字节 → Array[int]"那次拷贝（每字节 8 字节 Value，几百 MB 的包就是几个 GB）
+//   · 一次 native 调用顶 4 次数组下标（实测 42ns → 16ns/次）
+//   · 越界改成抛错：下面每处读取前都有 `pos + 46 > n` / `loff + 30 > n` 这类判据，
+//     正常文件不会触发；坏文件以前会读出幽灵条目，现在直接报错。
 
 func _err(string msg): Dict {
     return {ok: false, err: msg, count: 0, entries: []}
 }
 
 // 从尾部往前找 EOCD（注释最长 65535，所以最多回扫 64KB + 22）
-func _find_eocd(Array[int] bs): int {
-    int n = bs.len()
+//   EOCD 签名 0x06054B50 = 内存里的 50 4B 05 06（小端）⇒ 一次 4 字节读就够比较
+func _find_eocd(string raw): int {
+    int n = raw.byte_len()
     if n < 22 { return -1 }
     var lo = n - 22 - 65535
     lo = maths.maxi(lo, 0)
     var i = n - 22
     while i >= lo {
-        if bs[i] == 0x50 and bs[i + 1] == 0x4B and bs[i + 2] == 0x05 and bs[i + 3] == 0x06 {
-            return i
-        }
+        if bytes.read_u32(raw, i) == 0x06054B50 { return i }
         i = i - 1
     }
     return -1
 }
 
 export func decode(string raw): Dict {
-    Array[int] bs = raw.to_bytes()
-    int n = bs.len()
-    int eocd = _find_eocd(bs)
+    int n = raw.byte_len()
+    int eocd = _find_eocd(raw)
     if eocd < 0 { return _err("不是 zip：找不到 EOCD（文件可能被截断，或不是 zip）") }
 
-    int count = _u16(bs, eocd + 10)
-    int cdSize = _u32(bs, eocd + 12)
-    int cdOff = _u32(bs, eocd + 16)
+    int count = bytes.read_u16(raw, eocd + 10)
+    int cdSize = bytes.read_u32(raw, eocd + 12)
+    int cdOff = bytes.read_u32(raw, eocd + 16)
     if count == 0xFFFF or cdOff == 0xFFFFFFFF or cdSize == 0xFFFFFFFF {
         return _err("不支持 zip64（条目数/偏移超过 4GB 或 65535 项的归档）")
     }
@@ -65,18 +63,18 @@ export func decode(string raw): Dict {
 
     for 0:count-1 to idx {
         if pos + 46 > n { return _err("中央目录项越界（第 " + _str(idx + 1) + " 项）") }
-        if _u32(bs, pos) != 0x02014b50 {
+        if bytes.read_u32(raw, pos) != 0x02014b50 {
             return _err("第 " + _str(idx + 1) + " 个中央目录项签名不对")
         }
-        int flags = _u16(bs, pos + 8)
-        int method = _u16(bs, pos + 10)
-        int crc = _u32(bs, pos + 16)
-        int csz = _u32(bs, pos + 20)
-        int usz = _u32(bs, pos + 24)
-        int nlen = _u16(bs, pos + 28)
-        int elen = _u16(bs, pos + 30)
-        int clen = _u16(bs, pos + 32)
-        int loff = _u32(bs, pos + 42)
+        int flags = bytes.read_u16(raw, pos + 8)
+        int method = bytes.read_u16(raw, pos + 10)
+        int crc = bytes.read_u32(raw, pos + 16)
+        int csz = bytes.read_u32(raw, pos + 20)
+        int usz = bytes.read_u32(raw, pos + 24)
+        int nlen = bytes.read_u16(raw, pos + 28)
+        int elen = bytes.read_u16(raw, pos + 30)
+        int clen = bytes.read_u16(raw, pos + 32)
+        int loff = bytes.read_u32(raw, pos + 42)
 
         var name = ""
         if nlen > 0 { name = strings.byte_slice(raw, pos + 46, pos + 46 + nlen - 1) }
@@ -91,11 +89,11 @@ export func decode(string raw): Dict {
             entryErr = "条目已加密（本库不支持）"
         } else if loff + 30 > n {
             entryErr = "local header 越界"
-        } else if _u32(bs, loff) != 0x04034b50 {
+        } else if bytes.read_u32(raw, loff) != 0x04034b50 {
             entryErr = "local header 签名不对"
         } else {
-            int lnlen = _u16(bs, loff + 26)
-            int lelen = _u16(bs, loff + 28)
+            int lnlen = bytes.read_u16(raw, loff + 26)
+            int lelen = bytes.read_u16(raw, loff + 28)
             int dstart = loff + 30 + lnlen + lelen
             if dstart + csz > n {
                 entryErr = "条目数据越界：文件被截断"

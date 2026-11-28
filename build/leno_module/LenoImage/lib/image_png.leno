@@ -12,6 +12,7 @@
 // 口径：解码产出的 Image 与其它子模块一致 —— 紧凑 BGRA（与 SDL3 ARGB8888 同内存序）。
 
 import strings
+import bytes
 import files
 import dirs      // encodePNGFile 先判父目录（否则 files.write 抛得含糊，看不出是目录问题）
 import "image_core.leno" as core
@@ -21,17 +22,13 @@ use core.Image
 use res.Result
 
 // ==================== 字节工具 ====================
-
-func _be32(Array[int] b, int off): int {
-    return (b[off] << 24) | (b[off + 1] << 16) | (b[off + 2] << 8) | b[off + 3]
-}
+// ★ 2026-11-28：`_be32(Array[int], off)` 删除，读一律用内置 `bytes.read_u32be(data, off)`
+//   直接吃 **string** 载体 ⇒ 解码不再 `strings.to_bytes(data)` 把整张图拷成数组
+//   （每字节 8 字节 Value，几 MB 的图就是几十 MB 临时内存）；写侧改用 `bytes.write_u32be`。
 
 func _be32str(int v): string {
     Array[int] a = []
-    a.add(_uint8(v >> 24))
-    a.add(_uint8(v >> 16))
-    a.add(_uint8(v >> 8))
-    a.add(_uint8(v & 0xFF))
+    bytes.write_u32be(a, v)          // 大端 4 字节（一次调用写完，不再逐字节 add）
     return strings.from_bytes(a)
 }
 
@@ -77,14 +74,13 @@ func _unfilter(int filter, int x, int left, int up, int upLeft): int {
 // ==================== 解码 ====================
 
 export func decodePNG(string data): Result[Image] {
-    Array[int] b = strings.to_bytes(data)
-    int n = b.len()
+    int n = data.byte_len()
     // 8 字节签名
     if n < 8 {
         return res.err[Image](res.ErrCode.PARSE, "不是 PNG：文件太短")
     }
-    int sig0 = _be32(b, 0)
-    int sig1 = _be32(b, 4)
+    int sig0 = bytes.read_u32be(data, 0)
+    int sig1 = bytes.read_u32be(data, 4)
     if sig0 != 0x89504E47 or sig1 != 0x0D0A1A0A {
         return res.err[Image](res.ErrCode.PARSE, "不是 PNG：签名不对")
     }
@@ -95,12 +91,13 @@ export func decodePNG(string data): Result[Image] {
     int colorType = 0
     int interlace = 0
     bool haveIHDR = false
-    Array[int] idat = []
+    // IDAT 直接攒**字符串片段**（inflate 收的就是 string）⇒ 不做 Array[int] 逐字节 add
+    Array[string] idatParts = []
 
     int pos = 8
     while pos + 8 <= n {
-        int len = _be32(b, pos)
-        string ctype = strings.from_bytes([b[pos + 4], b[pos + 5], b[pos + 6], b[pos + 7]])
+        int len = bytes.read_u32be(data, pos)
+        string ctype = strings.byte_slice(data, pos + 4, pos + 7)
         int dataStart = pos + 8
         if len < 0 or dataStart + len + 4 > n {
             return res.err[Image](res.ErrCode.PARSE, "chunk " + ctype + " 越界")
@@ -109,14 +106,14 @@ export func decodePNG(string data): Result[Image] {
             if len != 13 {
                 return res.err[Image](res.ErrCode.PARSE, "IHDR 长度不是 13")
             }
-            width = _be32(b, dataStart)
-            height = _be32(b, dataStart + 4)
-            bitDepth = b[dataStart + 8]
-            colorType = b[dataStart + 9]
-            interlace = b[dataStart + 12]
+            width = bytes.read_u32be(data, dataStart)
+            height = bytes.read_u32be(data, dataStart + 4)
+            bitDepth = bytes.read_u8(data, dataStart + 8)
+            colorType = bytes.read_u8(data, dataStart + 9)
+            interlace = bytes.read_u8(data, dataStart + 12)
             haveIHDR = true
         } else if ctype == "IDAT" {
-            for dataStart : dataStart + len - 1 to i { idat.add(b[i]) }
+            if len > 0 { idatParts.add(strings.byte_slice(data, dataStart, dataStart + len - 1)) }
         } else if ctype == "IEND" {
             break
         }
@@ -138,12 +135,13 @@ export func decodePNG(string data): Result[Image] {
     if width < 1 or height < 1 {
         return res.err[Image](res.ErrCode.PARSE, "尺寸非法 " + _str(width) + "x" + _str(height))
     }
-    if idat.len() == 0 {
+    if idatParts.len() == 0 {
         return res.err[Image](res.ErrCode.PARSE, "缺 IDAT（无像素数据）")
     }
 
-    // IDAT 是 zlib 流
-    var inf = z.inflateZlib(strings.from_bytes(idat))
+    // IDAT 是 zlib 流（多个 IDAT 块按顺序拼起来；join 一次分配，不是 O(n²) 拼接）
+    string idat = idatParts.join("")
+    var inf = z.inflateZlib(idat)
     if inf.isErr() {
         return res.err[Image](res.ErrCode.PARSE, "IDAT 解压失败：" + inf.msg)
     }

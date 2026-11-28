@@ -322,7 +322,11 @@ main() {
     assert_eq(sp.decode_utf16le([61, 216, 0, 222, 0, 0], 0, 0), strings.from_bytes([240, 159, 152, 128]),
               "代理对（U+1F600）⇒ 4 字节 UTF-8 ✓")
     assert_eq(sp.decode_utf16le([65, 0, 0, 0, 66, 0], 0, 0), "A", "NUL 即停（后面的不该读出来 ✓）")
-    assert_eq(sp.decode_utf16le([0, 216, 65, 0, 0, 0], 0, 0), "A", "孤立代理 ⇒ 丢弃（不产出非法字节 ✓）")
+    // ★ 2026-11-28 口径变更：孤立代理给 **U+FFFD**（此前是"跳过"）。
+    //   与内置 `bytes.decode_utf16le` 同一口径 —— 替换字符能在结果里看见"这里坏了"，
+    //   而"跳过"是静默丢字符；两者输出都是合法 UTF-8（不会产出 ED A0 80 那种坏字节 ✓）
+    assert_eq(sp.decode_utf16le([0, 216, 65, 0, 0, 0], 0, 0), "\uFFFD" + "A",
+              "孤立代理 ⇒ U+FFFD（不产出非法字节 ✓）")
     assert_eq(sp.decode_utf16le([], 0, 0), "", "空 ⇒ 空（不抛 ✓）")
     assert_eq(sp.decode_utf16le([65, 0, 66, 0], 0, 1), "A", "maxUnits 生效：只读 1 个单元 ✓")
 
