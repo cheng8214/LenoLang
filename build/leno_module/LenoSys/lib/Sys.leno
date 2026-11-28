@@ -467,6 +467,35 @@ export func cpuUsage(): int {
     return _cpuPct
 }
 
+// ==================== 平台能力（2026-11-28）====================
+// 为什么需要：**macOS 上很多探针不存在**（Linux 走 `/proc`、`/sys`，Windows 走 Win32 API，
+//   macOS 两者都没有）。那些函数在 macOS 上会返回空数组 / 全 0，上层**分不清"没有"和"不支持"**
+//   —— 比如 `listVolumes()` 返回 [] 到底是"这台机器没挂任何盘"还是"这个平台不会枚举"？
+//   ⇒ 用这张表先问一句，据此隐藏 UI，而不是画一个空列表。
+//
+// 判据是"实现是否真的能拿到值"（不是"能不能编译"）。当前值：
+//   · `volumes/memory/cpu/processes/trash/startupItems/installedSoftware/recentFiles`：
+//     Windows + Linux ✓，macOS ✗（没有对应探针）
+//   · `fileIcon`：只有 Windows（Shell API）；Linux 未实现
+//   · `watch`：全平台（轮询引擎与平台无关）；`watchNative`：只有 Windows（inotify 未实现）
+export func capabilities(): Dict {
+    string os = _os()
+    bool desk = os == "windows" or os == "linux"     // 有 /proc 或有 Win32：探针齐全
+    return {
+        volumes: desk,
+        memory: desk,
+        cpu: desk,
+        processes: desk,
+        trash: desk,
+        startupItems: desk,
+        installedSoftware: desk,
+        recentFiles: desk,
+        fileIcon: os == "windows",
+        watch: true,
+        watchNative: os == "windows"
+    }
+}
+
 // ==================== 文件图标（2026-11-27）====================
 // 取文件在资源管理器里显示的图标：{ok, w, h, pixels}，pixels = Array[int]（RGBA，行优先）
 //   · small=true ⇒ 16×16；false ⇒ 32×32

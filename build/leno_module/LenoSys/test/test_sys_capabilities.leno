@@ -1,0 +1,64 @@
+// test_sys_capabilities.leno -- 平台能力表自测
+//   核心断言：能力表里说"支持"的，启用对应的函数不能抛错；
+//             说"不支持"的（macOS 那些），返回空/未知而不是异常。
+//   本机只有 Windows，所以 macOS 的"不支持"分支**无法验证**（只能在 mac 上跑）。
+import "Sys" as Sys
+import files
+import dirs
+
+var passed = 0
+var failed = 0
+
+func check(string name, bool ok) {
+    if ok {
+        print("  [PASS] " + name)
+        passed = passed + 1
+    } else {
+        print("  [FAIL] " + name)
+        failed = failed + 1
+    }
+}
+
+main() {
+    print("=== Sys.capabilities ===")
+    var c = Sys.capabilities()
+
+    // 平台无关的两项
+    check("watch 全平台可用", c["watch"] as bool)
+    check("windows/macos/linux 三选一", Sys.os() == "windows" or Sys.os() == "linux" or Sys.os() == "macos")
+
+    if _os() == "windows" or _os() == "linux" {
+        check("windows/linux：volumes 可用", c["volumes"] as bool)
+        check("windows/linux：memory 可用", c["memory"] as bool)
+        check("windows/linux：cpu 可用", c["cpu"] as bool)
+        check("windows/linux：processes 可用", c["processes"] as bool)
+
+        // 说支持就真的能拿到东西
+        if c["volumes"] as bool {
+            var vs = Sys.listVolumes()
+            check("volumes 支持 ⇒ listVolumes 非空", vs.len() > 0)
+            var okv = false
+            for vs to v { if v.ready { okv = true } }
+            check("volumes 支持 ⇒ 至少有一个卷 ready", okv)
+        }
+        if c["memory"] as bool {
+            var m = Sys.memoryUsage()
+            check("memory 支持 ⇒ totalKb > 0", m.totalKb > 0)
+            check("memory 支持 ⇒ percent 在 0..100", m.percent >= 0 and m.percent <= 100)
+        }
+        if c["cpu"] as bool {
+            var c1 = Sys.cpuUsage()
+            check("cpu 首次返回 -1", c1 == -1)
+        }
+    } else {
+        // macOS：没有 /proc 也没有 Win32 探针 ⇒ 应当**明确报不支持**
+        check("macOS：volumes 不支持", not (c["volumes"] as bool))
+        check("macOS：memory 不支持", not (c["memory"] as bool))
+        check("macOS：listVolumes 返回空数组（配合上面的 false 才可判读）", Sys.listVolumes().len() == 0)
+        check("macOS：memoryUsage 给全 0", Sys.memoryUsage().totalKb == 0)
+    }
+
+    print("")
+    print("========================================")
+    print("Results: " + _str(passed) + " passed, " + _str(failed) + " failed")
+}
