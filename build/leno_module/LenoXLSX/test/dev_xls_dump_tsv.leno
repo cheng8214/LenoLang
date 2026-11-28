@@ -1,9 +1,12 @@
-// dev_xls_dump_tsv.leno -- 把 .xls 读成 TSV（与 dev_xls_crosscheck.py 对照用）
+﻿// dev_xls_dump_tsv.leno -- 把 .xls 读成 TSV（与 dev_xls_crosscheck.py 对照用）
 import files
 import "xls_read.leno" as xr
 
 main() {
-    var r = xr.load("D:\\CLeno\\1月份.xls")
+    var p = "D:\\CLeno\\1月份.xls"
+var a = _args()
+if a.len() >= 1 { p = a[0] }
+var r = xr.load(p)
     if not (r["ok"] as bool) {
         print("读取失败：" + (r["err"] as string))
         return

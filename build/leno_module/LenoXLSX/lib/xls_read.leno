@@ -504,8 +504,10 @@ export func decode(string raw): Dict {
             } else if rid == 0x0203 and rl >= 14 {                   // NUMBER
                 int r = bytes.read_u16(wb, bt)
                 int c = bytes.read_u16(wb, bt + 2)
-                int hi = bytes.read_u32(wb, bt + 6)
-                int lo = bytes.read_u32(wb, bt + 10)
+                // ⚠ 小端 double：bt+6 是**低 32 位**，bt+10 是**高 32 位**（符号/指数/尾数高 20 位）。
+                //   传反了不会报错，只会得到 5.3e-315 这类次正规数 —— 实测交叉验证抓到的。
+                int lo = bytes.read_u32(wb, bt + 6)
+                int hi = bytes.read_u32(wb, bt + 10)
                 _putCell(rows, r, c, _numText(_dbl(hi, lo)))
             } else if (rid == 0x0204 or rid == 0x00D6) and rl >= 9 { // LABEL / RSTRING
                 int r = bytes.read_u16(wb, bt)

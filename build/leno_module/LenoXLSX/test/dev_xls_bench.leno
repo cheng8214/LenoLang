@@ -1,6 +1,7 @@
 // dev_xls_bench.leno -- 测 .xls 读取速度：整体 / OLE2 层 / 同规模 xlsx 对照
 //   用法：build\leno.exe build\leno_module\LenoXLSX\test\dev_xls_bench.leno
 import files
+import dirs
 import times
 import maths
 import strings
@@ -34,7 +35,14 @@ func stat(string name, Array[int] us): string {
 }
 
 main() {
-    string path = "D:\\CLeno\\1月份.xls"
+    // 路径可用命令行覆盖：build\leno.exe dev_xls_bench.leno <file.xls> [次数]
+    var path = "D:\\CLeno\\1月份.xls"
+    var argA = _args()
+    if argA.len() >= 1 { path = argA[0] }
+    if not files.exists(path) {
+        path = dirs.join(dirs.cwd(), "sample.xls")
+        print("（未指定文件或原路径不存在 ⇒ 用当前目录的 sample.xls；可先跑 gen_sample_xls.py 生成）")
+    }
     var warm = xlsx.read(path)
     if not (warm["ok"] as bool) {
         print("读取失败：" + (warm["err"] as string))
@@ -92,7 +100,7 @@ main() {
         t4.add(_int(times.us()) - s)
     }
 
-    print("文件：" + path + "（" + _str(raw.byte_len()) + " 字节，3 sheet / 612 个非空格 / 142 个共享字符串）")
+    print("文件：" + path + "（" + _str(raw.byte_len()) + " 字节）")
     print("")
     print(stat("读文件 files.read", t1))
     print(stat("to_bytes 44KB", t1b))

@@ -96,22 +96,26 @@ python build\leno_module\LenoXLSX\test\dev_xls_crosscheck.py "D:\CLeno\1月份.x
 两份 TSV **逐行逐格完全一致**（187 行），Python 那份是独立实现（`struct` 手解 OLE2 +
 BIFF，不依赖 xlrd/openpyxl），所以不是"同源自我确认"。
 
-**速度**（2026-11-26 实测，i5-3450 / Windows x64，100 次中位数，同机同轮）：
+**速度**（2026-11-28 实测，i5-3450 / Windows x64，100 次中位数，同机同轮。样本
+`test/sample.xls`：15 KB / 3 sheet / 601 非空格 / **269 个共享字符串**，由
+`test/gen_sample_xls.py` 生成 ⇒ 随时可复跑）：
 
 | 阶段 | Leno（本模块） | Python 参考实现 |
 |---|---|---|
-| 读文件 `files.read` | 240 µs | 95 µs（`open().read()`） |
-| `to_bytes()` 44 KB | 190 µs | —（bytes 本身就是 C 数组） |
-| OLE2 取 Workbook 流 | 378 µs | 117 µs |
-| BIFF8 记录解析 | 2850 µs | ~2950 µs |
-| **完整读取** | **3200 µs** | **3068 µs** |
+| 读文件 `files.read` | 103 µs | 94 µs（`open().read()`） |
+| `to_bytes()` | 68 µs | —（`bytes` 本身就是 C 数组） |
+| OLE2 取 Workbook 流 | **46 µs** | 57 µs |
+| BIFF8 记录解析 | 2188 µs | ~2133 µs |
+| **完整读取** | **2234 µs** | **2190 µs** |
 
-> BIFF8 段已经**比 Python 快**（2850 vs 2950 µs）。整体剩下的 130 µs 差距全在
-> `files.read`（240 vs 95）和 `to_bytes`（190 µs，Python 不转这一步）。
+> **差距 1.02 倍（≈2%）**：OLE2 层已经**反超** Python（46 vs 57 µs —— `bytes` 模块的
+> `read_u32` 走 string 载体免 `to_bytes`，比 Python 的 `struct.unpack_from` 还省一次
+> 元组分配）；BIFF8 段只慢 2.5%；剩下的就是 `to_bytes` 那 68 µs（Python 不需要这一步）。
+> 在**共享字符串更多**（269 vs 旧样本 142）的负载上打平，说明 SST 解码换
+> `bytes.decode_utf16le` 之后已不是短板。
 
-同一份数据（44 KB / 3 sheet / 612 非空格 / 142 个共享字符串）读成
-`Array[Array[string]]`。参照：同内容的 `.xlsx` 读一次约 **44 ms**（要 inflate + 扫 XML），
-`.xls` 快约 **11 倍**。
+同一份数据读成 `Array[Array[string]]`。参照：同内容的 `.xlsx` 读一次约 **35 ms**
+（要 inflate + 扫 XML），`.xls` 快约 **16 倍**。
 
 > **对照口径要说明**：Python 那边是"Python 逻辑 + C 原语"——
 > `struct.unpack_from`（一次调用解 4/8 字节，还能 `<109I` 一次解 109 个整数）、
