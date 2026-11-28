@@ -5,6 +5,7 @@ import dirs
 import times
 import maths
 import strings
+import "Sys" as sys
 import "XLSX" as xlsx
 import "xls_read.leno" as xr
 use xr.Ole
@@ -100,6 +101,12 @@ main() {
         t4.add(_int(times.us()) - s)
     }
 
+    // ★ 2026-11-28：**把机器型号打出来**。这份基准要和 `dev_xls_bench.py`（Python 参考实现）
+    //   对照看，不同机器差一倍很常见 ⇒ 数字必须自带 CPU / 内存 / 内核，否则两个数对不上时
+    //   根本分不清是"代码回退"还是"换了台机器"（同目录 py 版也打印同样一行）。
+    var si = sys.sysInfo()
+    print("机器：" + si.cpuModel + " × " + _str(si.cpuCount) + " 逻辑核 · " +
+          _str(si.memTotalKb / 1024 / 1024) + " GB · " + si.osName + " " + si.kernel)
     print("文件：" + path + "（" + _str(raw.byte_len()) + " 字节）")
     print("")
     print(stat("读文件 files.read", t1))

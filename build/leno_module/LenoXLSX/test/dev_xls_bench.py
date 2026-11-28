@@ -1,7 +1,41 @@
 # dev_xls_bench.py -- 同一个 .xls 的 Python 参考实现计时（对照 xls_read.leno）
 #   用法：python build\leno_module\LenoXLSX\test\dev_xls_bench.py [file.xls] [重复次数]
 #   只用标准库（struct / io），不依赖 xlrd / openpyxl / olefile
-import struct, sys, time, statistics
+import struct, sys, time, statistics, os, platform
+
+
+def mem_gb():
+    """物理内存 GB（Windows 走 GlobalMemoryStatusEx，POSIX 走 sysconf）"""
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024 ** 3
+    except Exception:
+        pass
+    try:
+        import ctypes
+        class _MS(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        ms = _MS()
+        ms.dwLength = ctypes.sizeof(_MS)
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms))
+        return ms.ullTotalPhys / 1024 ** 3
+    except Exception:
+        return 0.0
+
+
+def cpu_model():
+    """CPU 型号（Windows 走注册表拿完整商品名；其它平台退回 platform）"""
+    try:
+        import winreg
+        k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                           r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        v, _ = winreg.QueryValueEx(k, "ProcessorNameString")
+        return v.strip()
+    except Exception:
+        return platform.processor() or platform.machine() or "未知"
 
 PATH = sys.argv[1] if len(sys.argv) > 1 else r"D:\CLeno\1月份.xls"
 N = int(sys.argv[2]) if len(sys.argv) > 2 else 100
@@ -227,11 +261,14 @@ def bench(name, fn, n):
 
 
 d = read_file(PATH)
+# ★ 2026-11-28：与 dev_xls_bench.leno 打印**同一行机器信息** —— 两边数字要对照看，
+#   不同 CPU 差一倍很常见，不带型号的话对不上时分不清是"代码回退"还是"换了机器"。
+print("机器：%s × %d 逻辑核 · %.0f GB · %s %s · Python %s" % (
+    cpu_model(), os.cpu_count() or 0, mem_gb(),
+    platform.system(), platform.release(), platform.python_version()))
 print("文件：%s（%d 字节）" % (PATH, len(d)))
 print("")
 bench("open+read", lambda: read_file(PATH), N)
 bench("OLE2 打开+取流", lambda: ole_stream(d), N)
 wb = ole_stream(d)
 bench("xls 完整读取", lambda: parse(ole_stream(d)), N)
-print("")
-print("Python " + sys.version.split()[0])

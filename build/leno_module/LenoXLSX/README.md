@@ -118,6 +118,23 @@ BIFF，不依赖 xlrd/openpyxl），所以不是"同源自我确认"。
 同一份数据读成 `Array[Array[string]]`。参照：同内容的 `.xlsx` 读一次约 **35 ms**
 （要 inflate + 扫 XML），`.xls` 快约 **16 倍**。
 
+> **换机复测（2026-11-28，Intel i5-14400F / 16 逻辑核 / 16 GB / Windows 10 22H2）**
+> —— 同一份 `test/sample.xls`、同样取中位数（100/200 次，共 9 轮 Leno / 7 轮 Python）：
+> Leno 完整读取 **707 µs**、Python 参考实现 **703 µs** ⇒ **持平**（上表那个 +4% 的
+> "反超"在新 CPU 上不成立）。绝对值 2040 → 707（2.9×）来自 CPU 代际，不是代码变化。
+>
+> 差异来源：新 CPU 上 Python 那侧的 C 原语（`struct.unpack_from` / `bytes` 切片 /
+> `decode("utf-16-le")`）相对收益更大，而 Leno 侧仍是"每字段一次调用 + 手写位运算"。
+> 细节：Leno 的 **min 仍更好**（590 vs 647 µs），但长尾（GC）让 avg 抖动更大
+> （694~1032 vs 700~781 µs）。同内容 `.xlsx` 在这台机上约 **13 ms**（上表 35 ms 是 i5-3450）。
+>
+> **复跑时先核对机器**：两个基准脚本现在都会打印 `CPU 型号 × 逻辑核 · 内存 · 系统`
+> ```
+> build\leno.exe build\leno_module\LenoXLSX\test\dev_xls_bench.leno test\sample.xls 200
+> python            build\leno_module\LenoXLSX\test\dev_xls_bench.py  test\sample.xls 200
+> ```
+> 数字不带机器型号**不要横向比**（同一份代码在两代 CPU 上差 2.9 倍）。
+
 > **对照口径要说明**：Python 那边是"Python 逻辑 + C 原语"——
 > `struct.unpack_from`（一次调用解 4/8 字节，还能 `<109I` 一次解 109 个整数）、
 > `bytes` 切片（C memcpy）、`decode("utf-16-le")`（C 整段解码）。
