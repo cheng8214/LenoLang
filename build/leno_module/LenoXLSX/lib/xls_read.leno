@@ -64,7 +64,11 @@ export struct Ole {
         return false
     }
 
-    func sectorOff(int sid): int { return 512 + sid * ssz }
+    // 扇区 sid 在文件里的字节偏移。
+    // ⚠ 头部本身占**一个扇区**（512 或 4096），不是固定 512 —— 原来写死 512，
+    //   遇到 4096 字节扇区的 OLE 文件会把 FAT/目录项整体读偏。（该分支未实测：
+    //   需要专门构造 4096 扇区的样本；公式按 [MS-CFB] "header is one sector" 写）
+    func sectorOff(int sid): int { return ssz + sid * ssz }
 
     // 文件里 [off, off+len) 这一段（len <= 0 ⇒ 空）。只转**小段**，不要整文件 to_bytes
     func seg(int off, int len): Array[int] {
@@ -299,7 +303,9 @@ func _err(string msg): Dict {
 
 // 单元格下标（行，列，文本）。行/列可以跳号 ⇒ 补空行/空单元格
 func _putCell(Array[Array[string]] rows, int r, int c, string v) {
-    if r < 0 or c < 0 { return }
+    // BIFF8 的硬上限：65536 行 × 256 列。超出说明记录被构造坏了（恶意/损坏文件），
+    // 直接丢弃 —— 否则按 r 补空行会瞬间分配上百万个数组（内存爆炸）。
+    if r < 0 or c < 0 or r >= 65536 or c >= 256 { return }
     while rows.len() <= r {
         Array[string] blank = []
         rows.add(blank)
@@ -514,7 +520,13 @@ export func decode(string raw): Dict {
                 //   传反了不会报错，只会得到 5.3e-315 这类次正规数 —— 实测交叉验证抓到的。
                 int lo = bytes.read_u32(wb, bt + 6)
                 int hi = bytes.read_u32(wb, bt + 10)
-                _putCell(rows, r, c, _numText(_dbl(hi, lo)))
+                // 指数位全 1 = Inf / NaN。`_dbl` 对这种输入会退化成 0（静默给错值），
+                // 这里提前拦下来标成 #NUM —— 表格里不该有，但外部工具可能写进去。
+                if ((hi >> 20) & 0x7FF) == 0x7FF {
+                    _putCell(rows, r, c, "#NUM")
+                } else {
+                    _putCell(rows, r, c, _numText(_dbl(hi, lo)))
+                }
             } else if (rid == 0x0204 or rid == 0x00D6) and rl >= 9 { // LABEL / RSTRING
                 int r = bytes.read_u16(wb, bt)
                 int c = bytes.read_u16(wb, bt + 2)
