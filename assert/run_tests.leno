@@ -88,8 +88,9 @@ main() {
     var walks = dirs.walk(test_dir)
     for walks to w {
         var root = w.root
-        var files = w.files
-        for files to entry {
+        // ⚠ 变量别叫 `files`（内置模块名，会遮蔽它 ⇒ WARN_BUILTIN_MODULE_SHADOWED）
+        var fileNames = w.files
+        for fileNames to entry {
             if strings.starts_with(entry, "test_") and strings.ends_with(entry, ".leno") {
                 var full = dirs.abspath(dirs.join(root, entry))
                 // 直接传绝对路径，system() 包装层处理 stderr
