@@ -102,16 +102,17 @@ BIFF，不依赖 xlrd/openpyxl），所以不是"同源自我确认"。
 
 | 阶段 | Leno（本模块） | Python 参考实现 |
 |---|---|---|
-| 读文件 `files.read` | 103 µs | 94 µs（`open().read()`） |
-| `to_bytes()` | 68 µs | —（`bytes` 本身就是 C 数组） |
-| OLE2 取 Workbook 流 | **46 µs** | 57 µs |
-| BIFF8 记录解析 | 2188 µs | ~2133 µs |
-| **完整读取** | **2234 µs** | **2190 µs** |
+| 读文件 `files.read` | 100 µs | 84 µs（`open().read()`） |
+| `to_bytes()` 整流转换 | **0（已省掉）** | —（`bytes` 本身就是 C 数组） |
+| OLE2 取 Workbook 流 | **46 µs** | 58 µs |
+| BIFF8 记录解析 | **2018 µs** | ~2067 µs |
+| **完整读取** | **2040 µs** | **2125 µs** |
 
-> **差距 1.02 倍（≈2%）**：OLE2 层已经**反超** Python（46 vs 57 µs —— `bytes` 模块的
-> `read_u32` 走 string 载体免 `to_bytes`，比 Python 的 `struct.unpack_from` 还省一次
-> 元组分配）；BIFF8 段只慢 2.5%；剩下的就是 `to_bytes` 那 68 µs（Python 不需要这一步）。
-> 在**共享字符串更多**（269 vs 旧样本 142）的负载上打平，说明 SST 解码换
+> **Leno 反超 4%**（2040 vs 2125 µs）。关键是把 Workbook 流**保持 string 载体**、
+> 不再 `to_bytes()`：`bytes.read_*` 对 string 是零拷贝解引用（13 ns/次，`Array[int]`
+> 是 16 ns），既省掉整流一次转换，热点循环还更快。OLE2 层现在比 Python 快 21%
+> （46 vs 58 —— `read_u32` 免了 `struct.unpack_from` 的元组分配）。
+> 在**共享字符串更多**（269 vs 旧样本 142）的负载上反超，说明 SST 解码换
 > `bytes.decode_utf16le` 之后已不是短板。
 
 同一份数据读成 `Array[Array[string]]`。参照：同内容的 `.xlsx` 读一次约 **35 ms**
