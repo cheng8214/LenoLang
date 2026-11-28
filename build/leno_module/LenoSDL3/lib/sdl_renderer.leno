@@ -1400,13 +1400,14 @@ const BX_TEX    = 4   // 批处理文字纹理
                 verts[vi + 3].r = 1.0; verts[vi + 3].g = 1.0; verts[vi + 3].b = 1.0; verts[vi + 3].a = alpha
                 verts[vi + 3].u = eu0; verts[vi + 3].v = ev1
                 // 索引（与顶点同一个循环里写，省掉一趟遍历）
-                int io = k * 24
-                ffi.write_int(idxPtr, io,      vi)
-                ffi.write_int(idxPtr, io + 4,  vi + 1)
-                ffi.write_int(idxPtr, io + 8,  vi + 2)
-                ffi.write_int(idxPtr, io + 12, vi)
-                ffi.write_int(idxPtr, io + 16, vi + 2)
-                ffi.write_int(idxPtr, io + 20, vi + 3)
+                // ⚠ 变量名不能叫 `io`：那是内置模块名，同名会遮蔽它（WARN_BUILTIN_MODULE_SHADOWED）
+                int ioff = k * 24
+                ffi.write_int(idxPtr, ioff,      vi)
+                ffi.write_int(idxPtr, ioff + 4,  vi + 1)
+                ffi.write_int(idxPtr, ioff + 8,  vi + 2)
+                ffi.write_int(idxPtr, ioff + 12, vi)
+                ffi.write_int(idxPtr, ioff + 16, vi + 2)
+                ffi.write_int(idxPtr, ioff + 20, vi + 3)
             }
             // 构建索引指针
             _texIdxLastCount = idxCount          // 供 _dbgTexIdxCount 回归用

@@ -128,9 +128,10 @@ export func str_to_bytes(string s):Array[int] {
 }
 
 // 字节数组转十六进制字符串
-export func bytes_to_hex(Array[int] bytes):string {
+// ⚠ 形参不能叫 `bytes`（内置模块名，会遮蔽）；语义不变，只是改名
+export func bytes_to_hex(Array[int] data):string {
     // 2026-10-02 API 收口：逐字节拼串 O(n²) ⇒ `from_bytes` + `to_hex` ✓
-    return strings.to_hex(strings.from_bytes(bytes))
+    return strings.to_hex(strings.from_bytes(data))
 }
 
 // HMAC-SHA256 实现（RFC 2104）

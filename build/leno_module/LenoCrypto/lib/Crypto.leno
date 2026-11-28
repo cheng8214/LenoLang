@@ -66,7 +66,8 @@ export func aes128_cbc_decrypt_str(Array[int] key16, Array[int] iv16, Array[int]
 
 // ==================== hex ====================
 export func hex_to_bytes(string hex):Array[int] { return aes.hex_to_bytes(hex) }
-export func bytes_to_hex(Array[int] bytes):string { return aes.bytes_to_hex(bytes) }
+// ⚠ 形参不能叫 `bytes`（内置模块名，会遮蔽）；语义不变，只是改名
+export func bytes_to_hex(Array[int] data):string { return aes.bytes_to_hex(data) }
 
 // ==================== AES-256（2026-10-14 追加）====================
 // 与 AES-128 同一套核，只是 Nk=8 / Nr=14（老函数逐字未动，避免影响既有调用方）

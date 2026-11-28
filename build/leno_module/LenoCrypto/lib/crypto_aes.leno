@@ -265,9 +265,10 @@ export func hex_to_bytes(string hex):Array[int] {
     return strings.from_hex(hex).to_bytes()
 }
 
-export func bytes_to_hex(Array[int] bytes):string {
+// ⚠ 形参不能叫 `bytes`（内置模块名，会遮蔽）；语义不变，只是改名
+export func bytes_to_hex(Array[int] data):string {
     // 2026-10-02 API 收口：逐字节拼串 O(n²) ⇒ `from_bytes` + `to_hex`（各一趟分配）✓
-    return strings.to_hex(strings.from_bytes(bytes))
+    return strings.to_hex(strings.from_bytes(data))
 }
 
 // PKCS7 填充
@@ -589,8 +590,8 @@ func gcm_ctr(Array[int] w, int nr, Array[int] icb, Array[int] data):Array[int] {
 }
 
 // 84 位长度的大端编码（8 字节；GCM 用**位**数）
-func gcm_len64(int bytes):string {
-    int v = bytes * 8
+func gcm_len64(int nbytes):string {
+    int v = nbytes * 8
     var b = []
     for 0:7 to i { b.add(_uint8(v >> (8 * (7 - i)))) }
     return block_to_str(b)

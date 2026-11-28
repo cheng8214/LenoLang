@@ -1,4 +1,4 @@
-// compress_deflate.leno -- DEFLATE **压缩**（RFC1951，纯 Leno）
+﻿// compress_deflate.leno -- DEFLATE **压缩**（RFC1951，纯 Leno）
 //
 // 实现范围：**fixed Huffman（BTYPE=01）+ LZ77**，单个 BFINAL 块。
 //   · 为什么不先做 dynamic Huffman：它要多算码长、构树、把码表写进流里，
@@ -14,7 +14,8 @@ import "compress_crc.leno" as crc
 
 // ==================== 位输出（LSB 先出）====================
 struct BitOut {
-    Array[int] bytes = []
+    // 字段名不能叫 bytes（内置模块名）；语义不变
+    Array[int] buf = []
     int acc = 0
     int nbits = 0
 }
@@ -24,7 +25,7 @@ func _put(BitOut bw, int value, int nbits) {
     bw.acc = bw.acc | (value << bw.nbits)
     bw.nbits = bw.nbits + nbits
     while bw.nbits >= 8 {
-        bw.bytes.add(bw.acc & 0xFF)
+        bw.buf.add(bw.acc & 0xFF)
         bw.acc = bw.acc >> 8
         bw.nbits = bw.nbits - 8
     }
@@ -45,11 +46,11 @@ func _put_code(BitOut bw, int code, int nbits) {
 
 func _flush(BitOut bw): string {
     if bw.nbits > 0 {
-        bw.bytes.add(bw.acc & 0xFF)
+        bw.buf.add(bw.acc & 0xFF)
         bw.acc = 0
         bw.nbits = 0
     }
-    return strings.from_bytes(bw.bytes)
+    return strings.from_bytes(bw.buf)
 }
 
 // ==================== fixed Huffman 码表 ====================

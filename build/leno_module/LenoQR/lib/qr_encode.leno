@@ -1,4 +1,4 @@
-// qr_encode.leno -- 纯 Leno 的 QR 编码器（ISO/IEC 18004）
+﻿// qr_encode.leno -- 纯 Leno 的 QR 编码器（ISO/IEC 18004）
 //
 // 覆盖：版本 1–40 自动选择、纠错 L/M/Q/H、
 //       数字 / 字母数字 / 字节(UTF-8) / Kanji(Shift-JIS) 四种模式、
@@ -208,8 +208,9 @@ func cc_bits(int mode, int version): int {
     return if hi then 16 else 8
 }
 
-func payload_bits(Array[int] bytes, int mode): int {
-    int n = bytes.len()
+// ⚠ 形参不能叫 `bytes`（内置模块名，会遮蔽）
+func payload_bits(Array[int] data, int mode): int {
+    int n = data.len()
     var b = 0
     if mode == MODE_NUM {
         b = (n / 3) * 10
@@ -265,15 +266,16 @@ func _encode(string text, string eccName, int forceVersion, int eci, int forcedM
     }
     if ecc < 0 { return _err("纠错档位只能是 L/M/Q/H，收到「" + eccName + "」") }
 
-    Array[int] bytes = text.to_bytes()
+    // 变量不叫 bytes（内置模块名会遮蔽）；下面全部引用已同步为 src
+    Array[int] src = text.to_bytes()
     var mode = detect_mode(text)
     if forcedMode >= 0 { mode = forcedMode }
     if mode == MODE_KANJI {
-        if bytes.len() % 2 != 0 {
-            return _err("Kanji 模式要求 Shift-JIS 字节数为偶数，实际 " + _str(bytes.len()))
+        if src.len() % 2 != 0 {
+            return _err("Kanji 模式要求 Shift-JIS 字节数为偶数，实际 " + _str(src.len()))
         }
     }
-    int pbits = payload_bits(bytes, mode)
+    int pbits = payload_bits(src, mode)
 
     var version = 0
     if forceVersion > 0 {
@@ -303,41 +305,41 @@ func _encode(string text, string eccName, int forceVersion, int eci, int forcedM
     }
     bits_push(bits, _mode_indicator(mode), 4)
     if mode == MODE_NUM {
-        bits_push(bits, bytes.len(), cc_bits(mode, version))
+        bits_push(bits, src.len(), cc_bits(mode, version))
         // 数字模式按 3 位一组打包，步长 3/2/1 ⇒ 保留 while
         var p = 0
-        while p < bytes.len() {
-            int left = bytes.len() - p
+        while p < src.len() {
+            int left = src.len() - p
             if left >= 3 {
-                int v = (bytes[p] - 48) * 100 + (bytes[p + 1] - 48) * 10 + (bytes[p + 2] - 48)
+                int v = (src[p] - 48) * 100 + (src[p + 1] - 48) * 10 + (src[p + 2] - 48)
                 bits_push(bits, v, 10)
                 p = p + 3
             } else if left == 2 {
-                int v = (bytes[p] - 48) * 10 + (bytes[p + 1] - 48)
+                int v = (src[p] - 48) * 10 + (src[p + 1] - 48)
                 bits_push(bits, v, 7)
                 p = p + 2
             } else {
-                bits_push(bits, bytes[p] - 48, 4)
+                bits_push(bits, src[p] - 48, 4)
                 p = p + 1
             }
         }
     } else if mode == MODE_ALNUM {
-        bits_push(bits, bytes.len(), cc_bits(mode, version))
+        bits_push(bits, src.len(), cc_bits(mode, version))
         var p = 0
-        while p < bytes.len() {
-            if p + 1 < bytes.len() {
-                bits_push(bits, alnum_index(bytes[p]) * 45 + alnum_index(bytes[p + 1]), 11)
+        while p < src.len() {
+            if p + 1 < src.len() {
+                bits_push(bits, alnum_index(src[p]) * 45 + alnum_index(src[p + 1]), 11)
                 p = p + 2
             } else {
-                bits_push(bits, alnum_index(bytes[p]), 6)
+                bits_push(bits, alnum_index(src[p]), 6)
                 p = p + 1
             }
         }
     } else if mode == MODE_KANJI {
-        bits_push(bits, bytes.len() / 2, cc_bits(mode, version))
+        bits_push(bits, src.len() / 2, cc_bits(mode, version))
         var p = 0
-        while p + 1 < bytes.len() {
-            int c = (bytes[p] << 8) | bytes[p + 1]
+        while p + 1 < src.len() {
+            int c = (src[p] << 8) | src[p + 1]
             if c >= 0x8140 and c <= 0x9FFC { c = c - 0x8140 }
             else if c >= 0xE040 and c <= 0xEBBF { c = c - 0xC140 }
             else { return _err("不是合法的 Shift-JIS 双字节序列（码值 " + _str(c) + "）") }
@@ -345,8 +347,8 @@ func _encode(string text, string eccName, int forceVersion, int eci, int forcedM
             p = p + 2
         }
     } else {
-        bits_push(bits, bytes.len(), cc_bits(mode, version))
-        for bytes to by { bits_push(bits, by, 8) }
+        bits_push(bits, src.len(), cc_bits(mode, version))
+        for src to by { bits_push(bits, by, 8) }
     }
 
     int cap = data_codewords(version, ecc) * 8
