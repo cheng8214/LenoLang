@@ -2204,7 +2204,9 @@ void pool_shutdown(void) {
     for (int i = 0; i < n; i++) {
         if (g_pool_threads[i]) {
             platform_thread_join(g_pool_threads[i], NULL);
-            g_pool_threads[i] = NULL;
+            g_pool_threads[i] = 0;   // ⚠ 不能写 NULL：Windows 的 PlatformThread 是 HANDLE(指针)，
+                                     //   Linux 是 pthread_t(unsigned long) ⇒ NULL 在 Linux 上是
+                                     //   "整数 = 指针"，clang 直接 -Wint-conversion 报错（CI 抓到）
         }
     }
     g_pool_workers = 0;
