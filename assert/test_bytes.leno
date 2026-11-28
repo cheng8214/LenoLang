@@ -117,5 +117,54 @@ main() {
     assert_eq(bad2, true)
     print("  载体/类型错误: OK")
 
+    print("=== decode_utf16le（BIFF/ZIP 的宽字符）===")
+    // "abc" · "项目"(U+9879 U+76EE) · "😀"(U+1F600 = 代理对 D83D DE00)
+    Array[int] wide = [0x61, 0x00, 0x62, 0x00, 0x63, 0x00,
+                       0x79, 0x98, 0xEE, 0x76,
+                       0x3D, 0xD8, 0x00, 0xDE]
+    assert_eq(bytes.decode_utf16le(wide, 0, 14), "abc项目😀")
+    assert_eq(bytes.decode_utf16le(strings.from_bytes(wide), 0, 14), "abc项目😀")
+    assert_eq(bytes.decode_utf16le(wide, 0, 6), "abc")
+    // 从第 7 个字节起 4 个字节 = "项目"
+    assert_eq(bytes.decode_utf16le(wide, 6, 4), "项目")
+    // 只给 7 字节 ⇒ 第 8 字节（"项" 的半个码元）被丢弃
+    assert_eq(bytes.decode_utf16le(wide, 0, 7), "abc")
+    assert_eq(bytes.decode_utf16le(wide, 0, 8), "abc项")
+    // 孤立高位代理 ⇒ U+FFFD
+    Array[int] lone = [0x3D, 0xD8, 0x61, 0x00]
+    assert_eq(bytes.decode_utf16le(lone, 0, 4), "\uFFFD" + "a")
+    // 半个代理对（结尾只有高位代理）
+    assert_eq(bytes.decode_utf16le(lone, 0, 2), "\uFFFD")
+    print("  代理对/截断/孤立代理: OK")
+
+    print("=== decode_latin1（每字节一个码点）===")
+    Array[int] latin = [0x41, 0xA9, 0xFF]
+    assert_eq(bytes.decode_latin1(latin, 0, 3), "A©ÿ")
+    assert_eq(bytes.decode_latin1(strings.from_bytes(latin), 0, 3), "A©ÿ")
+    assert_eq(bytes.decode_utf16le(latin, 0, 0), "")
+    assert_eq(bytes.decode_latin1(latin, 1, 1), "©")
+    print("  Latin-1: OK")
+
+    print("=== decode 的流式口径（n 超过剩余长度按可用字节）===")
+    assert_eq(bytes.decode_latin1(latin, 1, 999), "©ÿ")
+    print("  超出部分截断: OK")
+
+    print("=== encode_utf16le（decode 的逆操作）===")
+    Array[int] enc = bytes.encode_utf16le("abc项目😀")
+    assert_eq(enc.len(), 14)                       // 3 + 2 + 2 + 4 字节
+    assert_eq(enc[0], 0x61)
+    assert_eq(enc[1], 0x00)
+    assert_eq(enc[6], 0x79)                        // "项" U+9879 小端
+    assert_eq(enc[7], 0x98)
+    assert_eq(enc[10], 0x3D)                       // "😀" 代理对 D83D DE00
+    assert_eq(enc[11], 0xD8)
+    assert_eq(enc[12], 0x00)
+    assert_eq(enc[13], 0xDE)
+    // 往返：encode → decode 必须回到原文
+    assert_eq(bytes.decode_utf16le(enc, 0, enc.len()), "abc项目😀")
+    assert_eq(bytes.encode_utf16le("").len(), 0)
+    assert_eq(bytes.decode_utf16le(bytes.encode_utf16le("纯中文"), 0, 6), "纯中文")
+    print("  往返/代理对/空串: OK")
+
     print("=== 所有测试通过 ===")
 }

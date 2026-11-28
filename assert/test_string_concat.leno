@@ -49,17 +49,19 @@ func test_hot_concat_correct():int {
 }
 
 // ---- 测试4：复刻 pbkdf2 bytes_to_hex（修复前 FAIL 的正确输出向量）----
-func bytes_to_hex(Array[int] bytes):string {
+// 形参/局部量改名 buf：`bytes` 现在是内置模块名，同名会让 `bytes.xxx()` 变成实例方法
+//   （WARN_BUILTIN_MODULE_SHADOWED 会提示；此处不是要测遮蔽，故改名保持零警告）
+func bytes_to_hex(Array[int] buf):string {
     var result = ""
-    for bytes.len() to i { result += hex_byte(bytes[i]) }
+    for buf.len() to i { result += hex_byte(buf[i]) }
     return result
 }
 
 func test_bytes_to_hex_pbkdf():int {
-    var bytes = [0x42, 0x07, 0x89, 0x27, 0x2f, 0xa0, 0x94, 0xb8,
-                 0xd8, 0x78, 0x41, 0xe9, 0xe3, 0x6a, 0xd1, 0x73,
-                 0xe3, 0xfb, 0xb3, 0x85, 0x5e, 0xf9, 0x9e, 0x28, 0x6c]
-    assert_eq(bytes_to_hex(bytes),
+    var buf = [0x42, 0x07, 0x89, 0x27, 0x2f, 0xa0, 0x94, 0xb8,
+               0xd8, 0x78, 0x41, 0xe9, 0xe3, 0x6a, 0xd1, 0x73,
+               0xe3, 0xfb, 0xb3, 0x85, 0x5e, 0xf9, 0x9e, 0x28, 0x6c]
+    assert_eq(bytes_to_hex(buf),
               "420789272fa094b8d87841e9e36ad173e3fbb3855ef99e286c")
     return 0
 }

@@ -171,6 +171,235 @@ BYTES_READER(bytes_u16be, BK_U16, 1, "bytes.read_u16be")
 BYTES_READER(bytes_u32be, BK_U32, 1, "bytes.read_u32be")
 BYTES_READER(bytes_u64be, BK_U64, 1, "bytes.read_u64be")
 
+// ==================== 解码：字节缓冲 → 文本 ====================
+
+// 把一个码点写成 UTF-8，返回写入字节数（1..4）
+static int utf8_push(uint32_t cp, char* out) {
+    if (cp < 0x80) {
+        out[0] = (char)cp;
+        return 1;
+    }
+    if (cp < 0x800) {
+        out[0] = (char)(0xC0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3F));
+        return 2;
+    }
+    if (cp < 0x10000) {
+        out[0] = (char)(0xE0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F));
+        return 3;
+    }
+    out[0] = (char)(0xF0 | (cp >> 18));
+    out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    out[3] = (char)(0x80 | (cp & 0x3F));
+    return 4;
+}
+
+// UTF-16LE → UTF-8。代理对合并；**孤立代理输出 U+FFFD**（不抛错）——
+//   真实文件里的脏数据不该让整次解析失败，替换字符能在结果里直接看得见"这里坏了"。
+static int utf16le_to_utf8(const unsigned char* src, int nb, char* out) {
+    int i = 0, o = 0;
+    while (i + 1 < nb) {
+        uint32_t u = (uint32_t)src[i] | ((uint32_t)src[i + 1] << 8);
+        i += 2;
+        uint32_t cp = u;
+        if (u >= 0xD800 && u <= 0xDBFF) {                 // 高位代理
+            if (i + 1 < nb) {
+                uint32_t u2 = (uint32_t)src[i] | ((uint32_t)src[i + 1] << 8);
+                if (u2 >= 0xDC00 && u2 <= 0xDFFF) {
+                    cp = 0x10000 + ((u - 0xD800) << 10) + (u2 - 0xDC00);
+                    i += 2;
+                } else {
+                    cp = 0xFFFD;                          // 高位代理后面不是低位代理
+                }
+            } else {
+                cp = 0xFFFD;                              // 结尾缺半个代理对
+            }
+        } else if (u >= 0xDC00 && u <= 0xDFFF) {
+            cp = 0xFFFD;                                  // 孤立低位代理
+        }
+        o += utf8_push(cp, out + o);
+    }
+    out[o] = '\0';
+    return o;
+}
+
+// Latin-1（每个字节就是一个 Unicode 码点，0x80..0xFF → U+0080..U+00FF）→ UTF-8
+static int latin1_to_utf8(const unsigned char* src, int nb, char* out) {
+    int o = 0;
+    for (int i = 0; i < nb; i++) {
+        o += utf8_push((uint32_t)src[i], out + o);
+    }
+    out[o] = '\0';
+    return o;
+}
+
+/* decode_utf16le(x, off, n) / decode_latin1(x, off, n) —— 把一段字节解码成文本
+ *
+ * 为什么补这两个（2026-11-28，LenoXLSX 实测）：
+ *   `_utf16(Array[int] b, int off, int bytes)` 这类转换器在每个解析器里各抄一份，实现都是
+ *   "逐字符算 UTF-8 字节 → add 进 Array[int] → strings.from_bytes"。实测 30 字符：
+ *   **3010 ns/次**，而其中真正的 from_bytes 只有 318 ns ⇒ 90% 的时间花在
+ *   "每个输出字节一次 arr.add（8 字节 Value + 扩容）"上；142 个共享字符串约 210µs，
+ *   正是 .xls "全共享串 738µs vs 全数字 435µs"那 300µs 的主体。
+ *   `ffi.utf16_to_utf8` 救不了：它只收 `Ptr` 且要求 NUL 结尾，对"缓冲里的一段"得先拷一遍。
+ *
+ * 口径（与 read_* 不同，这里是**流式解码**）：
+ *   · `n` 是**最多**多少字节：超过缓冲剩余长度时按可用的部分解码（截断的尾部不报错）
+ *   · `off < 0` / `n < 0` / `off` 超过缓冲长度 ⇒ 抛错
+ *   · UTF-16 的奇数尾字节丢弃、孤立代理给 U+FFFD（见上）
+ */
+static Value bytes_decode_impl(Value* args, int is_utf16, const char* who) {
+    int len = bytes_len_of(args[0]);
+    if (len < 0) {
+        native_throw_error("bytes: 第一个参数必须是 string 或 Array[int]（字节缓冲）");
+        return val_null();
+    }
+    if (!val_is_int(args[1]) || !val_is_int(args[2])) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "%s: 偏移与字节数必须是 int", who);
+        native_throw_error(msg);
+        return val_null();
+    }
+    int64_t off = val_as_int(args[1]);
+    int64_t want = val_as_int(args[2]);
+    if (off < 0 || want < 0 || off > (int64_t)len) {
+        char msg[192];
+        snprintf(msg, sizeof(msg), "%s: 偏移越界（offset=%lld, 缓冲长度 %d）",
+                 who, (long long)off, len);
+        native_throw_error(msg);
+        return val_null();
+    }
+    int64_t avail = (int64_t)len - off;
+    int nb = (int)(want > avail ? avail : want);
+    if (nb <= 0) return val_obj((Object*)str_copy("", 0));
+
+    // 输出上界：UTF-16 每 2 字节最多 3 字节（代理对是 4→4）；Latin-1 每字节最多 2 字节
+    int cap = (is_utf16 ? (nb / 2) * 3 : nb * 2) + 8;
+    char* out = (char*)malloc((size_t)cap);
+    if (!out) {
+        native_throw_error("bytes: 内存分配失败");
+        return val_null();
+    }
+
+    const unsigned char* src;
+    unsigned char* tmp = NULL;
+    if (val_is_string(args[0])) {
+        // 主路径：直接指向 string 的内部字节（不用拷）
+        src = (const unsigned char*)(((ObjString*)val_as_obj(args[0]))->chars + (int)off);
+    } else {
+        tmp = (unsigned char*)malloc((size_t)nb);
+        if (!tmp) {
+            free(out);
+            native_throw_error("bytes: 内存分配失败");
+            return val_null();
+        }
+        if (!bytes_fetch(args[0], (int)off, nb, tmp)) {
+            free(tmp);
+            free(out);
+            return val_null();
+        }
+        src = tmp;
+    }
+
+    int o = is_utf16 ? utf16le_to_utf8(src, nb, out) : latin1_to_utf8(src, nb, out);
+    ObjString* r = str_copy(out, o);
+    free(tmp);
+    free(out);
+    return val_obj((Object*)r);
+}
+
+static Value bytes_decode_utf16le(int argc, Value* args) {
+    (void)argc;
+    return bytes_decode_impl(args, 1, "bytes.decode_utf16le");
+}
+
+/* encode_utf16le(s) —— 文本 → UTF-16LE 字节（`decode_utf16le` 的逆操作，返回 Array[int]）
+ *
+ * 为什么补它：`xls_write` / zip 写入侧要把文本写成 UTF-16LE（BIFF8 的 fHighByte=1、
+ *   ZIP 的 UTF-8 标志位那一支），现在也是各项目手抄一份"码点 → 2/4 字节"。
+ * 口径：
+ *   · 输出**不带 BOM、不带 NUL 结尾**（"写多长"由调用方按 cch 决定，编码器不替它猜）
+ *   · 增补平面（> U+FFFF）→ 代理对（4 字节）；非法 UTF-8 序列 → U+FFFD（不抛错）
+ */
+static Value bytes_encode_utf16le(int argc, Value* args) {
+    (void)argc;
+    if (!val_is_string(args[0])) {
+        native_throw_error("bytes.encode_utf16le: 参数必须是 string");
+        return val_null();
+    }
+    ObjString* s = (ObjString*)val_as_obj(args[0]);
+    const unsigned char* p = (const unsigned char*)s->chars;
+
+    // 上界：全 ASCII 时每个字节一个码元（2 字节/字符）；4 字节 UTF-8 是 2 码元 = 4 字节/字符
+    ObjArray* out = arr_new(s->len * 2 > 0 ? s->len * 2 : 1);
+    if (!out) {
+        native_throw_error("bytes: 内存分配失败");
+        return val_null();
+    }
+    if (out->capacity < s->len * 2) {
+        while (out->capacity < s->len * 2) {
+            if (!arr_grow(out)) break;
+        }
+    }
+
+    int i = 0;
+    while (i < s->len) {
+        uint32_t cp = 0xFFFD;
+        int adv = 1;
+        unsigned char c = p[i];
+        if (c < 0x80) {
+            cp = c;
+        } else if ((c & 0xE0) == 0xC0 && i + 1 < s->len) {
+            cp = ((uint32_t)(c & 0x1F) << 6) | (p[i + 1] & 0x3F);
+            adv = 2;
+        } else if ((c & 0xF0) == 0xE0 && i + 2 < s->len) {
+            cp = ((uint32_t)(c & 0x0F) << 12) | ((uint32_t)(p[i + 1] & 0x3F) << 6) |
+                 (p[i + 2] & 0x3F);
+            adv = 3;
+        } else if ((c & 0xF8) == 0xF0 && i + 3 < s->len) {
+            cp = ((uint32_t)(c & 0x07) << 18) | ((uint32_t)(p[i + 1] & 0x3F) << 12) |
+                 ((uint32_t)(p[i + 2] & 0x3F) << 6) | (p[i + 3] & 0x3F);
+            adv = 4;
+        }
+        i += adv;
+
+        uint32_t units[2];
+        int nu = 1;
+        if (cp >= 0x10000) {
+            uint32_t v = cp - 0x10000;
+            units[0] = 0xD800 + (v >> 10);
+            units[1] = 0xDC00 + (v & 0x3FF);
+            nu = 2;
+        } else if (cp >= 0xD800 && cp <= 0xDFFF) {
+            units[0] = 0xFFFD;          // UTF-8 里出现的孤立代理：按替换字符写
+        } else {
+            units[0] = cp;
+        }
+        for (int k = 0; k < nu; k++) {
+            if (out->count >= out->capacity && !arr_grow(out)) {
+                native_throw_error("bytes: 数组扩容失败");
+                return val_obj((Object*)out);
+            }
+            // 小端两个字节；int 是立即值 ⇒ 不需要写屏障
+            out->elements[out->count++] = val_int((int64_t)(units[k] & 0xFF));
+            if (out->count >= out->capacity && !arr_grow(out)) {
+                native_throw_error("bytes: 数组扩容失败");
+                return val_obj((Object*)out);
+            }
+            out->elements[out->count++] = val_int((int64_t)((units[k] >> 8) & 0xFF));
+        }
+    }
+    return val_obj((Object*)out);
+}
+
+static Value bytes_decode_latin1(int argc, Value* args) {
+    (void)argc;
+    return bytes_decode_impl(args, 0, "bytes.decode_latin1");
+}
+
 // ==================== 写（追加到 Array[int]） ====================
 
 static Value bytes_put_impl(Value* args, int width, int big_endian, const char* who) {
@@ -298,6 +527,14 @@ void bytes_init_module(void) {
     native_register_module_method("bytes", "write_u16be", bytes_put_u16be, &NATIVE_T_NULL, NATIVE_FIXED(put_params));
     native_register_module_method("bytes", "write_u32be", bytes_put_u32be, &NATIVE_T_NULL, NATIVE_FIXED(put_params));
     native_register_module_method("bytes", "write_u64be", bytes_put_u64be, &NATIVE_T_NULL, NATIVE_FIXED(put_params));
+
+    // 解码：字节缓冲 → 文本（BIFF 的 UTF-16LE / 8 位压缩串、ZIP 文件名、Windows 宽字符片段）
+    TypeKind decode_params[] = { TYPE_ANY, TYPE_INT, TYPE_INT };   // x, offset, nbytes
+    native_register_module_method("bytes", "decode_utf16le", bytes_decode_utf16le, &NATIVE_T_STRING, NATIVE_FIXED(decode_params));
+    native_register_module_method("bytes", "decode_latin1",  bytes_decode_latin1,  &NATIVE_T_STRING, NATIVE_FIXED(decode_params));
+    // 反向：文本 → UTF-16LE 字节（写 BIFF8/ZIP 时用；不带 BOM/NUL）
+    TypeKind encode_params[] = { TYPE_STRING };
+    native_register_module_method("bytes", "encode_utf16le", bytes_encode_utf16le, &NATIVE_T_ARR_INT, NATIVE_FIXED(encode_params));
 
     // 辅助
     native_register_module_method("bytes", "len",   bytes_len_func,   &NATIVE_T_INT,  NATIVE_FIXED(len_params));

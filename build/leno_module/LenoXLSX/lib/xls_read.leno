@@ -29,75 +29,16 @@ import bytes
 
 
 // ==================== BIFF 字符串 ====================
-// UTF-16LE（BIFF8 的 fHighByte=1）。bytes 可能不是 2 的倍数（不会发生，但别越界）
-//
-// ⚠ 为什么不写成 `parts.add(strings.from_codepoint(u))` + join：
-//   每调一次 from_codepoint 都要**造一个 ObjString**，而 str_new 内部要
-//   intern_find（hash 查表）+ utf8_char_len（全扫）+ hash_string（全扫）
-//   ⇒ 10 字的中文串实测 9 µs。改成"手写 UTF-8 字节 + strings.from_bytes 一次构造"
-//   后 2 µs（4.5x）；142 个共享字符串上省约 1 ms。
-func _utf16(Array[int] b, int off, int bytes): string {
-    Array[int] out = []
-    var i = 0
-    while i + 1 < bytes and off + i + 1 < b.len() {
-        int u = b[off + i] | (b[off + i + 1] << 8)
-        i = i + 2
-        var cp = u
-        if u >= 0xD800 and u <= 0xDBFF and i + 1 < bytes and off + i + 1 < b.len() {
-            int u2 = b[off + i] | (b[off + i + 1] << 8)
-            if u2 >= 0xDC00 and u2 <= 0xDFFF {
-                cp = 0x10000 + ((u - 0xD800) << 10) + (u2 - 0xDC00)   // 代理对
-                i = i + 2
-            }
-        }
-        if cp < 0x80 {
-            out.add(cp)
-        } else if cp < 0x800 {
-            out.add(0xC0 | (cp >> 6))
-            out.add(0x80 | (cp & 0x3F))
-        } else if cp < 0x10000 {
-            out.add(0xE0 | (cp >> 12))
-            out.add(0x80 | ((cp >> 6) & 0x3F))
-            out.add(0x80 | (cp & 0x3F))
-        } else {
-            out.add(0xF0 | (cp >> 18))
-            out.add(0x80 | ((cp >> 12) & 0x3F))
-            out.add(0x80 | ((cp >> 6) & 0x3F))
-            out.add(0x80 | (cp & 0x3F))
-        }
-    }
-    return strings.from_bytes(out)
-}
-
-// BIFF 的 8 位压缩字符串（fHighByte=0）：每个字节一个码点（Latin-1 口径）
-func _latin1(Array[int] b, int off, int bytes): string {
-    // 快路径：全是 ASCII ⇒ 数组切片 + 一次构造（sheet 名、英文串走这条）
-    var hi = false
-    var i = 0
-    while i < bytes and off + i < b.len() {
-        if b[off + i] >= 0x80 { hi = true }
-        i = i + 1
-    }
-    if not hi {
-        var end = off + bytes - 1
-        if end >= b.len() { end = b.len() - 1 }
-        if end < off { return "" }
-        return strings.from_bytes(b[off : end])
-    }
-    Array[int] out = []
-    i = 0
-    while i < bytes and off + i < b.len() {
-        int u = b[off + i]
-        if u < 0x80 {
-            out.add(u)
-        } else {
-            out.add(0xC0 | (u >> 6))
-            out.add(0x80 | (u & 0x3F))
-        }
-        i = i + 1
-    }
-    return strings.from_bytes(out)
-}
+// ★ 2026-11-28：原来这里是两个手抄转换器（`_utf16` / `_latin1`）：
+//   "逐字符算 UTF-8 字节 → add 进 Array[int] → strings.from_bytes"。
+//   实测 30 字符一次 **3010 ns**，而其中 from_bytes 只占 318 ns ⇒ 90% 花在
+//   "每个输出字节一次 arr.add（8 字节 Value + 扩容）"上；142 个共享字符串约 210µs。
+//   现在直接调内置 `bytes.decode_utf16le` / `bytes.decode_latin1`：C 侧一遍扫完，
+//   位移出 UTF-8 直接写进输出缓冲，孤立代理给 U+FFFD（不中断解析）。
+// 说明（保留给后来的人）：
+//   · 更早的写法是 `parts.add(strings.from_codepoint(u))` + join —— 每字符造一个
+//     ObjString，10 字中文串实测 9µs。当年的"手写 UTF-8 字节"是那一步的 4.5x 优化。
+//   · 现在这一步又快了 ~10x（见 bytes 模块注释里的实测），且代码只剩一次调用。
 
 // ==================== OLE2 复合文档 ====================
 // 性能要点（2026-11-26 实测）：**大流一律走字符串切片**（strings.byte_slice），
@@ -255,7 +196,7 @@ export struct Ole {
             int size = bytes.read_u32(dir, i + 120)   // 高 32 位在流 > 4GB 时才有意义
             if typ != 0 {
                 var nm = ""
-                if nameLen >= 2 { nm = _utf16(dir, i, nameLen - 2) }
+                if nameLen >= 2 { nm = bytes.decode_utf16le(dir, i, nameLen - 2) }
                 names.add(nm)
                 kinds.add(typ)
                 starts.add(start)
@@ -427,13 +368,13 @@ func _parseSst(Array[int] wb, Array[int] rOff, Array[int] rId, Array[int] rLen, 
             if high {
                 var can = avail / 2
                 if can > need { can = need }
-                parts.add(_utf16(data, pos, can * 2))
+                parts.add(bytes.decode_utf16le(data, pos, can * 2))
                 pos = pos + can * 2
                 need = need - can
             } else {
                 var can = avail
                 if can > need { can = need }
-                parts.add(_latin1(data, pos, can))
+                parts.add(bytes.decode_latin1(data, pos, can))
                 pos = pos + can
                 need = need - can
             }
@@ -500,7 +441,7 @@ export func decode(string raw): Dict {
             int cch = bytes.read_u8(wb, o + 6)
             int fl = bytes.read_u8(wb, o + 7)
             var nm = ""
-            if (fl & 1) != 0 { nm = _utf16(wb, o + 8, cch * 2) } else { nm = _latin1(wb, o + 8, cch) }
+            if (fl & 1) != 0 { nm = bytes.decode_utf16le(wb, o + 8, cch * 2) } else { nm = bytes.decode_latin1(wb, o + 8, cch) }
             names.add(nm)
             pos.add(bof)
         }
@@ -572,7 +513,7 @@ export func decode(string raw): Dict {
                 int cch = bytes.read_u16(wb, bt + 6)
                 int fl = bytes.read_u8(wb, bt + 8)
                 var v = ""
-                if (fl & 1) != 0 { v = _utf16(wb, bt + 9, cch * 2) } else { v = _latin1(wb, bt + 9, cch) }
+                if (fl & 1) != 0 { v = bytes.decode_utf16le(wb, bt + 9, cch * 2) } else { v = bytes.decode_latin1(wb, bt + 9, cch) }
                 _putCell(rows, r, c, v)
             } else if rid == 0x0205 and rl >= 8 {                    // BOOLERR
                 int r = bytes.read_u16(wb, bt)

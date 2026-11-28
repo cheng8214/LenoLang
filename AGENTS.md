@@ -285,6 +285,25 @@ if ffi.read_bytes(p, 0, n) != pat { /* … */ }
 - `read_bytes` 造 ≥1KB 的串现在只 `memcpy`（UTF-8 字符数 / hash 首次用到才补算）
   ⇒ 读回 0.6 → 2.7~3.0 GB/s，就算紧接着调 `.len()` 也有 1.5 GB/s
 
+### 6.0.1 二进制解析：用 `bytes` 模块，别手抄 `_u8/_u16/_u32`
+
+```leno
+import bytes
+
+int rid = bytes.read_u16(buf, off)                       // 小端，越界抛错
+int len = bytes.read_u32(buf, off + 2)
+string name = bytes.decode_utf16le(buf, off + 6, cch * 2) // 宽字符（代理对/孤立代理都处理）
+
+Array[int] out = []
+bytes.write_u32(out, 0x04030201)                          // 追加小端 4 字节
+```
+
+- 载体 `string` **或** `Array[int]` 都吃；读大块二进制优先 `string`（省一次 `to_bytes()`）
+- `read_*` 越界**抛错**（与 `b[o]` 同口径）；要容错先 `bytes.check(x, o, n)`，别指望"给个 0"
+- `decode_*` 是流式：`n` 是"最多多少字节"，截断的尾部不报错；孤立代理给 `U+FFFD`
+- 方法名不能写 `u8/u16/u32`（**保留字**）⇒ 一律 `read_*` / `write_*`
+- 变量别取名 `bytes`（会遮蔽模块；编译器有 `WARN_BUILTIN_MODULE_SHADOWED` 提示）
+
 ---
 
 ## 6.1 数值：先查 `maths`，别手写
